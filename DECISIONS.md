@@ -81,6 +81,16 @@ review). The migration now `REVOKE`s all privileges from `anon`/`authenticated` 
 Tenant isolation is enforced solely server-side via `actor.tenantId`. If PostgREST exposure is ever
 required, it must come with RLS + tenant-scoped policies on every table.
 
+## D14 — base.css reconciled to the freshly-rendered design system
+`ref/html/design-system.html` was rendered headless (past "Unpacking…") and captured to
+`ref/proof/design-system-*.png`; tokens were read from the rendered DOM. This resolved the earlier
+OCR ambiguity from D1 and surfaced small conflicts, now corrected in `base.css`:
+- **Ink** `#182233` → **`#1B2233`** (the rendered value; D1 had the OCR'd hex).
+- **`.field`** radius `12px` → **`13px`**, min-height `48px` → **`52px`** (rendered input).
+- **`.btn`** font `15px/600` → **`14px/700`**, horizontal padding `16px` → **`20px`** (rendered button).
+- **`.btn` min-height kept at 44px** though the sheet draws 42px — the 44px touch-target floor wins.
+The full token/typography/component spec now lives in the binding `DESIGN_SYSTEM.md`.
+
 ## D13 — Session-without-active-user is signed out (no redirect loop)
 The Edge middleware only knows the GoTrue session; `getActor()` additionally requires an active
 `guesthub.users` row. A valid session with no active user (deactivated, unlinked, or a foreign

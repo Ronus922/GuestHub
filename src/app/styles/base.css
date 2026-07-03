@@ -12,7 +12,7 @@
   --color-primary-050: #eef1fd;
 
   /* Text */
-  --color-ink: #182233; /* primary text */
+  --color-ink: #1b2233; /* primary text (rendered design-system value) */
   --color-text2: #4b5266;
   --color-muted: #6b7385;
   --color-faint: #9aa1b4; /* labels */
@@ -79,11 +79,11 @@ a:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  min-height: 44px; /* touch target */
-  padding: 0.625rem 1rem;
+  min-height: 44px; /* touch target — rendered sheet is 42px; rounded up for a11y (D14) */
+  padding: 0.5rem 1.25rem; /* 0 20px per rendered primary button */
   border-radius: 12px;
-  font-weight: 600;
-  font-size: 0.9375rem;
+  font-weight: 700;
+  font-size: 0.875rem; /* 14px */
   line-height: 1.2;
   transition:
     background-color 0.15s ease,
@@ -128,12 +128,12 @@ a:focus-visible {
 /* ---------- Form field ---------- */
 .field {
   width: 100%;
-  min-height: 48px;
+  min-height: 52px; /* rendered design-system input height */
   background: var(--color-field);
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 13px; /* rendered design-system input radius */
   padding: 0.75rem 1rem;
-  font-size: 0.9375rem;
+  font-size: 0.9375rem; /* 15px */
   color: var(--color-ink);
   transition:
     border-color 0.15s ease,
