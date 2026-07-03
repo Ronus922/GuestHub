@@ -39,7 +39,6 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "ניקיון", icon: "cleaning", permission: "housekeeping.view", hidden: true },
       { label: "תחזוקה", icon: "maintenance", permission: "housekeeping.view", hidden: true },
-      { label: "עובדים", icon: "employees", href: "/staff", permission: "staff.view" },
       { label: "נוכחות", icon: "attendance", permission: "users.view", hidden: true },
       { label: "הבקשות שלי", icon: "my-requests", hidden: true },
       { label: "אישור בקשות", icon: "approve-requests", permission: "users.edit", hidden: true },
@@ -61,6 +60,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "אוטומציות", icon: "automations", permission: "settings.edit", hidden: true },
       { label: "ערוצים", icon: "channels", permission: "settings.edit", hidden: true },
       { label: "הגדרות", icon: "settings", permission: "settings.edit", hidden: true },
+      // "עובדים" moved here from תפעול (hidden section) and renamed — the users
+      // screen pairs with הרשאות under מערכת while תפעול stays hidden.
+      { label: "משתמשים", icon: "employees", href: "/staff", permission: "staff.view" },
       { label: "הרשאות", icon: "permissions", href: "/permissions", permission: "permissions.view" },
     ],
   },
