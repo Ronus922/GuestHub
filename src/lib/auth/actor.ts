@@ -52,8 +52,35 @@ type ActorRow = {
   tenant_slug: string;
 };
 
-// Resolves the Supabase session → the guesthub user, its tenant, role and permissions.
-// Memoized per request via React cache().
+// The final permission set of a user: role defaults ∪ personal grants − personal
+// revokes (guesthub.user_permission_overrides). Every authorization check —
+// requirePermission / hasPermission via getActor, and the dominance guards in the
+// staff actions — resolves through this, so overrides are enforced server-side.
+export async function effectivePermissionKeys(
+  tenantId: string,
+  userId: string,
+  roleId: string | null,
+): Promise<string[]> {
+  const rows = await sql<{ key: string }[]>`
+    SELECT p.key
+    FROM guesthub.role_permissions rp
+    JOIN guesthub.permissions p ON p.id = rp.permission_id
+    WHERE rp.role_id = ${roleId}
+    UNION
+    SELECT p.key
+    FROM guesthub.user_permission_overrides o
+    JOIN guesthub.permissions p ON p.id = o.permission_id
+    WHERE o.tenant_id = ${tenantId} AND o.user_id = ${userId} AND o.effect = 'grant'
+    EXCEPT
+    SELECT p.key
+    FROM guesthub.user_permission_overrides o
+    JOIN guesthub.permissions p ON p.id = o.permission_id
+    WHERE o.tenant_id = ${tenantId} AND o.user_id = ${userId} AND o.effect = 'revoke'`;
+  return rows.map((r) => r.key);
+}
+
+// Resolves the Supabase session → the guesthub user, its tenant, role and effective
+// permissions (role defaults + personal overrides). Memoized per request via cache().
 export const getActor = cache(async (): Promise<Actor | null> => {
   const supabase = await createSupabaseServerClient();
   const {
@@ -81,13 +108,8 @@ export const getActor = cache(async (): Promise<Actor | null> => {
 
   if (!row) return null;
 
-  const permRows = row.role_id
-    ? await sql<{ key: string }[]>`
-        SELECT p.key
-        FROM guesthub.role_permissions rp
-        JOIN guesthub.permissions p ON p.id = rp.permission_id
-        WHERE rp.role_id = ${row.role_id}`
-    : [];
+  // Always resolved (even with no role) — personal grants exist without a role too.
+  const permKeys = await effectivePermissionKeys(row.tenant_id, row.user_id, row.role_id);
 
   return {
     userId: row.user_id,
@@ -100,7 +122,7 @@ export const getActor = cache(async (): Promise<Actor | null> => {
     roleName: row.role_name,
     tenantName: row.tenant_name,
     tenantSlug: row.tenant_slug,
-    permissions: new Set(permRows.map((p) => p.key)),
+    permissions: new Set(permKeys),
   };
 });
 
@@ -116,6 +138,15 @@ export function toActorContext(actor: Actor): ActorContext {
     tenantName: actor.tenantName,
     permissions: [...actor.permissions],
   };
+}
+
+// Non-throwing check for gating pages / passing capability flags to the client.
+export function hasPermission(actor: Actor, key: string): boolean {
+  return (
+    actor.roleKey === "super_admin" ||
+    actor.roleKey === "admin" ||
+    actor.permissions.has(key)
+  );
 }
 
 // Server authority check — the first line of every business Server Action.

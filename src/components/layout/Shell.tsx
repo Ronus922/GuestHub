@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
+import { Toaster } from "sonner";
 import { TenantProvider } from "@/components/providers/TenantProvider";
 import type { ActorContext } from "@/lib/auth/actor";
 import { Sidebar } from "./Sidebar";
@@ -17,15 +19,24 @@ export function Shell({
 
   return (
     <TenantProvider actor={actor}>
-      <div className="flex h-screen overflow-hidden bg-appbg">
-        {/* Sidebar — צד ימין ב-RTL (הילד הראשון) */}
-        <Sidebar collapsed={collapsed} />
+      <NuqsAdapter>
+        <div className="flex h-screen overflow-hidden bg-appbg">
+          {/* Sidebar — צד ימין ב-RTL (הילד הראשון) */}
+          <Sidebar collapsed={collapsed} />
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar onToggleSidebar={() => setCollapsed((v) => !v)} />
-          <main className="thin-scroll flex-1 overflow-auto">{children}</main>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <TopBar onToggleSidebar={() => setCollapsed((v) => !v)} />
+            <main className="thin-scroll flex-1 overflow-auto">{children}</main>
+          </div>
         </div>
-      </div>
+        <Toaster
+          position="bottom-center"
+          richColors
+          closeButton
+          dir="rtl"
+          toastOptions={{ style: { fontFamily: "var(--font-sans)" } }}
+        />
+      </NuqsAdapter>
     </TenantProvider>
   );
 }

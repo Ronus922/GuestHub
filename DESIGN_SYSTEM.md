@@ -79,7 +79,7 @@ Single font: **Assistant** (Google Fonts), weights 300–800. RTL; numbers & dat
 ## 3. Spacing · Radius · Shadow
 
 **Radius scale:** `9px · 11px · 12px · 13px · 16px · 20px`
-- 12px — buttons · 13px — inputs/fields · 16px — cards (`--radius-card`) · 20px — SidePanel (`--radius-panel`) · 9–11px — chips/badges/small controls.
+- 12px — buttons · 13px — inputs/fields · 16px — cards (`--radius-card`) · 0.65rem — SidePanel exposed edge (/side-panel skill) · 9–11px — chips/badges/small controls.
 
 **Shadows (exact):**
 - Card — `0 6px 20px rgba(16,24,40,.03)` → `--shadow-card`
@@ -135,9 +135,11 @@ rounded-lg`; inactive tab Muted text, transparent. Use for in-page view switches
 Header row Faint/Label type; cells `px-4 py-3`; row `hover:bg-hover`; borders `border-line`.
 Status shown as a leading `border-r-4` in the status color — not a badge. `@tanstack/react-table`.
 
-### SidePanel _(spec: §16)_ — replaces all modals
-Slides in from the inline-start (left in RTL), 55% width desktop / 100% mobile, radius 20px,
-header bar in Primary, `--shadow-pop`. Use for every form / detail / wizard. **No centered modals.**
+### SidePanel _(spec: /side-panel skill)_ — replaces all modals
+Slides in from the inline-start (left in RTL) with fade, `1.2s ease-in-out`; 55% width desktop /
+100% mobile; exposed-edge radius `0.65rem`; glass body (`bg-white/90 backdrop-blur-md`); overlay
+`bg-black/65`; header bar in Primary, `--shadow-pop`. Use for every form / detail / wizard.
+**No centered modals.**
 
 ### Badges / status pills _(spec: status palette above)_
 Small pill `rounded-full px-2 py-0.5 text-xs`, using a status row's `bg`+`bd`+`tx`. On table/calendar

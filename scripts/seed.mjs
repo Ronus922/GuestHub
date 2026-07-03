@@ -1,8 +1,13 @@
 // GuestHub Phase-1 seed (PROJECT_OVERVIEW §20).
 // Run: pnpm db:seed   (node --env-file=.env.local scripts/seed.mjs)
 //
-// Idempotent: truncates the guesthub schema, recreates the 4 Supabase auth users,
+// Idempotent: truncates the guesthub schema, recreates the 5 Supabase auth users,
 // and regenerates all domain data. Only touches the `guesthub` schema + its own auth users.
+//
+// super_admin bootstrap: the `admin` user (admin@ginot.co.il) is part of this seed —
+// after any DB reset/reseed, run `pnpm db:seed` and log in as admin / SEED_PASSWORD.
+// This is the only sanctioned way to (re)create a super_admin: the seed runs server-side
+// with SUPABASE_SERVICE_ROLE_KEY from .env.local; there is no signup or client-side path.
 import postgres from "postgres";
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 4 });
@@ -67,7 +72,8 @@ async function main() {
   console.log("→ truncating guesthub schema…");
   await sql.unsafe(`TRUNCATE
     guesthub.tenants, guesthub.roles, guesthub.permissions, guesthub.role_permissions,
-    guesthub.users, guesthub.areas, guesthub.room_types, guesthub.rooms, guesthub.guests,
+    guesthub.users, guesthub.user_permission_overrides,
+    guesthub.areas, guesthub.room_types, guesthub.rooms, guesthub.guests,
     guesthub.lookup_items, guesthub.reservations, guesthub.reservation_rooms, guesthub.rates,
     guesthub.payments, guesthub.housekeeping_tasks, guesthub.audit_logs,
     guesthub.bulk_rate_update_logs, guesthub.bulk_rate_update_items
@@ -136,6 +142,13 @@ async function main() {
     ["settings.edit", "עריכת הגדרות", "settings"],
     ["reports.view", "צפייה בדוחות", "reports"],
     ["audit.view", "צפייה בלוג פעילות", "system"],
+    // Phase 2 — staff / permissions management (see db/migrations/001_phase2_permissions.sql)
+    ["staff.view", "צפייה בעובדים", "staff"],
+    ["staff.create", "יצירת עובד", "staff"],
+    ["staff.update", "עריכת עובד", "staff"],
+    ["staff.disable", "השבתה/הפעלה של עובד", "staff"],
+    ["permissions.view", "צפייה במטריצת ההרשאות", "permissions"],
+    ["permissions.update", "עדכון הרשאות לתפקיד", "permissions"],
   ];
   const perms = await sql`
     INSERT INTO guesthub.permissions ${sql(
@@ -167,8 +180,9 @@ async function main() {
   }
   await sql`INSERT INTO guesthub.role_permissions ${sql(rpRows, "role_id", "permission_id")}`;
 
-  // --- users (4, one per key role) + Supabase auth ---
+  // --- users (5, one per key role incl. super_admin) + Supabase auth ---
   const userDefs = [
+    { username: "admin", full_name: "מנהל-על", email: "admin@ginot.co.il", role: "super_admin", phone: "050-1000000" },
     { username: "manager", full_name: "מנהל המלון", email: "manager@ginot.co.il", role: "manager", phone: "050-1000001" },
     { username: "reception", full_name: "פקידת קבלה", email: "reception@ginot.co.il", role: "receptionist", phone: "050-1000002" },
     { username: "staff", full_name: "איש צוות", email: "staff@ginot.co.il", role: "staff", phone: "050-1000003" },
@@ -514,7 +528,7 @@ async function main() {
   }
   console.log("\n✓ seed complete:");
   console.table(counts);
-  console.log(`\nlogin: manager / reception / staff / cleaner  ·  password: ${SEED_PASSWORD}`);
+  console.log(`\nlogin: admin / manager / reception / staff / cleaner  ·  password: ${SEED_PASSWORD}`);
 
   await sql.end();
 }

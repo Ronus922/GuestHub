@@ -28,14 +28,16 @@
   --color-status-danger: #dc2626;
   --color-status-danger-050: #fdecec; /* danger tint surface (banners, destructive hover) */
   --color-status-success: #16a34a;
+  --color-status-success-050: #e7f6ec; /* success tint surface (badges) */
   --color-status-warning: #ea9314;
+  --color-status-warning-050: #fdf2e1; /* warning tint surface (badges) */
   --color-status-info: #2540c8;
   --color-status-purple: #7c3aed;
 
   --font-sans: var(--font-assistant), system-ui, sans-serif;
 
   --radius-card: 16px;
-  --radius-panel: 20px;
+  --radius-panel: 0.65rem;
 
   --shadow-card: 0 6px 20px rgba(16, 24, 40, 0.03);
   --shadow-primary: 0 4px 12px rgba(37, 64, 200, 0.2);
@@ -58,6 +60,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Component classes live in the `components` cascade layer so Tailwind utilities
+   (a later layer) can override them per-instance — e.g. `field ps-11` for inputs
+   with a leading icon. Unlayered rules would silently beat every utility. */
+@layer components {
 /* Focus ring — Azure Ethos: 0 0 0 4px rgba(37,64,200,.12) */
 .focus-ring:focus-visible,
 input:focus-visible,
@@ -149,3 +155,4 @@ a:focus-visible {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
 }
+} /* @layer components */

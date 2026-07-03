@@ -12,13 +12,21 @@
     "db:seed": "node --env-file=.env.local scripts/seed.mjs"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.109.0",
+    "@tanstack/react-table": "^8.21.3",
+    "framer-motion": "11.18.2",
     "lucide-react": "^1.23.0",
     "next": "15.5.20",
+    "nuqs": "^2.9.0",
     "postgres": "^3.4.9",
     "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "react-dom": "19.1.0",
+    "react-hook-form": "^7.80.0",
+    "server-only": "^0.0.1",
+    "sonner": "^2.0.7",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
