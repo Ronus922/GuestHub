@@ -44,6 +44,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       {/* ניווט */}
       <nav className="thin-scroll flex-1 overflow-y-auto px-3 py-2">
         {NAV_SECTIONS.map((section) => {
+          if (section.hidden) return null;
           const items = section.items.filter((item) => !item.hidden);
           if (items.length === 0) return null;
           return (

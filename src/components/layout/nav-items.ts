@@ -1,10 +1,11 @@
 import type { IconName } from "@/components/shared/Icon";
 
 // Sidebar structure per ref/screens/sidebar.png. Definitions are kept complete;
-// items whose route is not built yet carry `hidden: true` and are filtered out in
-// Sidebar.tsx (progressive visibility). Re-enable an item when its phase ships by
-// deleting its `hidden: true` — one line per item. A section with no visible items
-// is dropped entirely.
+// visibility is progressive: a section with `hidden: true` is dropped whole, and
+// within visible sections items whose route is not built yet carry `hidden: true`.
+// Both are filtered in Sidebar.tsx. Re-enable by deleting the relevant
+// `hidden: true` — one line per section or per item. A visible section with no
+// visible items is dropped entirely.
 export type NavItem = {
   label: string;
   icon: IconName;
@@ -16,6 +17,7 @@ export type NavItem = {
 export type NavSection = {
   title: string;
   items: NavItem[];
+  hidden?: boolean;
 };
 
 export const NAV_SECTIONS: NavSection[] = [
@@ -33,6 +35,7 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: "תפעול",
+    hidden: true,
     items: [
       { label: "ניקיון", icon: "cleaning", permission: "housekeeping.view", hidden: true },
       { label: "תחזוקה", icon: "maintenance", permission: "housekeeping.view", hidden: true },
@@ -44,6 +47,7 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: "ניהול עסקי",
+    hidden: true,
     items: [
       { label: "מסמכים", icon: "documents", hidden: true },
       { label: "כספים", icon: "finance", permission: "payments.view", hidden: true },
