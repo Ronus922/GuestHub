@@ -43,20 +43,24 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
 
       {/* ניווט */}
       <nav className="thin-scroll flex-1 overflow-y-auto px-3 py-2">
-        {NAV_SECTIONS.map((section) => (
-          <div key={section.title} className="mb-4">
-            {!collapsed && (
-              <p className="px-3 pb-1 text-[11px] font-bold tracking-wide text-faint">
-                {section.title}
-              </p>
-            )}
-            <ul className="flex flex-col gap-0.5">
-              {section.items.map((item) => (
-                <NavRow key={item.label} item={item} collapsed={collapsed} />
-              ))}
-            </ul>
-          </div>
-        ))}
+        {NAV_SECTIONS.map((section) => {
+          const items = section.items.filter((item) => !item.hidden);
+          if (items.length === 0) return null;
+          return (
+            <div key={section.title} className="mb-4">
+              {!collapsed && (
+                <p className="px-3 pb-1 text-[11px] font-bold tracking-wide text-faint">
+                  {section.title}
+                </p>
+              )}
+              <ul className="flex flex-col gap-0.5">
+                {items.map((item) => (
+                  <NavRow key={item.label} item={item} collapsed={collapsed} />
+                ))}
+              </ul>
+            </div>
+          );
+        })}
       </nav>
 
       {/* משתמש + התנתקות */}
