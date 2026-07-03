@@ -1,0 +1,151 @@
+/* ============================================================
+   GuestHub · Azure Ethos design tokens + base
+   Source of truth: ref/screens/design-system.png (rendered).
+   See DECISIONS.md D1 (palette) / D2 (font) / D3 (icons).
+   ============================================================ */
+
+@theme {
+  /* Brand */
+  --color-primary: #2540c8;
+  --color-primary-dark: #1c2e9a;
+  --color-primary-100: #d5dbf6;
+  --color-primary-050: #eef1fd;
+
+  /* Text */
+  --color-ink: #182233; /* primary text */
+  --color-text2: #4b5266;
+  --color-muted: #6b7385;
+  --color-faint: #9aa1b4; /* labels */
+
+  /* Surfaces & lines */
+  --color-line: #e7eaf1; /* borders */
+  --color-field: #eff2fb; /* input background */
+  --color-surface: #ffffff;
+  --color-hover: #f2f4f8; /* row hover / search */
+  --color-appbg: #f1f3f8; /* app background */
+
+  /* Status (from the design-system status table) */
+  --color-status-danger: #dc2626;
+  --color-status-danger-050: #fdecec; /* danger tint surface (banners, destructive hover) */
+  --color-status-success: #16a34a;
+  --color-status-warning: #ea9314;
+  --color-status-info: #2540c8;
+  --color-status-purple: #7c3aed;
+
+  --font-sans: var(--font-assistant), system-ui, sans-serif;
+
+  --radius-card: 16px;
+  --radius-panel: 20px;
+
+  --shadow-card: 0 6px 20px rgba(16, 24, 40, 0.03);
+  --shadow-primary: 0 4px 12px rgba(37, 64, 200, 0.2);
+  --shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.1);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-appbg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus ring — Azure Ethos: 0 0 0 4px rgba(37,64,200,.12) */
+.focus-ring:focus-visible,
+input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
+}
+
+/* Slim, unobtrusive scrollbars (contained board scroll comes later). */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+/* ---------- Buttons (overview §16) ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px; /* touch target */
+  padding: 0.625rem 1rem;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  line-height: 1.2;
+  transition:
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: var(--shadow-primary);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+}
+
+.btn-outline {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line);
+}
+.btn-outline:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.btn-filter {
+  background: var(--color-surface);
+  color: var(--color-text2);
+  border: 1px solid var(--color-line);
+  font-weight: 500;
+}
+.btn-filter:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+/* ---------- Form field ---------- */
+.field {
+  width: 100%;
+  min-height: 48px;
+  background: var(--color-field);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  font-size: 0.9375rem;
+  color: var(--color-ink);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+.field::placeholder {
+  color: var(--color-faint);
+}
+.field:focus {
+  outline: none;
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
+}
