@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import type { DateOnly } from "@/lib/dates";
 import { RateToolbar } from "./RateToolbar";
@@ -13,21 +13,34 @@ import type { RateCan, RateGridState, RateView } from "./types";
 // and composes the toolbar + grid + legend + panel. Data-loading is the server
 // view-model (src/lib/rates/grid-state.ts); interaction lives in the children.
 export function RateGridScreen({
-  state, view, today, can, initialGroupOpen = false,
+  state, view, today, can,
 }: {
   state: RateGridState;
   view: RateView;
   today: DateOnly;
   can: RateCan;
-  initialGroupOpen?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [groupUpdate, setGroupUpdate] = useState<{ open: boolean; preset: string[] }>({
-    open: initialGroupOpen,
-    preset: initialGroupOpen ? state.types.flatMap((t) => t.unitIds) : [],
-  });
+  // Group Update open/close is the canonical panel opened over this same grid;
+  // its state lives in the URL (?panel=group-update) so the sidebar active
+  // highlight, deep-links and Back/Forward all work. from/view are preserved.
+  const groupOpen = can.bulk && searchParams.get("panel") === "group-update";
+  const [preset, setPreset] = useState<string[]>(() => state.types.flatMap((t) => t.unitIds));
+  const panelHref = (open: boolean) => {
+    const p = new URLSearchParams(searchParams.toString());
+    if (open) p.set("panel", "group-update"); else p.delete("panel");
+    const q = p.toString();
+    return q ? `${pathname}?${q}` : pathname;
+  };
+  const openGroupUpdate = (units: string[]) => { setPreset(units); router.push(panelHref(true)); };
+  const closeGroupUpdate = () => {
+    setPreset(state.types.flatMap((t) => t.unitIds));
+    router.push(panelHref(false));
+  };
 
   const navigate = (from: DateOnly, v: RateView) => router.push(`/rates?from=${from}&view=${v}`);
   const visibleTypes = useMemo(
@@ -37,7 +50,6 @@ export function RateGridScreen({
   const allCollapsed = collapsed.size >= state.types.length && state.types.length > 0;
   const toggleCollapse = (tk: string) =>
     setCollapsed((s) => { const n = new Set(s); if (n.has(tk)) n.delete(tk); else n.add(tk); return n; });
-  const openGroupUpdate = (preset: string[]) => setGroupUpdate({ open: true, preset });
 
   return (
     <div className="rg-wrap">
@@ -70,10 +82,10 @@ export function RateGridScreen({
         <span className="rg-hint">לחיצה על תא לעריכה · Enter לשמירה · Esc לביטול</span>
       </div>
 
-      {groupUpdate.open && (
+      {groupOpen && (
         <GroupUpdatePanel
           types={state.types} from={state.from} toInclusive={state.toInclusive}
-          presetUnitIds={groupUpdate.preset} onClose={() => setGroupUpdate({ open: false, preset: [] })}
+          presetUnitIds={preset} onClose={closeGroupUpdate}
         />
       )}
     </div>

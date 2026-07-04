@@ -31,7 +31,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "אורחים", icon: "guests", permission: "guests.view", hidden: true },
       { label: "חדרים", icon: "rooms", permission: "rooms.view", hidden: true },
       { label: "חסימות חדרים", icon: "room-blocks", permission: "rooms.view", hidden: true },
-      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?group=1", permission: "rates.bulk_update" },
+      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?panel=group-update", permission: "rates.bulk_update" },
     ],
   },
   {

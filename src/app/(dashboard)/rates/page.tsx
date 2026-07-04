@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function RatesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; view?: string; group?: string }>;
+  searchParams: Promise<{ from?: string; view?: string; panel?: string }>;
 }) {
   const actor = await getActor();
   if (!actor) redirect("/auth/signout");
@@ -35,7 +35,6 @@ export default async function RatesPage({
       state={state}
       view={view}
       today={today}
-      initialGroupOpen={params.group === "1" && hasPermission(actor, "rates.bulk_update")}
       can={{
         edit: hasPermission(actor, "rates.edit"),
         bulk: hasPermission(actor, "rates.bulk_update"),
