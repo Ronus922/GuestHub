@@ -847,6 +847,17 @@ export type ReservationDetail = {
   }[];
   payments: { id: string; amount: number; method: string | null; paid_at: string | null }[];
   activity: { action: string; created_at: string; user_name: string | null }[];
+  // masked stored-card metadata ONLY — the PAN never rides this payload
+  // (explicit reveal via revealReservationCardAction, D41)
+  card: {
+    id: string;
+    brand: string | null;
+    last4: string;
+    expMonth: number;
+    expYear: number;
+    holderName: string;
+    updatedAt: string;
+  } | null;
 };
 
 export async function getReservationAction(id: string): Promise<ActionResult<ReservationDetail>> {
@@ -911,6 +922,15 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
       WHERE reservation_id = ${id} AND tenant_id = ${actor.tenantId}
       ORDER BY created_at DESC LIMIT 20`;
 
+    // masked metadata only — no decryption on the normal read path (D41)
+    const [card] = await sql<
+      { id: string; brand: string | null; last4: string; exp_month: number; exp_year: number;
+        holder_name: string; updated_at: string }[]
+    >`
+      SELECT id, brand, last4, exp_month, exp_year, holder_name, updated_at::text AS updated_at
+      FROM guesthub.reservation_cards
+      WHERE reservation_id = ${id} AND tenant_id = ${actor.tenantId}`;
+
     const activity = await sql<{ action: string; created_at: string; user_name: string | null }[]>`
       SELECT a.action, a.created_at::text AS created_at, u.full_name AS user_name
       FROM guesthub.audit_logs a
@@ -966,6 +986,17 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         })),
         payments,
         activity,
+        card: card
+          ? {
+              id: card.id,
+              brand: card.brand,
+              last4: card.last4,
+              expMonth: card.exp_month,
+              expYear: card.exp_year,
+              holderName: card.holder_name,
+              updatedAt: card.updated_at,
+            }
+          : null,
       },
     };
   } catch (e) {
