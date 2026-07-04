@@ -320,3 +320,201 @@ The value lives in `/opt/supabase/docker/.env`, which `docker-compose.yml` (line
 148) maps to `GOTRUE_URI_ALLOW_LIST` — a `docker compose up -d` recreate rereads
 it, so the config survives redeploys. Restarted service: `supabase-auth`
 (compose service `auth`, project `supabase`).
+
+---
+
+# Phase 3 — Occupancy Calendar + Channex-ready foundation
+
+## D31 — Temporary closures are a dedicated `room_closures` table
+Overview §8 lists a `blocked` reservation status, but no runtime data or code used it and a
+closure-as-fake-reservation would need a reservation_number, pollute future reservation lists
+and blur §Q diagnostics (occupied vs closed counted separately). `guesthub.room_closures`
+(004) is a clean date-range mechanism: start-inclusive/end-exclusive like every stay, checked
+inside the SAME `check_room_availability()` — so nothing can be booked/moved/resized over a
+closure. `rooms.status` stays a permanent state and is never used for temporary closures.
+The `blocked` status remains honored by the blocking set (defensive compatibility).
+
+## D32 — One overlap model, one blocking-status source
+The hotel-night rule lives once per layer and is asserted equal across layers:
+`src/lib/dates.ts` (`rangesOverlap`: `a.start < b.end AND b.start < a.end`, checkout-exclusive)
+and `guesthub.check_room_availability()` / `room_type_inventory()` in SQL. Inventory-consuming
+statuses = §8's `confirmed, checked_in, blocked` — single SQL source
+`guesthub.inventory_blocking_statuses()`, TS mirror in `src/lib/inventory-rules.ts`;
+`scripts/check-inventory.mjs` fails if they ever diverge, and also asserts the projection and
+the availability function agree per room-type/day (with closures and holds, rolled back).
+`cancelled`/`draft`/`checked_out`/`no_show` never consume inventory; `cancelled` never renders.
+
+## D33 — Locked per-room reservation model; parent keeps derived aggregates
+`reservation_rooms` gained nullable per-room guest fields (004). Calendar cards render one item
+per reservation-room with the shared reservation_id. The parent `reservations` columns
+(check_in/out, occupancy, totals) are derived: min/max of room dates, summed occupancy,
+Σ price_total − discount + extra_charges — kept in sync by every write path (KPIs/lists stay
+correct). The former global-stay semantics are not restored.
+
+## D34 — Concurrency: room-row FOR UPDATE + in-transaction re-check
+Every availability-checked write (create / edit / move / resize / closure) runs in one
+transaction: `lockRooms()` (SELECT … FOR UPDATE on the target+source room rows, tenant-scoped,
+throws on foreign rooms) → `check_room_availability()` → mutate → audit → dirty-range mark.
+Two concurrent writers on the same room serialize on the row lock, so both can never pass the
+same check. Reservation-number allocation locks the tenant row; the unique index is the
+backstop. No exclusion constraint needed (status lives on the parent table).
+
+## D35 — Channex foundation: structural, tenant-scoped, and OFF
+005 adds channel_connections (state machine disconnected→…→active, api_key ciphertext-only +
+masked hint, webhook token hash), room-type/rate-plan mappings (unique per connection, audit on
+change), transactional dirty ranges (written ONLY when an active outbound-enabled connection
+exists — none does, so local ops stay no-op and no backlog forms; coalescing merges
+overlapping/adjacent pending ranges), a jobs queue (idempotency-key partial unique, FOR UPDATE
+SKIP LOCKED claim, FIFO per connection, backoff+jitter retries, dead_letter), booking revisions
+(unique per connection+revision, quarantine on unmapped, acknowledgement structurally
+impossible before import), webhook events (dedup unique, redacted payloads), inventory holds
+(§R: room-type-level, reduce availability immediately, calendar lane renders only when they
+exist), and sync errors. The provider boundary (`src/lib/channel/provider.ts`) is pure:
+`createChannelProvider` yields Disabled unless `CHANNEX_ENABLED=true` AND an active connection,
+and even then Phase 3 resolves to DryRun — NO HTTP client exists in the repo at all
+(check-calendar asserts no fetch/XHR in the channel modules). Base URLs live only in
+`src/lib/channel/config.ts` (server-only). The webhook route 404s unless an active
+inbound-enabled connection matches the hashed token — i.e., always, in Phase 3.
+
+## D36 — Channel management is super_admin-only, stricter than requirePermission
+`canManageChannels` (guards.ts) admits ONLY `super_admin` — `admin` does not qualify, unlike
+the generic requirePermission bypass, because integration credentials/mappings outrank ordinary
+full access. Every action in `src/lib/channel/admin.ts` enforces it server-side; no channel UI
+ships this phase (foundation only). Covered in check-guards.
+
+## D37 — Rates schema unchanged; Channex fields derived in the payload builder
+guesthub.rates already carries price/min_nights/max_nights/closed/CTA/CTD. Channex-only
+concepts map at projection time (closed→stop_sell, min_nights→min_stay_arrival,
+max_nights→max_stay) in the pure builders (`payloads.ts`) instead of duplicating columns.
+Effective price priority stays: room-level rate → type-level rate → room_type.base_price
+(one resolver used by server pricing AND the calendar's empty-cell strip). Restrictions are
+enforced on new sales and blocking-status reschedules; a calendar operation can never pass
+what the reservation engine rejects.
+
+## D38 — Phase-3 verification data
+Manual verification created reservation #1039 (guest "בדיקה יומן", 2 rooms) through the real
+booking flow, exercised move/resize/invalid-drop/status-edit against it, then CANCELLED it via
+the real cancel flow — it remains in the DB as a cancelled reservation with its ₪300 payment
+row and full audit trail (nothing was deleted; seed was not run). A test closure on room 102
+was created and removed through the UI. Proof screenshots: docs/proof/phase-3-*.png.
+
+## D39 — Phase-3 visual/interaction correction pass (reference-exact board)
+The /calendar board, booking wizard and edit window were rebuilt pixel-close to the rendered
+references (ref/html/rooms-calendar.html + booking-window.html, ref/screens/edit-booking-modal,
+new-booking-step-*, Tooltip.png), whose computed CSS was extracted from the live pages and
+ported 1:1 into `app/styles/calendar.css` (`cb-*`) and `app/styles/booking-window.css` (`bw-*`).
+Geometry is now FRACTION-based like the reference (equal-width flex day columns; pills at
+`(nights(from,ci)+0.5)/days → (nights(from,co)+0.5)/days` of the strip), all computed by ONE
+pure module `src/lib/calendar-interactions.ts` shared by committed pills, drag ghosts and
+resize previews — checked by `scripts/check-calendar-ui.mjs` (which caught a real half-column
+checkout-edge bug during the pass). Card color = PAYMENT state only, using the exact reference
+families (paid `#DFF2E7/#4FB47E/#0F6B3C`, partial `#EAF7EE/#93D3A5/#1F7A3D`, unpaid
+`#FDEBEC/#EFA3A9/#B4232D`); checked-out stays use the reference's neutral gray family
+(`#EAEEF4/#AEBACB/#3C4A5E`), drafts render dashed. The legend keeps only the four chips our
+data model really has (הכל + three derived payment states) — the reference's extra
+transfer/failed/refunded chips would fabricate unsupported payment states. Click opens the
+reference popover (`.cb-pop`, 316px, avatar/badge/rows/עריכה); עריכה opens the full-screen
+edit window; the popover's "אישור הזמנה" button for pending bookings was deliberately NOT
+added because draft→confirmed changes inventory consumption and would need a new write path
+(the editor's status field, fully validated server-side, covers it). Drag is pointer-captured
+on the card, threshold 6px, rAF-throttled, and paints ONLY an imperative transform-positioned
+ghost — zero React renders per pointer move (React renders happen exactly at threshold-cross
+and release, row-scoped via memo). Wizard/editor moved from the 55% SidePanel to the
+reference's full-screen window (FullWindow) — the reference visual for these flows overrides
+the site-wide side-panel rule for the calendar pair only. The reference step-3 credit-card
+form and VAT split were not reproduced (no gateway, no VAT model — no fake data).
+
+## D40 — Phase-3 second correction pass (tooltip, direct edit, range-create, card fields)
+User-directed pass over D39 with new authoritative references (Tooltip.png,
+edit-booking-modal.png, new-booking-step-3, updated booking-window.html, day-header shot).
+INTERACTION MODEL CHANGED: hovering a pill (mouse, 380ms deliberate delay / 140ms leave grace,
+`TOOLTIP_OPEN_MS`/`TOOLTIP_CLOSE_MS`) opens the reference `.pop` card as an interactive
+TOOLTIP (`ReservationTooltip`, renamed from ReservationPopover, with the reference caret);
+CLICKING a pill now opens the edit flow directly (click = movement ≤6px; drags and the
+resize handle never open). [Corrected in D41: the tooltip is INFORMATIONAL ONLY — its
+"אישור הזמנה" button was removed; the tooltip performs no server write of any kind, and
+draft confirmation happens only inside the validated editor. The full-screen edit window
+was also replaced by the site-wide side panel — see D41.] SHORTEN-PREVIEW ROOT CAUSE:
+`.cb-resbar:hover/.sel` z-index 4 out-stacked the z-2 ghost, hiding the shorten band beneath
+its own pill (extend bands sat outside the pill, masking the bug); fixed by suppressing pill
+elevation while any drag session is live, plus a red HATCH band for removed nights and an
+invalid state when shortening under the check-in cell's min-stay (same rule the server
+enforces; commit is also client-blocked). EMPTY-CELL RANGE CREATE: pointer-drag across free
+cells (mouse/pen only — touch pans; horizontal-dominant beyond 6px activates, vertical aborts
+— explicit input rule in `createActivated`) paints a dashed brand band over WHOLE day cells
+(`cellRangeGeometry`) with a live nights label, clamps to the cell min-stay, rejects
+occupied/closed ranges (red band + toast, no window), and on valid release opens the wizard
+prefilled (roomId/checkIn/checkOut); no DB writes before the wizard submits. CARD FIELDS
+(supersedes D39's omission per the new reference): the reference `.ccbox` renders in step 3
+and the editor. [Corrected in D41: transient-only card state was NOT sufficient — manual
+card entry with protected server-side storage is now an explicit approved requirement.
+The PAN is encrypted (AES-256-GCM) through a dedicated guarded action; CVV remains
+prohibited and was removed from the form entirely; "סלוק עכשיו" stays permanently disabled
+(no gateway → no charge) and saving a card never affects payment status.]
+Step-3 additions: the reference's 4 payment chips drive REAL fields only (unpaid→paid=0,
+paid→paid=total, partial→focuses the amount input, ממתין לאישור→creates the reservation as a
+DRAFT — a status the create action already supports); the VAT line is display-only over the
+VAT-inclusive total. [Corrected in D41: the previously hardcoded 17% was replaced by a
+tenant-configurable VAT setting (Settings → שיעור מע״מ), initialized to 18.] Edit
+window per edit-booking-modal.png: phone/mail field icons, room rows render as summary +
+"החלף חדר" (select only while switching), quick actions = בצע צ׳ק-אין (same validated save
+with status=checked_in) and העבר לחדר אחר (scrolls to the stays card). UNSUPPORTED reference
+concepts documented and omitted rather than faked: header print/PDF/WhatsApp/email actions,
+"שלח אישור הזמנה" quick action (no messaging infra), an ACTIVE charge button, and בסיס אירוח
+(no board-basis model). TOOLBAR DATE PICKER: the reference bundle has none (nav-only
+rangebox), so a design-language month popover was built (`cb-dpop`): label-button opens it,
+Escape/outside close, day click navigates the board. DAY HEADER scaled to the supplied
+screenshot (row 64px, weekday 11.5px amber on weekends, date 20px/800 in a 34×30 pill).
+RTL BUG FIXED: fixed-position popups computed a physical viewport LEFT but applied it as
+inset-inline-start under dir=rtl, mirroring them across the screen (tooltip, cell context
+menu, closure popover — now physical `left`). Read-only hardening: StayEditor gained a
+`disabled` prop so view-only editors expose zero enabled controls. Perf preserved and
+re-measured on scripted 120-move drags: 59–60fps, worst frame 17–50ms, exactly ONE grid class
+mutation per gesture (the threshold-cross React commit) — pointer moves stay ref+rAF+ghost.
+
+## D41 — Phase-3 final correction (tenant VAT setting, protected card storage, side-panel restoration)
+User-directed final pass over D40. TENANT VAT SETTING: the VAT display rate is now a tenant
+business setting (`guesthub.tenants.settings` jsonb, key `vat_rate`, migration 007) edited in
+the new /settings screen (nav הגדרות, gated by `settings.edit` in the UI AND in
+`updateVatRateAction`), validated by ONE pure rule (`src/lib/vat.ts`: 0–50, ≤2 decimals,
+malformed/negative/oversized rejected), initialized to 18 only where absent, audited
+(`tenant_settings`/`update_vat_rate` with before/after), and rendered dynamically in the
+booking wizard + editor as "מע״מ ({rate}%) — כלול" (trailing zeros trimmed). Displayed prices
+remain VAT-INCLUSIVE; changing the setting changes the display line only and NEVER recalculates
+existing reservations — there is still no tax accounting engine. PROTECTED CARD STORAGE:
+manual card entry + persistence is now an explicit approved requirement (supersedes D40's
+transient-only stance). One active card per reservation in `guesthub.reservation_cards`
+(tenant+reservation FKs, UNIQUE(reservation_id)); the PAN is encrypted at the application
+layer with AES-256-GCM (`src/lib/card-vault.ts`), fresh random 96-bit IV per value, ciphertext
+`v1.<iv>.<tag>.<data>` carrying the key/format version for rotation; key from env
+`CARD_VAULT_KEY` (never in DB, never client-side); missing key FAILS CLOSED (no plaintext
+fallback — the save action refuses). brand/last4/expiry/holder are stored separately for
+masked display; CVV is NEVER stored — it has no column, no form field, no payload field
+anywhere (with no gateway there is no immediate authorization, so it is not collected at all).
+Guarded server actions (`card-actions.ts`): save/replace + delete require
+`payments.card_manage`; full-PAN reveal requires `payments.card_reveal` (new catalog keys,
+migration 008; manage→super_admin/admin/manager/receptionist, reveal→management only) —
+enforced server-side via requirePermission, tenant+reservation ownership re-verified, PAN
+Luhn+length validated, expiry validated, nothing logged, PAN never in error text, save
+returns masked metadata only. The normal reservation payload (`getReservationAction`) carries
+masked metadata only and never selects `pan_encrypted`; reveal decrypts ONE card per explicit
+request, is audited (`card_reveal`, no digits beyond last4 anywhere in audit), auto-remasks
+on hide/panel close/reservation switch/45s inactivity. SAVING A CARD IS NOT A PAYMENT:
+status, paid amount and payments rows are untouched; "סלוק עכשיו" remains permanently
+disabled. This is encryption-at-rest + access control, NOT a PCI-DSS certification claim;
+production must set `CARD_VAULT_KEY` (rotation = new key version + re-encrypt; deploy blocks
+card features when unset) and serve over HTTPS only. SIDE PANELS RESTORED (supersedes D39/D40
+full-screen deviation): the booking wizard and the reservation editor render inside the
+site-wide `SidePanel` shell (55% desktop / full-width mobile, RTL slide from the left,
+z-90 above all calendar layers, sticky header + action footer, focus trap, Escape) — the
+calendar stays mounted and visible behind, scroll/range/filters preserved; `FullWindow.tsx`
+and its window-only CSS were deleted; ONE `PanelState` in CalendarScreen is the single source
+of truth (booking/edit/closure, one open at a time). Dirty forms get an explicit footer
+discard-confirmation (the project's inline-confirm pattern) on Escape/X/overlay. TOOLTIP IS
+INFORMATIONAL ONLY: the "אישור הזמנה" button and its mutation/loading state were removed —
+the hover card performs zero writes; hover=info, click=edit side panel, status changes only
+inside the validated editor. Checks: new `scripts/check-cards.mjs` (crypto round-trip, unique
+IVs, tamper rejection, fail-closed, Luhn/brand/expiry/mask, VAT rules, source-level
+sensitive-data assertions) + check-calendar-ui extended (tooltip has no write path, panels
+use SidePanel, FullWindow gone, single panel state, z-order). Pointer architecture untouched
+(capture + refs + rAF ghosts); panel open/close never remounts the grid.
