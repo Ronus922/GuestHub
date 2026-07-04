@@ -2,28 +2,28 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { FullWindow } from "@/components/ui/FullWindow";
+import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState } from "@/lib/inventory-rules";
+import { formatVatRate, includedVatAmount } from "@/lib/vat";
+import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import {
   createReservationAction,
   searchGuestsAction,
   getStayQuoteAction,
 } from "@/app/(dashboard)/reservations/actions";
+import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
-import { CardFields, EMPTY_CARD, type CardDraft } from "./CardFields";
+import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
-// VAT display rate — the reference pricing card shows an informational
-// "מע״מ (17%) — כלול" line; the amount is the VAT portion already included
-// in the total (display only, no pricing rule involved — D40).
-const VAT_RATE = 0.17;
-
 // The canonical new-reservation flow (הקמת הזמנה חדשה) — the reference
-// 4-step full-screen wizard (ref/html/booking-window.html,
-// ref/screens/new-booking-step-*.png). The calendar opens THIS flow;
-// there is no calendar-only editor (§G).
+// 4-step wizard (ref/html/booking-window.html, new-booking-step-*.png)
+// inside the site-wide SIDE PANEL shell (D41): the calendar stays mounted
+// and visible behind it. The calendar opens THIS flow; there is no
+// calendar-only editor (§G). The VAT line is the TENANT setting
+// (Settings → שיעור מע״מ), display-only over the VAT-inclusive total.
 
 export type BookingPrefill = {
   roomId?: string;
@@ -54,18 +54,41 @@ const EMPTY_GUEST: GuestForm = {
 
 const STEPS = ["פרטי אורח", "שהות וחדרים", "תמחור ותשלום", "סיכום ואישור"];
 
+// dirty-state fingerprint of everything the user can edit (stay "key"
+// fields are random per open, so the replacer drops them)
+function formSnapshot(
+  guest: GuestForm,
+  sourceId: string,
+  stays: StayDraft[],
+  discount: number,
+  paid: number,
+  method: string,
+  notes: string,
+  asDraft: boolean,
+  cc: CardDraft,
+): string {
+  return JSON.stringify(
+    [guest, sourceId, stays, discount, paid, method, notes, asDraft, cc],
+    (k, v) => (k === "key" ? undefined : v),
+  );
+}
+
 export function BookingPanel({
   open,
   onClose,
   prefill,
   bookingSources,
   paymentMethods,
+  vatRate,
+  canSaveCard,
 }: {
   open: boolean;
   onClose: () => void;
   prefill: BookingPrefill;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  vatRate: number;
+  canSaveCard: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [guest, setGuest] = useState<GuestForm>(EMPTY_GUEST);
@@ -79,10 +102,14 @@ export function BookingPanel({
   // "ממתין לאישור" chip → the reservation is created as a DRAFT (a status
   // the create action already supports); everything else creates confirmed
   const [asDraft, setAsDraft] = useState(false);
-  // card details never leave the client (see CardFields security note)
+  // card values are sent ONLY to the dedicated guarded save action after
+  // the reservation is created, then cleared (see CardFields security note)
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
   const paidRef = useRef<HTMLInputElement | null>(null);
   const [saving, startSaving] = useTransition();
+  // dirty-state protection: snapshot of the form right after open
+  const snapshotRef = useRef("");
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // guest search
   const [query, setQuery] = useState("");
@@ -93,10 +120,8 @@ export function BookingPanel({
 
   useEffect(() => {
     if (!open) return;
-    setStep(0);
-    setGuest(EMPTY_GUEST);
-    setSourceId(bookingSources[0]?.id ?? "");
-    setStays([
+    const initialSource = bookingSources[0]?.id ?? "";
+    const initialStays: StayDraft[] = [
       {
         key: newStayKey(),
         roomId: prefill.roomId ?? "",
@@ -106,7 +131,11 @@ export function BookingPanel({
         children: 0,
         infants: 0,
       },
-    ]);
+    ];
+    setStep(0);
+    setGuest(EMPTY_GUEST);
+    setSourceId(initialSource);
+    setStays(initialStays);
     setQuotes({});
     setDiscount(0);
     setPaid(0);
@@ -116,8 +145,22 @@ export function BookingPanel({
     setCc(EMPTY_CARD);
     setQuery("");
     setResults([]);
+    setConfirmDiscard(false);
+    snapshotRef.current = formSnapshot(EMPTY_GUEST, initialSource, initialStays, 0, 0, "", "", false, EMPTY_CARD);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  const dirty =
+    formSnapshot(guest, sourceId, stays, discount, paid, method, notes, asDraft, cc) !==
+    snapshotRef.current;
+
+  // Escape / X / overlay click route here — unsaved changes get an explicit
+  // discard confirmation (footer strip) instead of a silent reset
+  const requestClose = () => {
+    if (saving) return;
+    if (dirty && !confirmDiscard) setConfirmDiscard(true);
+    else onClose();
+  };
 
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -161,6 +204,9 @@ export function BookingPanel({
     return true;
   }, [step, guest, staysValid]);
 
+  // a partially-typed invalid card blocks creation; an empty one is skipped
+  const ccState = canSaveCard && method === "credit_card" ? cardDraftState(cc) : "empty";
+
   const submit = () =>
     startSaving(async () => {
       const res = await createReservationAction({
@@ -193,12 +239,28 @@ export function BookingPanel({
         paidAmount: paid || undefined,
         paymentMethod: method || undefined,
       });
-      if (res.success) {
-        toast.success(`הזמנה #${res.data?.reservationNumber} נוצרה בהצלחה`);
-        onClose();
-      } else {
+      if (!res.success) {
         toast.error(res.error);
+        return;
       }
+      // store the card through the dedicated guarded action AFTER the
+      // reservation exists; card values are cleared from client state
+      // either way and never included in the create payload (D41)
+      if (ccState === "valid" && res.data) {
+        const exp = parseExpiry(cc.exp)!;
+        const saved = await saveReservationCardAction({
+          reservationId: res.data.reservationId,
+          holderName: cc.holder.trim(),
+          holderIdNumber: cc.idNum || undefined,
+          pan: normalizePan(cc.number),
+          expMonth: exp.month,
+          expYear: exp.year,
+        });
+        if (!saved.success) toast.error(`ההזמנה נוצרה, אך שמירת הכרטיס נכשלה: ${saved.error}`);
+      }
+      setCc(EMPTY_CARD);
+      toast.success(`הזמנה #${res.data?.reservationNumber} נוצרה בהצלחה`);
+      onClose();
     });
 
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "אורח חדש";
@@ -210,11 +272,13 @@ export function BookingPanel({
   const totalGuests = stays.reduce((n, s) => n + s.adults + s.children + s.infants, 0);
 
   return (
-    <FullWindow
+    <SidePanel
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       title="הקמת הזמנה חדשה"
       subtitle="אורח · שהות · תמחור · אישור"
+      icon="reservations"
+      bodyClassName="bg-[#eef0f5] p-0"
       band={
         /* stepper band (reference .stp) — RTL: step 1 rightmost */
         <div className="bw-stp">
@@ -239,38 +303,59 @@ export function BookingPanel({
         </div>
       }
       footer={
-        <>
-          <button type="button" className="bw-btn bw-btn-ghost" onClick={onClose}>
-            ביטול
-          </button>
-          <span className="flex-1" />
-          <span className="bw-ft-step">
-            <Icon name="info" size={15} />
-            שלב {step + 1} מתוך {STEPS.length}
-          </span>
-          {step > 0 && (
-            <button type="button" className="bw-btn bw-btn-o" onClick={() => setStep((s) => s - 1)}>
-              הקודם
-              <Icon name="chevron-right" size={16} />
+        confirmDiscard ? (
+          /* dirty-state discard confirmation (existing inline-confirm pattern) */
+          <div className="flex items-center gap-3">
+            <Icon name="warning" size={17} className="text-status-danger" />
+            <span className="text-sm font-bold text-ink">יש שינויים שלא נשמרו — לסגור בכל זאת?</span>
+            <span className="flex-1" />
+            <button type="button" className="bw-btn bw-btn-o" onClick={() => setConfirmDiscard(false)}>
+              המשך עריכה
             </button>
-          )}
-          {step < 3 ? (
-            <button
-              type="button"
-              className="bw-btn bw-btn-primary"
-              disabled={!stepValid}
-              onClick={() => setStep((s) => s + 1)}
-            >
-              <Icon name="chevron-left" size={16} />
-              הבא
+            <button type="button" className="bw-btn bw-btn-danger" onClick={onClose}>
+              סגור בלי לשמור
             </button>
-          ) : (
-            <button type="button" className="bw-btn bw-btn-primary" disabled={saving || !staysValid} onClick={submit}>
-              <Icon name="check" size={16} />
-              {saving ? "יוצר…" : "צור הזמנה"}
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <button type="button" className="bw-btn bw-btn-ghost" onClick={requestClose}>
+              ביטול
             </button>
-          )}
-        </>
+            <span className="flex-1" />
+            <span className="bw-ft-step">
+              <Icon name="info" size={15} />
+              שלב {step + 1} מתוך {STEPS.length}
+            </span>
+            {step > 0 && (
+              <button type="button" className="bw-btn bw-btn-o" onClick={() => setStep((s) => s - 1)}>
+                הקודם
+                <Icon name="chevron-right" size={16} />
+              </button>
+            )}
+            {step < 3 ? (
+              <button
+                type="button"
+                className="bw-btn bw-btn-primary"
+                disabled={!stepValid}
+                onClick={() => setStep((s) => s + 1)}
+              >
+                <Icon name="chevron-left" size={16} />
+                הבא
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="bw-btn bw-btn-primary"
+                disabled={saving || !staysValid || ccState === "invalid"}
+                title={ccState === "invalid" ? "פרטי הכרטיס שהוזנו אינם תקינים" : undefined}
+                onClick={submit}
+              >
+                <Icon name="check" size={16} />
+                {saving ? "יוצר…" : "צור הזמנה"}
+              </button>
+            )}
+          </div>
+        )
       }
     >
       <div className="bw-main">
@@ -502,13 +587,13 @@ export function BookingPanel({
                     </b>
                   </div>
                 )}
-                {/* informational only — VAT already included in the total */}
+                {/* informational only — the TENANT VAT rate (Settings), already included in the total */}
                 <div className="bw-price-line">
                   <span className="bw-plr" style={{ fontSize: 14 }}>
-                    מע״מ ({Math.round(VAT_RATE * 100)}%) — כלול
+                    מע״מ ({formatVatRate(vatRate)}%) — כלול
                   </span>
                   <b dir="ltr" style={{ color: "#6B7385" }}>
-                    ₪{Math.round(total - total / (1 + VAT_RATE)).toLocaleString()}
+                    ₪{includedVatAmount(total, vatRate).toLocaleString()}
                   </b>
                 </div>
                 <div className="bw-price-total">
@@ -591,9 +676,12 @@ export function BookingPanel({
                     />
                   </Field>
                 </div>
-                {method === "credit_card" && (
-                  <CardFields value={cc} onChange={setCc} chargeAmount={Math.max(0, total - paid)} />
-                )}
+                {method === "credit_card" &&
+                  (canSaveCard ? (
+                    <CardFields value={cc} onChange={setCc} chargeAmount={Math.max(0, total - paid)} />
+                  ) : (
+                    <p className="bw-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
+                  ))}
               </section>
             </>
           )}
@@ -722,7 +810,7 @@ export function BookingPanel({
           </div>
         </aside>
       </div>
-    </FullWindow>
+    </SidePanel>
   );
 }
 

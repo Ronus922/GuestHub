@@ -1,63 +1,14 @@
 /* ============================================================
-   Full-screen booking/edit window — ported 1:1 from the rendered
-   reference ref/html/booking-window.html + ref/screens/edit-booking-
-   modal.png (Phase 3 visual pass). Used by BookingPanel (wizard) and
-   EditReservationPanel (editor); both open over the calendar.
+   Booking/edit content styles — ported 1:1 from the rendered reference
+   ref/html/booking-window.html + ref/screens/edit-booking-modal.png
+   (Phase 3 visual pass). Used by BookingPanel (wizard) and
+   EditReservationPanel (editor) INSIDE the site-wide SidePanel shell
+   (D41 — the full-screen .bw-window wrapper was removed with
+   FullWindow.tsx; header chips render inside the panel header).
    ============================================================ */
 
 @layer components {
 
-.bw-window {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  direction: rtl;
-  background: #eef0f5;
-}
-
-/* ---------- brand header ---------- */
-.bw-hd {
-  flex: none;
-  background: var(--color-primary);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px 26px;
-}
-.bw-hd-title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.3px;
-}
-.bw-hd-sub {
-  font-size: 13.5px;
-  opacity: 0.82;
-  font-weight: 500;
-  margin-top: 2px;
-}
-.bw-icbtn {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.12);
-  border: none;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex: none;
-}
-.bw-icbtn:hover {
-  background: rgba(255, 255, 255, 0.24);
-}
-.bw-icbtn.close:hover {
-  background: #fff;
-  color: var(--color-status-danger);
-}
 .bw-hd-chip {
   display: inline-flex;
   align-items: center;
@@ -158,12 +109,7 @@
   color: #4b5266;
 }
 
-/* ---------- scroll body + columns ---------- */
-.bw-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
+/* ---------- body columns ---------- */
 .bw-main {
   display: flex;
   gap: 22px;
@@ -693,17 +639,7 @@ select.bw-fld {
   direction: ltr;
 }
 
-/* ---------- footer ---------- */
-.bw-ft {
-  flex: none;
-  background: #fff;
-  border-top: 1px solid #e4e8f0;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 26px;
-  box-shadow: 0 -4px 16px rgba(16, 24, 40, 0.04);
-}
+/* ---------- footer step label ---------- */
 .bw-ft-step {
   font-size: 13.5px;
   color: var(--color-muted);

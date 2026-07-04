@@ -2,27 +2,41 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { FullWindow } from "@/components/ui/FullWindow";
+import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState } from "@/lib/inventory-rules";
+import { formatVatRate, includedVatAmount } from "@/lib/vat";
+import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import {
   getReservationAction,
   updateReservationAction,
   cancelReservationAction,
   type ReservationDetail,
 } from "@/app/(dashboard)/reservations/actions";
+import {
+  saveReservationCardAction,
+  deleteReservationCardAction,
+} from "@/app/(dashboard)/reservations/card-actions";
 import { EDITABLE_STATUSES } from "@/lib/validation/reservation";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
-import { CardFields, EMPTY_CARD, type CardDraft } from "./CardFields";
+import {
+  CardFields,
+  EMPTY_CARD,
+  StoredCardBox,
+  cardDraftState,
+  type CardDraft,
+} from "./CardFields";
 import { PaymentBadge, CardTitle, Field } from "./BookingPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
 // עריכת הזמנה — the single reservation detail/edit flow the calendar opens
-// (ref/screens/edit-booking-modal.png): full-screen window, sectioned form
-// on the right, summary + activity sidebar on the left, sticky footer.
+// (ref/screens/edit-booking-modal.png) inside the site-wide SIDE PANEL
+// shell (D41): sectioned form, summary + activity sidebar, sticky header
+// and action footer, the calendar stays mounted and visible behind it.
 // Preserves every reservation room, per-room guests, pricing, status and
-// payments (§F).
+// payments (§F). The stored-card section shows masked metadata only;
+// full-PAN reveal is explicit, permission-guarded and audited.
 export function EditReservationPanel({
   reservationId,
   onClose,
@@ -31,6 +45,9 @@ export function EditReservationPanel({
   statusItems,
   canEdit,
   canCancel,
+  vatRate,
+  canSaveCard,
+  canRevealCard,
 }: {
   reservationId: string | null;
   onClose: () => void;
@@ -39,6 +56,9 @@ export function EditReservationPanel({
   statusItems: LookupItem[];
   canEdit: boolean;
   canCancel: boolean;
+  vatRate: number;
+  canSaveCard: boolean;
+  canRevealCard: boolean;
 }) {
   const [detail, setDetail] = useState<ReservationDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -50,10 +70,16 @@ export function EditReservationPanel({
   const [addPay, setAddPay] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
-  // card details never leave the client (see CardFields security note)
+  // new-card entry values travel ONLY through the dedicated guarded save
+  // action, then are cleared (see CardFields security note)
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
+  const [cardMeta, setCardMeta] = useState<ReservationDetail["card"]>(null);
+  const [replacingCard, setReplacingCard] = useState(false);
+  const [cardBusy, startCardBusy] = useTransition();
   const [saving, startSaving] = useTransition();
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const snapshotRef = useRef("");
   const staysRef = useRef<HTMLElement | null>(null);
 
   const open = reservationId !== null;
@@ -102,9 +128,54 @@ export function EditReservationPanel({
       setAddPay(0);
       setMethod("");
       setCc(EMPTY_CARD);
+      setCardMeta(d.card);
+      setReplacingCard(false);
+      setConfirmDiscard(false);
       setNotes(d.notes ?? "");
+      snapshotRef.current = editSnapshot(
+        {
+          firstName: d.guest.first_name,
+          lastName: d.guest.last_name,
+          phone: d.guest.phone ?? "",
+          email: d.guest.email ?? "",
+          idNumber: d.guest.id_number ?? "",
+        },
+        d.source_id ?? "",
+        d.status,
+        d.rooms.map((r) => ({
+          rrId: r.rrId,
+          roomId: r.roomId,
+          checkIn: r.checkIn,
+          checkOut: r.checkOut,
+          adults: r.adults,
+          children: r.children,
+          infants: r.infants,
+          ratePerNight: r.ratePerNight,
+          guestFirstName: r.guestFirstName ?? undefined,
+          guestLastName: r.guestLastName ?? undefined,
+          guestPhone: r.guestPhone ?? undefined,
+        })),
+        d.discount_amount,
+        0,
+        "",
+        d.notes ?? "",
+        EMPTY_CARD,
+      );
     });
   }, [reservationId]);
+
+  const dirty =
+    detail !== null &&
+    editSnapshot(guest, sourceId, status, stays, discount, addPay, method, notes, cc) !==
+      snapshotRef.current;
+
+  // Escape / X / overlay click — dirty forms get an explicit discard
+  // confirmation in the footer instead of silently losing changes
+  const requestClose = () => {
+    if (saving) return;
+    if (dirty && !confirmDiscard) setConfirmDiscard(true);
+    else onClose();
+  };
 
   const staysValid =
     stays.length > 0 &&
@@ -172,15 +243,56 @@ export function EditReservationPanel({
       }
     });
 
+  // ---- stored card (dedicated guarded actions, never the main save) ----
+  const ccStateForSave = cardDraftState(cc);
+
+  const saveCard = () =>
+    startCardBusy(async () => {
+      if (!detail || ccStateForSave !== "valid") return;
+      const exp = parseExpiry(cc.exp)!;
+      const res = await saveReservationCardAction({
+        reservationId: detail.id,
+        holderName: cc.holder.trim(),
+        holderIdNumber: cc.idNum || undefined,
+        pan: normalizePan(cc.number),
+        expMonth: exp.month,
+        expYear: exp.year,
+      });
+      if (res.success && res.data) {
+        // raw values are cleared; only masked metadata remains client-side
+        setCc(EMPTY_CARD);
+        setCardMeta(res.data);
+        setReplacingCard(false);
+        toast.success("הכרטיס נשמר מוצפן");
+      } else {
+        toast.error(res.success ? "שמירת הכרטיס נכשלה" : res.error);
+      }
+    });
+
+  const deleteCard = () =>
+    startCardBusy(async () => {
+      if (!cardMeta) return;
+      const res = await deleteReservationCardAction(cardMeta.id);
+      if (res.success) {
+        setCardMeta(null);
+        setReplacingCard(false);
+        toast.success("הכרטיס הוסר");
+      } else {
+        toast.error(res.error);
+      }
+    });
+
   const statusMeta = detail ? statusItems.find((s) => s.key === detail.status) : null;
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "—";
   const payState = paymentState(total, paidAfter);
 
   return (
-    <FullWindow
+    <SidePanel
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       title="עריכת הזמנה"
+      icon="edit"
+      bodyClassName="bg-[#eef0f5] p-0"
       subtitle={
         detail
           ? `נוצרה ${fmtDate(detail.created_at)}${
@@ -203,48 +315,63 @@ export function EditReservationPanel({
       }
       footer={
         detail ? (
-          <>
-            {canCancel && detail.status !== "cancelled" ? (
-              confirmCancel ? (
-                <span className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="bw-btn"
-                    style={{ background: "var(--color-status-danger)", color: "#fff" }}
-                    disabled={saving}
-                    onClick={doCancel}
-                  >
-                    אישור ביטול
-                  </button>
-                  <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setConfirmCancel(false)}>
-                    חזרה
-                  </button>
-                </span>
-              ) : (
-                <button type="button" className="bw-btn bw-btn-danger" onClick={() => setConfirmCancel(true)}>
-                  <Icon name="circle-slash" size={15} />
-                  בטל הזמנה
-                </button>
-              )
-            ) : (
-              <span />
-            )}
-            <span className="flex-1" />
-            <button type="button" className="bw-btn bw-btn-ghost" onClick={onClose}>
-              סגור
-            </button>
-            {canEdit && (
-              <button
-                type="button"
-                className="bw-btn bw-btn-primary"
-                disabled={saving || !staysValid}
-                onClick={() => save()}
-              >
-                <Icon name="check" size={16} />
-                {saving ? "שומר…" : "שמור שינויים"}
+          confirmDiscard ? (
+            /* dirty-state discard confirmation (existing inline-confirm pattern) */
+            <div className="flex items-center gap-3">
+              <Icon name="warning" size={17} className="text-status-danger" />
+              <span className="text-sm font-bold text-ink">יש שינויים שלא נשמרו — לסגור בכל זאת?</span>
+              <span className="flex-1" />
+              <button type="button" className="bw-btn bw-btn-o" onClick={() => setConfirmDiscard(false)}>
+                המשך עריכה
               </button>
-            )}
-          </>
+              <button type="button" className="bw-btn bw-btn-danger" onClick={onClose}>
+                סגור בלי לשמור
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              {canCancel && detail.status !== "cancelled" ? (
+                confirmCancel ? (
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="bw-btn"
+                      style={{ background: "var(--color-status-danger)", color: "#fff" }}
+                      disabled={saving}
+                      onClick={doCancel}
+                    >
+                      אישור ביטול
+                    </button>
+                    <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setConfirmCancel(false)}>
+                      חזרה
+                    </button>
+                  </span>
+                ) : (
+                  <button type="button" className="bw-btn bw-btn-danger" onClick={() => setConfirmCancel(true)}>
+                    <Icon name="circle-slash" size={15} />
+                    בטל הזמנה
+                  </button>
+                )
+              ) : (
+                <span />
+              )}
+              <span className="flex-1" />
+              <button type="button" className="bw-btn bw-btn-ghost" onClick={requestClose}>
+                סגור
+              </button>
+              {canEdit && (
+                <button
+                  type="button"
+                  className="bw-btn bw-btn-primary"
+                  disabled={saving || !staysValid}
+                  onClick={() => save()}
+                >
+                  <Icon name="check" size={16} />
+                  {saving ? "שומר…" : "שמור שינויים"}
+                </button>
+              )}
+            </div>
+          )
         ) : undefined
       }
     >
@@ -394,6 +521,15 @@ export function EditReservationPanel({
                   </b>
                 </div>
               )}
+              {/* informational only — the TENANT VAT rate (Settings), already included in the total */}
+              <div className="bw-price-line">
+                <span className="bw-plr" style={{ fontSize: 14 }}>
+                  מע״מ ({formatVatRate(vatRate)}%) — כלול
+                </span>
+                <b dir="ltr" style={{ color: "#6B7385" }}>
+                  ₪{includedVatAmount(total, vatRate).toLocaleString()}
+                </b>
+              </div>
               <div className="bw-price-total">
                 <span>סה״כ לתשלום</span>
                 <span className="bw-amt" dir="ltr">
@@ -438,13 +574,50 @@ export function EditReservationPanel({
                       </select>
                     </Field>
                   </div>
-                  {method === "credit_card" && (
-                    <CardFields
-                      value={cc}
-                      onChange={setCc}
-                      chargeAmount={Math.max(0, total - paidAfter)}
-                    />
-                  )}
+                </>
+              )}
+              {/* ---- stored card (D41): masked by default; entry/replace
+                   through the dedicated guarded save action only ---- */}
+              {cardMeta && !replacingCard && (
+                <StoredCardBox
+                  card={cardMeta}
+                  canReveal={canRevealCard}
+                  canManage={canSaveCard && canEdit}
+                  onReplace={() => setReplacingCard(true)}
+                  onDelete={deleteCard}
+                  deleting={cardBusy}
+                />
+              )}
+              {canSaveCard && canEdit && (replacingCard || !cardMeta) && (
+                <>
+                  <CardFields
+                    value={cc}
+                    onChange={setCc}
+                    chargeAmount={Math.max(0, total - paidAfter)}
+                  />
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="bw-btn bw-btn-o"
+                      disabled={cardBusy || ccStateForSave !== "valid"}
+                      onClick={saveCard}
+                    >
+                      <Icon name="check" size={15} />
+                      {cardBusy ? "שומר…" : cardMeta ? "החלף כרטיס" : "שמור כרטיס"}
+                    </button>
+                    {replacingCard && (
+                      <button
+                        type="button"
+                        className="bw-btn bw-btn-ghost"
+                        onClick={() => {
+                          setReplacingCard(false);
+                          setCc(EMPTY_CARD);
+                        }}
+                      >
+                        ביטול
+                      </button>
+                    )}
+                  </div>
                 </>
               )}
               {detail.payments.length > 0 && (
@@ -591,7 +764,7 @@ export function EditReservationPanel({
           </aside>
         </div>
       )}
-    </FullWindow>
+    </SidePanel>
   );
 }
 
@@ -607,4 +780,27 @@ const ACTIVITY_LABEL: Record<string, string> = {
   update: "ההזמנה עודכנה",
   cancel: "ההזמנה בוטלה",
   reschedule: "חדר / תאריכים עודכנו",
+  card_save: "כרטיס אשראי נשמר",
+  card_replace: "כרטיס אשראי הוחלף",
+  card_reveal: "מספר כרטיס נחשף",
+  card_delete: "כרטיס אשראי הוסר",
 };
+
+// dirty-state fingerprint of everything the user can edit (stay "key"
+// fields are random per load, so the replacer drops them)
+function editSnapshot(
+  guest: { firstName: string; lastName: string; phone: string; email: string; idNumber: string },
+  sourceId: string,
+  status: string,
+  stays: (StayDraft | Omit<StayDraft, "key">)[],
+  discount: number,
+  addPay: number,
+  method: string,
+  notes: string,
+  cc: CardDraft,
+): string {
+  return JSON.stringify(
+    [guest, sourceId, status, stays, discount, addPay, method, notes, cc],
+    (k, v) => (k === "key" ? undefined : v),
+  );
+}

@@ -881,7 +881,6 @@ export function CalendarGrid({
       <ReservationTooltip
         target={tip}
         statusLabel={statusLabel}
-        canConfirm={can.edit}
         onClose={() => {
           cancelTipTimers();
           setTip(null);

@@ -28,7 +28,17 @@ export type CalendarCan = {
   cancel: boolean;
   close: boolean;
   viewReservation: boolean;
+  saveCard: boolean;
+  revealCard: boolean;
 };
+
+// ONE open panel at a time — the single source of truth for the booking /
+// edit / closure side panels over the calendar (D41)
+type PanelState =
+  | { kind: "booking"; prefill: BookingPrefill }
+  | { kind: "edit"; id: string }
+  | { kind: "closure"; prefill: ClosurePrefill }
+  | null;
 
 const VIEW_LABELS: Record<CalendarView, string> = {
   week: "שבוע",
@@ -51,6 +61,7 @@ export function CalendarScreen({
   paymentMethods,
   bookingSources,
   can,
+  vatRate,
 }: {
   data: CalendarData;
   view: CalendarView;
@@ -58,12 +69,12 @@ export function CalendarScreen({
   paymentMethods: LookupItem[];
   bookingSources: LookupItem[];
   can: CalendarCan;
+  vatRate: number;
 }) {
   const router = useRouter();
   const [paymentFilter, setPaymentFilter] = useState<PaymentState | "all">("all");
-  const [booking, setBooking] = useState<BookingPrefill | null>(null);
-  const [editId, setEditId] = useState<string | null>(null);
-  const [closure, setClosure] = useState<ClosurePrefill | null>(null);
+  const [panel, setPanel] = useState<PanelState>(null);
+  const closePanel = useCallback(() => setPanel(null), []);
 
   const navigate = useCallback(
     (from: string, v: CalendarView) => {
@@ -189,9 +200,9 @@ export function CalendarScreen({
           paymentFilter={paymentFilter}
           statusLabel={statusLabel}
           can={can}
-          onOpenReservation={(id) => can.viewReservation && setEditId(id)}
-          onNewBooking={(prefill) => can.create && setBooking(prefill)}
-          onNewClosure={(prefill) => can.close && setClosure(prefill)}
+          onOpenReservation={(id) => can.viewReservation && setPanel({ kind: "edit", id })}
+          onNewBooking={(prefill) => can.create && setPanel({ kind: "booking", prefill })}
+          onNewClosure={(prefill) => can.close && setPanel({ kind: "closure", prefill })}
         />
       </div>
 
@@ -201,27 +212,32 @@ export function CalendarScreen({
         חדשה · לחיצה על סטטוס תשלום מסננת
       </p>
 
-      {/* ---- windows ---- */}
+      {/* ---- side panels (one open at a time; calendar stays mounted) ---- */}
       <BookingPanel
-        open={booking !== null}
-        onClose={() => setBooking(null)}
-        prefill={booking ?? {}}
+        open={panel?.kind === "booking"}
+        onClose={closePanel}
+        prefill={panel?.kind === "booking" ? panel.prefill : {}}
         bookingSources={bookingSources}
         paymentMethods={paymentMethods}
+        vatRate={vatRate}
+        canSaveCard={can.saveCard}
       />
       <EditReservationPanel
-        reservationId={editId}
-        onClose={() => setEditId(null)}
+        reservationId={panel?.kind === "edit" ? panel.id : null}
+        onClose={closePanel}
         bookingSources={bookingSources}
         paymentMethods={paymentMethods}
         statusItems={statusItems}
         canEdit={can.edit}
         canCancel={can.cancel}
+        vatRate={vatRate}
+        canSaveCard={can.saveCard}
+        canRevealCard={can.revealCard}
       />
       <ClosurePanel
-        open={closure !== null}
-        onClose={() => setClosure(null)}
-        prefill={closure ?? {}}
+        open={panel?.kind === "closure"}
+        onClose={closePanel}
+        prefill={panel?.kind === "closure" ? panel.prefill : {}}
         rooms={data.rooms}
       />
     </div>

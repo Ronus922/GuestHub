@@ -3,6 +3,7 @@ import { getActor, hasPermission } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
 import { isDateOnly, todayInTz } from "@/lib/dates";
 import { getCalendarData } from "./data";
+import { getTenantVatRate } from "@/lib/settings";
 import { CalendarScreen } from "./CalendarScreen";
 import { VIEW_DAYS, type CalendarView } from "./types";
 
@@ -29,6 +30,8 @@ export default async function CalendarPage({
   const from = params.from && isDateOnly(params.from) ? params.from : today;
 
   const data = await getCalendarData(actor, from, VIEW_DAYS[view]);
+  // tenant VAT rate (Settings) — display-only in the booking/edit panels
+  const vatRate = await getTenantVatRate(actor.tenantId);
 
   // lookups the calendar + panels need (colors/labels come from the DB, §4.5)
   const lookups = await sql<
@@ -53,7 +56,10 @@ export default async function CalendarPage({
         cancel: hasPermission(actor, "reservations.cancel"),
         close: hasPermission(actor, "rooms.edit"),
         viewReservation: hasPermission(actor, "reservations.view"),
+        saveCard: hasPermission(actor, "payments.card_manage"),
+        revealCard: hasPermission(actor, "payments.card_reveal"),
       }}
+      vatRate={vatRate}
     />
   );
 }

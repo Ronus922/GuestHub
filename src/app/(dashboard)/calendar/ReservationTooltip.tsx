@@ -1,22 +1,17 @@
 "use client";
 
-import { useLayoutEffect, useEffect, useRef, useState, useTransition } from "react";
-import { toast } from "sonner";
+import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
-import {
-  getReservationAction,
-  updateReservationAction,
-} from "@/app/(dashboard)/reservations/actions";
 import { stayPalette } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
-// Reservation HOVER tooltip (reference rooms-calendar .pop / Tooltip.png):
-// opens on deliberate hover, stays open while the pointer is inside it,
-// עריכה opens the full edit window and אישור הזמנה (drafts only) confirms
-// through the existing validated update action — no new write path.
-// Clicking the pill itself opens the editor directly (§3); this card is
-// hover-only.
+// Reservation HOVER tooltip (reference rooms-calendar .pop / Tooltip.png) —
+// INFORMATIONAL ONLY (D41): it performs no server write of any kind. Status
+// changes (incl. draft confirmation) happen inside the validated edit
+// panel. The עריכה button only opens that panel; the pending/draft badge is
+// informational. Clicking the pill itself opens the editor directly (§3);
+// this card is hover-only.
 
 export type TooltipTarget = {
   stay: CalendarStay;
@@ -33,7 +28,6 @@ function hebDayMonth(d: string): string {
 export function ReservationTooltip({
   target,
   statusLabel,
-  canConfirm,
   onClose,
   onEdit,
   onKeepAlive,
@@ -41,7 +35,6 @@ export function ReservationTooltip({
 }: {
   target: TooltipTarget | null;
   statusLabel: Map<string, string>;
-  canConfirm: boolean;
   onClose: () => void;
   onEdit: (reservationId: string) => void;
   onKeepAlive: () => void;
@@ -49,7 +42,6 @@ export function ReservationTooltip({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number; place: "above" | "below" } | null>(null);
-  const [confirming, startConfirm] = useTransition();
 
   // position after render (needs the measured height): prefer ABOVE the
   // pill like Tooltip.png, flip below near the viewport top; clamped so it
@@ -108,52 +100,6 @@ export function ReservationTooltip({
   ]
     .filter(Boolean)
     .join(" · ");
-
-  // confirm a draft through the EXISTING validated edit path: load the full
-  // reservation and resubmit it unchanged with status=confirmed (the server
-  // re-proves availability for draft→confirmed inside its transaction)
-  const confirmDraft = () =>
-    startConfirm(async () => {
-      const res = await getReservationAction(stay.reservation_id);
-      if (!res.success || !res.data) {
-        toast.error(res.success ? "הזמנה לא נמצאה" : res.error);
-        return;
-      }
-      const d = res.data;
-      const upd = await updateReservationAction({
-        id: d.id,
-        guest: {
-          firstName: d.guest.first_name,
-          lastName: d.guest.last_name,
-          phone: d.guest.phone ?? undefined,
-          email: d.guest.email ?? undefined,
-          idNumber: d.guest.id_number ?? undefined,
-        },
-        sourceId: d.source_id,
-        status: "confirmed",
-        rooms: d.rooms.map((r) => ({
-          rrId: r.rrId,
-          roomId: r.roomId,
-          checkIn: r.checkIn,
-          checkOut: r.checkOut,
-          adults: r.adults,
-          children: r.children,
-          infants: r.infants,
-          ratePerNight: r.ratePerNight ?? undefined,
-          guestFirstName: r.guestFirstName ?? undefined,
-          guestLastName: r.guestLastName ?? undefined,
-          guestPhone: r.guestPhone ?? undefined,
-        })),
-        notes: d.notes ?? undefined,
-        discountAmount: d.discount_amount,
-      });
-      if (upd.success) {
-        toast.success("ההזמנה אושרה");
-        onClose();
-      } else {
-        toast.error(upd.error);
-      }
-    });
 
   return (
     <div
@@ -231,20 +177,10 @@ export function ReservationTooltip({
       </div>
 
       <div className="cb-pop-f">
-        <button
-          type="button"
-          className={`cb-pbtn ${stay.status === "draft" && canConfirm ? "g" : ""}`}
-          onClick={() => onEdit(stay.reservation_id)}
-        >
+        <button type="button" className="cb-pbtn" onClick={() => onEdit(stay.reservation_id)}>
           <Icon name="edit" size={15} />
           עריכה
         </button>
-        {stay.status === "draft" && canConfirm && (
-          <button type="button" className="cb-pbtn" disabled={confirming} onClick={confirmDraft}>
-            <Icon name="check" size={15} />
-            {confirming ? "מאשר…" : "אישור הזמנה"}
-          </button>
-        )}
       </div>
     </div>
   );
