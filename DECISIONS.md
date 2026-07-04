@@ -270,3 +270,21 @@ Note: the login page's Google button is still a stub ("התחברות Google ת�
 the staff screen already resolves the linked identity (last-login via the auth join).
 Future phase: staff-create could offer an explicit "adopt existing auth identity"
 branch instead of masking the GoTrue 422.
+
+## D29 — Google OAuth login ships via the shared GoTrue, gated per-user (supersedes D28's stub note)
+The login stub is now a real flow (google-oauth skill, Route A — adapted, not
+copied): the button calls `signInWithOAuth` with `redirectTo`
+`NEXT_PUBLIC_APP_URL/auth/callback`; the new `/auth/callback` route exchanges the
+PKCE code server-side (cookies staged and bound to the final redirect, like
+/auth/signout) and then gates every non-password provider by the guesthub layer:
+`auth_user_id` match AND `is_active` AND `allow_google_auth` AND a real tenant.
+Unknown identity / flag off / inactive collapse into ONE neutral Hebrew error
+(`google_not_allowed`) — the shared auth.users must not become an email-existence
+oracle. Login never creates or adopts guesthub rows and grants nothing; all
+authorization stays in getActor/effectivePermissionKeys. Redirects are built only
+from `NEXT_PUBLIC_APP_URL` (behind nginx, request.url is the internal upstream).
+`/auth/callback` is exempt from the middleware auth redirect (a callback is
+unauthenticated by definition). Infra (outside the repo): guesthub origins were
+appended to `ADDITIONAL_REDIRECT_URLS` in /opt/supabase/docker/.env and the auth
+container re-upped — Google provider + Console redirect URI were already
+configured instance-wide. No app-side Google secrets exist (they live in GoTrue).

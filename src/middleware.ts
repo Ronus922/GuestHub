@@ -35,6 +35,9 @@ export async function middleware(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
   const isLogin = path === "/login";
+  // The OAuth callback arrives unauthenticated by definition (the session is only
+  // created inside the route by exchangeCodeForSession) — it must stay reachable.
+  const isOauthCallback = path === "/auth/callback";
 
   // Redirect while carrying over any refreshed auth cookies staged on `response`
   // (a fresh NextResponse.redirect would otherwise drop a rotated refresh token).
@@ -47,7 +50,7 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  if (!user && !isLogin) return redirectTo("/login");
+  if (!user && !isLogin && !isOauthCallback) return redirectTo("/login");
   if (user && isLogin) return redirectTo("/");
 
   return response;
