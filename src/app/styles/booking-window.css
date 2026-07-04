@@ -720,4 +720,236 @@ select.bw-fld {
   margin-top: 7px;
 }
 
+/* ---------- payment-status chips (reference .paychip) ---------- */
+.bw-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.bw-paychip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1.5px solid #e4e8f0;
+  background: #fff;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: #4b5266;
+  cursor: pointer;
+}
+.bw-paychip .bw-d {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.bw-paychip:hover {
+  background: #f5f7fb;
+}
+.bw-paychip.on {
+  border-width: 2px;
+}
+.bw-paychip.pc-unpaid .bw-d {
+  background: #dc2626;
+}
+.bw-paychip.on.pc-unpaid {
+  border-color: #dc2626;
+  background: #fdecec;
+  color: #b4231f;
+}
+.bw-paychip.pc-partial .bw-d {
+  background: #ea9314;
+}
+.bw-paychip.on.pc-partial {
+  border-color: #ea9314;
+  background: #fdf2e1;
+  color: #b4670a;
+}
+.bw-paychip.pc-paid .bw-d {
+  background: #16a34a;
+}
+.bw-paychip.on.pc-paid {
+  border-color: #16a34a;
+  background: #e7f6ec;
+  color: #15803d;
+}
+.bw-paychip.pc-pending .bw-d {
+  background: #2540c8;
+}
+.bw-paychip.on.pc-pending {
+  border-color: #2540c8;
+  background: var(--color-primary-050);
+  color: var(--color-primary);
+}
+
+/* ---------- credit-card details block (reference .ccbox) ---------- */
+.bw-ccbox {
+  border: 1.5px solid #e4e8f0;
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-top: 16px;
+  background: #fcfdfe;
+}
+.bw-cc-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 16px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--color-ink);
+}
+.bw-cc-top svg {
+  color: var(--color-primary);
+}
+.bw-opt {
+  color: #9aa1b4;
+  font-weight: 600;
+  font-size: 12px;
+}
+.bw-fld-wrap {
+  position: relative;
+}
+.bw-fld-wrap .bw-fi {
+  position: absolute;
+  inset-inline-start: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #8a91a3;
+  pointer-events: none;
+}
+.bw-fld.ic {
+  padding-inline-start: 42px;
+}
+.bw-fld.bad {
+  border-color: var(--color-status-danger);
+  background: #fdecec;
+}
+.bw-cc-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+.bw-btn-charge {
+  height: 44px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: 800;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.bw-btn-charge:disabled {
+  background: #b9c0d6;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+.bw-cc-hint {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #15803d;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ---------- sidebar quick actions (reference פעולות מהירות) ---------- */
+.bw-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bw-qa-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 42px;
+  padding: 0 14px;
+  border: 1.5px solid #e4e8f0;
+  border-radius: 11px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-ink);
+  cursor: pointer;
+  text-align: start;
+}
+.bw-qa-btn:hover:not(:disabled) {
+  background: #f5f7fb;
+}
+.bw-qa-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.bw-qa-btn svg {
+  color: var(--color-primary);
+}
+.bw-qa-btn.qg svg {
+  color: #16a34a;
+}
+
+/* room summary row inside a stay card (reference: Deluxe King · חדר 214 +
+   swap button) */
+.bw-rc-room {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1.5px solid #e4e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.bw-rc-ric {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--color-primary-050);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.bw-rc-rn {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--color-ink);
+}
+.bw-rc-rs {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-faint);
+}
+.bw-swap {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1.5px solid #dfe5fb;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--color-primary);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bw-swap:hover {
+  background: var(--color-primary-050);
+}
+
 } /* @layer components */

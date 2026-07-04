@@ -12,7 +12,13 @@ import {
   getStayQuoteAction,
 } from "@/app/(dashboard)/reservations/actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
+import { CardFields, EMPTY_CARD, type CardDraft } from "./CardFields";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
+
+// VAT display rate — the reference pricing card shows an informational
+// "מע״מ (17%) — כלול" line; the amount is the VAT portion already included
+// in the total (display only, no pricing rule involved — D40).
+const VAT_RATE = 0.17;
 
 // The canonical new-reservation flow (הקמת הזמנה חדשה) — the reference
 // 4-step full-screen wizard (ref/html/booking-window.html,
@@ -70,6 +76,12 @@ export function BookingPanel({
   const [paid, setPaid] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
+  // "ממתין לאישור" chip → the reservation is created as a DRAFT (a status
+  // the create action already supports); everything else creates confirmed
+  const [asDraft, setAsDraft] = useState(false);
+  // card details never leave the client (see CardFields security note)
+  const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
+  const paidRef = useRef<HTMLInputElement | null>(null);
   const [saving, startSaving] = useTransition();
 
   // guest search
@@ -100,6 +112,8 @@ export function BookingPanel({
     setPaid(0);
     setMethod("");
     setNotes("");
+    setAsDraft(false);
+    setCc(EMPTY_CARD);
     setQuery("");
     setResults([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -161,7 +175,7 @@ export function BookingPanel({
           language: guest.language.trim() || undefined,
         },
         sourceId: sourceId || null,
-        status: "confirmed",
+        status: asDraft ? "draft" : "confirmed",
         rooms: stays.map((s) => ({
           roomId: s.roomId,
           checkIn: s.checkIn,
@@ -444,85 +458,144 @@ export function BookingPanel({
             </section>
           )}
 
-          {/* ---- step 3: pricing & payment ---- */}
+          {/* ---- step 3: pricing & payment (reference
+               new-booking-step-3 + booking-window.html) ---- */}
           {step === 2 && (
-            <section className="bw-card">
-              <CardTitle icon="finance" title="תמחור ותשלום" />
-              {stays.map((s, i) => {
-                const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
-                const q = quotes[s.key];
-                const lineTotal = s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
-                return (
-                  <div key={s.key} className="bw-price-line">
-                    <div>
-                      <b>חדר {i + 1}</b>
-                      <div className="bw-plr">
-                        {nights} לילות × ₪
-                        <input
-                          type="number"
-                          min={0}
-                          className="mx-1 w-24 rounded-lg border border-line px-2 py-1 text-center text-xs font-semibold"
-                          value={s.ratePerNight ?? (nights ? Math.round((q?.total ?? 0) / nights) : 0)}
-                          onChange={(e) =>
-                            setStays((all) =>
-                              all.map((x) =>
-                                x.key === s.key ? { ...x, ratePerNight: Number(e.target.value) || 0 } : x,
-                              ),
-                            )
-                          }
-                        />
-                        / לילה
+            <>
+              <section className="bw-card">
+                <CardTitle icon="documents" title="פירוט תמחור" />
+                {stays.map((s, i) => {
+                  const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
+                  const q = quotes[s.key];
+                  const lineTotal = s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
+                  return (
+                    <div key={s.key} className="bw-price-line">
+                      <div>
+                        <b>חדר {i + 1}</b>
+                        <div className="bw-plr">
+                          {nights} לילות × ₪
+                          <input
+                            type="number"
+                            min={0}
+                            className="mx-1 w-24 rounded-lg border border-line px-2 py-1 text-center text-xs font-semibold"
+                            value={s.ratePerNight ?? (nights ? Math.round((q?.total ?? 0) / nights) : 0)}
+                            onChange={(e) =>
+                              setStays((all) =>
+                                all.map((x) =>
+                                  x.key === s.key ? { ...x, ratePerNight: Number(e.target.value) || 0 } : x,
+                                ),
+                              )
+                            }
+                          />
+                          / לילה
+                        </div>
                       </div>
+                      <b dir="ltr">₪{lineTotal.toLocaleString()}</b>
                     </div>
-                    <b dir="ltr">₪{lineTotal.toLocaleString()}</b>
+                  );
+                })}
+                {discount > 0 && (
+                  <div className="bw-price-line">
+                    <span className="bw-plr">הנחה</span>
+                    <b dir="ltr" style={{ color: "#B4231F" }}>
+                      -₪{discount.toLocaleString()}
+                    </b>
                   </div>
-                );
-              })}
-              <div className="bw-price-total">
-                <span>סה״כ לתשלום</span>
-                <span className="bw-amt" dir="ltr">
-                  ₪{total.toLocaleString()}
-                </span>
-              </div>
-              <div className="bw-grid2 mt-5">
-                <Field label="הנחה (₪)">
-                  <input
-                    type="number"
-                    min={0}
-                    className="bw-fld"
-                    value={discount || ""}
-                    placeholder="0"
-                    onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))}
-                  />
-                </Field>
-                <Field label="סכום ששולם">
-                  <input
-                    type="number"
-                    min={0}
-                    className="bw-fld"
-                    value={paid || ""}
-                    placeholder="0"
-                    onChange={(e) => setPaid(Math.max(0, Number(e.target.value) || 0))}
-                  />
-                </Field>
-                <Field label="אמצעי תשלום">
-                  <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
-                    <option value="">בחירה…</option>
-                    {paymentMethods.map((m) => (
-                      <option key={m.id} value={m.key}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <div className="bw-fg">
-                  <span className="bw-lbl">סטטוס תשלום</span>
-                  <div className="flex h-[46px] items-center">
-                    <PaymentBadge state={payState} />
-                  </div>
+                )}
+                {/* informational only — VAT already included in the total */}
+                <div className="bw-price-line">
+                  <span className="bw-plr" style={{ fontSize: 14 }}>
+                    מע״מ ({Math.round(VAT_RATE * 100)}%) — כלול
+                  </span>
+                  <b dir="ltr" style={{ color: "#6B7385" }}>
+                    ₪{Math.round(total - total / (1 + VAT_RATE)).toLocaleString()}
+                  </b>
                 </div>
-              </div>
-            </section>
+                <div className="bw-price-total">
+                  <span>סה״כ לתשלום</span>
+                  <span className="bw-amt" dir="ltr">
+                    ₪{total.toLocaleString()}
+                  </span>
+                </div>
+              </section>
+
+              <section className="bw-card">
+                <CardTitle icon="finance" title="סטטוס תשלום" />
+                {/* the chips drive REAL fields only: paid amount / draft
+                    status — the shown state is always the derived one */}
+                <div className="bw-chips-row">
+                  <PayChip
+                    kind="pc-unpaid"
+                    label="לא שולם"
+                    on={!asDraft && payState === "unpaid"}
+                    onClick={() => {
+                      setAsDraft(false);
+                      setPaid(0);
+                    }}
+                  />
+                  <PayChip
+                    kind="pc-partial"
+                    label="שולם חלקית"
+                    on={!asDraft && payState === "partial"}
+                    onClick={() => {
+                      setAsDraft(false);
+                      paidRef.current?.focus();
+                    }}
+                  />
+                  <PayChip
+                    kind="pc-paid"
+                    label="שולם מלא"
+                    on={!asDraft && payState === "paid"}
+                    onClick={() => {
+                      setAsDraft(false);
+                      setPaid(Math.round(total));
+                    }}
+                  />
+                  <PayChip
+                    kind="pc-pending"
+                    label="ממתין לאישור"
+                    on={asDraft}
+                    onClick={() => setAsDraft(true)}
+                  />
+                </div>
+                <div className="bw-grid3 mt-5">
+                  <Field label="אמצעי תשלום">
+                    <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+                      <option value="">בחירה…</option>
+                      {paymentMethods.map((m) => (
+                        <option key={m.id} value={m.key}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="סכום ששולם">
+                    <input
+                      ref={paidRef}
+                      type="number"
+                      min={0}
+                      className="bw-fld"
+                      value={paid || ""}
+                      placeholder="0"
+                      onChange={(e) => setPaid(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </Field>
+                  <Field label="הנחה (₪)">
+                    <input
+                      type="number"
+                      min={0}
+                      className="bw-fld"
+                      value={discount || ""}
+                      placeholder="0"
+                      onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </Field>
+                </div>
+                {method === "credit_card" && (
+                  <CardFields value={cc} onChange={setCc} chargeAmount={Math.max(0, total - paid)} />
+                )}
+              </section>
+            </>
           )}
 
           {/* ---- step 4: summary ---- */}
@@ -672,6 +745,31 @@ export function Field({ label, required, children }: { label: string; required?:
       </span>
       {children}
     </label>
+  );
+}
+
+// Selectable payment-status chip (reference .paychip, step 3).
+function PayChip({
+  kind,
+  label,
+  on,
+  onClick,
+}: {
+  kind: "pc-unpaid" | "pc-partial" | "pc-paid" | "pc-pending";
+  label: string;
+  on: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`bw-paychip ${kind} ${on ? "on" : ""}`}
+      aria-pressed={on}
+      onClick={onClick}
+    >
+      <span className="bw-d" />
+      {label}
+    </button>
   );
 }
 

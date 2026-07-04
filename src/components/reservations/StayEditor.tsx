@@ -51,18 +51,23 @@ export function StayEditor({
   onChange,
   onRemove,
   excludeReservationId,
+  disabled = false,
 }: {
   index: number;
   value: StayDraft;
   onChange: (next: StayDraft) => void;
   onRemove?: () => void;
   excludeReservationId?: string;
+  disabled?: boolean;
 }) {
   const [rooms, setRooms] = useState<RoomOption[]>([]);
   const [quote, setQuote] = useState<{ total: number; restriction: string | null } | null>(null);
   const [showGuest, setShowGuest] = useState(
     Boolean(value.guestFirstName || value.guestLastName || value.guestPhone),
   );
+  // reference edit-modal: a chosen room renders as a summary row with a
+  // "החלף חדר" button; the select shows only while actually choosing
+  const [changing, setChanging] = useState(false);
 
   const validRange = value.checkIn && value.checkOut && value.checkOut > value.checkIn;
   const nights = validRange ? nightsBetween(value.checkIn, value.checkOut) : 0;
@@ -132,6 +137,7 @@ export function StayEditor({
             type="date"
             className="bw-fld"
             value={value.checkIn}
+            disabled={disabled}
             onChange={(e) => onChange({ ...value, checkIn: e.target.value, roomId: "" })}
           />
         </label>
@@ -144,6 +150,7 @@ export function StayEditor({
             className="bw-fld"
             value={value.checkOut}
             min={value.checkIn}
+            disabled={disabled}
             onChange={(e) => onChange({ ...value, checkOut: e.target.value, roomId: value.roomId })}
           />
         </label>
@@ -162,32 +169,55 @@ export function StayEditor({
       </div>
 
       <div className="bw-grid3 mt-4">
-        <Counter label="מבוגרים" value={value.adults} min={1} onChange={(adults) => onChange({ ...value, adults })} />
-        <Counter label="ילדים" value={value.children} min={0} onChange={(children) => onChange({ ...value, children })} />
-        <Counter label="תינוקות" value={value.infants} min={0} onChange={(infants) => onChange({ ...value, infants })} />
+        <Counter label="מבוגרים" value={value.adults} min={1} disabled={disabled} onChange={(adults) => onChange({ ...value, adults })} />
+        <Counter label="ילדים" value={value.children} min={0} disabled={disabled} onChange={(children) => onChange({ ...value, children })} />
+        <Counter label="תינוקות" value={value.infants} min={0} disabled={disabled} onChange={(infants) => onChange({ ...value, infants })} />
       </div>
 
-      <label className="bw-fg mt-4">
-        <span className="bw-lbl">
-          חדר <span className="bw-req">*</span>
-        </span>
-        <select
-          className="bw-fld"
-          value={value.roomId}
-          onChange={(e) => onChange({ ...value, roomId: e.target.value })}
-          disabled={!validRange}
-        >
-          <option value="">{validRange ? "בחירת חדר פנוי…" : "בחרו תאריכים תחילה"}</option>
-          {rooms.map((r) => (
-            <option key={r.id} value={r.id} disabled={!r.free && r.id !== value.roomId}>
-              {r.room_number}
-              {r.name && r.name !== r.room_number ? ` · ${r.name}` : ""} ·{" "}
-              {r.room_type_name ?? ""} · ₪{r.avg_price}/לילה
-              {r.free ? "" : " · תפוס"}
-            </option>
-          ))}
-        </select>
-      </label>
+      {selected && !changing ? (
+        <div className="bw-rc-room">
+          <span className="bw-rc-ric">
+            <Icon name="rooms" size={20} />
+          </span>
+          <div className="min-w-0">
+            <p className="bw-rc-rn">
+              {selected.room_type_name ?? selected.name ?? ""} · חדר {selected.room_number}
+            </p>
+            <p className="bw-rc-rs">₪{selected.avg_price}/לילה</p>
+          </div>
+          {!disabled && (
+            <button type="button" className="bw-swap" onClick={() => setChanging(true)}>
+              <Icon name="refresh" size={15} />
+              החלף חדר
+            </button>
+          )}
+        </div>
+      ) : (
+        <label className="bw-fg mt-4">
+          <span className="bw-lbl">
+            חדר <span className="bw-req">*</span>
+          </span>
+          <select
+            className="bw-fld"
+            value={value.roomId}
+            onChange={(e) => {
+              setChanging(false);
+              onChange({ ...value, roomId: e.target.value });
+            }}
+            disabled={!validRange || disabled}
+          >
+            <option value="">{validRange ? "בחירת חדר פנוי…" : "בחרו תאריכים תחילה"}</option>
+            {rooms.map((r) => (
+              <option key={r.id} value={r.id} disabled={!r.free && r.id !== value.roomId}>
+                {r.room_number}
+                {r.name && r.name !== r.room_number ? ` · ${r.name}` : ""} ·{" "}
+                {r.room_type_name ?? ""} · ₪{r.avg_price}/לילה
+                {r.free ? "" : " · תפוס"}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {quote && value.roomId && (
         <div className="bw-price-line" style={{ borderBottom: "none", marginTop: 6 }}>
@@ -211,25 +241,29 @@ export function StayEditor({
         </p>
       )}
 
-      <button
-        type="button"
-        className="mt-3 text-sm font-semibold text-primary hover:underline"
-        onClick={() => setShowGuest((v) => !v)}
-      >
-        {showGuest ? "− הסתר אורח לחדר זה" : "+ אורח שונה בחדר זה (אופציונלי)"}
-      </button>
+      {!disabled && (
+        <button
+          type="button"
+          className="mt-3 text-sm font-semibold text-primary hover:underline"
+          onClick={() => setShowGuest((v) => !v)}
+        >
+          {showGuest ? "− הסתר אורח לחדר זה" : "+ אורח שונה בחדר זה (אופציונלי)"}
+        </button>
+      )}
       {showGuest && (
         <div className="bw-grid3 mt-2">
           <input
             className="bw-fld"
             placeholder="שם פרטי"
             value={value.guestFirstName ?? ""}
+            disabled={disabled}
             onChange={(e) => onChange({ ...value, guestFirstName: e.target.value })}
           />
           <input
             className="bw-fld"
             placeholder="שם משפחה"
             value={value.guestLastName ?? ""}
+            disabled={disabled}
             onChange={(e) => onChange({ ...value, guestLastName: e.target.value })}
           />
           <input
@@ -237,6 +271,7 @@ export function StayEditor({
             placeholder="טלפון"
             dir="ltr"
             value={value.guestPhone ?? ""}
+            disabled={disabled}
             onChange={(e) => onChange({ ...value, guestPhone: e.target.value })}
           />
         </div>
@@ -251,11 +286,13 @@ function Counter({
   value,
   min,
   onChange,
+  disabled = false,
 }: {
   label: string;
   value: number;
   min: number;
   onChange: (n: number) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="bw-fg">
@@ -266,7 +303,7 @@ function Counter({
           aria-label={`הפחתת ${label}`}
           onClick={() => onChange(Math.max(value - 1, min))}
           className="bw-qty-b"
-          disabled={value <= min}
+          disabled={disabled || value <= min}
         >
           <Icon name="minus" size={17} />
         </button>
@@ -276,6 +313,7 @@ function Counter({
           aria-label={`הוספת ${label}`}
           onClick={() => onChange(Math.min(value + 1, 20))}
           className="bw-qty-b"
+          disabled={disabled}
         >
           <Icon name="plus" size={17} />
         </button>

@@ -63,6 +63,7 @@ import {
   Baby,
   TrendingUp,
   TrendingDown,
+  CreditCard,
   type LucideIcon,
 } from "lucide-react";
 
@@ -84,6 +85,7 @@ const ICONS = {
   "approve-requests": ClipboardCheck,
   documents: FileText,
   finance: Wallet,
+  "credit-card": CreditCard,
   suppliers: Truck,
   reports: BarChart3,
   automations: Zap,

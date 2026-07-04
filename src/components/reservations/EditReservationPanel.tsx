@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { FullWindow } from "@/components/ui/FullWindow";
 import { Icon } from "@/components/shared/Icon";
@@ -14,6 +14,7 @@ import {
 } from "@/app/(dashboard)/reservations/actions";
 import { EDITABLE_STATUSES } from "@/lib/validation/reservation";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
+import { CardFields, EMPTY_CARD, type CardDraft } from "./CardFields";
 import { PaymentBadge, CardTitle, Field } from "./BookingPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
@@ -49,8 +50,11 @@ export function EditReservationPanel({
   const [addPay, setAddPay] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
+  // card details never leave the client (see CardFields security note)
+  const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
   const [saving, startSaving] = useTransition();
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const staysRef = useRef<HTMLElement | null>(null);
 
   const open = reservationId !== null;
 
@@ -97,6 +101,7 @@ export function EditReservationPanel({
       setDiscount(d.discount_amount);
       setAddPay(0);
       setMethod("");
+      setCc(EMPTY_CARD);
       setNotes(d.notes ?? "");
     });
   }, [reservationId]);
@@ -113,7 +118,9 @@ export function EditReservationPanel({
   const total = Math.max(0, roomsTotal - discount + (detail?.extra_charges ?? 0));
   const paidAfter = (detail?.paid_amount ?? 0) + addPay;
 
-  const save = () =>
+  // statusOverride serves the quick actions (e.g. בצע צ׳ק-אין) — same
+  // validated action, same payload, just an explicit status
+  const save = (statusOverride?: (typeof EDITABLE_STATUSES)[number]) =>
     startSaving(async () => {
       if (!detail) return;
       const res = await updateReservationAction({
@@ -126,7 +133,7 @@ export function EditReservationPanel({
           idNumber: guest.idNumber.trim() || undefined,
         },
         sourceId: sourceId || null,
-        status: status as (typeof EDITABLE_STATUSES)[number],
+        status: statusOverride ?? (status as (typeof EDITABLE_STATUSES)[number]),
         rooms: stays.map((s) => ({
           rrId: s.rrId,
           roomId: s.roomId,
@@ -231,7 +238,7 @@ export function EditReservationPanel({
                 type="button"
                 className="bw-btn bw-btn-primary"
                 disabled={saving || !staysValid}
-                onClick={save}
+                onClick={() => save()}
               >
                 <Icon name="check" size={16} />
                 {saving ? "שומר…" : "שמור שינויים"}
@@ -275,12 +282,18 @@ export function EditReservationPanel({
                     onChange={(e) => setGuest({ ...guest, lastName: e.target.value })} />
                 </Field>
                 <Field label="טלפון">
-                  <input className="bw-fld" dir="ltr" value={guest.phone} disabled={!canEdit}
-                    onChange={(e) => setGuest({ ...guest, phone: e.target.value })} />
+                  <div className="bw-fld-wrap">
+                    <Icon name="phone" size={16} className="bw-fi" />
+                    <input className="bw-fld ic" dir="ltr" value={guest.phone} disabled={!canEdit}
+                      onChange={(e) => setGuest({ ...guest, phone: e.target.value })} />
+                  </div>
                 </Field>
                 <Field label="אימייל">
-                  <input className="bw-fld" dir="ltr" type="email" value={guest.email} disabled={!canEdit}
-                    onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
+                  <div className="bw-fld-wrap">
+                    <Icon name="mail" size={16} className="bw-fi" />
+                    <input className="bw-fld ic" dir="ltr" type="email" value={guest.email} disabled={!canEdit}
+                      onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
+                  </div>
                 </Field>
                 <Field label="סטטוס הזמנה">
                   <select className="bw-fld" value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value)}>
@@ -305,7 +318,7 @@ export function EditReservationPanel({
             </section>
 
             {/* stays */}
-            <section className="bw-card">
+            <section ref={staysRef} className="bw-card">
               <CardTitle icon="rooms" title="שהות וחדרים" />
               <div className="flex flex-col gap-4">
                 {stays.map((s, i) => (
@@ -314,6 +327,7 @@ export function EditReservationPanel({
                     index={i}
                     value={s}
                     excludeReservationId={detail.id}
+                    disabled={!canEdit}
                     onChange={(next) => canEdit && setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}
                     onRemove={
                       canEdit && stays.length > 1
@@ -405,24 +419,33 @@ export function EditReservationPanel({
               </div>
 
               {canEdit && (
-                <div className="bw-grid3 mt-5">
-                  <Field label="הנחה (₪)">
-                    <input type="number" min={0} className="bw-fld" value={discount || ""}
-                      placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
-                  </Field>
-                  <Field label="תשלום נוסף (₪)">
-                    <input type="number" min={0} className="bw-fld" value={addPay || ""}
-                      placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
-                  </Field>
-                  <Field label="אמצעי תשלום">
-                    <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
-                      <option value="">בחירה…</option>
-                      {paymentMethods.map((m) => (
-                        <option key={m.id} value={m.key}>{m.label}</option>
-                      ))}
-                    </select>
-                  </Field>
-                </div>
+                <>
+                  <div className="bw-grid3 mt-5">
+                    <Field label="הנחה (₪)">
+                      <input type="number" min={0} className="bw-fld" value={discount || ""}
+                        placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
+                    </Field>
+                    <Field label="תשלום נוסף (₪)">
+                      <input type="number" min={0} className="bw-fld" value={addPay || ""}
+                        placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
+                    </Field>
+                    <Field label="אמצעי תשלום">
+                      <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+                        <option value="">בחירה…</option>
+                        {paymentMethods.map((m) => (
+                          <option key={m.id} value={m.key}>{m.label}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  {method === "credit_card" && (
+                    <CardFields
+                      value={cc}
+                      onChange={setCc}
+                      chargeAmount={Math.max(0, total - paidAfter)}
+                    />
+                  )}
+                </>
               )}
               {detail.payments.length > 0 && (
                 <ul className="mt-5 flex flex-col gap-2 border-t border-line pt-4">
@@ -509,6 +532,40 @@ export function EditReservationPanel({
                 </div>
               </div>
             </div>
+
+            {/* quick actions (reference פעולות מהירות) — only actions the
+                system truly supports: check-in via the same validated save
+                path, and jumping to the room editor. שלח אישור הזמנה is not
+                rendered (no messaging infra — D40). */}
+            {canEdit && (detail.status === "confirmed" || detail.status === "draft") && (
+              <div className="bw-sum">
+                <div className="bw-sum-h">
+                  <Icon name="automations" size={17} className="text-primary" />
+                  פעולות מהירות
+                </div>
+                <div className="bw-sum-b">
+                  <div className="bw-qa">
+                    <button
+                      type="button"
+                      className="bw-qa-btn qg"
+                      disabled={saving || !staysValid}
+                      onClick={() => save("checked_in")}
+                    >
+                      <Icon name="login" size={17} />
+                      בצע צ׳ק-אין
+                    </button>
+                    <button
+                      type="button"
+                      className="bw-qa-btn"
+                      onClick={() => staysRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    >
+                      <Icon name="refresh" size={17} />
+                      העבר לחדר אחר
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {detail.activity.length > 0 && (
               <div className="bw-sum">
