@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
+import { SidePanel } from "@/components/ui/SidePanel";
 import { addDays, dayOfWeek, eachDay, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { bulkUpdateRatesAction } from "./actions";
 import { applyPriceMode } from "@/lib/rates/rules";
@@ -24,12 +25,14 @@ type TriState = "nochange" | "yes" | "no";
 type SuCard = { id: string; code: string; name: string; typeName: string; basePrice: number; roomTypeId: string; pooled: boolean; rooms: number };
 
 export function GroupUpdatePanel({
+  open,
   types,
   from,
   toInclusive,
   presetUnitIds,
   onClose,
 }: {
+  open: boolean;
   types: RateGridType[];
   from: DateOnly;
   toInclusive: DateOnly;
@@ -77,6 +80,16 @@ export function GroupUpdatePanel({
   const [ctd, setCtd] = useState<TriState>("nochange");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Each open may target a different preset (whole grid vs one room-type button);
+  // sync the selection + range when the panel opens so it reflects that trigger.
+  useEffect(() => {
+    if (!open) return;
+    setSelected(new Set(presetUnitIds));
+    setDateFrom(from);
+    setDateTo(toInclusive);
+    setError(null);
+  }, [open, presetUnitIds, from, toInclusive]);
 
   const cards = allCards.filter(
     (c) =>
@@ -148,24 +161,28 @@ export function GroupUpdatePanel({
   }
 
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div
-        className="bg-[var(--color-appbg)] w-full max-w-[980px] max-h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-        dir="rtl"
-      >
-        {/* header */}
-        <div className="flex items-center justify-between gap-3 bg-[var(--color-primary)] text-white px-6 py-4 flex-none">
-          <div>
-            <h2 className="text-lg font-extrabold">עדכון קבוצתי</h2>
-            <p className="text-[12.5px] font-medium text-white/85">עדכון מחיר, זמינות ומגבלות לילות במספר יחידות ותאריכים בבת אחת</p>
-          </div>
-          <button onClick={onClose} className="w-9 h-9 rounded-lg hover:bg-white/15 flex items-center justify-center" aria-label="סגור">
-            <Icon name="close" size={20} />
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="עדכון קבוצתי"
+      subtitle="עדכון מחיר, זמינות ומגבלות לילות במספר יחידות ותאריכים בבת אחת"
+      icon="bulk-update"
+      bodyClassName="p-5 flex flex-col gap-4"
+      footer={
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="h-11 px-5 rounded-xl border-[1.5px] border-[#e4e8f0] text-[13.5px] font-bold text-[var(--color-ink)] hover:bg-[#f5f7fb]">ביטול</button>
+          <button
+            data-testid="gu-apply"
+            onClick={apply}
+            disabled={!canApply}
+            className="flex-1 h-11 rounded-xl bg-[var(--color-primary)] text-white text-[14px] font-extrabold hover:bg-[var(--color-primary-dark)] disabled:opacity-45 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+          >
+            <Icon name="check" size={18} />
+            {busy ? "מעדכן…" : `עדכן ${cellCount} תאים`}
           </button>
         </div>
-
-        <div className="flex-1 min-h-0 overflow-auto p-5 flex flex-col gap-4">
+      }
+    >
           {/* 1 — Sellable Units */}
           <Section n={1} title="יחידות מכירה" badge={`נבחרו ${selected.size} מתוך ${allCards.length}`}>
             <div className="flex items-center gap-2 flex-wrap mb-3">
@@ -293,24 +310,8 @@ export function GroupUpdatePanel({
             )}
           </Section>
 
-          {error && <p className="text-[13px] font-bold text-[var(--color-status-danger)]">{error}</p>}
-        </div>
-
-        {/* footer */}
-        <div className="flex items-center gap-3 px-6 py-4 border-t border-[#eef0f5] bg-white flex-none">
-          <button onClick={onClose} className="h-11 px-5 rounded-xl border-[1.5px] border-[#e4e8f0] text-[13.5px] font-bold text-[var(--color-ink)] hover:bg-[#f5f7fb]">ביטול</button>
-          <button
-            data-testid="gu-apply"
-            onClick={apply}
-            disabled={!canApply}
-            className="flex-1 h-11 rounded-xl bg-[var(--color-primary)] text-white text-[14px] font-extrabold hover:bg-[var(--color-primary-dark)] disabled:opacity-45 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
-          >
-            <Icon name="check" size={18} />
-            {busy ? "מעדכן…" : `עדכן ${cellCount} תאים`}
-          </button>
-        </div>
-      </div>
-    </div>
+      {error && <p className="text-[13px] font-bold text-[var(--color-status-danger)]">{error}</p>}
+    </SidePanel>
   );
 }
 

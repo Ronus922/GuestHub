@@ -82,12 +82,11 @@ export function RateGridScreen({
         <span className="rg-hint">לחיצה על תא לעריכה · Enter לשמירה · Esc לביטול</span>
       </div>
 
-      {groupOpen && (
-        <GroupUpdatePanel
-          types={state.types} from={state.from} toInclusive={state.toInclusive}
-          presetUnitIds={preset} onClose={closeGroupUpdate}
-        />
-      )}
+      <GroupUpdatePanel
+        open={groupOpen}
+        types={state.types} from={state.from} toInclusive={state.toInclusive}
+        presetUnitIds={preset} onClose={closeGroupUpdate}
+      />
     </div>
   );
 }
