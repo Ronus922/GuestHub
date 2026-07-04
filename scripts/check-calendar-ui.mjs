@@ -127,4 +127,43 @@ assert.equal(ix.canDragCard(true, false), true);
 assert.equal(ix.canDragCard(false, false), false, "read-only users get no drag affordance");
 assert.equal(ix.canDragCard(true, true), false, "a card mid-commit cannot be dragged again");
 
+// ============================================================
+// D41 interaction-model rules, asserted against the real sources:
+// informational tooltip + side-panel booking/editing (no full-screen path)
+// ============================================================
+const { readFileSync, existsSync } = await import("node:fs");
+// comments stripped — rules are about code, not the explanatory notes
+const src = (p) => readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+// tooltip is informational only — zero write paths
+const tooltip = src("src/app/(dashboard)/calendar/ReservationTooltip.tsx");
+assert.ok(!tooltip.includes("אישור הזמנה"), "tooltip has NO confirmation button");
+assert.ok(!/updateReservationAction|createReservationAction|cancelReservationAction|Action\(/.test(tooltip),
+  "tooltip calls no server action at all");
+assert.ok(!/useTransition|toast\./.test(tooltip), "tooltip has no mutation/loading state");
+assert.ok(/role="tooltip"/.test(tooltip), "accessibility role preserved");
+assert.ok(/draft/.test(tooltip), "pending/draft badge stays as informational content");
+assert.ok(/room_count > 1/.test(tooltip), "multi-room information preserved");
+assert.ok(/onEdit\(stay\.reservation_id\)/.test(tooltip), "עריכה only hands off to the editor");
+
+// booking + edit flows live in the shared SidePanel shell — no full screen
+assert.ok(!existsSync("src/components/ui/FullWindow.tsx"), "FullWindow was removed");
+const booking = src("src/components/reservations/BookingPanel.tsx");
+const editor = src("src/components/reservations/EditReservationPanel.tsx");
+for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editor]]) {
+  assert.ok(/from "@\/components\/ui\/SidePanel"/.test(s), `${name} renders inside the SidePanel shell`);
+  assert.ok(!/FullWindow/.test(s), `${name} has no full-screen window`);
+  assert.ok(/requestClose/.test(s) && /confirmDiscard/.test(s), `${name} has dirty-state close protection`);
+}
+
+// one open panel at a time — a single source of truth on the screen
+const screen = src("src/app/(dashboard)/calendar/CalendarScreen.tsx");
+assert.ok(/PanelState/.test(screen) && /setPanel\(\{ kind: "edit"/.test(screen) &&
+  /setPanel\(\{ kind: "booking"/.test(screen), "booking/edit/closure share ONE panel state");
+assert.ok(!/FullWindow/.test(screen), "the calendar screen never opens a full-screen window");
+
+// the panel stacks above every calendar layer (tooltip 60, date picker 80)
+const sidePanel = src("src/components/ui/SidePanel.tsx");
+assert.ok(/z-\[90\]/.test(sidePanel), "side panel renders above tooltip/context-menu/date-picker");
+
 console.log("check-calendar-ui: all interaction/geometry rules hold ✔");
