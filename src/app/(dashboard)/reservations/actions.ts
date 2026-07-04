@@ -5,7 +5,7 @@ import type { TransactionSql } from "postgres";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
-import { addDays, eachDay, nightsBetween, rangesOverlap, type DateOnly } from "@/lib/dates";
+import { eachDay, nightsBetween, rangesOverlap, type DateOnly } from "@/lib/dates";
 import {
   checkRoomAvailability,
   lockRooms,
@@ -18,7 +18,6 @@ import {
   capacityViolation,
   effectiveNightlyPrice,
   restrictionViolation,
-  resolveRate,
 } from "@/lib/inventory-rules";
 import { markAriDirty } from "@/lib/channel/outbox";
 import {
@@ -799,30 +798,6 @@ export async function getStayQuoteAction(args: {
         restriction,
       },
     };
-  } catch (e) {
-    return fail(errorMessage(e));
-  }
-}
-
-// Default checkout for an empty-cell double-click: at least one hotel night,
-// stretched to the arrival date's min_nights when one applies (§G).
-export async function getDefaultCheckoutAction(args: {
-  roomId: string;
-  checkIn: DateOnly;
-}): Promise<ActionResult<{ checkOut: DateOnly }>> {
-  try {
-    const actor = await getActor();
-    requirePermission(actor, "reservations.create");
-    const [room] = await sql<{ id: string; room_type_id: string | null }[]>`
-      SELECT id, room_type_id FROM guesthub.rooms
-      WHERE id = ${args.roomId} AND tenant_id = ${actor.tenantId}`;
-    if (!room) return fail("חדר לא נמצא");
-    const rateRows = await getRateRows(
-      sql, actor.tenantId, room.id, room.room_type_id, args.checkIn, args.checkIn,
-    );
-    const arrival = resolveRate(rateRows, args.checkIn, room.id, room.room_type_id);
-    const nights = Math.max(1, arrival?.min_nights ?? 1);
-    return { success: true, data: { checkOut: addDays(args.checkIn, nights) } };
   } catch (e) {
     return fail(errorMessage(e));
   }

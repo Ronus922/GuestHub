@@ -65,14 +65,6 @@ export function todayInTz(timeZone: string): DateOnly {
   return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
 }
 
-export function maxDate(a: DateOnly, b: DateOnly): DateOnly {
-  return a > b ? a : b;
-}
-
-export function minDate(a: DateOnly, b: DateOnly): DateOnly {
-  return a < b ? a : b;
-}
-
 // 0=Sunday … 6=Saturday (timezone-independent for date-only values).
 export function dayOfWeek(d: DateOnly): number {
   return toUtcNoon(d).getUTCDay();
