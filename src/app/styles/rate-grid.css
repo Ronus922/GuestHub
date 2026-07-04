@@ -13,7 +13,9 @@
 
 @layer components {
 
-.rg-wrap { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+/* site page insets — match /calendar (18px off the top nav, 26px sides) so the
+   title/buttons never sit flush against the TopBar (Iron Rule #5: padding) */
+.rg-wrap { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; padding: 18px 26px 14px; }
 
 /* ---------- filter chips ---------- */
 .rg-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
