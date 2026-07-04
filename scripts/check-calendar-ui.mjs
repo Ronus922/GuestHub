@@ -26,10 +26,41 @@ assert.equal(ix.dragActivated(0, -7), true, "past the threshold vertically = dra
 assert.equal(ix.dragActivated(-4, 5), false, "diagonal jitter under threshold = click");
 
 // ---- click vs drag outcomes (§6/§7) ----
-assert.equal(ix.dragEndAction("move", false), "open", "plain click on the card opens the reservation");
+assert.equal(ix.dragEndAction("move", false), "open", "plain click on the card opens the FULL editor");
 assert.equal(ix.dragEndAction("move", true), "commit", "an activated drag commits, never opens");
 assert.equal(ix.dragEndAction("resize", false), "none", "clicking the resize handle NEVER opens");
 assert.equal(ix.dragEndAction("resize", true), "commit");
+assert.equal(ix.dragEndAction("create", false), "none", "a plain click on an empty cell never opens anything");
+assert.equal(ix.dragEndAction("create", true), "commit", "an activated cell drag hands off to the booking window");
+
+// ---- hover tooltip timing (§2): deliberate open, shorter close grace ----
+assert.ok(ix.TOOLTIP_OPEN_MS >= 200 && ix.TOOLTIP_OPEN_MS <= 800, "tooltip opens after a short, deliberate delay");
+assert.ok(ix.TOOLTIP_CLOSE_MS > 0 && ix.TOOLTIP_CLOSE_MS < ix.TOOLTIP_OPEN_MS, "close grace is shorter than the open delay");
+
+// ---- empty-cell selection activation (§4): horizontal-dominant only ----
+assert.equal(ix.createActivated(7, 3), true, "horizontal drag past threshold starts a selection");
+assert.equal(ix.createActivated(-7, 3), true, "both horizontal directions work");
+assert.equal(ix.createActivated(7, 8), false, "vertical-dominant movement is a scroll, not a selection");
+assert.equal(ix.createActivated(5, 0), false, "below the threshold nothing activates");
+
+// ---- empty-cell range target (§4): whole nights, exclusive checkout ----
+let cr = ix.createRangeTarget("2026-07-10", 0);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-10", "2026-07-11", 1], "single cell = one night");
+cr = ix.createRangeTarget("2026-07-10", 2);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-10", "2026-07-13", 3], "dragging left (RTL) selects later nights");
+cr = ix.createRangeTarget("2026-07-10", -2);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-08", "2026-07-11", 3], "dragging right selects earlier nights, anchor stays a night");
+cr = ix.createRangeTarget("2026-07-10", 0, 2);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-10", "2026-07-12", 2], "cell min-stay stretches a single-cell selection");
+
+// ---- selection band geometry: full cells, not mid-cell ----
+let cg = ix.cellRangeGeometry("2026-07-04", 21, "2026-07-08", "2026-07-11");
+assert.ok(Math.abs(cg.start - 4 / 21) < 1e-9, "selection starts at the cell edge");
+assert.ok(Math.abs(cg.width - 3 / 21) < 1e-9, "3 selected nights = exactly 3 whole cells");
+cg = ix.cellRangeGeometry("2026-07-04", 21, "2026-07-01", "2026-07-06");
+assert.equal(cg.start, 0, "selection clips at the visible range start");
+cg = ix.cellRangeGeometry("2026-07-04", 21, "2026-07-20", "2026-08-02");
+assert.ok(Math.abs(cg.start + cg.width - 1) < 1e-9, "selection clips at the visible range end");
 
 // ---- RTL day snapping: dragging left = later dates ----
 assert.equal(ix.snapDayDelta(500, 500, 65), 0);

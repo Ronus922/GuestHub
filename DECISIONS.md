@@ -423,3 +423,50 @@ and release, row-scoped via memo). Wizard/editor moved from the 55% SidePanel to
 reference's full-screen window (FullWindow) — the reference visual for these flows overrides
 the site-wide side-panel rule for the calendar pair only. The reference step-3 credit-card
 form and VAT split were not reproduced (no gateway, no VAT model — no fake data).
+
+## D40 — Phase-3 second correction pass (tooltip, direct edit, range-create, card fields)
+User-directed pass over D39 with new authoritative references (Tooltip.png,
+edit-booking-modal.png, new-booking-step-3, updated booking-window.html, day-header shot).
+INTERACTION MODEL CHANGED: hovering a pill (mouse, 380ms deliberate delay / 140ms leave grace,
+`TOOLTIP_OPEN_MS`/`TOOLTIP_CLOSE_MS`) opens the reference `.pop` card as an interactive
+TOOLTIP (`ReservationTooltip`, renamed from ReservationPopover, with the reference caret);
+CLICKING a pill now opens the FULL edit window directly (click = movement ≤6px; drags and the
+resize handle never open). The tooltip's "אישור הזמנה" button (drafts only, reservations.edit
+only) now EXISTS — supersedes D39's omission — but through the EXISTING validated path:
+getReservationAction + updateReservationAction with status=confirmed (the server re-proves
+availability for draft→confirmed); no new write path was added. SHORTEN-PREVIEW ROOT CAUSE:
+`.cb-resbar:hover/.sel` z-index 4 out-stacked the z-2 ghost, hiding the shorten band beneath
+its own pill (extend bands sat outside the pill, masking the bug); fixed by suppressing pill
+elevation while any drag session is live, plus a red HATCH band for removed nights and an
+invalid state when shortening under the check-in cell's min-stay (same rule the server
+enforces; commit is also client-blocked). EMPTY-CELL RANGE CREATE: pointer-drag across free
+cells (mouse/pen only — touch pans; horizontal-dominant beyond 6px activates, vertical aborts
+— explicit input rule in `createActivated`) paints a dashed brand band over WHOLE day cells
+(`cellRangeGeometry`) with a live nights label, clamps to the cell min-stay, rejects
+occupied/closed ranges (red band + toast, no window), and on valid release opens the wizard
+prefilled (roomId/checkIn/checkOut); no DB writes before the wizard submits. CARD FIELDS
+(supersedes D39's omission per the new reference): step 3 and the edit window's pricing card
+render the reference `.ccbox` (holder, PAN with grouping+Luhn mark, MM/YY, CVV as a password
+input, optional ID) — values live ONLY in transient client state, are NEVER included in any
+action payload (verified live by capturing the save request body), never persisted/logged;
+"סלוק עכשיו" renders permanently disabled with the reference's truthful "טרם בוצע חיוב" hint
+(no gateway → no charge, no fake success); entering card data never affects payment status.
+Step-3 additions: the reference's 4 payment chips drive REAL fields only (unpaid→paid=0,
+paid→paid=total, partial→focuses the amount input, ממתין לאישור→creates the reservation as a
+DRAFT — a status the create action already supports); "מע״מ (17%) — כלול" is a display-only
+line of the VAT portion already inside the total (no VAT model, no pricing change). Edit
+window per edit-booking-modal.png: phone/mail field icons, room rows render as summary +
+"החלף חדר" (select only while switching), quick actions = בצע צ׳ק-אין (same validated save
+with status=checked_in) and העבר לחדר אחר (scrolls to the stays card). UNSUPPORTED reference
+concepts documented and omitted rather than faked: header print/PDF/WhatsApp/email actions,
+"שלח אישור הזמנה" quick action (no messaging infra), an ACTIVE charge button, and בסיס אירוח
+(no board-basis model). TOOLBAR DATE PICKER: the reference bundle has none (nav-only
+rangebox), so a design-language month popover was built (`cb-dpop`): label-button opens it,
+Escape/outside close, day click navigates the board. DAY HEADER scaled to the supplied
+screenshot (row 64px, weekday 11.5px amber on weekends, date 20px/800 in a 34×30 pill).
+RTL BUG FIXED: fixed-position popups computed a physical viewport LEFT but applied it as
+inset-inline-start under dir=rtl, mirroring them across the screen (tooltip, cell context
+menu, closure popover — now physical `left`). Read-only hardening: StayEditor gained a
+`disabled` prop so view-only editors expose zero enabled controls. Perf preserved and
+re-measured on scripted 120-move drags: 59–60fps, worst frame 17–50ms, exactly ONE grid class
+mutation per gesture (the threshold-cross React commit) — pointer moves stay ref+rAF+ghost.
