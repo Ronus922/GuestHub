@@ -53,8 +53,8 @@ NEW_BUILD_ID="$(cat .next/BUILD_ID)"
 # 10. restart ONLY the guesthub process (unrelated PM2 services untouched)
 pm2 restart "$PM2_APP" --update-env || fail "pm2 restart failed"
 
-# verify PM2 is running this exact directory
-RUN_CWD="$(pm2 jlist | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const a=JSON.parse(s).find(p=>p.name===process.env.PM2_APP);process.stdout.write(a?a.pm2_env.pm_cwd:"")})' PM2_APP="$PM2_APP")"
+# verify PM2 is running this exact directory (app name passed as argv[1])
+RUN_CWD="$(pm2 jlist | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=process.argv[1];const a=JSON.parse(s).find(p=>p.name===n);process.stdout.write(a&&a.pm2_env?(a.pm2_env.pm_cwd||""):"")})' "$PM2_APP")"
 [ "$RUN_CWD" = "$PROD_DIR" ] || fail "PM2 cwd is '$RUN_CWD', expected '$PROD_DIR'"
 
 # 11. verify port answers
