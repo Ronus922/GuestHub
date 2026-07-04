@@ -19,6 +19,9 @@
 
 # production
 /build
+# production-runtime marker: created ONLY in /var/www/guesthub-production to
+# make `npm run build` fail-closed there. Must never travel into a feature checkout.
+.production-runtime
 
 # misc
 .DS_Store

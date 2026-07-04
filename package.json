@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "node scripts/prebuild-guard.mjs",
     "build": "next build --turbopack",
+    "deploy:prod": "bash scripts/deploy-production.sh",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
