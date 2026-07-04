@@ -39,11 +39,20 @@ export function PermissionsMatrix({
     () => new Set(grants.map((g) => `${g.role_id}:${g.permission_id}`)),
   );
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [q, setQ] = useState("");
   const [, startTransition] = useTransition();
 
   const groups = useMemo(() => {
+    // Client-only filter over the already-loaded catalog (name or key).
+    const nq = q.trim().toLowerCase();
     const byCat = new Map<string, Permission[]>();
     for (const p of permissions) {
+      if (
+        nq &&
+        !(p.description ?? "").toLowerCase().includes(nq) &&
+        !p.key.toLowerCase().includes(nq)
+      )
+        continue;
       const cat = p.category ?? "אחר";
       if (!byCat.has(cat)) byCat.set(cat, []);
       byCat.get(cat)!.push(p);
@@ -53,7 +62,7 @@ export function PermissionsMatrix({
     return [...byCat.entries()].sort(
       (a, b) => categoryIndex(a[0]) - categoryIndex(b[0]),
     );
-  }, [permissions]);
+  }, [permissions, q]);
 
   const countByRole = useMemo(() => {
     const counts = new Map<string, number>();
@@ -100,17 +109,33 @@ export function PermissionsMatrix({
 
   return (
     <div className="flex h-full flex-col gap-6 p-6 lg:p-8">
-      <div className="flex flex-none flex-col gap-1.5">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-extrabold tracking-tight text-ink">הרשאות</h1>
-          <span className="rounded-lg bg-primary-050 px-3 py-1 text-[13px] font-bold text-primary">
-            {permissions.length} הרשאות · {roles.length} תפקידים
-          </span>
+      <div className="flex flex-none flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-extrabold tracking-tight text-ink">הרשאות</h1>
+            <span className="rounded-lg bg-primary-050 px-3 py-1 text-[13px] font-bold text-primary">
+              {permissions.length} הרשאות · {roles.length} תפקידים
+            </span>
+          </div>
+          <p className="text-[13px] font-medium text-muted">
+            מטריצת הרשאות לפי תפקיד. שינויים נכנסים לתוקף בבקשה הבאה של המשתמש, ללא צורך
+            בהתחברות מחדש. עמודות מנהל-על ואדמין נעולות — גישה מלאה.
+          </p>
         </div>
-        <p className="text-[13px] font-medium text-muted">
-          מטריצת הרשאות לפי תפקיד. שינויים נכנסים לתוקף בבקשה הבאה של המשתמש, ללא צורך
-          בהתחברות מחדש. עמודות מנהל-על ואדמין נעולות — גישה מלאה.
-        </p>
+        <div className="relative ms-auto w-full sm:w-[300px]">
+          <Icon
+            name="search"
+            size={18}
+            className="pointer-events-none absolute start-0 top-1/2 ms-3 -translate-y-1/2 text-faint"
+          />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="חיפוש הרשאה…"
+            className="field h-11 min-h-0 ps-11 pe-4 text-sm"
+            aria-label="חיפוש הרשאה"
+          />
+        </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
@@ -124,7 +149,7 @@ export function PermissionsMatrix({
                 {roles.map((role) => (
                   <th
                     key={role.id}
-                    className="sticky top-0 z-20 border-b border-line bg-surface px-3 py-3 text-center"
+                    className="sticky top-0 z-20 border-b border-e border-b-line border-e-line/50 bg-surface px-3 py-3 text-center last:border-e-0"
                   >
                     <div className="flex flex-col items-center gap-1.5">
                       <div>
@@ -149,6 +174,16 @@ export function PermissionsMatrix({
               </tr>
             </thead>
             <tbody>
+              {groups.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={roles.length + 1}
+                    className="px-5 py-10 text-center text-sm font-medium text-muted"
+                  >
+                    אין הרשאות תואמות לחיפוש „{q.trim()}”
+                  </td>
+                </tr>
+              ) : null}
               {groups.map(([cat, perms]) => (
                 <CategoryGroup
                   key={cat}
@@ -176,7 +211,10 @@ export function PermissionsMatrix({
                         const editable = canUpdate && !isProtected;
                         const busy = pending.has(`${role.id}:${perm.id}`);
                         return (
-                          <td key={key} className="px-3 py-2.5 text-center">
+                          <td
+                            key={key}
+                            className="border-e border-e-line/50 px-3 py-2.5 text-center last:border-e-0"
+                          >
                             <Cell
                               on={on}
                               editable={editable}
@@ -280,7 +318,7 @@ function Cell({
       disabled={!editable || busy}
       onClick={onToggle}
       title={protectedCol ? "גישה מלאה — לקריאה בלבד" : editable ? "" : "אין הרשאת עריכה"}
-      className={`relative grid h-6 w-6 place-items-center rounded-lg border-[1.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 ${
+      className={`relative mx-auto grid h-6 w-6 place-items-center rounded-lg border-[1.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 ${
         on
           ? protectedCol
             ? "border-primary-100 bg-primary-100 text-primary/60"
