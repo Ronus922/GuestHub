@@ -397,3 +397,29 @@ booking flow, exercised move/resize/invalid-drop/status-edit against it, then CA
 the real cancel flow — it remains in the DB as a cancelled reservation with its ₪300 payment
 row and full audit trail (nothing was deleted; seed was not run). A test closure on room 102
 was created and removed through the UI. Proof screenshots: docs/proof/phase-3-*.png.
+
+## D39 — Phase-3 visual/interaction correction pass (reference-exact board)
+The /calendar board, booking wizard and edit window were rebuilt pixel-close to the rendered
+references (ref/html/rooms-calendar.html + booking-window.html, ref/screens/edit-booking-modal,
+new-booking-step-*, Tooltip.png), whose computed CSS was extracted from the live pages and
+ported 1:1 into `app/styles/calendar.css` (`cb-*`) and `app/styles/booking-window.css` (`bw-*`).
+Geometry is now FRACTION-based like the reference (equal-width flex day columns; pills at
+`(nights(from,ci)+0.5)/days → (nights(from,co)+0.5)/days` of the strip), all computed by ONE
+pure module `src/lib/calendar-interactions.ts` shared by committed pills, drag ghosts and
+resize previews — checked by `scripts/check-calendar-ui.mjs` (which caught a real half-column
+checkout-edge bug during the pass). Card color = PAYMENT state only, using the exact reference
+families (paid `#DFF2E7/#4FB47E/#0F6B3C`, partial `#EAF7EE/#93D3A5/#1F7A3D`, unpaid
+`#FDEBEC/#EFA3A9/#B4232D`); checked-out stays use the reference's neutral gray family
+(`#EAEEF4/#AEBACB/#3C4A5E`), drafts render dashed. The legend keeps only the four chips our
+data model really has (הכל + three derived payment states) — the reference's extra
+transfer/failed/refunded chips would fabricate unsupported payment states. Click opens the
+reference popover (`.cb-pop`, 316px, avatar/badge/rows/עריכה); עריכה opens the full-screen
+edit window; the popover's "אישור הזמנה" button for pending bookings was deliberately NOT
+added because draft→confirmed changes inventory consumption and would need a new write path
+(the editor's status field, fully validated server-side, covers it). Drag is pointer-captured
+on the card, threshold 6px, rAF-throttled, and paints ONLY an imperative transform-positioned
+ghost — zero React renders per pointer move (React renders happen exactly at threshold-cross
+and release, row-scoped via memo). Wizard/editor moved from the 55% SidePanel to the
+reference's full-screen window (FullWindow) — the reference visual for these flows overrides
+the site-wide side-panel rule for the calendar pair only. The reference step-3 credit-card
+form and VAT split were not reproduced (no gateway, no VAT model — no fake data).
