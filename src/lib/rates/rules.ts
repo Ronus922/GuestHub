@@ -76,6 +76,38 @@ export function stayRestrictionViolation(
   return null;
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// Resolve the committed price for ONE stay (§6). Precedence:
+//   1. manual override — an explicit authorized rate, always honored;
+//   2. committed snapshot — a confirmed stay whose price basis (room + dates)
+//      is unchanged keeps its stored price and is NEVER re-priced from the
+//      current rate table, so a guest-agreed total can't drift when rates
+//      change later (snapshot.priceTotal preserves exact per-night variation);
+//   3. otherwise auto-price from the CURRENT rate table (autoTotal = the sum of
+//      the nightly prices the caller already resolved).
+export function resolveStayPrice(input: {
+  nights: number;
+  isManualRate: boolean;
+  manualRatePerNight?: number | null;
+  snapshot?: { ratePerNight: number; priceTotal?: number } | null;
+  autoTotal: number;
+}): { ratePerNight: number; priceTotal: number } {
+  const { nights } = input;
+  if (input.isManualRate) {
+    const r = input.manualRatePerNight ?? 0;
+    return { ratePerNight: r, priceTotal: r * nights };
+  }
+  if (input.snapshot) {
+    const r = input.snapshot.ratePerNight;
+    return { ratePerNight: r, priceTotal: input.snapshot.priceTotal ?? round2(r * nights) };
+  }
+  return {
+    ratePerNight: nights > 0 ? round2(input.autoTotal / nights) : 0,
+    priceTotal: input.autoTotal,
+  };
+}
+
 // Group-Update price modes (§7b). An undefined field = "don't touch" and is
 // handled by the caller; this only computes a touched price. Clamps at 0 and
 // rounds to cents. current=null falls back to the base price.

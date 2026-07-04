@@ -15,7 +15,7 @@ import {
 } from "@/lib/inventory";
 import { capacityViolation } from "@/lib/inventory-rules";
 import { getRoomPlanRates, getRoomStayRates } from "@/lib/rates/effective-state";
-import { indexByDate, planNightlyPrice, stayRestrictionViolation } from "@/lib/rates/rules";
+import { indexByDate, planNightlyPrice, resolveStayPrice, stayRestrictionViolation } from "@/lib/rates/rules";
 import { markAriDirty } from "@/lib/channel/outbox";
 import {
   createReservationSchema,
@@ -101,6 +101,12 @@ async function validateAndPriceStays(
     enforceAvailability: boolean;
     enforceRestrictions: boolean;
     skipChecksForRr?: Set<string>;
+    // §6 committed-price snapshot: rrId → its stored rate. A non-manual stay
+    // listed here keeps this committed price instead of being re-priced from the
+    // CURRENT rate table, so a confirmed guest-agreed total never drifts when
+    // rates change later. priceTotal (when given) preserves the exact stored
+    // total incl. per-night variation; omit it to re-derive from the nightly.
+    snapshotByRr?: Map<string, { ratePerNight: number; priceTotal?: number }>;
   },
 ): Promise<PricedStay[]> {
   assertNoInternalOverlap(stays);
@@ -152,18 +158,20 @@ async function validateAndPriceStays(
     // being present — the edit panel resubmits the stored rate on every save,
     // which must NOT silently flag every edited stay as a manual override.
     const isManualRate = stay.isManualRate ?? false;
-    let priceTotal: number;
-    let ratePerNight: number;
-    if (isManualRate) {
-      ratePerNight = stay.ratePerNight!;
-      priceTotal = ratePerNight * nights;
-    } else {
-      priceTotal = eachDay(stay.checkIn, stay.checkOut).reduce(
-        (sum, d) => sum + planNightlyPrice(byDate, d, rp.basePrice),
-        0,
-      );
-      ratePerNight = nights > 0 ? Math.round((priceTotal / nights) * 100) / 100 : 0;
-    }
+    // A stay whose price basis (room + dates) is unchanged keeps its committed
+    // snapshot rather than being re-priced from CURRENT rates (§6).
+    const snapshot = stay.rrId != null ? opts.snapshotByRr?.get(stay.rrId) : undefined;
+    const autoTotal = eachDay(stay.checkIn, stay.checkOut).reduce(
+      (sum, d) => sum + planNightlyPrice(byDate, d, rp.basePrice),
+      0,
+    );
+    const { ratePerNight, priceTotal } = resolveStayPrice({
+      nights,
+      isManualRate,
+      manualRatePerNight: stay.ratePerNight,
+      snapshot,
+      autoTotal,
+    });
     priced.push({ ...stay, ratePerNight, priceTotal, nights, isManualRate });
   }
   return priced;
@@ -351,11 +359,12 @@ export async function updateReservationAction(
       const oldRows = await tx<
         { id: string; room_id: string | null; check_in: string; check_out: string;
           adults: number; children: number; infants: number; room_type_id: string | null;
-          is_manual_rate: boolean; rate_per_night: number }[]
+          is_manual_rate: boolean; rate_per_night: number; price_total: number }[]
       >`
         SELECT rr.id, rr.room_id, rr.check_in::text, rr.check_out::text,
                rr.adults, rr.children, rr.infants, r.room_type_id,
-               rr.is_manual_rate, rr.rate_per_night::float8 AS rate_per_night
+               rr.is_manual_rate, rr.rate_per_night::float8 AS rate_per_night,
+               rr.price_total::float8 AS price_total
         FROM guesthub.reservation_rooms rr
         LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
         WHERE rr.reservation_id = ${input.id} AND rr.tenant_id = ${actor.tenantId}`;
@@ -396,6 +405,20 @@ export async function updateReservationAction(
       // availability for ALL stays, even untouched ones
       if (!wasBlocking && nowBlocking) skipChecksForRr.clear();
 
+      // §6 committed-price snapshot: a non-manual stay whose room + dates are
+      // unchanged keeps its stored price (never re-priced from current rates);
+      // only genuinely re-dated / re-roomed stays are re-priced. Confirming a
+      // draft does NOT re-price an otherwise-unchanged stay.
+      const snapshotByRr = new Map<string, { ratePerNight: number; priceTotal: number }>();
+      for (const s of input.rooms) {
+        if (!s.rrId) continue;
+        const old = oldById.get(s.rrId);
+        if (!old || s.isManualRate) continue;
+        if (old.room_id === s.roomId && old.check_in === s.checkIn && old.check_out === s.checkOut) {
+          snapshotByRr.set(s.rrId, { ratePerNight: old.rate_per_night, priceTotal: old.price_total });
+        }
+      }
+
       const allRoomIds = [
         ...new Set([
           ...input.rooms.map((s) => s.roomId),
@@ -409,6 +432,7 @@ export async function updateReservationAction(
         enforceAvailability: nowBlocking,
         enforceRestrictions: nowBlocking,
         skipChecksForRr,
+        snapshotByRr,
       });
 
       const guestId = await upsertGuest(tx, actor.tenantId, {
@@ -601,6 +625,10 @@ export async function rescheduleReservationRoomAction(raw: {
       await lockRooms(tx, actor.tenantId, lockIds);
 
       const blocking = isBlocking(rr.status);
+      // date-only move (same room) keeps the committed nightly rate — the
+      // guest-agreed price (§6); a room change re-prices from the target room's
+      // rates. The committed rate is pinned via the snapshot, never re-derived.
+      const sameRoom = rr.room_id === input.targetRoomId;
       const priced = await validateAndPriceStays(
         tx,
         actor.tenantId,
@@ -612,14 +640,14 @@ export async function rescheduleReservationRoomAction(raw: {
           adults: rr.adults,
           children: rr.children,
           infants: rr.infants,
-          // room change → reprice from the target room's rates; date-only
-          // change keeps the committed nightly rate (guest-agreed price)
-          ratePerNight: rr.room_id === input.targetRoomId ? Number(rr.rate_per_night) : undefined,
         }],
         {
           excludeRrIds: [rr.id],
           enforceAvailability: true, // even drafts must not be dropped onto closures/unsellable rooms
           enforceRestrictions: blocking,
+          snapshotByRr: sameRoom
+            ? new Map([[rr.id, { ratePerNight: Number(rr.rate_per_night) }]])
+            : undefined,
         },
       );
       const s = priced[0];
