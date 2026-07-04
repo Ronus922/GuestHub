@@ -36,6 +36,9 @@ export type RateGridUnit = {
   roomTypeName: string | null;
   basePrice: number;
   hasBasePlan: boolean;
+  // Count of dates in the visible window this unit is commercially closed
+  // (stop_sell) — the reference "N סגורים" descriptor badge.
+  closedCount: number;
   cells: RateCellState[];
 };
 

@@ -163,6 +163,7 @@ export async function getRateGridState(
       roomTypeName: u.room_type_name,
       basePrice: u.base_price,
       hasBasePlan: !!u.plan_id,
+      closedCount: cells.reduce((n, c) => n + (c.stopSell ? 1 : 0), 0),
       cells,
     };
   });

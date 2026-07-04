@@ -149,6 +149,7 @@ export function RateGrid({
                         <span className="rg-unum">{unit.code}</span>
                         <span className="rg-utype">{unit.roomTypeName}</span>
                         {unit.isPooled && <span className="rg-badge pool">מאגר · {unit.roomCount}</span>}
+                        {unit.closedCount > 0 && <span className="rg-badge closed">{unit.closedCount} סגורים</span>}
                         {!unit.hasBasePlan && <span className="rg-badge warn">ללא תוכנית</span>}
                       </div>
                       <div className="rg-cells">

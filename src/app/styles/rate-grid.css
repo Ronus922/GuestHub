@@ -120,6 +120,7 @@
 .rg-badge.pool { color: var(--color-primary); background: var(--color-primary-050); }
 .rg-badge.warn { color: #b4670a; background: #fbf1e0; }
 .rg-badge.blk { color: #a23b52; background: #fbe9ee; }
+.rg-badge.closed { color: #a23b52; background: #fbe9ee; }
 
 .rg-mrow2 { height: 24px; }
 .rg-mrow2 .rg-lab { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
@@ -143,9 +144,15 @@
 .rg-num { font-size: 11px; font-weight: 800; color: #5b6478; }
 .rg-dash { color: #d7dce6; font-size: 11px; font-weight: 700; }
 .rg-blk { color: #98a0b2; }
-.rg-flag { display: inline-flex; }
-.rg-flag.sell { color: #c0455b; }
-.rg-flag.cta { color: #b4670a; }
+/* CTA/CTD/stop-sell flags render as filled rounded chips (reference), each with
+   its own hue: CTA amber, CTD purple, stop-sell red. */
+.rg-flag {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 16px; border-radius: 5px;
+}
+.rg-flag.sell { color: #c0455b; background: #fbe9ee; }
+.rg-flag.cta { color: #b4670a; background: #fbf1e0; }
+.rg-flag.ctd { color: #6b27d6; background: #f0eafc; }
 
 .rg-input {
   width: 82%; height: 22px; border: 1.5px solid var(--color-primary); border-radius: 5px;

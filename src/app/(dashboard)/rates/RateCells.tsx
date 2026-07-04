@@ -111,7 +111,7 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
       onClick={ctx.editable ? () => ctx.toggleBool(unit, field, cell.date, on) : undefined}
       title={on ? "פעיל · לחיצה לביטול" : ctx.editable ? "לחיצה להפעלה" : undefined}
     >
-      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : "cta"}`}><Icon name={iconName} size={12} /></span> : <span className="rg-dash">—</span>}
+      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={12} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }
