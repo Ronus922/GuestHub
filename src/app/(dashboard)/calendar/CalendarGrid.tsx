@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import {
@@ -18,6 +18,18 @@ import {
   type PaymentState,
   type RateRow,
 } from "@/lib/inventory-rules";
+import {
+  barGeometry,
+  canDragCard,
+  dragActivated,
+  dragEndAction,
+  moveTarget,
+  resizeDeltaRange,
+  resizeTarget,
+  snapDayDelta,
+  snapRowDelta,
+  type DragMode,
+} from "@/lib/calendar-interactions";
 import { rescheduleReservationRoomAction } from "@/app/(dashboard)/reservations/actions";
 import { deleteClosureAction } from "./actions";
 import type {
@@ -25,55 +37,56 @@ import type {
   CalendarData,
   CalendarRoom,
   CalendarStay,
-  CalendarView,
 } from "./types";
 import type { BookingPrefill } from "@/components/reservations/BookingPanel";
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
+import { ReservationPopover, type PopoverTarget } from "./ReservationPopover";
 
-// ---- geometry ----
-const ROOM_COL = 190;
+// ---- geometry (reference: 176px room column, 56px rows, 38px pills) ----
+const ROOM_COL = 176;
 const ROW_H = 56;
-const COL_W: Record<CalendarView, number> = { week: 150, "3w": 96, month: 84 };
+const BAR_TOP = 9;
 
-// payment-state pill colors — DESIGN_SYSTEM §1 status table, no invented hex
-const PAY_STYLE: Record<PaymentState, { bg: string; bd: string; tx: string }> = {
-  unpaid: { bg: "#FDECEC", bd: "#F4B9B9", tx: "#B4231F" },
-  partial: { bg: "#E4F6EE", bd: "#A6E2CC", tx: "#0B7355" },
-  paid: { bg: "#E7F6EC", bd: "#AADDB7", tx: "#15803D" },
+// Payment-state pill palettes — extracted from the rendered reference
+// (ref/html/rooms-calendar.html): bg / border / text per family.
+export const PAY_STYLE: Record<PaymentState, { bg: string; bd: string; tx: string }> = {
+  unpaid: { bg: "#FDEBEC", bd: "#EFA3A9", tx: "#B4232D" },
+  partial: { bg: "#EAF7EE", bd: "#93D3A5", tx: "#1F7A3D" },
+  paid: { bg: "#DFF2E7", bd: "#4FB47E", tx: "#0F6B3C" },
 };
+// Departed stays use the reference's neutral gray family (רון פרידמן card).
+const PAST_STYLE = { bg: "#EAEEF4", bd: "#AEBACB", tx: "#3C4A5E" };
 
-type DragState =
-  | {
-      mode: "move";
-      stay: CalendarStay;
-      roomIndex: number;
-      startX: number;
-      startY: number;
-      dayDelta: number;
-      roomDelta: number;
-      active: boolean; // passed the movement threshold
-    }
-  | {
-      mode: "resize";
-      stay: CalendarStay;
-      roomIndex: number;
-      startX: number;
-      startY: number;
-      dayDelta: number;
-      active: boolean;
-    };
+export function stayPalette(stay: Pick<CalendarStay, "status" | "payment">) {
+  return stay.status === "checked_out" ? PAST_STYLE : PAY_STYLE[stay.payment];
+}
 
 type ContextMenu = { x: number; y: number; roomId: string; date: DateOnly };
 type ClosurePopover = { x: number; y: number; id: string; label: string };
+
+// Live drag session — kept OUT of React state so pointer movement never
+// re-renders the grid; only the ghost node is mutated (rAF-throttled).
+type DragSession = {
+  mode: DragMode;
+  stay: CalendarStay;
+  roomIndex: number;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+  colW: number;
+  stripWidth: number;
+  activated: boolean;
+  raf: number;
+};
 
 const isBlocking = (s: string) => (INVENTORY_BLOCKING_STATUSES as readonly string[]).includes(s);
 
 export function CalendarGrid({
   data,
-  view,
   paymentFilter,
-  statusColor,
   statusLabel,
   can,
   onOpenReservation,
@@ -81,26 +94,29 @@ export function CalendarGrid({
   onNewClosure,
 }: {
   data: CalendarData;
-  view: CalendarView;
   paymentFilter: PaymentState | "all";
-  statusColor: Map<string, string>;
   statusLabel: Map<string, string>;
   can: CalendarCan;
   onOpenReservation: (id: string) => void;
   onNewBooking: (prefill: BookingPrefill) => void;
   onNewClosure: (prefill: ClosurePrefill) => void;
 }) {
-  const colW = COL_W[view];
-  const dates = useMemo(() => eachDay(data.from, addDays(data.from, data.days)), [data.from, data.days]);
-  const lastVisible = dates[dates.length - 1];
-  const bodyW = data.days * colW;
+  const dates = useMemo(
+    () => eachDay(data.from, addDays(data.from, data.days)),
+    [data.from, data.days],
+  );
 
-  const [drag, setDrag] = useState<DragState | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [closurePop, setClosurePop] = useState<ClosurePopover | null>(null);
-  const dragRef = useRef<DragState | null>(null);
-  dragRef.current = drag;
+  const [popover, setPopover] = useState<PopoverTarget | null>(null);
+  // set once when the movement threshold is crossed, cleared on release —
+  // NOT updated per pointer move (that path is ref + rAF + DOM only).
+  const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
+
+  const sessionRef = useRef<DragSession | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const ghostRef = useRef<HTMLDivElement | null>(null);
 
   const staysByRoom = useMemo(() => {
     const m = new Map<string, CalendarStay[]>();
@@ -133,108 +149,221 @@ export function CalendarGrid({
     return { room, type };
   }, [data.rates]);
 
-  const cellRate = (roomItem: CalendarRoom, date: DateOnly): RateRow | undefined =>
-    rateIdx.room.get(`${roomItem.id}|${date}`) ??
-    (roomItem.room_type_id ? rateIdx.type.get(`${roomItem.room_type_id}|${date}`) : undefined);
+  const cellRate = useCallback(
+    (roomItem: CalendarRoom, date: DateOnly): RateRow | undefined =>
+      rateIdx.room.get(`${roomItem.id}|${date}`) ??
+      (roomItem.room_type_id ? rateIdx.type.get(`${roomItem.room_type_id}|${date}`) : undefined),
+    [rateIdx],
+  );
 
   // ---- client-side collision PREVIEW (visual only — the server re-validates
   // everything inside a transaction before any commit, §I) ----
-  const previewInvalid = (
-    stay: CalendarStay,
-    targetRoom: CalendarRoom,
-    ci: DateOnly,
-    co: DateOnly,
-  ): boolean => {
-    if (targetRoom.status !== "available" || !targetRoom.is_active) return true;
-    if (stay.adults + stay.children > targetRoom.max_occupancy) return true;
-    for (const other of staysByRoom.get(targetRoom.id) ?? []) {
-      if (other.rr_id === stay.rr_id) continue;
-      if (!isBlocking(other.status)) continue;
-      if (other.check_in < co && other.check_out > ci) return true;
-    }
-    for (const c of closuresByRoom.get(targetRoom.id) ?? []) {
-      if (c.start_date < co && c.end_date > ci) return true;
-    }
-    return false;
-  };
-
-  // ---- drag wiring (move + resize) ----
-  useEffect(() => {
-    if (!drag) return;
-    const onMove = (e: PointerEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      const dx = d.startX - e.clientX; // RTL: leftwards = later dates
-      const dy = e.clientY - d.startY;
-      const dayDelta = Math.round(dx / colW);
-      const active = d.active || Math.abs(dx) > 6 || Math.abs(dy) > 6;
-      if (d.mode === "move") {
-        const roomDelta = Math.round(dy / ROW_H);
-        setDrag({ ...d, dayDelta, roomDelta, active });
-      } else {
-        setDrag({ ...d, dayDelta, active });
+  const previewInvalid = useCallback(
+    (stay: CalendarStay, targetRoom: CalendarRoom, ci: DateOnly, co: DateOnly): boolean => {
+      if (targetRoom.status !== "available" || !targetRoom.is_active) return true;
+      if (stay.adults + stay.children > targetRoom.max_occupancy) return true;
+      for (const other of staysByRoom.get(targetRoom.id) ?? []) {
+        if (other.rr_id === stay.rr_id) continue;
+        if (!isBlocking(other.status)) continue;
+        if (other.check_in < co && other.check_out > ci) return true;
       }
-    };
-    const onUp = async () => {
-      const d = dragRef.current;
-      setDrag(null);
-      if (!d) return;
-      if (!d.active) {
-        // plain click — open the existing reservation flow (§F)
-        onOpenReservation(d.stay.reservation_id);
+      for (const c of closuresByRoom.get(targetRoom.id) ?? []) {
+        if (c.start_date < co && c.end_date > ci) return true;
+      }
+      return false;
+    },
+    [staysByRoom, closuresByRoom],
+  );
+
+  // ---- ghost rendering (direct DOM, rAF-throttled — zero React work) ----
+  const paintGhost = useCallback(() => {
+    const s = sessionRef.current;
+    const ghost = ghostRef.current;
+    const body = bodyRef.current;
+    if (!s || !ghost || !body || !s.activated) return;
+
+    const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
+    if (s.mode === "move") {
+      const roomDelta = snapRowDelta(s.startY, s.lastY, ROW_H);
+      const t = moveTarget(s.stay, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
+      const geo = barGeometry(data.from, data.days, t.ci, t.co);
+      const targetRoom = data.rooms[t.roomIndex];
+      const invalid = previewInvalid(s.stay, targetRoom, t.ci, t.co);
+      // physical left inside the body: strips sit left of the sticky RTL
+      // room column, so x = stripWidth * (1 - start - width)
+      const x = s.stripWidth * (1 - geo.start - geo.width);
+      const y = t.roomIndex * ROW_H + BAR_TOP;
+      ghost.style.width = `${geo.width * s.stripWidth}px`;
+      ghost.style.transform = `translate(${x}px, ${y}px)`;
+      ghost.dataset.invalid = invalid ? "true" : "false";
+      ghost.classList.remove("rsz");
+      ghost.classList.add("live");
+    } else {
+      const t = resizeTarget(s.stay, dayDelta);
+      const delta = resizeDeltaRange(s.stay, t.co);
+      if (!delta) {
+        ghost.classList.remove("live");
         return;
       }
-      const commit = computeDragTarget(d);
-      if (!commit) return;
-      const { targetRoom, ci, co, changed } = commit;
+      const geo = barGeometry(data.from, data.days, delta.from, delta.to);
+      const invalid =
+        delta.extending &&
+        previewInvalid(s.stay, data.rooms[s.roomIndex], delta.from, delta.to);
+      const x = s.stripWidth * (1 - geo.start - geo.width);
+      const y = s.roomIndex * ROW_H + BAR_TOP;
+      ghost.style.width = `${geo.width * s.stripWidth}px`;
+      ghost.style.transform = `translate(${x}px, ${y}px)`;
+      ghost.dataset.kind = delta.extending ? "extend" : "shorten";
+      ghost.dataset.invalid = invalid ? "true" : "false";
+      ghost.classList.add("rsz", "live");
+    }
+  }, [data.from, data.days, data.rooms, previewInvalid]);
+
+  const endDrag = useCallback(() => {
+    const s = sessionRef.current;
+    sessionRef.current = null;
+    if (s?.raf) cancelAnimationFrame(s.raf);
+    ghostRef.current?.classList.remove("live");
+    setDragUi(null);
+  }, []);
+
+  // Escape cancels a live drag (§4) — listener exists only while dragging.
+  useEffect(() => {
+    if (!dragUi) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") endDrag();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [dragUi, endDrag]);
+
+  const commitDrag = useCallback(
+    async (s: DragSession) => {
+      const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
+      let targetRoom: CalendarRoom;
+      let ci: DateOnly;
+      let co: DateOnly;
+      let changed: boolean;
+      if (s.mode === "move") {
+        const roomDelta = snapRowDelta(s.startY, s.lastY, ROW_H);
+        const t = moveTarget(s.stay, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
+        targetRoom = data.rooms[t.roomIndex];
+        ci = t.ci;
+        co = t.co;
+        changed = t.changed || targetRoom.id !== s.stay.room_id;
+      } else {
+        const t = resizeTarget(s.stay, dayDelta);
+        targetRoom = data.rooms[s.roomIndex];
+        ci = t.ci;
+        co = t.co;
+        changed = t.changed;
+      }
       if (!changed) return;
-      if (previewInvalid(d.stay, targetRoom, ci, co)) {
+      if (previewInvalid(s.stay, targetRoom, ci, co)) {
         toast.error("היעד אינו זמין — הפעולה בוטלה");
         return;
       }
-      setPending((p) => new Set(p).add(d.stay.rr_id));
+      setPending((p) => new Set(p).add(s.stay.rr_id));
       const res = await rescheduleReservationRoomAction({
-        rrId: d.stay.rr_id,
+        rrId: s.stay.rr_id,
         targetRoomId: targetRoom.id,
         checkIn: ci,
         checkOut: co,
       });
       setPending((p) => {
         const n = new Set(p);
-        n.delete(d.stay.rr_id);
+        n.delete(s.stay.rr_id);
         return n;
       });
-      if (res.success) toast.success(d.mode === "move" ? "ההזמנה הועברה" : "התאריכים עודכנו");
+      if (res.success) toast.success(s.mode === "move" ? "ההזמנה הועברה" : "התאריכים עודכנו");
       else toast.error(res.error);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp, { once: true });
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag !== null, colW]);
+    },
+    [data.rooms, previewInvalid],
+  );
 
-  const computeDragTarget = (d: DragState) => {
-    if (d.mode === "move") {
-      const targetIdx = Math.min(Math.max(d.roomIndex + d.roomDelta, 0), data.rooms.length - 1);
-      const targetRoom = data.rooms[targetIdx];
-      const ci = addDays(d.stay.check_in, d.dayDelta);
-      const co = addDays(d.stay.check_out, d.dayDelta);
-      return {
-        targetRoom,
-        ci,
-        co,
-        changed: d.dayDelta !== 0 || targetRoom.id !== d.stay.room_id,
+  const openPopover = useCallback(
+    (stay: CalendarStay, room: CalendarRoom, anchor: DOMRect) => {
+      if (!can.viewReservation) return;
+      setMenu(null);
+      setClosurePop(null);
+      setPopover({ stay, room, anchor: { x: anchor.left + anchor.width / 2, top: anchor.top, bottom: anchor.bottom } });
+    },
+    [can.viewReservation],
+  );
+
+  // ---- pointer wiring (handlers live ON the card via pointer capture —
+  // no document-level listeners, nothing leaks) ----
+  const onBarPointerDown = useCallback(
+    (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => {
+      if (!canDragCard(can.edit, pending.has(stay.rr_id))) return;
+      if (e.button !== 0) return;
+      e.preventDefault();
+      setMenu(null);
+      setClosurePop(null);
+      setPopover(null);
+      const body = bodyRef.current;
+      if (!body) return;
+      const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      sessionRef.current = {
+        mode,
+        stay,
+        roomIndex,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        colW: stripWidth / data.days,
+        stripWidth,
+        activated: false,
+        raf: 0,
       };
-    }
-    const targetRoom = data.rooms[d.roomIndex];
-    const co = maxDateOnly(addDays(d.stay.check_out, d.dayDelta), addDays(d.stay.check_in, 1));
-    return { targetRoom, ci: d.stay.check_in, co, changed: co !== d.stay.check_out };
-  };
+    },
+    [can.edit, pending, data.days],
+  );
 
-  // dismiss popovers on outside click / escape
+  const onBarPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const s = sessionRef.current;
+      if (!s || e.pointerId !== s.pointerId) return;
+      s.lastX = e.clientX;
+      s.lastY = e.clientY;
+      if (!s.activated) {
+        if (!dragActivated(e.clientX - s.startX, e.clientY - s.startY)) return;
+        s.activated = true;
+        setDragUi({ mode: s.mode, rrId: s.stay.rr_id });
+      }
+      if (!s.raf) {
+        s.raf = requestAnimationFrame(() => {
+          if (sessionRef.current === s) {
+            s.raf = 0;
+            paintGhost();
+          }
+        });
+      }
+    },
+    [paintGhost],
+  );
+
+  const onBarPointerUp = useCallback(
+    (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => {
+      const s = sessionRef.current;
+      if (!s || e.pointerId !== s.pointerId) return;
+      const action = dragEndAction(s.mode, s.activated);
+      const anchor = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      endDrag();
+      if (action === "open") openPopover(stay, room, anchor);
+      else if (action === "commit") void commitDrag(s);
+    },
+    [endDrag, openPopover, commitDrag],
+  );
+
+  const onBarPointerCancel = useCallback(() => {
+    if (sessionRef.current) endDrag();
+  }, [endDrag]);
+
+  // dismiss context menus on outside click / escape
   useEffect(() => {
     if (!menu && !closurePop) return;
     const close = () => {
@@ -250,23 +379,61 @@ export function CalendarGrid({
     };
   }, [menu, closurePop]);
 
-  // ---- bar geometry: mid-cell to mid-cell so a checkout and a same-day
-  // check-in coexist; visual width = occupied nights (§E) ----
-  const barBox = (ci: DateOnly, co: DateOnly) => {
-    const clippedStart = ci < data.from;
-    const clippedEnd = co > lastVisible;
-    const startPx = clippedStart ? 0 : nightsBetween(data.from, ci) * colW + colW / 2;
-    const endPx = clippedEnd ? bodyW : nightsBetween(data.from, co) * colW + colW / 2;
-    return { startPx, width: Math.max(endPx - startPx, colW / 2), clippedStart, clippedEnd };
-  };
-
-  const monthStarts = useMemo(
-    () => dates.filter((d, i) => i === 0 || d.slice(8, 10) === "01"),
-    [dates],
+  const onCellContext = useCallback(
+    (e: React.MouseEvent, roomId: string, date: DateOnly) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setClosurePop(null);
+      setPopover(null);
+      setMenu({ x: e.clientX, y: e.clientY, roomId, date });
+    },
+    [],
   );
 
+  const onCellDouble = useCallback(
+    (roomId: string, date: DateOnly, minNights: number) => {
+      onNewBooking({ roomId, checkIn: date, checkOut: addDays(date, Math.max(1, minNights)) });
+    },
+    [onNewBooking],
+  );
+
+  const onClosureClick = useCallback((e: React.MouseEvent, c: CalendarClosure) => {
+    e.stopPropagation();
+    setMenu(null);
+    setClosurePop({
+      x: e.clientX,
+      y: e.clientY,
+      id: c.id,
+      label: `${c.reason || "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(c.end_date)}`,
+    });
+  }, []);
+
+  // month band segments (reference .mrow/.mseg)
+  const monthSegs = useMemo(() => {
+    const segs: { label: string; days: number }[] = [];
+    for (const d of dates) {
+      const label = hebrewMonthYear(d);
+      const last = segs[segs.length - 1];
+      if (last && last.label === label) last.days += 1;
+      else segs.push({ label, days: 1 });
+    }
+    return segs;
+  }, [dates]);
+
+  const floorCount = useMemo(
+    () => new Set(data.rooms.map((r) => r.floor).filter(Boolean)).size,
+    [data.rooms],
+  );
+
+  const dragStay = dragUi ? data.stays.find((s) => s.rr_id === dragUi.rrId) : null;
+  const dragPalette = dragStay ? stayPalette(dragStay) : null;
+  // dim only the source card of a MOVE, and only re-render its own row
+  const dimRoomId = dragUi?.mode === "move" ? (dragStay?.room_id ?? null) : null;
+  // selected card = the one whose popover is open (row-scoped for memo)
+  const selRoomId = popover?.stay.room_id ?? null;
+
   return (
-    <div className="min-h-0 flex-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+    <div className="cb-calcard">
       {data.rooms.length === 0 ? (
         <div className="grid h-64 place-items-center text-muted">
           <div className="text-center">
@@ -276,93 +443,92 @@ export function CalendarGrid({
           </div>
         </div>
       ) : (
-        <div
-          className="thin-scroll h-full overflow-auto overscroll-contain"
-          style={{ maxHeight: "calc(100vh - 350px)", minHeight: 320 }}
-          dir="rtl"
-        >
-          <div style={{ width: ROOM_COL + bodyW }} className={drag?.active ? "select-none" : ""}>
-            {/* ===== sticky header ===== */}
-            <div className="sticky top-0 z-30 flex border-b border-line bg-surface">
-              <div
-                className="sticky start-0 z-40 shrink-0 border-e border-line bg-surface px-4 py-2"
-                style={{ width: ROOM_COL }}
-              >
-                <p className="text-sm font-bold text-ink">חדרים</p>
-                <p className="text-[11px] text-faint">
-                  {data.rooms.length} יחידות
-                </p>
-              </div>
-              <div className="relative flex">
-                {/* month labels */}
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-4">
-                  {monthStarts.map((d) => (
-                    <span
-                      key={d}
-                      className="absolute top-0 whitespace-nowrap ps-2 text-[10px] font-semibold text-faint"
-                      style={{ insetInlineStart: nightsBetween(data.from, d) * colW }}
+        <div className="cb-calwrap thin-scroll" dir="rtl">
+          <div
+            className={`cb-calin ${dragUi ? (dragUi.mode === "move" ? "dragging" : "resizing") : ""}`}
+          >
+            {/* ===== sticky header: month band + day band ===== */}
+            <div className="cb-chead">
+              <div className="cb-hrow cb-mrow">
+                <div className="cb-hcorn" style={{ width: ROOM_COL }} />
+                <div className="cb-hcells">
+                  {monthSegs.map((seg, i) => (
+                    <div
+                      key={seg.label}
+                      className={`cb-mseg ${i > 0 ? "ms" : ""}`}
+                      style={{ width: `${(seg.days / data.days) * 100}%` }}
                     >
-                      {hebrewMonthYear(d)}
-                    </span>
+                      <span className="cb-min">{seg.label}</span>
+                    </div>
                   ))}
                 </div>
-                {dates.map((d) => {
-                  const dow = dayOfWeek(d);
-                  const isToday = d === data.today;
-                  const weekend = dow === 5 || dow === 6;
-                  return (
-                    <div
-                      key={d}
-                      className={`flex flex-col items-center justify-end border-e border-line/60 pb-1.5 pt-4 ${
-                        weekend ? "bg-[#FBF7EC]" : ""
-                      }`}
-                      style={{ width: colW }}
-                    >
-                      <span className="text-[10px] font-medium text-faint">
-                        יום {HEBREW_DAY_LETTERS[dow]}
-                      </span>
-                      <span
-                        className={`grid h-7 min-w-7 place-items-center rounded-lg px-1 text-sm font-bold ${
-                          isToday ? "bg-primary text-white" : "text-ink"
-                        }`}
+              </div>
+              <div className="cb-hrow cb-drow">
+                <div className="cb-hcorn" style={{ width: ROOM_COL }}>
+                  <span className="cb-t">חדרים</span>
+                  <span className="cb-cnt">
+                    {data.rooms.length} יחידות
+                    {floorCount > 1 ? ` · ${floorCount} קומות` : ""}
+                  </span>
+                </div>
+                <div className="cb-hcells">
+                  {dates.map((d) => {
+                    const dow = dayOfWeek(d);
+                    const weekend = dow === 5 || dow === 6;
+                    const monthStart = d.slice(8, 10) === "01" && d !== data.from;
+                    return (
+                      <div
+                        key={d}
+                        className={`cb-dcell ${weekend ? "we" : ""} ${d === data.today ? "td" : ""} ${monthStart ? "ms" : ""}`}
                       >
-                        {Number(d.slice(8, 10))}
-                      </span>
-                    </div>
-                  );
-                })}
+                        <span className="cb-dw">יום {HEBREW_DAY_LETTERS[dow]}</span>
+                        <span className="cb-dn">{Number(d.slice(8, 10))}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
             {/* ===== unassigned external-booking lane (renders only when
                  active holds exist, §R) ===== */}
             {data.holds.length > 0 && (
-              <div className="flex border-b border-line" style={{ minHeight: ROW_H }}>
-                <div
-                  className="sticky start-0 z-20 flex shrink-0 items-center gap-2 border-e border-line bg-[#FDF2E1] px-4"
-                  style={{ width: ROOM_COL }}
-                >
-                  <Icon name="warning" size={16} className="text-[#B4670A]" />
-                  <div>
-                    <p className="text-sm font-bold text-[#B4670A]">ללא שיוך</p>
-                    <p className="text-[10px] text-[#B4670A]/70">הזמנות חיצוניות ממתינות לחדר</p>
+              <div className="cb-rrow">
+                <div className="cb-rlabel" style={{ width: ROOM_COL }}>
+                  <div className="cb-rl1">
+                    <span className="cb-rnum" style={{ color: "#8A5207" }}>
+                      ללא שיוך
+                    </span>
+                  </div>
+                  <div className="cb-rl2" style={{ color: "#B4670A" }}>
+                    הזמנות חיצוניות ממתינות לחדר
                   </div>
                 </div>
-                <div className="relative" style={{ width: bodyW, height: ROW_H }}>
+                <div className="cb-rstrip">
+                  {dates.map((d) => {
+                    const dow = dayOfWeek(d);
+                    return (
+                      <div
+                        key={d}
+                        className={`cb-rcell ${dow === 5 || dow === 6 ? "we" : ""} ${d === data.today ? "td" : ""}`}
+                      />
+                    );
+                  })}
                   {data.holds.map((h) => {
-                    const box = barBox(h.check_in, h.check_out);
+                    const geo = barGeometry(data.from, data.days, h.check_in, h.check_out);
                     return (
                       <div
                         key={h.id}
-                        className="absolute flex items-center gap-1.5 truncate rounded-full border border-dashed border-[#F5D19A] bg-[#FDF2E1] px-3 text-xs font-semibold text-[#B4670A]"
+                        className="cb-holdbar"
                         style={{
-                          insetInlineStart: box.startPx,
-                          width: box.width - 6,
-                          top: 10,
-                          height: ROW_H - 20,
+                          insetInlineStart: `${geo.start * 100}%`,
+                          width: `${geo.width * 100}%`,
                         }}
                       >
-                        {h.guest_name ?? h.room_type_name} · {h.rooms_count} יח׳
+                        <Icon name="warning" size={13} />
+                        <span className="cb-nm">
+                          {h.guest_name ?? h.room_type_name} · {h.rooms_count} יח׳
+                        </span>
                       </div>
                     );
                   })}
@@ -370,256 +536,59 @@ export function CalendarGrid({
               </div>
             )}
 
-            {/* ===== room rows ===== */}
-            {data.rooms.map((room, roomIndex) => {
-              const sellable = room.status === "available" && room.is_active;
-              const occupiedNow = (staysByRoom.get(room.id) ?? []).some(
-                (s) =>
-                  isBlocking(s.status) && s.check_in <= data.today && s.check_out > data.today,
-              );
-              const isDragTargetRow =
-                drag?.active && drag.mode === "move"
-                  ? Math.min(Math.max(drag.roomIndex + drag.roomDelta, 0), data.rooms.length - 1) === roomIndex
-                  : drag?.active && drag.mode === "resize"
-                    ? drag.roomIndex === roomIndex
-                    : false;
+            {/* ===== room rows + drag ghost layer ===== */}
+            <div ref={bodyRef} className="relative">
+              {data.rooms.map((room, roomIndex) => (
+                <RoomRow
+                  key={room.id}
+                  room={room}
+                  roomIndex={roomIndex}
+                  dates={dates}
+                  from={data.from}
+                  days={data.days}
+                  today={data.today}
+                  stays={staysByRoom.get(room.id)}
+                  closures={closuresByRoom.get(room.id)}
+                  cellRate={cellRate}
+                  paymentFilter={paymentFilter}
+                  pending={pending}
+                  dragRrId={room.id === dimRoomId && dragUi ? dragUi.rrId : null}
+                  selectedRrId={room.id === selRoomId && popover ? popover.stay.rr_id : null}
+                  can={can}
+                  onBarPointerDown={onBarPointerDown}
+                  onBarPointerMove={onBarPointerMove}
+                  onBarPointerUp={onBarPointerUp}
+                  onBarPointerCancel={onBarPointerCancel}
+                  onOpenPopover={openPopover}
+                  onCellContext={onCellContext}
+                  onCellDouble={onCellDouble}
+                  onClosureClick={onClosureClick}
+                />
+              ))}
 
-              return (
-                <div key={room.id} className="group/row flex border-b border-line/70 last:border-b-0">
-                  {/* room info — sticky inline-start column */}
-                  <div
-                    className="sticky start-0 z-20 flex shrink-0 items-center justify-between border-e border-line bg-surface px-4 py-2 group-hover/row:bg-hover"
-                    style={{ width: ROOM_COL, height: ROW_H }}
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-ink">
-                        {room.room_number}
-                        {room.name && room.name !== room.room_number ? (
-                          <span className="ms-1.5 truncate text-[11px] font-medium text-muted">
-                            {room.name}
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="truncate text-[11px] text-faint">
-                        {room.room_type_name ?? "—"}
-                        {room.floor ? ` · קומה ${room.floor}` : ""}
-                      </p>
-                    </div>
-                    <span
-                      className="flex shrink-0 items-center gap-1 text-[10px] font-semibold"
-                      style={{
-                        color: !sellable ? "#64748B" : occupiedNow ? "#DC2626" : "#16A34A",
-                      }}
-                    >
-                      <span
-                        className="h-2 w-2 rounded-full"
-                        style={{
-                          background: !sellable ? "#94A3B8" : occupiedNow ? "#DC2626" : "#16A34A",
-                        }}
-                      />
-                      {!sellable
-                        ? room.status === "out_of_order"
-                          ? "מושבת"
-                          : room.status === "maintenance"
-                            ? "תחזוקה"
-                            : "לא פעיל"
-                        : occupiedNow
-                          ? "תפוס"
-                          : "פנוי"}
+              {/* the single drag/resize ghost — positioned via transform,
+                  content rendered once per drag, never per pointer move */}
+              <div
+                ref={ghostRef}
+                className="cb-ghost"
+                style={
+                  dragUi?.mode === "move" && dragPalette
+                    ? { background: dragPalette.bg, color: dragPalette.tx }
+                    : undefined
+                }
+              >
+                {dragUi?.mode === "move" && dragStay ? (
+                  <>
+                    {dragStay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
+                    <span className="cb-nm">{dragStay.guest_name}</span>
+                    <span className="cb-bn">
+                      <Icon name="moon" size={12} />
+                      {nightsBetween(dragStay.check_in, dragStay.check_out)}
                     </span>
-                  </div>
-
-                  {/* day cells + bars */}
-                  <div
-                    className={`relative ${isDragTargetRow ? "bg-primary-050/40" : ""}`}
-                    style={{ width: bodyW, height: ROW_H }}
-                  >
-                    {dates.map((d, di) => {
-                      const dow = dayOfWeek(d);
-                      const weekend = dow === 5 || dow === 6;
-                      const rate = cellRate(room, d);
-                      const price = rate?.price != null ? Number(rate.price) : room.base_price;
-                      const minN = rate?.min_nights ?? null;
-                      return (
-                        <div
-                          key={d}
-                          className={`absolute top-0 flex h-full flex-col items-center justify-center border-e border-line/50 ${
-                            d === data.today
-                              ? "bg-primary-050/50"
-                              : weekend
-                                ? "bg-[#FBF7EC]/70"
-                                : ""
-                          } ${!sellable ? "bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,#F1F3F6_6px,#F1F3F6_12px)]" : ""}`}
-                          style={{ insetInlineStart: di * colW, width: colW }}
-                          onDoubleClick={
-                            can.create && sellable
-                              ? () =>
-                                  onNewBooking({
-                                    roomId: room.id,
-                                    checkIn: d,
-                                    checkOut: addDays(d, Math.max(1, minN ?? 1)),
-                                  })
-                              : undefined
-                          }
-                          onContextMenu={
-                            can.create || can.close
-                              ? (e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  setClosurePop(null);
-                                  setMenu({ x: e.clientX, y: e.clientY, roomId: room.id, date: d });
-                                }
-                              : undefined
-                          }
-                        >
-                          {sellable && (
-                            <>
-                              <span className="text-[11px] font-semibold text-muted" dir="ltr">
-                                ₪{Math.round(price)}
-                              </span>
-                              {minN != null && minN >= 2 && (
-                                <span className="flex items-center gap-0.5 text-[11px] text-[#64748B]">
-                                  {minN}
-                                  <Icon name="moon" size={10} />
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* closures — rounded soft-pink, dashed (§H) */}
-                    {(closuresByRoom.get(room.id) ?? []).map((c) => {
-                      const box = barBox(c.start_date, c.end_date);
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMenu(null);
-                            setClosurePop({
-                              x: e.clientX,
-                              y: e.clientY,
-                              id: c.id,
-                              label: `${c.reason || "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(c.end_date)}`,
-                            });
-                          }}
-                          className="absolute z-[5] flex items-center justify-center gap-1.5 truncate border border-dashed px-3 text-xs font-semibold"
-                          style={{
-                            insetInlineStart: box.startPx,
-                            width: box.width - 6,
-                            top: 8,
-                            height: ROW_H - 16,
-                            background: "#FDE7EC",
-                            borderColor: "#F5AEC0",
-                            color: "#BE123C",
-                            borderRadius: 999,
-                          }}
-                        >
-                          <Icon name="circle-slash" size={13} />
-                          <span className="truncate">{c.reason || "סגור חדר"}</span>
-                        </button>
-                      );
-                    })}
-
-                    {/* reservation cards */}
-                    {(staysByRoom.get(room.id) ?? []).map((stay) => (
-                      <StayBar
-                        key={stay.rr_id}
-                        stay={stay}
-                        box={barBox(stay.check_in, stay.check_out)}
-                        dimmed={paymentFilter !== "all" && stay.payment !== paymentFilter}
-                        pending={pending.has(stay.rr_id)}
-                        moving={
-                          drag?.active && drag.mode === "move" && drag.stay.rr_id === stay.rr_id
-                        }
-                        statusColor={statusColor.get(stay.status) ?? "#6B7385"}
-                        statusText={statusLabel.get(stay.status) ?? stay.status}
-                        canEdit={can.edit}
-                        onPointerDown={(e, mode) => {
-                          if (!can.edit) return;
-                          e.preventDefault();
-                          setMenu(null);
-                          setClosurePop(null);
-                          setDrag({
-                            mode,
-                            stay,
-                            roomIndex,
-                            startX: e.clientX,
-                            startY: e.clientY,
-                            dayDelta: 0,
-                            roomDelta: 0,
-                            active: false,
-                          } as DragState);
-                        }}
-                        onClick={() => {
-                          if (!can.edit) onOpenReservation(stay.reservation_id);
-                        }}
-                      />
-                    ))}
-
-                    {/* move preview (full ghost bar in the target row) */}
-                    {drag?.active &&
-                      drag.mode === "move" &&
-                      isDragTargetRow &&
-                      (() => {
-                        const t = computeDragTarget(drag);
-                        if (!t) return null;
-                        const box = barBox(t.ci, t.co);
-                        const invalid = previewInvalid(drag.stay, t.targetRoom, t.ci, t.co);
-                        return (
-                          <div
-                            className="pointer-events-none absolute z-20 rounded-full border-2"
-                            style={{
-                              insetInlineStart: box.startPx,
-                              width: box.width - 6,
-                              top: 6,
-                              height: ROW_H - 12,
-                              background: invalid ? "rgba(220,38,38,.12)" : "rgba(22,163,74,.12)",
-                              borderColor: invalid ? "#DC2626" : "#16A34A",
-                            }}
-                          />
-                        );
-                      })()}
-
-                    {/* resize preview — DELTA ONLY, committed pill untouched (§J) */}
-                    {drag?.active &&
-                      drag.mode === "resize" &&
-                      drag.roomIndex === roomIndex &&
-                      (() => {
-                        const t = computeDragTarget(drag);
-                        if (!t || t.co === drag.stay.check_out) return null;
-                        const extending = t.co > drag.stay.check_out;
-                        const dFrom = extending ? drag.stay.check_out : t.co;
-                        const dTo = extending ? t.co : drag.stay.check_out;
-                        const box = barBox(dFrom, dTo);
-                        const invalid =
-                          extending &&
-                          previewInvalid(drag.stay, data.rooms[roomIndex], dFrom, dTo);
-                        const color = !extending || invalid ? "#DC2626" : "#16A34A";
-                        return (
-                          <div
-                            className={`pointer-events-none absolute z-20 rounded-lg ${invalid ? "border-2" : "border"}`}
-                            style={{
-                              insetInlineStart: box.startPx,
-                              width: box.width,
-                              top: 6,
-                              height: ROW_H - 12,
-                              background:
-                                !extending || invalid
-                                  ? "rgba(220,38,38,.14)"
-                                  : "rgba(22,163,74,.14)",
-                              borderColor: color,
-                            }}
-                          />
-                        );
-                      })()}
-                  </div>
-                </div>
-              );
-            })}
+                  </>
+                ) : null}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -657,7 +626,7 @@ export function CalendarGrid({
                 setMenu(null);
               }}
             >
-              <Icon name="circle-slash" size={16} className="text-[#BE123C]" />
+              <Icon name="circle-slash" size={16} className="text-[#3C4A5E]" />
               סגור חדר
             </button>
           )}
@@ -695,142 +664,290 @@ export function CalendarGrid({
           )}
         </div>
       )}
+
+      {/* ===== reservation card popover (reference .pop) ===== */}
+      <ReservationPopover
+        target={popover}
+        statusLabel={statusLabel}
+        onClose={() => setPopover(null)}
+        onEdit={(reservationId) => {
+          setPopover(null);
+          onOpenReservation(reservationId);
+        }}
+      />
     </div>
   );
 }
 
-function maxDateOnly(a: DateOnly, b: DateOnly): DateOnly {
-  return a > b ? a : b;
-}
-
-// ---- one reservation-room card ----
-function StayBar({
-  stay,
-  box,
-  dimmed,
+// ============================================================
+// One room row — memoized so pointer-driven UI state (dim/pending) only
+// re-renders the row it touches.
+// ============================================================
+const RoomRow = memo(function RoomRow({
+  room,
+  roomIndex,
+  dates,
+  from,
+  days,
+  today,
+  stays,
+  closures,
+  cellRate,
+  paymentFilter,
   pending,
-  moving,
-  statusColor,
-  statusText,
-  canEdit,
-  onPointerDown,
-  onClick,
+  dragRrId,
+  selectedRrId,
+  can,
+  onBarPointerDown,
+  onBarPointerMove,
+  onBarPointerUp,
+  onBarPointerCancel,
+  onOpenPopover,
+  onCellContext,
+  onCellDouble,
+  onClosureClick,
 }: {
-  stay: CalendarStay;
-  box: { startPx: number; width: number; clippedStart: boolean; clippedEnd: boolean };
-  dimmed: boolean;
-  pending: boolean;
-  moving: boolean | undefined;
-  statusColor: string;
-  statusText: string;
-  canEdit: boolean;
-  onPointerDown: (e: React.PointerEvent, mode: "move" | "resize") => void;
-  onClick: () => void;
+  room: CalendarRoom;
+  roomIndex: number;
+  dates: DateOnly[];
+  from: DateOnly;
+  days: number;
+  today: DateOnly;
+  stays: CalendarStay[] | undefined;
+  closures: CalendarClosure[] | undefined;
+  cellRate: (room: CalendarRoom, date: DateOnly) => RateRow | undefined;
+  paymentFilter: PaymentState | "all";
+  pending: Set<string>;
+  dragRrId: string | null;
+  selectedRrId: string | null;
+  can: CalendarCan;
+  onBarPointerDown: (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => void;
+  onBarPointerMove: (e: React.PointerEvent) => void;
+  onBarPointerUp: (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => void;
+  onBarPointerCancel: () => void;
+  onOpenPopover: (stay: CalendarStay, room: CalendarRoom, anchor: DOMRect) => void;
+  onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
+  onCellDouble: (roomId: string, date: DateOnly, minNights: number) => void;
+  onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
-  const pay = PAY_STYLE[stay.payment];
-  const nights = nightsBetween(stay.check_in, stay.check_out);
-  const guests = stay.adults + stay.children + stay.infants;
-  const isDraft = stay.status === "draft";
-  const wide = box.width > 150;
+  const sellable = room.status === "available" && room.is_active;
+  const occupiedNow = (stays ?? []).some(
+    (s) => isBlocking(s.status) && s.check_in <= today && s.check_out > today,
+  );
+  const statusText = !sellable
+    ? room.status === "out_of_order"
+      ? "מושבת"
+      : room.status === "maintenance"
+        ? "תחזוקה"
+        : "לא פעיל"
+    : occupiedNow
+      ? "תפוס"
+      : "פנוי";
+  const statusColor = !sellable ? "#94A3B8" : occupiedNow ? "#E5484D" : "#16A34A";
 
   return (
-    <div
-      className={`group absolute z-10 flex items-center transition-opacity ${
-        moving ? "opacity-40" : dimmed ? "opacity-25" : ""
-      } ${pending ? "animate-pulse" : ""}`}
-      style={{
-        insetInlineStart: box.startPx,
-        width: box.width - 6,
-        top: 8,
-        height: ROW_H - 16,
-      }}
-    >
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={`הזמנה ${stay.reservation_number} · ${stay.guest_name}`}
-        onPointerDown={(e) => onPointerDown(e, "move")}
-        onClick={onClick}
-        onKeyDown={(e) => e.key === "Enter" && onClick()}
-        className={`flex h-full w-full min-w-0 items-center gap-1.5 border px-2.5 text-xs font-semibold ${
-          isDraft ? "border-dashed" : ""
-        } ${canEdit ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
-        style={{
-          background: pay.bg,
-          borderColor: pay.bd,
-          color: pay.tx,
-          borderStartStartRadius: box.clippedStart ? 4 : 999,
-          borderEndStartRadius: box.clippedStart ? 4 : 999,
-          borderStartEndRadius: box.clippedEnd ? 4 : 999,
-          borderEndEndRadius: box.clippedEnd ? 4 : 999,
-        }}
-      >
-        {/* reservation status dot (shared reservation_id ⇒ same status on
-            every card of the reservation) */}
-        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusColor }} />
-        {stay.is_vip && <Icon name="star" size={11} className="shrink-0 text-[#EA9314]" />}
-        <span className="truncate">{stay.guest_name}</span>
-        {stay.room_count > 1 && (
-          <span className="shrink-0 opacity-70">
-            <Icon name="link" size={11} />
+    <div className="cb-rrow">
+      {/* room info — sticky inline-start column */}
+      <div className="cb-rlabel" style={{ width: ROOM_COL }}>
+        <div className="cb-rl1">
+          <span className="cb-rnum">{room.room_number}</span>
+          <span className="cb-rtype">
+            {room.room_type_name ?? room.name ?? "—"}
           </span>
-        )}
-        <span className="ms-auto flex shrink-0 items-center gap-0.5 opacity-80">
-          {wide ? (
-            <span className="whitespace-nowrap">
-              {nights} לילות · {guests} אורחים
-            </span>
-          ) : (
-            <>
-              {nights}
-              <Icon name="moon" size={10} />
-            </>
-          )}
-        </span>
-
-        {/* hover tooltip — read-only, no server call (§10.1) */}
-        <div className="pointer-events-none absolute bottom-full start-2 z-40 mb-1.5 hidden w-56 rounded-xl border border-line bg-surface p-3 text-start shadow-pop group-hover:block">
-          <p className="mb-1 flex items-center justify-between gap-2 text-sm font-bold text-ink">
-            <span className="truncate">{stay.guest_name}</span>
-            <span className="shrink-0 text-[10px] font-semibold text-faint" dir="ltr">
-              #{stay.reservation_number}
-            </span>
-          </p>
-          <div className="space-y-0.5 text-[11px] text-text2">
-            <p dir="ltr" className="text-end">
-              {formatFullDate(stay.check_in)} → {formatFullDate(stay.check_out)}
-            </p>
-            <p>
-              {nights} לילות · {stay.adults} מבוגרים
-              {stay.children > 0 ? ` · ${stay.children} ילדים` : ""}
-              {stay.infants > 0 ? ` · ${stay.infants} תינוקות` : ""}
-            </p>
-            <p>
-              סטטוס: <b style={{ color: statusColor }}>{statusText}</b>
-              {stay.source_label ? ` · מקור: ${stay.source_label}` : ""}
-            </p>
-            <p dir="ltr" className="text-end">
-              ₪{stay.total_price.toLocaleString()} · שולם ₪{stay.paid_amount.toLocaleString()} ·
-              יתרה ₪{Math.max(0, stay.total_price - stay.paid_amount).toLocaleString()}
-            </p>
-            {stay.room_count > 1 && <p>הזמנה מרובת חדרים ({stay.room_count} חדרים)</p>}
-          </div>
+        </div>
+        <div className="cb-rl2">
+          {room.floor ? <span>קומה {room.floor}</span> : <span>{room.area_name ?? ""}</span>}
+          <span className="cb-d" style={{ background: statusColor }} />
+          <span style={{ color: statusColor }}>{statusText}</span>
         </div>
       </div>
 
-      {/* departure resize handle — the bar's inline-end edge (left in RTL) */}
-      {canEdit && !pending && (
-        <div
+      {/* day cells + bars */}
+      <div className="cb-rstrip">
+        {dates.map((d) => {
+          const dow = dayOfWeek(d);
+          const weekend = dow === 5 || dow === 6;
+          const monthStart = d.slice(8, 10) === "01" && d !== from;
+          const rate = cellRate(room, d);
+          const price = rate?.price != null ? Number(rate.price) : room.base_price;
+          const minN = rate?.min_nights ?? null;
+          return (
+            <div
+              key={d}
+              className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${monthStart ? "ms" : ""} ${!sellable ? "blocked" : ""}`}
+              onDoubleClick={
+                can.create && sellable ? () => onCellDouble(room.id, d, minN ?? 1) : undefined
+              }
+              onContextMenu={
+                can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
+              }
+            >
+              {sellable && (
+                <>
+                  <span className="cb-pr" dir="ltr">
+                    ₪{Math.round(price)}
+                  </span>
+                  {minN != null && minN >= 2 && (
+                    <span className="cb-mn">
+                      <Icon name="moon" size={11} />
+                      {minN}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+
+        {/* closures — dashed neutral block (reference .blockbar) */}
+        {(closures ?? []).map((c) => {
+          const geo = barGeometry(from, days, c.start_date, c.end_date);
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={(e) => onClosureClick(e, c)}
+              className="cb-blockbar"
+              style={{
+                insetInlineStart: `${geo.start * 100}%`,
+                width: `${geo.width * 100}%`,
+              }}
+            >
+              <Icon name="circle-slash" size={13} />
+              <span className="cb-nm">{c.reason || "סגור"}</span>
+            </button>
+          );
+        })}
+
+        {/* reservation pills */}
+        {(stays ?? []).map((stay) => (
+          <StayBar
+            key={stay.rr_id}
+            stay={stay}
+            room={room}
+            roomIndex={roomIndex}
+            from={from}
+            days={days}
+            dimmed={paymentFilter !== "all" && stay.payment !== paymentFilter}
+            pending={pending.has(stay.rr_id)}
+            dragSource={dragRrId === stay.rr_id}
+            selected={selectedRrId === stay.rr_id}
+            canEdit={can.edit}
+            canView={can.viewReservation}
+            onPointerDown={onBarPointerDown}
+            onPointerMove={onBarPointerMove}
+            onPointerUp={onBarPointerUp}
+            onPointerCancel={onBarPointerCancel}
+            onOpenPopover={onOpenPopover}
+          />
+        ))}
+      </div>
+    </div>
+  );
+});
+
+// ============================================================
+// One reservation pill (reference .resbar): [★][name]…[nights ☾][handle]
+// ============================================================
+const StayBar = memo(function StayBar({
+  stay,
+  room,
+  roomIndex,
+  from,
+  days,
+  dimmed,
+  pending,
+  dragSource,
+  selected,
+  canEdit,
+  canView,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onOpenPopover,
+}: {
+  stay: CalendarStay;
+  room: CalendarRoom;
+  roomIndex: number;
+  from: DateOnly;
+  days: number;
+  dimmed: boolean;
+  pending: boolean;
+  dragSource: boolean;
+  selected: boolean;
+  canEdit: boolean;
+  canView: boolean;
+  onPointerDown: (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => void;
+  onPointerCancel: () => void;
+  onOpenPopover: (stay: CalendarStay, room: CalendarRoom, anchor: DOMRect) => void;
+}) {
+  const pal = stayPalette(stay);
+  const geo = barGeometry(from, days, stay.check_in, stay.check_out);
+  const nights = nightsBetween(stay.check_in, stay.check_out);
+  const draggable = canDragCard(canEdit, pending);
+
+  return (
+    <div
+      role="button"
+      tabIndex={canView ? 0 : -1}
+      aria-label={`הזמנה ${stay.reservation_number} · ${stay.guest_name}`}
+      className={`cb-resbar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""} ${
+        stay.status === "draft" ? "draft" : ""
+      } ${dimmed ? "dim" : ""} ${dragSource ? "src" : ""} ${selected ? "sel" : ""} ${pending ? "pending" : ""} ${
+        draggable ? "" : canView ? "viewonly" : "lk"
+      }`}
+      style={{
+        insetInlineStart: `${geo.start * 100}%`,
+        width: `${geo.width * 100}%`,
+        background: pal.bg,
+        borderColor: pal.bd,
+        color: pal.tx,
+      }}
+      onPointerDown={draggable ? (e) => onPointerDown(e, stay, roomIndex, "move") : undefined}
+      onPointerMove={draggable ? onPointerMove : undefined}
+      onPointerUp={draggable ? (e) => onPointerUp(e, stay, room) : undefined}
+      onPointerCancel={draggable ? onPointerCancel : undefined}
+      onClick={
+        draggable
+          ? undefined
+          : (e) => onOpenPopover(stay, room, (e.currentTarget as HTMLElement).getBoundingClientRect())
+      }
+      onKeyDown={(e) => {
+        if (e.key === "Enter")
+          onOpenPopover(stay, room, (e.currentTarget as HTMLElement).getBoundingClientRect());
+      }}
+    >
+      {stay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
+      <span className="cb-nm">{stay.guest_name}</span>
+      {stay.room_count > 1 && <Icon name="link" size={11} className="shrink-0 opacity-70" />}
+      <span className="cb-bn">
+        <Icon name="moon" size={12} />
+        {nights}
+      </span>
+
+      {/* departure resize handle — inside the pill's inline-end edge (§5);
+          pointer-down here starts a RESIZE session on the same capture flow */}
+      {draggable && (
+        <span
+          className="cb-rh"
           role="separator"
           aria-label="שינוי תאריך עזיבה"
+          title="גרירה לשינוי תאריך עזיבה"
           onPointerDown={(e) => {
             e.stopPropagation();
-            onPointerDown(e, "resize");
+            onPointerDown(e, stay, roomIndex, "resize");
           }}
-          className="absolute inset-y-0 -end-1 z-20 w-2.5 cursor-ew-resize rounded-full opacity-0 transition-opacity group-hover:opacity-100"
-          style={{ background: pay.tx }}
+          onPointerMove={onPointerMove}
+          onPointerUp={(e) => {
+            e.stopPropagation();
+            onPointerUp(e, stay, room);
+          }}
+          onPointerCancel={onPointerCancel}
         />
       )}
     </div>
   );
-}
+});

@@ -61,6 +61,8 @@ import {
   CalendarPlus,
   Link2,
   Baby,
+  TrendingUp,
+  TrendingDown,
   type LucideIcon,
 } from "lucide-react";
 
@@ -130,6 +132,8 @@ const ICONS = {
   "calendar-plus": CalendarPlus,
   link: Link2,
   baby: Baby,
+  "trending-up": TrendingUp,
+  "trending-down": TrendingDown,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

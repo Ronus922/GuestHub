@@ -28,6 +28,14 @@ const VIEW_LABELS: Record<CalendarView, string> = {
   month: "30 יום",
 };
 
+// Legend dot colors — extracted from the rendered reference legend row.
+const LEGEND: { key: PaymentState | "all"; label: string; dot: string }[] = [
+  { key: "all", label: "הכל", dot: "#5B6478" },
+  { key: "unpaid", label: "לא שולם", dot: "#E5484D" },
+  { key: "partial", label: "שולם חלקית", dot: "#48B865" },
+  { key: "paid", label: "שולם מלא", dot: "#16A34A" },
+];
+
 export function CalendarScreen({
   data,
   view,
@@ -56,11 +64,6 @@ export function CalendarScreen({
     [router],
   );
 
-  const statusColor = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of statusItems) if (s.color) m.set(s.key, s.color);
-    return m;
-  }, [statusItems]);
   const statusLabel = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of statusItems) m.set(s.key, s.label);
@@ -70,129 +73,124 @@ export function CalendarScreen({
   const rangeEnd = addDays(data.from, data.days - 1);
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6">
-      {/* ---- toolbar ---- */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[18.5px] font-extrabold text-ink">יומן חדרים</h1>
-          <span className="rounded-full bg-primary-050 px-3 py-1 text-xs font-semibold text-primary">
-            {data.rooms.length} יחידות
-          </span>
+    <div className="flex h-full flex-col" dir="rtl">
+      {/* ---- toolbar (reference .hd) ---- */}
+      <div className="flex flex-wrap items-center gap-3 px-[26px] pt-[18px]">
+        <h1 className="cb-title">יומן חדרים</h1>
+        <span className="cb-count">{data.rooms.length} יחידות</span>
+        <span className="flex-1" />
+        <div className="cb-seg">
+          {(Object.keys(VIEW_LABELS) as CalendarView[]).map((v) => (
+            <button
+              key={v}
+              type="button"
+              className={view === v ? "on" : ""}
+              onClick={() => navigate(data.from, v)}
+            >
+              {VIEW_LABELS[v]}
+            </button>
+          ))}
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* view switcher — Tabs variation 3 */}
-          <div className="flex rounded-xl bg-[#f4f2fc] p-1">
-            {(Object.keys(VIEW_LABELS) as CalendarView[]).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => navigate(data.from, v)}
-                className={`min-h-[36px] rounded-lg px-4 text-sm transition-colors ${
-                  view === v
-                    ? "bg-white font-semibold text-primary shadow-sm"
-                    : "font-medium text-muted hover:text-ink"
-                }`}
-              >
-                {VIEW_LABELS[v]}
-              </button>
-            ))}
-          </div>
-
-          {/* range nav — RTL: earlier dates on the right, later on the left */}
-          <div className="flex items-center gap-1 rounded-xl border border-line bg-surface px-2 py-1">
-            <button
-              type="button"
-              aria-label="טווח קודם"
-              onClick={() => navigate(addDays(data.from, -VIEW_DAYS[view]), view)}
-              className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-hover"
-            >
-              <Icon name="chevron-right" size={18} />
-            </button>
-            <span className="min-w-[178px] text-center text-sm font-semibold text-ink" dir="ltr">
-              {formatFullDate(data.from)} – {formatFullDate(rangeEnd)}
-            </span>
-            <button
-              type="button"
-              aria-label="טווח הבא"
-              onClick={() => navigate(addDays(data.from, VIEW_DAYS[view]), view)}
-              className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-hover"
-            >
-              <Icon name="chevron-left" size={18} />
-            </button>
-          </div>
-
+        <div className="cb-rangebox">
           <button
             type="button"
-            onClick={() => navigate(data.today, view)}
-            className="btn btn-outline !min-h-[44px] text-primary"
+            className="cb-nav"
+            aria-label="תקופה קודמת"
+            onClick={() => navigate(addDays(data.from, -VIEW_DAYS[view]), view)}
           >
-            היום
+            <Icon name="chevron-right" size={18} />
+          </button>
+          <span className="cb-rl">
+            {formatFullDate(data.from)} – {formatFullDate(rangeEnd)}
+          </span>
+          <button
+            type="button"
+            className="cb-nav"
+            aria-label="תקופה הבאה"
+            onClick={() => navigate(addDays(data.from, VIEW_DAYS[view]), view)}
+          >
+            <Icon name="chevron-left" size={18} />
           </button>
         </div>
+        <button type="button" className="cb-todaybtn" onClick={() => navigate(data.today, view)}>
+          היום
+        </button>
       </div>
 
       {/* ---- KPI row (all real DB data, §10.2) ---- */}
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 px-[26px] pt-[14px] xl:grid-cols-4">
         <KpiOccupancy pct={data.kpis.occupancyPct} delta={data.kpis.occupancyDeltaPct} />
-        <KpiCard
-          icon="users-round"
-          label="אורחים בבית"
-          value={String(data.kpis.guestsInHouse)}
-          sub={`${data.kpis.occupiedToday}/${data.kpis.sellableToday} חדרים תפוסים`}
-        />
-        <KpiCard icon="login" label="הגעות היום" value={String(data.kpis.arrivalsToday)} />
-        <KpiCard icon="logout" label="יציאות היום" value={String(data.kpis.departuresToday)} />
+        <div className="cb-kpi">
+          <span className="cb-kpi-ic" style={{ background: "#E4F6EE", color: "#0B7355" }}>
+            <Icon name="users-round" size={21} />
+          </span>
+          <div className="min-w-0">
+            <p className="cb-kpi-l">אורחים בבית</p>
+            <p className="cb-kpi-v">
+              {data.kpis.guestsInHouse}
+              <span className="cb-u">
+                {" "}
+                · {data.kpis.occupiedToday}/{data.kpis.sellableToday} חדרים
+              </span>
+            </p>
+          </div>
+        </div>
+        <div className="cb-kpi">
+          <span className="cb-kpi-ic" style={{ background: "#FDF2E1", color: "#B4670A" }}>
+            <Icon name="login" size={21} />
+          </span>
+          <div className="min-w-0">
+            <p className="cb-kpi-l">הגעות היום</p>
+            <p className="cb-kpi-v">{data.kpis.arrivalsToday}</p>
+          </div>
+        </div>
+        <div className="cb-kpi">
+          <span className="cb-kpi-ic" style={{ background: "#F2ECFD", color: "#6B27D6" }}>
+            <Icon name="logout" size={21} />
+          </span>
+          <div className="min-w-0">
+            <p className="cb-kpi-l">יציאות היום</p>
+            <p className="cb-kpi-v">{data.kpis.departuresToday}</p>
+          </div>
+        </div>
       </div>
 
-      {/* ---- payment legend / filter ---- */}
-      <div className="flex flex-wrap items-center gap-2">
-        <LegendChip
-          active={paymentFilter === "all"}
-          onClick={() => setPaymentFilter("all")}
-          label="הכל"
-          dot="#1B2233"
-        />
-        <LegendChip
-          active={paymentFilter === "unpaid"}
-          onClick={() => setPaymentFilter("unpaid")}
-          label="לא שולם"
-          dot="#DC2626"
-        />
-        <LegendChip
-          active={paymentFilter === "partial"}
-          onClick={() => setPaymentFilter("partial")}
-          label="שולם חלקית"
-          dot="#0EA47B"
-        />
-        <LegendChip
-          active={paymentFilter === "paid"}
-          onClick={() => setPaymentFilter("paid")}
-          label="שולם מלא"
-          dot="#16A34A"
-        />
+      {/* ---- payment legend / filter (reference .legrow) ---- */}
+      <div className="flex flex-wrap items-center gap-1 px-[26px] pt-[10px]">
+        {LEGEND.map((l) => (
+          <button
+            key={l.key}
+            type="button"
+            aria-pressed={paymentFilter === l.key}
+            className={`cb-leg ${paymentFilter === l.key ? "on" : ""}`}
+            onClick={() => setPaymentFilter(l.key)}
+          >
+            <span className="cb-d" style={{ background: l.dot }} />
+            {l.label}
+          </button>
+        ))}
       </div>
 
       {/* ---- the board ---- */}
-      <CalendarGrid
-        data={data}
-        view={view}
-        paymentFilter={paymentFilter}
-        statusColor={statusColor}
-        statusLabel={statusLabel}
-        can={can}
-        onOpenReservation={(id) => can.viewReservation && setEditId(id)}
-        onNewBooking={(prefill) => can.create && setBooking(prefill)}
-        onNewClosure={(prefill) => can.close && setClosure(prefill)}
-      />
+      <div className="mx-[26px] mb-[6px] mt-3 flex min-h-0 flex-1 flex-col">
+        <CalendarGrid
+          data={data}
+          paymentFilter={paymentFilter}
+          statusLabel={statusLabel}
+          can={can}
+          onOpenReservation={(id) => can.viewReservation && setEditId(id)}
+          onNewBooking={(prefill) => can.create && setBooking(prefill)}
+          onNewClosure={(prefill) => can.close && setClosure(prefill)}
+        />
+      </div>
 
-      <p className="text-xs text-faint">
+      <p className="cb-hint px-[30px] pb-[14px] pt-[6px]">
         גרירת הזמנה מזיזה תאריכים או חדר · הפס בקצה השמאלי משנה תאריך עזיבה · לחיצה על
-        הזמנה פותחת את כרטיס ההזמנה · לחיצה כפולה על תא ריק פותחת הזמנה חדשה · לחיצה על
+        הזמנה פותחת כרטיס פעולות · לחיצה כפולה על תא ריק פותחת הזמנה חדשה · לחיצה על
         סטטוס תשלום מסננת
       </p>
 
-      {/* ---- panels ---- */}
+      {/* ---- windows ---- */}
       <BookingPanel
         open={booking !== null}
         onClose={() => setBooking(null)}
@@ -219,96 +217,51 @@ export function CalendarScreen({
   );
 }
 
-// ---- KPI building blocks (DESIGN_SYSTEM card + accent icon square) ----
-
-function KpiCard({
-  icon,
-  label,
-  value,
-  sub,
-}: {
-  icon: Parameters<typeof Icon>[0]["name"];
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  return (
-    <div className="flex items-center gap-4 rounded-2xl border border-line bg-surface p-5 shadow-card">
-      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
-        <Icon name={icon} size={22} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-sm text-muted">{label}</p>
-        <p className="text-2xl font-extrabold text-ink">
-          {value}
-          {sub ? <span className="ms-2 text-xs font-medium text-faint">{sub}</span> : null}
-        </p>
-      </div>
-    </div>
-  );
-}
-
+// Occupancy KPI — donut with the % inside + delta chip (reference .kpi).
 function KpiOccupancy({ pct, delta }: { pct: number; delta: number }) {
-  const r = 20;
+  const r = 17;
   const c = 2 * Math.PI * r;
+  const up = delta >= 0;
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-line bg-surface p-5 shadow-card">
-      <svg width="52" height="52" viewBox="0 0 52 52" className="-rotate-90 shrink-0">
-        <circle cx="26" cy="26" r={r} fill="none" stroke="#E7EAF1" strokeWidth="6" />
+    <div className="cb-kpi">
+      <svg width="46" height="46" viewBox="0 0 46 46" className="shrink-0">
+        <circle cx="23" cy="23" r={r} fill="none" stroke="#E9EDF5" strokeWidth="6" />
         <circle
-          cx="26"
-          cy="26"
+          cx="23"
+          cy="23"
           r={r}
           fill="none"
           stroke="#2540C8"
           strokeWidth="6"
           strokeLinecap="round"
-          strokeDasharray={`${(pct / 100) * c} ${c}`}
+          strokeDasharray={`${(Math.min(pct, 100) / 100) * c} ${c}`}
+          transform="rotate(-90 23 23)"
         />
+        <text x="23" y="27" textAnchor="middle" fontSize="11" fontWeight="800" fill="#1B2233">
+          {pct}%
+        </text>
       </svg>
-      <div>
-        <p className="text-sm text-muted">תפוסה היום</p>
+      <div className="min-w-0">
+        <p className="cb-kpi-l">תפוסה היום</p>
         <div className="flex items-center gap-2">
-          <p className="text-2xl font-extrabold text-ink">{pct}%</p>
+          <span className="cb-kpi-v">{pct}%</span>
           <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-              delta >= 0 ? "bg-status-success-050 text-[#15803D]" : "bg-status-danger-050 text-[#B4231F]"
-            }`}
-            dir="ltr"
+            className="cb-kpi-delta"
+            style={
+              up
+                ? { background: "#E4F6EE", color: "#0B7355" }
+                : { background: "#FDECEC", color: "#B4231F" }
+            }
           >
-            {delta >= 0 ? "+" : ""}
-            {delta}% מאתמול
+            <Icon name={up ? "trending-up" : "trending-down"} size={13} />
+            <span dir="ltr">
+              {up ? "+" : ""}
+              {delta}%
+            </span>{" "}
+            מאתמול
           </span>
         </div>
       </div>
     </div>
-  );
-}
-
-function LegendChip({
-  active,
-  onClick,
-  label,
-  dot,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  dot: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`flex min-h-[36px] items-center gap-2 rounded-full border px-4 py-1 text-sm transition-colors ${
-        active
-          ? "border-primary bg-primary-050 font-semibold text-primary"
-          : "border-line bg-surface font-medium text-text2 hover:bg-hover"
-      }`}
-    >
-      <span className="h-2.5 w-2.5 rounded-full" style={{ background: dot }} />
-      {label}
-    </button>
   );
 }
