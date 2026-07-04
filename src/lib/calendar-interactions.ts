@@ -11,16 +11,30 @@ import { addDays, nightsBetween, type DateOnly } from "./dates";
 // Movement (px) below which a pointer-down+up is a CLICK, at/above it a DRAG.
 export const DRAG_THRESHOLD_PX = 6;
 
-export type DragMode = "move" | "resize";
+// Hover-tooltip timing: a short deliberate delay before opening, and a
+// grace period on leave so the pointer can travel pill → tooltip without
+// flicker (§2 of the correction pass).
+export const TOOLTIP_OPEN_MS = 380;
+export const TOOLTIP_CLOSE_MS = 140;
+
+export type DragMode = "move" | "resize" | "create";
 
 // Has the pointer moved far enough to switch from click to drag?
 export function dragActivated(dx: number, dy: number, threshold = DRAG_THRESHOLD_PX): boolean {
   return Math.abs(dx) > threshold || Math.abs(dy) > threshold;
 }
 
+// Explicit input rule separating empty-cell RANGE SELECTION from scrolling:
+// a selection starts only when the pointer travels past the threshold AND
+// horizontally more than vertically. Vertical-dominant movement is a scroll
+// gesture and must abort the session (§4).
+export function createActivated(dx: number, dy: number, threshold = DRAG_THRESHOLD_PX): boolean {
+  return Math.abs(dx) > threshold && Math.abs(dx) >= Math.abs(dy);
+}
+
 // What a pointer-up means. A plain click (never activated) on the card body
-// opens the reservation; the resize handle NEVER opens it; an activated drag
-// commits. This is the click-vs-drag separation rule (§F).
+// OPENS the reservation editor; the resize handle and empty cells never
+// open on click; an activated drag commits. Click-vs-drag rule (§F/§3).
 export function dragEndAction(mode: DragMode, activated: boolean): "open" | "commit" | "none" {
   if (!activated) return mode === "move" ? "open" : "none";
   return "commit";
@@ -87,6 +101,39 @@ export function barGeometry(
   const start = clippedStart ? 0 : (nightsBetween(from, ci) + 0.5) / days;
   const end = clippedEnd ? 1 : (nightsBetween(from, co) + 0.5) / days;
   return { start, width: Math.max(end - start, 0.5 / days), clippedStart, clippedEnd };
+}
+
+// Target of an empty-cell CREATE drag: the anchor cell plus the signed day
+// delta select whole nights in either horizontal direction. The first
+// selected cell is always a stay night, so checkout is exclusive one day
+// past the last selected cell, and the range never shrinks below the
+// cell's minimum stay (§4).
+export function createRangeTarget(
+  startDate: DateOnly,
+  dayDelta: number,
+  minNights = 1,
+): { ci: DateOnly; co: DateOnly; nights: number } {
+  const end = addDays(startDate, dayDelta);
+  const ci = dayDelta < 0 ? end : startDate;
+  const lastNight = dayDelta < 0 ? startDate : end;
+  let co = addDays(lastNight, 1);
+  const min = Math.max(1, minNights);
+  if (nightsBetween(ci, co) < min) co = addDays(ci, min);
+  return { ci, co, nights: nightsBetween(ci, co) };
+}
+
+// Selection-band geometry: FULL day cells (cell edge to cell edge), unlike
+// reservation pills which run mid-cell to mid-cell — a selected night
+// highlights its whole cell. Same fraction space, same clipping rules.
+export function cellRangeGeometry(
+  from: DateOnly,
+  days: number,
+  ci: DateOnly,
+  co: DateOnly,
+): { start: number; width: number } {
+  const start = Math.min(Math.max(nightsBetween(from, ci) / days, 0), 1);
+  const end = Math.min(Math.max(nightsBetween(from, co) / days, 0), 1);
+  return { start, width: Math.max(end - start, 0) };
 }
 
 // The delta-only resize preview band (§J): committed pill untouched, only

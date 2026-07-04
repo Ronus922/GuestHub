@@ -21,6 +21,9 @@ import {
 import {
   barGeometry,
   canDragCard,
+  cellRangeGeometry,
+  createActivated,
+  createRangeTarget,
   dragActivated,
   dragEndAction,
   moveTarget,
@@ -28,6 +31,8 @@ import {
   resizeTarget,
   snapDayDelta,
   snapRowDelta,
+  TOOLTIP_CLOSE_MS,
+  TOOLTIP_OPEN_MS,
   type DragMode,
 } from "@/lib/calendar-interactions";
 import { rescheduleReservationRoomAction } from "@/app/(dashboard)/reservations/actions";
@@ -41,7 +46,7 @@ import type {
 import type { BookingPrefill } from "@/components/reservations/BookingPanel";
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
-import { ReservationPopover, type PopoverTarget } from "./ReservationPopover";
+import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
 
 // ---- geometry (reference: 176px room column, 56px rows, 38px pills) ----
 const ROOM_COL = 176;
@@ -67,9 +72,13 @@ type ClosurePopover = { x: number; y: number; id: string; label: string };
 
 // Live drag session — kept OUT of React state so pointer movement never
 // re-renders the grid; only the ghost node is mutated (rAF-throttled).
+// mode "create" is an empty-cell range selection: stay is null and
+// startDate anchors the selected night range (§4).
 type DragSession = {
   mode: DragMode;
-  stay: CalendarStay;
+  stay: CalendarStay | null;
+  startDate: DateOnly | null;
+  minNights: number;
   roomIndex: number;
   pointerId: number;
   startX: number;
@@ -109,7 +118,9 @@ export function CalendarGrid({
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [closurePop, setClosurePop] = useState<ClosurePopover | null>(null);
-  const [popover, setPopover] = useState<PopoverTarget | null>(null);
+  // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
+  // delay, kept alive while the pointer is inside the card or the tooltip
+  const [tip, setTip] = useState<TooltipTarget | null>(null);
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
   const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
@@ -117,6 +128,17 @@ export function CalendarGrid({
   const sessionRef = useRef<DragSession | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
+  const gnRef = useRef<HTMLSpanElement | null>(null);
+  const tipOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelTipTimers = useCallback(() => {
+    if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
+    if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
+    tipOpenTimer.current = null;
+    tipCloseTimer.current = null;
+  }, []);
+  useEffect(() => cancelTipTimers, [cancelTipTimers]);
 
   const staysByRoom = useMemo(() => {
     const m = new Map<string, CalendarStay[]>();
@@ -158,12 +180,11 @@ export function CalendarGrid({
 
   // ---- client-side collision PREVIEW (visual only — the server re-validates
   // everything inside a transaction before any commit, §I) ----
-  const previewInvalid = useCallback(
-    (stay: CalendarStay, targetRoom: CalendarRoom, ci: DateOnly, co: DateOnly): boolean => {
+  const rangeInvalid = useCallback(
+    (targetRoom: CalendarRoom, ci: DateOnly, co: DateOnly, excludeRrId?: string): boolean => {
       if (targetRoom.status !== "available" || !targetRoom.is_active) return true;
-      if (stay.adults + stay.children > targetRoom.max_occupancy) return true;
       for (const other of staysByRoom.get(targetRoom.id) ?? []) {
-        if (other.rr_id === stay.rr_id) continue;
+        if (excludeRrId && other.rr_id === excludeRrId) continue;
         if (!isBlocking(other.status)) continue;
         if (other.check_in < co && other.check_out > ci) return true;
       }
@@ -175,6 +196,14 @@ export function CalendarGrid({
     [staysByRoom, closuresByRoom],
   );
 
+  const previewInvalid = useCallback(
+    (stay: CalendarStay, targetRoom: CalendarRoom, ci: DateOnly, co: DateOnly): boolean => {
+      if (stay.adults + stay.children > targetRoom.max_occupancy) return true;
+      return rangeInvalid(targetRoom, ci, co, stay.rr_id);
+    },
+    [rangeInvalid],
+  );
+
   // ---- ghost rendering (direct DOM, rAF-throttled — zero React work) ----
   const paintGhost = useCallback(() => {
     const s = sessionRef.current;
@@ -183,7 +212,7 @@ export function CalendarGrid({
     if (!s || !ghost || !body || !s.activated) return;
 
     const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
-    if (s.mode === "move") {
+    if (s.mode === "move" && s.stay) {
       const roomDelta = snapRowDelta(s.startY, s.lastY, ROW_H);
       const t = moveTarget(s.stay, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
       const geo = barGeometry(data.from, data.days, t.ci, t.co);
@@ -196,9 +225,9 @@ export function CalendarGrid({
       ghost.style.width = `${geo.width * s.stripWidth}px`;
       ghost.style.transform = `translate(${x}px, ${y}px)`;
       ghost.dataset.invalid = invalid ? "true" : "false";
-      ghost.classList.remove("rsz");
+      ghost.classList.remove("rsz", "new");
       ghost.classList.add("live");
-    } else {
+    } else if (s.mode === "resize" && s.stay) {
       const t = resizeTarget(s.stay, dayDelta);
       const delta = resizeDeltaRange(s.stay, t.co);
       if (!delta) {
@@ -206,18 +235,35 @@ export function CalendarGrid({
         return;
       }
       const geo = barGeometry(data.from, data.days, delta.from, delta.to);
-      const invalid =
-        delta.extending &&
-        previewInvalid(s.stay, data.rooms[s.roomIndex], delta.from, delta.to);
+      // extension must be free; shortening turns invalid only when the
+      // result drops below the cell's minimum-stay restriction (§1)
+      const nightsAfter = nightsBetween(s.stay.check_in, t.co);
+      const invalid = delta.extending
+        ? previewInvalid(s.stay, data.rooms[s.roomIndex], delta.from, delta.to)
+        : nightsAfter < s.minNights;
       const x = s.stripWidth * (1 - geo.start - geo.width);
       const y = s.roomIndex * ROW_H + BAR_TOP;
       ghost.style.width = `${geo.width * s.stripWidth}px`;
       ghost.style.transform = `translate(${x}px, ${y}px)`;
       ghost.dataset.kind = delta.extending ? "extend" : "shorten";
       ghost.dataset.invalid = invalid ? "true" : "false";
+      ghost.classList.remove("new");
       ghost.classList.add("rsz", "live");
+    } else if (s.mode === "create" && s.startDate) {
+      const t = createRangeTarget(s.startDate, dayDelta, s.minNights);
+      const geo = cellRangeGeometry(data.from, data.days, t.ci, t.co);
+      const room = data.rooms[s.roomIndex];
+      const invalid = rangeInvalid(room, t.ci, t.co);
+      const x = s.stripWidth * (1 - geo.start - geo.width);
+      const y = s.roomIndex * ROW_H + BAR_TOP;
+      ghost.style.width = `${geo.width * s.stripWidth}px`;
+      ghost.style.transform = `translate(${x}px, ${y}px)`;
+      ghost.dataset.invalid = invalid ? "true" : "false";
+      ghost.classList.remove("rsz");
+      ghost.classList.add("new", "live");
+      if (gnRef.current) gnRef.current.textContent = `${t.nights} לילות`;
     }
-  }, [data.from, data.days, data.rooms, previewInvalid]);
+  }, [data.from, data.days, data.rooms, previewInvalid, rangeInvalid]);
 
   const endDrag = useCallback(() => {
     const s = sessionRef.current;
@@ -239,6 +285,8 @@ export function CalendarGrid({
 
   const commitDrag = useCallback(
     async (s: DragSession) => {
+      const stay = s.stay;
+      if (!stay) return;
       const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
       let targetRoom: CalendarRoom;
       let ci: DateOnly;
@@ -246,33 +294,39 @@ export function CalendarGrid({
       let changed: boolean;
       if (s.mode === "move") {
         const roomDelta = snapRowDelta(s.startY, s.lastY, ROW_H);
-        const t = moveTarget(s.stay, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
+        const t = moveTarget(stay, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
         targetRoom = data.rooms[t.roomIndex];
         ci = t.ci;
         co = t.co;
-        changed = t.changed || targetRoom.id !== s.stay.room_id;
+        changed = t.changed || targetRoom.id !== stay.room_id;
       } else {
-        const t = resizeTarget(s.stay, dayDelta);
+        const t = resizeTarget(stay, dayDelta);
         targetRoom = data.rooms[s.roomIndex];
         ci = t.ci;
         co = t.co;
         changed = t.changed;
+        // same rule the red preview shows: shortening below the check-in
+        // cell's minimum stay is rejected client-side too (§1)
+        if (changed && co < stay.check_out && nightsBetween(ci, co) < s.minNights) {
+          toast.error("קיצור מתחת לשהות המינימלית אינו אפשרי");
+          return;
+        }
       }
       if (!changed) return;
-      if (previewInvalid(s.stay, targetRoom, ci, co)) {
+      if (previewInvalid(stay, targetRoom, ci, co)) {
         toast.error("היעד אינו זמין — הפעולה בוטלה");
         return;
       }
-      setPending((p) => new Set(p).add(s.stay.rr_id));
+      setPending((p) => new Set(p).add(stay.rr_id));
       const res = await rescheduleReservationRoomAction({
-        rrId: s.stay.rr_id,
+        rrId: stay.rr_id,
         targetRoomId: targetRoom.id,
         checkIn: ci,
         checkOut: co,
       });
       setPending((p) => {
         const n = new Set(p);
-        n.delete(s.stay.rr_id);
+        n.delete(stay.rr_id);
         return n;
       });
       if (res.success) toast.success(s.mode === "move" ? "ההזמנה הועברה" : "התאריכים עודכנו");
@@ -281,15 +335,60 @@ export function CalendarGrid({
     [data.rooms, previewInvalid],
   );
 
-  const openPopover = useCallback(
-    (stay: CalendarStay, room: CalendarRoom, anchor: DOMRect) => {
+  // ---- click → the FULL edit window, directly (§3; hover shows the
+  // tooltip, clicking edits) ----
+  const openEditor = useCallback(
+    (stay: CalendarStay) => {
       if (!can.viewReservation) return;
+      cancelTipTimers();
+      setTip(null);
       setMenu(null);
       setClosurePop(null);
-      setPopover({ stay, room, anchor: { x: anchor.left + anchor.width / 2, top: anchor.top, bottom: anchor.bottom } });
+      onOpenReservation(stay.reservation_id);
+    },
+    [can.viewReservation, cancelTipTimers, onOpenReservation],
+  );
+
+  // ---- hover tooltip wiring (§2): open after a deliberate delay, close
+  // with a short grace so the pointer can travel into the tooltip ----
+  const onBarHoverStart = useCallback(
+    (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => {
+      if (e.pointerType !== "mouse" || !can.viewReservation) return;
+      if (sessionRef.current) return; // never during a drag/resize/selection
+      const el = e.currentTarget as HTMLElement;
+      if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
+      tipCloseTimer.current = null;
+      if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
+      tipOpenTimer.current = setTimeout(() => {
+        tipOpenTimer.current = null;
+        if (sessionRef.current || !el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        setTip({ stay, room, anchor: { x: r.left + r.width / 2, top: r.top, bottom: r.bottom } });
+      }, TOOLTIP_OPEN_MS);
     },
     [can.viewReservation],
   );
+
+  const scheduleTipClose = useCallback(() => {
+    if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
+    tipOpenTimer.current = null;
+    if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
+    tipCloseTimer.current = setTimeout(() => {
+      tipCloseTimer.current = null;
+      setTip(null);
+    }, TOOLTIP_CLOSE_MS);
+  }, []);
+
+  const keepTipAlive = useCallback(() => {
+    if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
+    tipCloseTimer.current = null;
+  }, []);
+
+  // hovering the resize handle never opens the tooltip (§2)
+  const cancelTipOpen = useCallback(() => {
+    if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
+    tipOpenTimer.current = null;
+  }, []);
 
   // ---- pointer wiring (handlers live ON the card via pointer capture —
   // no document-level listeners, nothing leaks) ----
@@ -298,16 +397,20 @@ export function CalendarGrid({
       if (!canDragCard(can.edit, pending.has(stay.rr_id))) return;
       if (e.button !== 0) return;
       e.preventDefault();
+      cancelTipOpen();
       setMenu(null);
       setClosurePop(null);
-      setPopover(null);
       const body = bodyRef.current;
       if (!body) return;
+      const room = data.rooms[roomIndex];
+      const minN = room ? (cellRate(room, stay.check_in)?.min_nights ?? 1) : 1;
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       sessionRef.current = {
         mode,
         stay,
+        startDate: null,
+        minNights: Math.max(1, minN ?? 1),
         roomIndex,
         pointerId: e.pointerId,
         startX: e.clientX,
@@ -320,7 +423,7 @@ export function CalendarGrid({
         raf: 0,
       };
     },
-    [can.edit, pending, data.days],
+    [can.edit, pending, data.days, data.rooms, cellRate, cancelTipOpen],
   );
 
   const onBarPointerMove = useCallback(
@@ -332,7 +435,95 @@ export function CalendarGrid({
       if (!s.activated) {
         if (!dragActivated(e.clientX - s.startX, e.clientY - s.startY)) return;
         s.activated = true;
-        setDragUi({ mode: s.mode, rrId: s.stay.rr_id });
+        // crossing the threshold closes the tooltip and never opens it (§2)
+        cancelTipTimers();
+        setTip(null);
+        setDragUi({ mode: s.mode, rrId: s.stay?.rr_id ?? "" });
+      }
+      if (!s.raf) {
+        s.raf = requestAnimationFrame(() => {
+          if (sessionRef.current === s) {
+            s.raf = 0;
+            paintGhost();
+          }
+        });
+      }
+    },
+    [paintGhost, cancelTipTimers],
+  );
+
+  const onBarPointerUp = useCallback(
+    (e: React.PointerEvent, stay: CalendarStay) => {
+      const s = sessionRef.current;
+      if (!s || e.pointerId !== s.pointerId) return;
+      const action = dragEndAction(s.mode, s.activated);
+      endDrag();
+      if (action === "open") openEditor(stay);
+      else if (action === "commit") void commitDrag(s);
+    },
+    [endDrag, openEditor, commitDrag],
+  );
+
+  const onBarPointerCancel = useCallback(() => {
+    if (sessionRef.current) endDrag();
+  }, [endDrag]);
+
+  // ---- empty-cell range selection → prefilled new booking (§4).
+  // Explicit input rule: mouse/pen only (touch keeps native panning), and
+  // the gesture must be horizontal-dominant past the threshold — vertical
+  // movement aborts the session and scrolls as usual. ----
+  const onCellPointerDown = useCallback(
+    (e: React.PointerEvent, roomIndex: number, date: DateOnly, minNights: number) => {
+      if (!can.create) return;
+      if (e.button !== 0 || e.pointerType === "touch") return;
+      if (sessionRef.current) return;
+      const body = bodyRef.current;
+      if (!body) return;
+      cancelTipTimers();
+      setTip(null);
+      setMenu(null);
+      setClosurePop(null);
+      const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      // no preventDefault — a sub-threshold press must still double-click
+      sessionRef.current = {
+        mode: "create",
+        stay: null,
+        startDate: date,
+        minNights: Math.max(1, minNights),
+        roomIndex,
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastX: e.clientX,
+        lastY: e.clientY,
+        colW: stripWidth / data.days,
+        stripWidth,
+        activated: false,
+        raf: 0,
+      };
+    },
+    [can.create, data.days, cancelTipTimers],
+  );
+
+  const onCellPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const s = sessionRef.current;
+      if (!s || s.mode !== "create" || e.pointerId !== s.pointerId) return;
+      s.lastX = e.clientX;
+      s.lastY = e.clientY;
+      if (!s.activated) {
+        const dx = e.clientX - s.startX;
+        const dy = e.clientY - s.startY;
+        if (createActivated(dx, dy)) {
+          s.activated = true;
+          setDragUi({ mode: "create", rrId: "" });
+        } else if (dragActivated(dx, dy)) {
+          // vertical-dominant = scroll gesture → abort the selection
+          sessionRef.current = null;
+          (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+          return;
+        } else return;
       }
       if (!s.raf) {
         s.raf = requestAnimationFrame(() => {
@@ -346,22 +537,24 @@ export function CalendarGrid({
     [paintGhost],
   );
 
-  const onBarPointerUp = useCallback(
-    (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => {
+  const onCellPointerUp = useCallback(
+    (e: React.PointerEvent) => {
       const s = sessionRef.current;
-      if (!s || e.pointerId !== s.pointerId) return;
-      const action = dragEndAction(s.mode, s.activated);
-      const anchor = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      if (!s || s.mode !== "create" || e.pointerId !== s.pointerId) return;
       endDrag();
-      if (action === "open") openPopover(stay, room, anchor);
-      else if (action === "commit") void commitDrag(s);
+      if (!s.activated || !s.startDate) return; // plain click → double-click still creates
+      const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
+      const t = createRangeTarget(s.startDate, dayDelta, s.minNights);
+      const room = data.rooms[s.roomIndex];
+      if (!room) return;
+      if (rangeInvalid(room, t.ci, t.co)) {
+        toast.error("הטווח המסומן אינו זמין");
+        return;
+      }
+      onNewBooking({ roomId: room.id, checkIn: t.ci, checkOut: t.co });
     },
-    [endDrag, openPopover, commitDrag],
+    [endDrag, data.rooms, rangeInvalid, onNewBooking],
   );
-
-  const onBarPointerCancel = useCallback(() => {
-    if (sessionRef.current) endDrag();
-  }, [endDrag]);
 
   // dismiss context menus on outside click / escape
   useEffect(() => {
@@ -384,7 +577,7 @@ export function CalendarGrid({
       e.preventDefault();
       e.stopPropagation();
       setClosurePop(null);
-      setPopover(null);
+      setTip(null);
       setMenu({ x: e.clientX, y: e.clientY, roomId, date });
     },
     [],
@@ -429,8 +622,8 @@ export function CalendarGrid({
   const dragPalette = dragStay ? stayPalette(dragStay) : null;
   // dim only the source card of a MOVE, and only re-render its own row
   const dimRoomId = dragUi?.mode === "move" ? (dragStay?.room_id ?? null) : null;
-  // selected card = the one whose popover is open (row-scoped for memo)
-  const selRoomId = popover?.stay.room_id ?? null;
+  // highlighted card = the one whose hover tooltip is open (row-scoped)
+  const selRoomId = tip?.stay.room_id ?? null;
 
   return (
     <div className="cb-calcard">
@@ -445,7 +638,15 @@ export function CalendarGrid({
       ) : (
         <div className="cb-calwrap thin-scroll" dir="rtl">
           <div
-            className={`cb-calin ${dragUi ? (dragUi.mode === "move" ? "dragging" : "resizing") : ""}`}
+            className={`cb-calin ${
+              dragUi
+                ? dragUi.mode === "move"
+                  ? "dragging"
+                  : dragUi.mode === "resize"
+                    ? "resizing"
+                    : "selecting"
+                : ""
+            }`}
           >
             {/* ===== sticky header: month band + day band ===== */}
             <div className="cb-chead">
@@ -553,13 +754,20 @@ export function CalendarGrid({
                   paymentFilter={paymentFilter}
                   pending={pending}
                   dragRrId={room.id === dimRoomId && dragUi ? dragUi.rrId : null}
-                  selectedRrId={room.id === selRoomId && popover ? popover.stay.rr_id : null}
+                  selectedRrId={room.id === selRoomId && tip ? tip.stay.rr_id : null}
                   can={can}
                   onBarPointerDown={onBarPointerDown}
                   onBarPointerMove={onBarPointerMove}
                   onBarPointerUp={onBarPointerUp}
                   onBarPointerCancel={onBarPointerCancel}
-                  onOpenPopover={openPopover}
+                  onBarHoverStart={onBarHoverStart}
+                  onBarHoverEnd={scheduleTipClose}
+                  onHandleHover={cancelTipOpen}
+                  onOpenEditor={openEditor}
+                  onCellPointerDown={onCellPointerDown}
+                  onCellPointerMove={onCellPointerMove}
+                  onCellPointerUp={onCellPointerUp}
+                  onCellPointerCancel={onBarPointerCancel}
                   onCellContext={onCellContext}
                   onCellDouble={onCellDouble}
                   onClosureClick={onClosureClick}
@@ -587,6 +795,9 @@ export function CalendarGrid({
                     </span>
                   </>
                 ) : null}
+                {/* live nights label of the create-selection band — text is
+                    written imperatively per frame, never via React */}
+                <span ref={gnRef} className="cb-gn" />
               </div>
             </div>
           </div>
@@ -597,7 +808,8 @@ export function CalendarGrid({
       {menu && (
         <div
           className="fixed z-50 min-w-[180px] overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop"
-          style={{ top: menu.y + 4, insetInlineStart: Math.max(menu.x - 170, 8) }}
+          // physical left — a logical inset inside dir="rtl" would mirror it
+          style={{ top: menu.y + 4, left: Math.max(menu.x - 170, 8) }}
           dir="rtl"
           onClick={(e) => e.stopPropagation()}
         >
@@ -637,7 +849,7 @@ export function CalendarGrid({
       {closurePop && (
         <div
           className="fixed z-50 min-w-[220px] overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop"
-          style={{ top: closurePop.y + 4, insetInlineStart: Math.max(closurePop.x - 200, 8) }}
+          style={{ top: closurePop.y + 4, left: Math.max(closurePop.x - 200, 8) }}
           dir="rtl"
           onClick={(e) => e.stopPropagation()}
         >
@@ -665,15 +877,22 @@ export function CalendarGrid({
         </div>
       )}
 
-      {/* ===== reservation card popover (reference .pop) ===== */}
-      <ReservationPopover
-        target={popover}
+      {/* ===== reservation hover tooltip (reference .pop / Tooltip.png) ===== */}
+      <ReservationTooltip
+        target={tip}
         statusLabel={statusLabel}
-        onClose={() => setPopover(null)}
+        canConfirm={can.edit}
+        onClose={() => {
+          cancelTipTimers();
+          setTip(null);
+        }}
         onEdit={(reservationId) => {
-          setPopover(null);
+          cancelTipTimers();
+          setTip(null);
           onOpenReservation(reservationId);
         }}
+        onKeepAlive={keepTipAlive}
+        onRelease={scheduleTipClose}
       />
     </div>
   );
@@ -702,7 +921,14 @@ const RoomRow = memo(function RoomRow({
   onBarPointerMove,
   onBarPointerUp,
   onBarPointerCancel,
-  onOpenPopover,
+  onBarHoverStart,
+  onBarHoverEnd,
+  onHandleHover,
+  onOpenEditor,
+  onCellPointerDown,
+  onCellPointerMove,
+  onCellPointerUp,
+  onCellPointerCancel,
   onCellContext,
   onCellDouble,
   onClosureClick,
@@ -723,9 +949,16 @@ const RoomRow = memo(function RoomRow({
   can: CalendarCan;
   onBarPointerDown: (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => void;
   onBarPointerMove: (e: React.PointerEvent) => void;
-  onBarPointerUp: (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => void;
+  onBarPointerUp: (e: React.PointerEvent, stay: CalendarStay) => void;
   onBarPointerCancel: () => void;
-  onOpenPopover: (stay: CalendarStay, room: CalendarRoom, anchor: DOMRect) => void;
+  onBarHoverStart: (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => void;
+  onBarHoverEnd: () => void;
+  onHandleHover: () => void;
+  onOpenEditor: (stay: CalendarStay) => void;
+  onCellPointerDown: (e: React.PointerEvent, roomIndex: number, date: DateOnly, minNights: number) => void;
+  onCellPointerMove: (e: React.PointerEvent) => void;
+  onCellPointerUp: (e: React.PointerEvent) => void;
+  onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (roomId: string, date: DateOnly, minNights: number) => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
@@ -771,13 +1004,18 @@ const RoomRow = memo(function RoomRow({
           const rate = cellRate(room, d);
           const price = rate?.price != null ? Number(rate.price) : room.base_price;
           const minN = rate?.min_nights ?? null;
+          const creatable = can.create && sellable;
           return (
             <div
               key={d}
-              className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${monthStart ? "ms" : ""} ${!sellable ? "blocked" : ""}`}
-              onDoubleClick={
-                can.create && sellable ? () => onCellDouble(room.id, d, minN ?? 1) : undefined
+              className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${monthStart ? "ms" : ""} ${!sellable ? "blocked" : ""} ${creatable ? "cr" : ""}`}
+              onPointerDown={
+                creatable ? (e) => onCellPointerDown(e, roomIndex, d, minN ?? 1) : undefined
               }
+              onPointerMove={creatable ? onCellPointerMove : undefined}
+              onPointerUp={creatable ? onCellPointerUp : undefined}
+              onPointerCancel={creatable ? onCellPointerCancel : undefined}
+              onDoubleClick={creatable ? () => onCellDouble(room.id, d, minN ?? 1) : undefined}
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
@@ -838,7 +1076,10 @@ const RoomRow = memo(function RoomRow({
             onPointerMove={onBarPointerMove}
             onPointerUp={onBarPointerUp}
             onPointerCancel={onBarPointerCancel}
-            onOpenPopover={onOpenPopover}
+            onHoverStart={onBarHoverStart}
+            onHoverEnd={onBarHoverEnd}
+            onHandleHover={onHandleHover}
+            onOpenEditor={onOpenEditor}
           />
         ))}
       </div>
@@ -865,7 +1106,10 @@ const StayBar = memo(function StayBar({
   onPointerMove,
   onPointerUp,
   onPointerCancel,
-  onOpenPopover,
+  onHoverStart,
+  onHoverEnd,
+  onHandleHover,
+  onOpenEditor,
 }: {
   stay: CalendarStay;
   room: CalendarRoom;
@@ -880,9 +1124,12 @@ const StayBar = memo(function StayBar({
   canView: boolean;
   onPointerDown: (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => void;
   onPointerMove: (e: React.PointerEvent) => void;
-  onPointerUp: (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => void;
+  onPointerUp: (e: React.PointerEvent, stay: CalendarStay) => void;
   onPointerCancel: () => void;
-  onOpenPopover: (stay: CalendarStay, room: CalendarRoom, anchor: DOMRect) => void;
+  onHoverStart: (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => void;
+  onHoverEnd: () => void;
+  onHandleHover: () => void;
+  onOpenEditor: (stay: CalendarStay) => void;
 }) {
   const pal = stayPalette(stay);
   const geo = barGeometry(from, days, stay.check_in, stay.check_out);
@@ -908,16 +1155,16 @@ const StayBar = memo(function StayBar({
       }}
       onPointerDown={draggable ? (e) => onPointerDown(e, stay, roomIndex, "move") : undefined}
       onPointerMove={draggable ? onPointerMove : undefined}
-      onPointerUp={draggable ? (e) => onPointerUp(e, stay, room) : undefined}
+      onPointerUp={draggable ? (e) => onPointerUp(e, stay) : undefined}
       onPointerCancel={draggable ? onPointerCancel : undefined}
-      onClick={
-        draggable
-          ? undefined
-          : (e) => onOpenPopover(stay, room, (e.currentTarget as HTMLElement).getBoundingClientRect())
-      }
+      onPointerEnter={canView ? (e) => onHoverStart(e, stay, room) : undefined}
+      onPointerLeave={canView ? onHoverEnd : undefined}
+      onClick={draggable ? undefined : () => onOpenEditor(stay)}
       onKeyDown={(e) => {
-        if (e.key === "Enter")
-          onOpenPopover(stay, room, (e.currentTarget as HTMLElement).getBoundingClientRect());
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpenEditor(stay);
+        }
       }}
     >
       {stay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
@@ -936,6 +1183,7 @@ const StayBar = memo(function StayBar({
           role="separator"
           aria-label="שינוי תאריך עזיבה"
           title="גרירה לשינוי תאריך עזיבה"
+          onPointerEnter={onHandleHover}
           onPointerDown={(e) => {
             e.stopPropagation();
             onPointerDown(e, stay, roomIndex, "resize");
@@ -943,7 +1191,7 @@ const StayBar = memo(function StayBar({
           onPointerMove={onPointerMove}
           onPointerUp={(e) => {
             e.stopPropagation();
-            onPointerUp(e, stay, room);
+            onPointerUp(e, stay);
           }}
           onPointerCancel={onPointerCancel}
         />
