@@ -270,3 +270,53 @@ Note: the login page's Google button is still a stub ("התחברות Google ת�
 the staff screen already resolves the linked identity (last-login via the auth join).
 Future phase: staff-create could offer an explicit "adopt existing auth identity"
 branch instead of masking the GoTrue 422.
+
+## D29 — Google OAuth login ships via the shared GoTrue, gated per-user (supersedes D28's stub note)
+The login stub is now a real flow (google-oauth skill, Route A — adapted, not
+copied): the button calls `signInWithOAuth` with `redirectTo`
+`NEXT_PUBLIC_APP_URL/auth/callback`; the new `/auth/callback` route exchanges the
+PKCE code server-side (cookies staged and bound to the final redirect, like
+/auth/signout) and then gates every non-password provider by the guesthub layer:
+`auth_user_id` match AND `is_active` AND `allow_google_auth` AND a real tenant.
+Unknown identity / flag off / inactive collapse into ONE neutral Hebrew error
+(`google_not_allowed`) — the shared auth.users must not become an email-existence
+oracle. Login never creates or adopts guesthub rows and grants nothing; all
+authorization stays in getActor/effectivePermissionKeys. Redirects are built only
+from `NEXT_PUBLIC_APP_URL` (behind nginx, request.url is the internal upstream).
+`/auth/callback` is exempt from the middleware auth redirect (a callback is
+unauthenticated by definition). Infra (outside the repo): guesthub origins were
+appended to `ADDITIONAL_REDIRECT_URLS` in /opt/supabase/docker/.env and the auth
+container re-upped — Google provider + Console redirect URI were already
+configured instance-wide. No app-side Google secrets exist (they live in GoTrue).
+
+## D30 — OAuth auto-provisioning audit + callback restricted to Google-only (pre-push review, 2026-07-04)
+**Provisioning risk (verified on the running instance, no settings changed):** the
+shared GoTrue already runs `GOTRUE_DISABLE_SIGNUP=true` (flipped instance-wide
+between 2026-05-10 and 2026-07-03, before this feature) and has **no** GoTrue hooks
+configured (zero `GOTRUE_HOOK_*` vars). An unknown Google account completing OAuth
+is therefore rejected by GoTrue itself with `signup_disabled` — **no `auth.users`
+or `auth.identities` row is created**; GuestHub's callback never even sees a code.
+Known ceiling: GoTrue auto-*linking* is not signup — a Google account whose
+verified email equals an EXISTING `auth.users` email gets a `google` identity row
+linked to that existing user and a session (which GuestHub's gate then rejects).
+That only adds an identity to the email's legitimate owner, never a new user.
+Compatibility: the instance is shared by invoice, mail-system, pms, sea-tower and
+guesthub (almog uses a separate hosted supabase.co project). None of them calls
+`auth.signUp` — all provision users via admin/service-role — so the already-active
+global signup block breaks nothing and no hook is needed.
+**Callback tightened (code):** D29's gate covered "every non-password provider" and
+let `provider=email` sessions through ungated — too broad for a route that serves
+exactly one flow. `/auth/callback` now requires the session itself to be a Google
+OAuth login: JWT `amr[0].method === "oauth"` (decoded from GoTrue's own
+server-to-server exchange response) AND a `google` identity on the user; anything
+else (magic-link/recovery codes, future providers) is signed out behind the same
+neutral `google_not_allowed` error. amr can't name the provider — google is the
+only enabled OAuth provider instance-wide; revisit if a second one is enabled.
+**Infra persistence:** `ADDITIONAL_REDIRECT_URLS` gained exactly
+`https://guesthub.bios.co.il/**` and `https://guesthub.bios.co.il/auth/callback`
+(all four prior invoice/pms entries intact — verified by diff against the backup
+`/opt/supabase/docker/.env.bak-guesthub`, taken 2026-07-03 before the change).
+The value lives in `/opt/supabase/docker/.env`, which `docker-compose.yml` (line
+148) maps to `GOTRUE_URI_ALLOW_LIST` — a `docker compose up -d` recreate rereads
+it, so the config survives redeploys. Restarted service: `supabase-auth`
+(compose service `auth`, project `supabase`).

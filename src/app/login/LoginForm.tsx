@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Icon } from "@/components/shared/Icon";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loginAction, type LoginState } from "./actions";
 
 function SubmitButton() {
@@ -15,10 +16,30 @@ function SubmitButton() {
   );
 }
 
-export function LoginForm() {
+export function LoginForm({ initialError }: { initialError?: string }) {
   const [state, formAction] = useActionState<LoginState, FormData>(loginAction, {});
   const [showPassword, setShowPassword] = useState(false);
-  const [googleNote, setGoogleNote] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+
+  // Starts Supabase Google OAuth. The callback (/auth/callback) exchanges the code
+  // and enforces the guesthub gate (active user + allow_google_auth) server-side.
+  async function signInWithGoogle() {
+    setGoogleError(null);
+    setGoogleLoading(true);
+    const supabase = createSupabaseBrowserClient();
+    const base = process.env.NEXT_PUBLIC_APP_URL ?? window.location.origin;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${base}/auth/callback` },
+    });
+    if (error) {
+      setGoogleError("שגיאה בהתחברות עם Google. נסו שוב.");
+      setGoogleLoading(false);
+    }
+  }
+
+  const errorMessage = state.error ?? googleError ?? initialError;
 
   return (
     <form action={formAction} className="flex flex-col gap-5">
@@ -94,9 +115,9 @@ export function LoginForm() {
         זכור אותי במכשיר זה
       </label>
 
-      {state.error ? (
+      {errorMessage ? (
         <p className="rounded-lg bg-status-danger-050 px-4 py-2.5 text-sm text-status-danger">
-          {state.error}
+          {errorMessage}
         </p>
       ) : null}
 
@@ -112,17 +133,13 @@ export function LoginForm() {
       {/* Google */}
       <button
         type="button"
-        onClick={() => setGoogleNote(true)}
+        onClick={signInWithGoogle}
+        disabled={googleLoading}
         className="btn btn-outline w-full"
       >
         <GoogleGlyph />
-        התחבר עם Google
+        {googleLoading ? "מפנה ל-Google…" : "התחבר עם Google"}
       </button>
-      {googleNote ? (
-        <p className="-mt-2 text-center text-xs text-faint">
-          התחברות Google תופעל בשלב הבא
-        </p>
-      ) : null}
 
       <p className="text-center text-sm text-muted">
         אין לך חשבון?{" "}

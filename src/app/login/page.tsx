@@ -10,7 +10,22 @@ const FEATURES = [
   { icon: "cleaning", title: "ניקיון ותחזוקה", sub: "משימות צוות מסונכרנות אוטומטית" },
 ] as const;
 
-export default function LoginPage() {
+// OAuth-callback failures arrive as ?error= on /login. One deliberately neutral
+// message for every gate rejection — the shared auth layer must not leak whether
+// an email/identity exists (see /auth/callback).
+const OAUTH_ERRORS: Record<string, string> = {
+  google_not_allowed: "כניסה עם Google אינה זמינה לחשבון זה. פנו למנהל המערכת.",
+  exchange_failed: "אירעה שגיאה בהתחברות. נסו שוב.",
+  missing_code: "קישור ההתחברות אינו תקין. נסו שוב.",
+};
+
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
+  const initialError = error ? OAUTH_ERRORS[error] : undefined;
   return (
     <div className="flex min-h-screen bg-surface">
       {/* פאנל מותג — צד ימין בדסקטופ, מוסתר במובייל */}
@@ -84,7 +99,7 @@ export default function LoginPage() {
             <p className="text-muted">הזן את פרטי ההתחברות שלך כדי להמשיך</p>
           </div>
 
-          <LoginForm />
+          <LoginForm initialError={initialError} />
 
           <footer className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-faint">
             <span>© GuestHub 2026</span>
