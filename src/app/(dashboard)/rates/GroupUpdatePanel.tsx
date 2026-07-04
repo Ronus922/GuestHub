@@ -81,13 +81,30 @@ export function GroupUpdatePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Each open may target a different preset (whole grid vs one room-type button);
-  // sync the selection + range when the panel opens so it reflects that trigger.
+  // Each open may target a different preset (whole grid vs one room-type button).
+  // The panel is always mounted now, so opening must reset ALL editable state to
+  // defaults — otherwise field selections leak from a previous (unapplied) open
+  // and could silently bulk-write stale changes.
   useEffect(() => {
     if (!open) return;
     setSelected(new Set(presetUnitIds));
+    setCardType("all");
+    setSearch("");
     setDateFrom(from);
     setDateTo(toInclusive);
+    setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]));
+    setPriceOn(false);
+    setPriceMode("percent_add");
+    setPriceAmount(10);
+    setStopSell("nochange");
+    setMinThroughOn(false);
+    setMinThrough(2);
+    setMaxStayOn(false);
+    setMaxStay(7);
+    setMinArrivalOn(false);
+    setMinArrival(1);
+    setCta("nochange");
+    setCtd("nochange");
     setError(null);
   }, [open, presetUnitIds, from, toInclusive]);
 

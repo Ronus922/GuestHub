@@ -605,13 +605,13 @@ export async function rescheduleReservationRoomAction(raw: {
           id: string; reservation_id: string; room_id: string | null;
           check_in: string; check_out: string;
           adults: number; children: number; infants: number;
-          rate_per_night: string; status: string;
+          rate_per_night: string; is_manual_rate: boolean; status: string;
           old_room_type: string | null;
         }[]
       >`
         SELECT rr.id, rr.reservation_id, rr.room_id,
                rr.check_in::text, rr.check_out::text,
-               rr.adults, rr.children, rr.infants, rr.rate_per_night,
+               rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
                res.status, r.room_type_id AS old_room_type
         FROM guesthub.reservation_rooms rr
         JOIN guesthub.reservations res ON res.id = rr.reservation_id
@@ -625,9 +625,10 @@ export async function rescheduleReservationRoomAction(raw: {
       await lockRooms(tx, actor.tenantId, lockIds);
 
       const blocking = isBlocking(rr.status);
-      // date-only move (same room) keeps the committed nightly rate — the
-      // guest-agreed price (§6); a room change re-prices from the target room's
-      // rates. The committed rate is pinned via the snapshot, never re-derived.
+      // Manual overrides survive a move — room change included — exactly like the
+      // edit path (§13). For an auto-priced stay: a same-room date change keeps the
+      // committed nightly (§6); a room change re-prices from the target's rates.
+      const isManual = rr.is_manual_rate;
       const sameRoom = rr.room_id === input.targetRoomId;
       const priced = await validateAndPriceStays(
         tx,
@@ -640,12 +641,13 @@ export async function rescheduleReservationRoomAction(raw: {
           adults: rr.adults,
           children: rr.children,
           infants: rr.infants,
+          ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
         }],
         {
           excludeRrIds: [rr.id],
           enforceAvailability: true, // even drafts must not be dropped onto closures/unsellable rooms
           enforceRestrictions: blocking,
-          snapshotByRr: sameRoom
+          snapshotByRr: !isManual && sameRoom
             ? new Map([[rr.id, { ratePerNight: Number(rr.rate_per_night) }]])
             : undefined,
         },
