@@ -12,6 +12,31 @@ import { sql } from "@/lib/db";
 // login is authentication only, adoption/creation happens in the staff screen.
 // Redirects are built from NEXT_PUBLIC_APP_URL — behind nginx, request.url's origin
 // is the internal upstream (127.0.0.1:3007), never send the browser there.
+
+// This route serves exactly ONE flow: Google OAuth. How the session was minted
+// lives in the JWT's `amr` claim (most recent method first) — app_metadata.provider
+// only records the FIRST provider the user ever signed up with, so it cannot
+// identify this session. The token comes straight from GoTrue's server-to-server
+// code exchange below, so decoding without signature verification is fine here.
+// ponytail: amr says "oauth", not which provider — google is the only OAuth
+// provider enabled on this GoTrue instance, so oauth + a google identity on the
+// user pins it down; revisit if a second OAuth provider is ever enabled.
+function isGoogleSession(
+  accessToken: string,
+  user: { identities?: { provider: string }[] | null },
+): boolean {
+  try {
+    const claims = JSON.parse(
+      Buffer.from(accessToken.split(".")[1], "base64url").toString(),
+    ) as { amr?: { method?: string }[] };
+    return (
+      claims.amr?.[0]?.method === "oauth" &&
+      (user.identities ?? []).some((i) => i.provider === "google")
+    );
+  } catch {
+    return false;
+  }
+}
 export async function GET(request: NextRequest) {
   const origin =
     process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin;
@@ -46,23 +71,30 @@ export async function GET(request: NextRequest) {
   );
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-  if (error || !data.user) return finish("/login?error=exchange_failed");
+  if (error || !data.session) return finish("/login?error=exchange_failed");
 
-  // Per-user gate for every external (non-password) provider.
-  const provider = data.user.app_metadata?.provider;
-  if (provider && provider !== "email") {
-    const [allowed] = await sql<{ id: string }[]>`
-      SELECT u.id
-      FROM guesthub.users u
-      JOIN guesthub.tenants t ON t.id = u.tenant_id
-      WHERE u.auth_user_id = ${data.user.id}
-        AND u.is_active = true
-        AND u.allow_google_auth = true
-      LIMIT 1`;
-    if (!allowed) {
-      await supabase.auth.signOut();
-      return finish("/login?error=google_not_allowed");
-    }
+  // Google-only: a PKCE code can also be minted by magic-link/recovery emails
+  // (and by any provider enabled later). Those sessions are signed out behind
+  // the SAME neutral error as the gate below — rejection never reveals whether
+  // an account exists or why it was refused.
+  if (!isGoogleSession(data.session.access_token, data.user)) {
+    await supabase.auth.signOut();
+    return finish("/login?error=google_not_allowed");
+  }
+
+  // Per-user gate: only an active guesthub user whose admin enabled
+  // allow_google_auth (and who belongs to a real tenant) may enter.
+  const [allowed] = await sql<{ id: string }[]>`
+    SELECT u.id
+    FROM guesthub.users u
+    JOIN guesthub.tenants t ON t.id = u.tenant_id
+    WHERE u.auth_user_id = ${data.user.id}
+      AND u.is_active = true
+      AND u.allow_google_auth = true
+    LIMIT 1`;
+  if (!allowed) {
+    await supabase.auth.signOut();
+    return finish("/login?error=google_not_allowed");
   }
 
   return finish("/dashboard");
