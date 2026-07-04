@@ -25,7 +25,7 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "ניהול",
     items: [
       { label: "דשבורד", icon: "dashboard", href: "/dashboard", permission: "dashboard.view" },
-      { label: "תפוסה", icon: "calendar", permission: "calendar.view", hidden: true },
+      { label: "תפוסה", icon: "calendar", href: "/calendar", permission: "calendar.view" },
       { label: "הזמנות", icon: "reservations", permission: "reservations.view", hidden: true },
       { label: "אורחים", icon: "guests", permission: "guests.view", hidden: true },
       { label: "חדרים", icon: "rooms", permission: "rooms.view", hidden: true },

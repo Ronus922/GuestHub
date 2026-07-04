@@ -51,6 +51,16 @@ import {
   ArrowDown,
   Info,
   RotateCcw,
+  Star,
+  ChevronLeft,
+  ChevronRight,
+  Minus,
+  Trash2,
+  CircleSlash2,
+  UsersRound,
+  CalendarPlus,
+  Link2,
+  Baby,
   type LucideIcon,
 } from "lucide-react";
 
@@ -110,6 +120,16 @@ const ICONS = {
   "arrow-down": ArrowDown,
   info: Info,
   refresh: RotateCcw,
+  star: Star,
+  "chevron-left": ChevronLeft,
+  "chevron-right": ChevronRight,
+  minus: Minus,
+  trash: Trash2,
+  "circle-slash": CircleSlash2,
+  "users-round": UsersRound,
+  "calendar-plus": CalendarPlus,
+  link: Link2,
+  baby: Baby,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;
