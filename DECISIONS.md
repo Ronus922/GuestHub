@@ -251,3 +251,22 @@ no signup, API, or client-side path that can create or escalate to super_admin.
 The two demo overrides on `reception` (grant staff.view / revoke guests.view) used for
 Phase-2 verification were removed via the panel's reset link (audited `override_clear`
 pair); the live DB ships Phase 2 with zero override rows.
+
+## D28 — Owner login adopts the pre-existing shared GoTrue identity (r@bios.co.il)
+The shared self-hosted Supabase serves several projects and GoTrue enforces email
+uniqueness instance-wide (`users_email_partial_key` on `auth.users`). `r@bios.co.il`
+already existed as a live Google identity (`auth.users` `d94e462c-…`, provider
+`google`, actively used by other apps on the instance), so GuestHub's staff-create
+flow — which always *creates* a GoTrue user — was rejected with `email_exists`,
+while no GuestHub UI could show why (the blocker lives below `guesthub.users`).
+**Resolution (2026-07-04, data-only, no code change):** the identity was adopted,
+not recreated — `guesthub.users` `a70bd403-…` (username `ronen`, role `super_admin`,
+`allow_google_auth=true`, tenant גינות הים) links `auth_user_id d94e462c-…`. The row
+and its `create` audit entry (with `adopted_existing_auth_identity=true`) committed
+in one statement. Nothing in `auth.*` was created or modified (before/after field
+hash identical) and no password was set or changed anywhere.
+Note: the login page's Google button is still a stub ("התחברות Google תופעל בשלב
+הבא"), so Google sign-in for this account is testable only once that flow ships;
+the staff screen already resolves the linked identity (last-login via the auth join).
+Future phase: staff-create could offer an explicit "adopt existing auth identity"
+branch instead of masking the GoTrue 422.
