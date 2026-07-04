@@ -11,7 +11,9 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "db:migrate": "docker exec -i supabase-db psql -U supabase_admin -d postgres < db/migrations/000_init_schema.sql",
-    "db:seed": "node --env-file=.env.local scripts/seed.mjs"
+    "db:seed": "node --env-file=.env.local scripts/seed.mjs",
+    "check:e2e-safety": "node scripts/check-e2e-safety.mjs",
+    "guard:deploy": "node scripts/production-deploy-guard.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

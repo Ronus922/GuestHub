@@ -93,34 +93,7 @@ export async function getRoomCapacities(
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-// Rate rows relevant to a room's stay window (room-level + its type-level
-// rows), for pure resolution/validation via inventory-rules.
-export async function getRateRows(
-  db: Sql | TransactionSql,
-  tenantId: string,
-  roomId: string,
-  roomTypeId: string | null,
-  from: DateOnly,
-  toInclusive: DateOnly,
-) {
-  return db<
-    {
-      date: string;
-      room_id: string | null;
-      room_type_id: string | null;
-      price: string | null;
-      min_nights: number | null;
-      max_nights: number | null;
-      closed: boolean;
-      closed_to_arrival: boolean;
-      closed_to_departure: boolean;
-    }[]
-  >`
-    SELECT date::text, room_id, room_type_id, price, min_nights, max_nights,
-           closed, closed_to_arrival, closed_to_departure
-    FROM guesthub.rates
-    WHERE tenant_id = ${tenantId}
-      AND date >= ${from} AND date <= ${toInclusive}
-      AND (room_id = ${roomId}
-           OR (room_id IS NULL AND room_type_id = ${roomTypeId}))`;
-}
+// Rate reads moved to the canonical commercial model (§0.4): see
+// getRoomPlanRates / getRoomStayRates in src/lib/rates/effective-state.ts,
+// which resolve a physical room → its Sellable Unit → base pricing plan →
+// guesthub.pricing_plan_rates. Legacy guesthub.rates is retired.

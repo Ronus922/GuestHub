@@ -26,11 +26,12 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "דשבורד", icon: "dashboard", href: "/dashboard", permission: "dashboard.view" },
       { label: "תפוסה", icon: "calendar", href: "/calendar", permission: "calendar.view" },
+      { label: "רשת תעריפים", icon: "credit-card", href: "/rates", permission: "rates.view" },
       { label: "הזמנות", icon: "reservations", permission: "reservations.view", hidden: true },
       { label: "אורחים", icon: "guests", permission: "guests.view", hidden: true },
       { label: "חדרים", icon: "rooms", permission: "rooms.view", hidden: true },
       { label: "חסימות חדרים", icon: "room-blocks", permission: "rooms.view", hidden: true },
-      { label: "עדכון קבוצתי", icon: "bulk-update", permission: "rates.bulk_update", hidden: true },
+      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?panel=group-update", permission: "rates.bulk_update" },
     ],
   },
   {

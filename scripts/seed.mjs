@@ -10,12 +10,21 @@
 // with SUPABASE_SERVICE_ROLE_KEY from .env.local; there is no signup or client-side path.
 import postgres from "postgres";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 4 });
 
 const ADMIN = process.env.SUPABASE_ADMIN_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SEED_PASSWORD = "Guesthub!2026";
+// Isolated test envs have no shared GoTrue. SEED_SKIP_AUTH=1 mints a local,
+// deterministic mock auth identity per email instead of calling the auth admin
+// API — satisfies "test-only/mocked auth", never touches a real auth server.
+const SKIP_AUTH = process.env.SEED_SKIP_AUTH === "1";
+const localAuthId = (email) => {
+  const h = createHash("sha1").update(`guesthub-test:${email}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+};
 
 // ---------- helpers ----------
 const authHeaders = {
@@ -160,6 +169,8 @@ async function main() {
     guesthub.users, guesthub.user_permission_overrides,
     guesthub.areas, guesthub.room_types, guesthub.rooms, guesthub.guests,
     guesthub.lookup_items, guesthub.reservations, guesthub.reservation_rooms, guesthub.rates,
+    guesthub.sellable_units, guesthub.sellable_unit_rooms,
+    guesthub.pricing_plans, guesthub.pricing_plan_rates,
     guesthub.payments, guesthub.housekeeping_tasks, guesthub.audit_logs,
     guesthub.bulk_rate_update_logs, guesthub.bulk_rate_update_items
     RESTART IDENTITY CASCADE`);
@@ -275,7 +286,9 @@ async function main() {
   ];
   const userRows = [];
   for (const u of userDefs) {
-    const authId = await upsertAuthUser(u.email, { full_name: u.full_name, tenant: "ginot-hayam" });
+    const authId = SKIP_AUTH
+      ? localAuthId(u.email)
+      : await upsertAuthUser(u.email, { full_name: u.full_name, tenant: "ginot-hayam" });
     userRows.push({
       tenant_id: tenantId, auth_user_id: authId, username: u.username,
       full_name: u.full_name, email: u.email, phone: u.phone,
@@ -400,8 +413,10 @@ async function main() {
       max_infants: 1, single_beds: 0, double_beds: 0, queen_beds: 1, sofa_beds: 0, cribs: 0,
     });
   }
-  // one maintenance, one inactive (not sellable)
-  roomRows[roomRows.length - 1].status = "maintenance";
+  // one out-of-order, one inactive (not sellable). Since Phase 4A, rooms.status
+  // is only available|inactive|out_of_order (§0.5) — dated maintenance/owner
+  // stays are room_closures, not a permanent status.
+  roomRows[roomRows.length - 1].status = "out_of_order";
   roomRows[roomRows.length - 2].status = "inactive";
   roomRows[roomRows.length - 2].is_active = false;
 
@@ -574,45 +589,61 @@ async function main() {
     await sql`INSERT INTO guesthub.housekeeping_tasks ${sql(hkRows,
       "tenant_id", "room_id", "reservation_id", "checkout_time", "status", "assigned_to", "priority")}`;
 
-  // --- rates (PARTIAL — many dates intentionally without a rate, for fallback test) ---
-  const rateRows = [];
-  const rateRooms = sellableRooms.slice(0, 4); // only some rooms get explicit rates
-  for (const room of rateRooms) {
-    const base = basePriceByType[room.room_type_id];
+  // --- Sellable Units + base pricing plans (§0.1/§0.4): one SU per room ---
+  const suRows = rooms.map((r) => ({
+    tenant_id: tenantId, code: r.room_number,
+    name: `יחידה ${r.room_number}`, room_type_id: r.room_type_id,
+    is_pooled: false, is_active: true,
+  }));
+  const sus = await sql`INSERT INTO guesthub.sellable_units ${sql(suRows,
+    "tenant_id", "code", "name", "room_type_id", "is_pooled", "is_active")}
+    RETURNING id, code, room_type_id`;
+  const suByCode = Object.fromEntries(sus.map((s) => [s.code, s]));
+
+  const memberRows = rooms.map((r) => ({
+    tenant_id: tenantId, sellable_unit_id: suByCode[r.room_number].id, room_id: r.id,
+  }));
+  await sql`INSERT INTO guesthub.sellable_unit_rooms ${sql(memberRows,
+    "tenant_id", "sellable_unit_id", "room_id")}`;
+
+  const planRows = sus.map((s) => ({
+    tenant_id: tenantId, sellable_unit_id: s.id, code: "base",
+    name: "מחיר בסיס", is_base: true, is_active: true,
+  }));
+  const plans = await sql`INSERT INTO guesthub.pricing_plans ${sql(planRows,
+    "tenant_id", "sellable_unit_id", "code", "name", "is_base", "is_active")}
+    RETURNING id, sellable_unit_id`;
+  const planBySu = Object.fromEntries(plans.map((p) => [p.sellable_unit_id, p.id]));
+
+  // --- canonical commercial rates (PARTIAL — many dates fall back to base_price) ---
+  const ppRateRows = [];
+  const rateUnits = sus.slice(0, 4); // only some units get explicit rates
+  for (const su of rateUnits) {
+    const base = basePriceByType[su.room_type_id];
     for (let off = -10; off <= 30; off++) {
-      if (Math.random() < 0.55) continue; // ~55% of dates left without a rate
+      if (Math.random() < 0.55) continue; // ~55% of dates left without an explicit rate
       const d = addDays(today, off);
       const dow = d.getUTCDay(); // 5=Fri,6=Sat weekend uplift
       const factor = dow === 5 || dow === 6 ? 1.25 : 1.0;
-      rateRows.push({
-        tenant_id: tenantId, room_id: room.id, room_type_id: null,
+      ppRateRows.push({
+        tenant_id: tenantId, sellable_unit_id: su.id, pricing_plan_id: planBySu[su.id],
         date: iso(d), price: Math.round(base * factor),
-        min_nights: dow === 5 ? 2 : null, closed: false,
-        closed_to_arrival: false, closed_to_departure: false,
+        min_stay_arrival: dow === 5 ? 2 : null, min_stay_through: null, max_stay: null,
+        stop_sell: false, closed_to_arrival: false, closed_to_departure: false,
       });
     }
   }
-  // a couple of room_type-level rates too
-  for (const rt of roomTypes.slice(0, 2)) {
-    for (let off = 0; off <= 6; off++) {
-      if (Math.random() < 0.5) continue;
-      const d = addDays(today, off);
-      rateRows.push({
-        tenant_id: tenantId, room_id: null, room_type_id: rt.id,
-        date: iso(d), price: Math.round(Number(rt.base_price) * 1.1),
-        min_nights: null, closed: false, closed_to_arrival: false, closed_to_departure: false,
-      });
-    }
-  }
-  await sql`INSERT INTO guesthub.rates ${sql(rateRows,
-    "tenant_id", "room_id", "room_type_id", "date", "price",
-    "min_nights", "closed", "closed_to_arrival", "closed_to_departure")}`;
+  await sql`INSERT INTO guesthub.pricing_plan_rates ${sql(ppRateRows,
+    "tenant_id", "sellable_unit_id", "pricing_plan_id", "date", "price",
+    "min_stay_arrival", "min_stay_through", "max_stay",
+    "stop_sell", "closed_to_arrival", "closed_to_departure")}`;
 
   // --- report ---
   const counts = {};
   for (const t of [
     "tenants", "roles", "permissions", "role_permissions", "users", "areas", "room_types",
-    "rooms", "guests", "lookup_items", "reservations", "reservation_rooms", "rates",
+    "rooms", "guests", "lookup_items", "reservations", "reservation_rooms",
+    "sellable_units", "sellable_unit_rooms", "pricing_plans", "pricing_plan_rates",
     "payments", "housekeeping_tasks",
   ]) {
     const [{ c }] = await sql.unsafe(`SELECT count(*)::int AS c FROM guesthub.${t}`);

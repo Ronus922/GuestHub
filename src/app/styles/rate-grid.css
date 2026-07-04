@@ -1,0 +1,183 @@
+/* ============================================================
+   /rates — Rate Grid (Synchronization Table). Rebuilt 1:1 from the supplied
+   reference ref/html/Synchronization-table.html (grid-template 220px + date
+   columns) and Synchronization-table.png. Page-scoped, Azure-Ethos tokens, RTL.
+
+   Layout model: a horizontally-scrolling board. Every row is `label | cells`.
+   The label column is a fixed-width sticky column (right, RTL); the cells are
+   flex:1 so the grid FILLS the workspace when wide, and only scrolls when the
+   viewport drops below the min-width floor (set inline from the column count).
+   Header day cells, month segments and body cells share the identical flex
+   basis, so every column aligns exactly across header and body.
+   ============================================================ */
+
+@layer components {
+
+/* site page insets — match /calendar (18px off the top nav, 26px sides) so the
+   title/buttons never sit flush against the TopBar (Iron Rule #5: padding) */
+.rg-wrap { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; padding: 18px 26px 14px; }
+
+/* ---------- filter chips ---------- */
+.rg-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rg-flabl { font-size: 12px; font-weight: 700; color: var(--color-faint); }
+.rg-chip {
+  height: 32px; padding: 0 13px; border-radius: 9px; border: 1.5px solid var(--color-line);
+  background: #fff; color: #5b6478; font-family: inherit; font-size: 12.5px;
+  font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.rg-chip.on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.rg-chip:hover:not(.on) { background: #f2f4f8; }
+
+/* ---------- board card + scroll ---------- */
+.rg-card {
+  flex: 1; min-height: 0; background: #fff; border: 1px solid var(--color-line);
+  border-radius: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.03), 0 8px 22px rgba(16,24,40,.05);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.rg-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
+/* width:100% fills the workspace; min-width (inline) forces scroll when narrow */
+.rg-grid { width: 100%; }
+
+/* every row is a flex line: sticky fixed label + growing cell strip */
+.rg-row { display: flex; width: 100%; }
+.rg-lab {
+  position: sticky; inset-inline-start: 0; flex: none; width: var(--rg-label, 224px);
+  border-inline-end: 1px solid var(--color-line); z-index: 2; background: #fff;
+}
+.rg-cells { display: flex; flex: 1; min-width: 0; }
+.rg-cell {
+  flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center;
+  border-inline-end: 1px solid #f3f5f9; font-variant-numeric: tabular-nums; position: relative;
+}
+
+/* ---------- sticky header (month band + day row) ---------- */
+.rg-head { position: sticky; top: 0; z-index: 5; background: #fff; }
+.rg-head .rg-lab { z-index: 6; background: #fbfcfe; }
+.rg-mrow { height: 24px; }
+.rg-mrow .rg-lab { background: #fbfcfe; border-bottom: 1px solid #eef0f5; }
+.rg-mseg {
+  flex: 1 1 0; min-width: 0; height: 24px; background: #fbfcfe; border-bottom: 1px solid #eef0f5;
+  border-inline-start: 1.5px solid #e1e5ee; display: flex; align-items: center; overflow: hidden;
+}
+.rg-mseg:first-child { border-inline-start: none; }
+.rg-mseg span { font-size: 11px; font-weight: 800; color: #4b5266; padding: 0 10px; white-space: nowrap; }
+
+.rg-drow { height: 50px; }
+.rg-drow .rg-lab {
+  display: flex; align-items: center; justify-content: space-between; padding: 0 14px;
+  background: #fff; border-bottom: 1px solid var(--color-line);
+}
+.rg-drow .rg-lab .rg-htitle { font-size: 13px; font-weight: 800; color: var(--color-ink); }
+.rg-drow .rg-lab .rg-hsub { font-size: 10.5px; font-weight: 700; color: var(--color-faint); }
+.rg-dcell {
+  flex: 1 1 0; min-width: 0; height: 50px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1px;
+  border-bottom: 1px solid var(--color-line); border-inline-end: 1px solid #f3f5f9; background: #fff;
+}
+.rg-dcell.we { background: #eef1fb; }
+.rg-dcell.we .rg-dw { color: #6b74c4; }
+.rg-dcell.ms { border-inline-start: 1.5px solid #e1e5ee; }
+.rg-dw { font-size: 11px; font-weight: 700; color: var(--color-faint); line-height: 1; }
+.rg-dn {
+  font-size: 16px; font-weight: 800; color: #3a4257; font-variant-numeric: tabular-nums;
+  min-width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 8px;
+}
+.rg-dcell.td .rg-dn { background: var(--color-primary); color: #fff; box-shadow: 0 3px 8px rgba(37,64,200,.30); }
+.rg-dcell.td .rg-dw { color: var(--color-primary); font-weight: 800; }
+
+/* ---------- room-type band header ---------- */
+.rg-band { height: 40px; background: #f6f8fc; border-block: 1px solid var(--color-line); }
+.rg-band .rg-lab {
+  display: flex; align-items: center; gap: 7px; padding: 0 12px; background: #f6f8fc; z-index: 3;
+}
+.rg-collapse {
+  width: 22px; height: 22px; border: none; background: transparent; color: var(--color-faint);
+  cursor: pointer; display: flex; align-items: center; justify-content: center; border-radius: 6px;
+}
+.rg-collapse:hover { background: #e9ecf3; }
+.rg-tname { font-size: 13px; font-weight: 800; color: var(--color-ink); white-space: nowrap; }
+.rg-tcount { font-size: 11px; font-weight: 700; color: var(--color-faint); white-space: nowrap; }
+.rg-bandinfo { display: flex; align-items: center; gap: 16px; padding: 0 14px; height: 40px; background: #f6f8fc; }
+.rg-tbase { font-size: 12px; font-weight: 700; color: var(--color-muted); white-space: nowrap; }
+.rg-tbase b { color: var(--color-ink); }
+.rg-tlink {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;
+  color: var(--color-primary); background: none; border: none; cursor: pointer; white-space: nowrap;
+}
+.rg-tlink:hover { text-decoration: underline; }
+.rg-band .rg-cells { background: #f6f8fc; }
+
+/* ---------- Sellable-Unit block: price row (32px) + 6 metric rows (24px) ---------- */
+.rg-unit { border-bottom: 2px solid #eef0f5; }
+.rg-prow { height: 32px; }
+.rg-prow .rg-lab { display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+.rg-unum { font-size: 14px; font-weight: 800; color: var(--color-ink); }
+.rg-utype { font-size: 10.5px; font-weight: 700; color: var(--color-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-badge {
+  font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 5px; white-space: nowrap;
+  margin-inline-start: auto;
+}
+.rg-badge.pool { color: var(--color-primary); background: var(--color-primary-050); }
+.rg-badge.warn { color: #b4670a; background: #fbf1e0; }
+.rg-badge.blk { color: #a23b52; background: #fbe9ee; }
+.rg-badge.closed { color: #a23b52; background: #fbe9ee; }
+
+.rg-mrow2 { height: 24px; }
+.rg-mrow2 .rg-lab { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
+.rg-mname { font-size: 10.5px; font-weight: 700; color: #8a91a3; white-space: nowrap; }
+.rg-mtag { font-size: 9px; font-weight: 800; color: #b9c0d6; letter-spacing: .03em; }
+
+/* ---------- cells (shared price/metric) ---------- */
+.rg-cell.we { background: #f3f5fc; }
+.rg-cell.td { background: #eef1fd; }
+.rg-cell.ms { border-inline-start: 1.5px solid #e1e5ee; }
+.rg-cell.editable { cursor: pointer; }
+.rg-cell.editable:hover { box-shadow: inset 0 0 0 1.5px var(--color-primary); border-radius: 5px; z-index: 1; }
+.rg-cell.blocked {
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, #e5e9f0 5px, #e5e9f0 10px);
+}
+.rg-cell.saving { opacity: .45; }
+
+.rg-price { font-size: 12px; font-weight: 800; color: #3a4257; }
+.rg-price.inherited { color: #aeb5c6; font-weight: 700; }
+.rg-price.notsell { color: #c0455b; }
+.rg-num { font-size: 11px; font-weight: 800; color: #5b6478; }
+.rg-dash { color: #d7dce6; font-size: 11px; font-weight: 700; }
+.rg-blk { color: #98a0b2; }
+/* CTA/CTD/stop-sell flags render as filled rounded chips (reference), each with
+   its own hue: CTA amber, CTD purple, stop-sell red. */
+.rg-flag {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 16px; border-radius: 5px;
+}
+.rg-flag.sell { color: #c0455b; background: #fbe9ee; }
+.rg-flag.cta { color: #b4670a; background: #fbf1e0; }
+.rg-flag.ctd { color: #6b27d6; background: #f0eafc; }
+
+.rg-input {
+  width: 82%; height: 22px; border: 1.5px solid var(--color-primary); border-radius: 5px;
+  text-align: center; font-family: inherit; font-size: 11.5px; font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--color-ink); outline: none; padding: 0;
+}
+
+/* ---------- legend + hint ---------- */
+.rg-legend { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+.rg-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: #5b6478; }
+.rg-leg .rg-sw { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+.rg-leg .rg-sw.hatch { background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, #cbd2df 3px, #cbd2df 6px); border: 1px solid #dfe4ee; }
+.rg-hint { font-size: 11px; font-weight: 600; color: var(--color-faint); }
+
+/* ---------- cell tooltip ---------- */
+.rg-tip {
+  position: fixed; z-index: 70; background: #111827; color: #fff; border-radius: 10px;
+  padding: 9px 12px; font-size: 11.5px; font-weight: 600; line-height: 1.55;
+  box-shadow: 0 12px 30px rgba(16,24,40,.3); pointer-events: none; direction: rtl; max-width: 240px;
+}
+.rg-tip b { font-weight: 800; }
+.rg-tip .rg-tip-t { font-weight: 800; margin-bottom: 3px; }
+.rg-tip .rg-tip-ok { color: #6ee7a8; }
+.rg-tip .rg-tip-no { color: #fca5a5; }
+
+.rg-empty { padding: 60px 24px; text-align: center; color: var(--color-muted); font-weight: 700; }
+
+} /* @layer components */

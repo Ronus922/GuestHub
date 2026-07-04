@@ -10,15 +10,12 @@ import {
   checkRoomAvailability,
   lockRooms,
   getRoomCapacities,
-  getRateRows,
   CONFLICT_LABEL,
   INVENTORY_BLOCKING_STATUSES,
 } from "@/lib/inventory";
-import {
-  capacityViolation,
-  effectiveNightlyPrice,
-  restrictionViolation,
-} from "@/lib/inventory-rules";
+import { capacityViolation } from "@/lib/inventory-rules";
+import { getRoomPlanRates, getRoomStayRates } from "@/lib/rates/effective-state";
+import { indexByDate, planNightlyPrice, resolveStayPrice, stayRestrictionViolation } from "@/lib/rates/rules";
 import { markAriDirty } from "@/lib/channel/outbox";
 import {
   createReservationSchema,
@@ -81,13 +78,20 @@ function assertNoInternalOverlap(stays: StayInput[]): void {
   }
 }
 
-type PricedStay = StayInput & { ratePerNight: number; priceTotal: number; nights: number };
+type PricedStay = StayInput & {
+  ratePerNight: number;
+  priceTotal: number;
+  nights: number;
+  isManualRate: boolean;
+};
 
 // Full server-side gate for a set of stays: availability (incl. closures +
-// room status), capacity, stay restrictions, effective pricing. Runs inside
-// the caller's transaction AFTER lockRooms. `skip` lets a status-only edit
-// bypass re-validating untouched stays (§F) — inventory consumption changes
-// are still availability-checked by the caller.
+// room status), capacity, stay restrictions, effective pricing — all from the
+// canonical Effective Sell State (§0.4/§0.9): a room resolves to its Sellable
+// Unit → base plan → guesthub.pricing_plan_rates. Runs inside the caller's
+// transaction AFTER lockRooms. `skip` lets a status-only edit bypass
+// re-validating untouched stays (§F). A passed-in ratePerNight is an authorized
+// manual override (§13) — flagged so it survives later recomputes.
 async function validateAndPriceStays(
   tx: TransactionSql,
   tenantId: string,
@@ -97,18 +101,29 @@ async function validateAndPriceStays(
     enforceAvailability: boolean;
     enforceRestrictions: boolean;
     skipChecksForRr?: Set<string>;
+    // §6 committed-price snapshot: rrId → its stored rate. A non-manual stay
+    // listed here keeps this committed price instead of being re-priced from the
+    // CURRENT rate table, so a confirmed guest-agreed total never drifts when
+    // rates change later. priceTotal (when given) preserves the exact stored
+    // total incl. per-night variation; omit it to re-derive from the nightly.
+    snapshotByRr?: Map<string, { ratePerNight: number; priceTotal?: number }>;
   },
 ): Promise<PricedStay[]> {
   assertNoInternalOverlap(stays);
   const roomIds = [...new Set(stays.map((s) => s.roomId))];
-  const meta = await loadRoomMeta(tx, tenantId, roomIds);
-  if (meta.size !== roomIds.length) throw new DomainError("חדר לא נמצא");
   const caps = await getRoomCapacities(tx, tenantId, roomIds);
+
+  // One batch load of canonical commercial rows for the whole span. toInclusive
+  // is the max check-OUT (departure) date so closed_to_departure is available.
+  const spanFrom = stays.reduce((m, s) => (s.checkIn < m ? s.checkIn : m), stays[0].checkIn);
+  const spanTo = stays.reduce((m, s) => (s.checkOut > m ? s.checkOut : m), stays[0].checkOut);
+  const planRates = await getRoomPlanRates(tx, tenantId, roomIds, spanFrom, spanTo);
+  if (planRates.size !== roomIds.length) throw new DomainError("חדר לא נמצא");
 
   const priced: PricedStay[] = [];
   for (const stay of stays) {
     const skip = stay.rrId != null && opts.skipChecksForRr?.has(stay.rrId);
-    const m = meta.get(stay.roomId)!;
+    const rp = planRates.get(stay.roomId)!;
 
     if (!skip && opts.enforceAvailability) {
       const conflicts = await checkRoomAvailability(tx, {
@@ -128,33 +143,36 @@ async function validateAndPriceStays(
       if (capErr) throw new DomainError(capErr);
     }
 
-    const rateRows = await getRateRows(
-      tx, tenantId, stay.roomId, m.room_type_id, stay.checkIn, stay.checkOut,
-    );
+    const byDate = indexByDate(rp.rows);
     if (!skip && opts.enforceRestrictions) {
-      const restrictionErr = restrictionViolation(
-        rateRows,
-        { checkIn: stay.checkIn, checkOut: stay.checkOut, nights: eachDay(stay.checkIn, stay.checkOut) },
-        stay.roomId,
-        m.room_type_id,
-      );
+      const restrictionErr = stayRestrictionViolation(byDate, {
+        checkIn: stay.checkIn,
+        checkOut: stay.checkOut,
+        nights: eachDay(stay.checkIn, stay.checkOut),
+      });
       if (restrictionErr) throw new DomainError(restrictionErr);
     }
 
     const nights = nightsBetween(stay.checkIn, stay.checkOut);
-    let priceTotal: number;
-    let ratePerNight: number;
-    if (stay.ratePerNight != null) {
-      ratePerNight = stay.ratePerNight;
-      priceTotal = ratePerNight * nights;
-    } else {
-      priceTotal = eachDay(stay.checkIn, stay.checkOut).reduce(
-        (sum, d) => sum + effectiveNightlyPrice(rateRows, d, stay.roomId, m.room_type_id, m.base_price),
-        0,
-      );
-      ratePerNight = nights > 0 ? Math.round((priceTotal / nights) * 100) / 100 : 0;
-    }
-    priced.push({ ...stay, ratePerNight, priceTotal, nights });
+    // is_manual_rate is an EXPLICIT flag (§13), never inferred from a price
+    // being present — the edit panel resubmits the stored rate on every save,
+    // which must NOT silently flag every edited stay as a manual override.
+    const isManualRate = stay.isManualRate ?? false;
+    // A stay whose price basis (room + dates) is unchanged keeps its committed
+    // snapshot rather than being re-priced from CURRENT rates (§6).
+    const snapshot = stay.rrId != null ? opts.snapshotByRr?.get(stay.rrId) : undefined;
+    const autoTotal = eachDay(stay.checkIn, stay.checkOut).reduce(
+      (sum, d) => sum + planNightlyPrice(byDate, d, rp.basePrice),
+      0,
+    );
+    const { ratePerNight, priceTotal } = resolveStayPrice({
+      nights,
+      isManualRate,
+      manualRatePerNight: stay.ratePerNight,
+      snapshot,
+      autoTotal,
+    });
+    priced.push({ ...stay, ratePerNight, priceTotal, nights, isManualRate });
   }
   return priced;
 }
@@ -273,6 +291,7 @@ export async function createReservationAction(
             infants: s.infants,
             rate_per_night: s.ratePerNight,
             price_total: s.priceTotal,
+            is_manual_rate: s.isManualRate,
             ...stayGuestCols(s),
           })}`;
       }
@@ -339,14 +358,30 @@ export async function updateReservationAction(
 
       const oldRows = await tx<
         { id: string; room_id: string | null; check_in: string; check_out: string;
-          adults: number; children: number; infants: number; room_type_id: string | null }[]
+          adults: number; children: number; infants: number; room_type_id: string | null;
+          is_manual_rate: boolean; rate_per_night: number; price_total: number }[]
       >`
         SELECT rr.id, rr.room_id, rr.check_in::text, rr.check_out::text,
-               rr.adults, rr.children, rr.infants, r.room_type_id
+               rr.adults, rr.children, rr.infants, r.room_type_id,
+               rr.is_manual_rate, rr.rate_per_night::float8 AS rate_per_night,
+               rr.price_total::float8 AS price_total
         FROM guesthub.reservation_rooms rr
         LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
         WHERE rr.reservation_id = ${input.id} AND rr.tenant_id = ${actor.tenantId}`;
       const oldById = new Map(oldRows.map((r) => [r.id, r]));
+
+      // Preserve the authorized-override flag AND its committed rate across a
+      // recompute-triggering edit (§13): an existing stay keeps its stored
+      // is_manual_rate unless the caller explicitly changes it, and a manual
+      // stay keeps its committed rate when no new price is resubmitted — so the
+      // recompute can never silently overwrite the override or corrupt the flag.
+      for (const s of input.rooms) {
+        if (!s.rrId) continue;
+        const old = oldById.get(s.rrId);
+        if (!old) continue;
+        if (s.isManualRate === undefined) s.isManualRate = old.is_manual_rate;
+        if (old.is_manual_rate && s.ratePerNight == null) s.ratePerNight = old.rate_per_night;
+      }
 
       // stays whose room/dates/occupancy are untouched skip re-validation —
       // a status-only edit can never fail on capacity it already holds (§F)
@@ -370,6 +405,20 @@ export async function updateReservationAction(
       // availability for ALL stays, even untouched ones
       if (!wasBlocking && nowBlocking) skipChecksForRr.clear();
 
+      // §6 committed-price snapshot: a non-manual stay whose room + dates are
+      // unchanged keeps its stored price (never re-priced from current rates);
+      // only genuinely re-dated / re-roomed stays are re-priced. Confirming a
+      // draft does NOT re-price an otherwise-unchanged stay.
+      const snapshotByRr = new Map<string, { ratePerNight: number; priceTotal: number }>();
+      for (const s of input.rooms) {
+        if (!s.rrId) continue;
+        const old = oldById.get(s.rrId);
+        if (!old || s.isManualRate) continue;
+        if (old.room_id === s.roomId && old.check_in === s.checkIn && old.check_out === s.checkOut) {
+          snapshotByRr.set(s.rrId, { ratePerNight: old.rate_per_night, priceTotal: old.price_total });
+        }
+      }
+
       const allRoomIds = [
         ...new Set([
           ...input.rooms.map((s) => s.roomId),
@@ -383,6 +432,7 @@ export async function updateReservationAction(
         enforceAvailability: nowBlocking,
         enforceRestrictions: nowBlocking,
         skipChecksForRr,
+        snapshotByRr,
       });
 
       const guestId = await upsertGuest(tx, actor.tenantId, {
@@ -408,6 +458,7 @@ export async function updateReservationAction(
           infants: s.infants,
           rate_per_night: s.ratePerNight,
           price_total: s.priceTotal,
+          is_manual_rate: s.isManualRate,
           ...stayGuestCols(s),
         };
         if (s.rrId) {
@@ -554,13 +605,13 @@ export async function rescheduleReservationRoomAction(raw: {
           id: string; reservation_id: string; room_id: string | null;
           check_in: string; check_out: string;
           adults: number; children: number; infants: number;
-          rate_per_night: string; status: string;
+          rate_per_night: string; is_manual_rate: boolean; status: string;
           old_room_type: string | null;
         }[]
       >`
         SELECT rr.id, rr.reservation_id, rr.room_id,
                rr.check_in::text, rr.check_out::text,
-               rr.adults, rr.children, rr.infants, rr.rate_per_night,
+               rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
                res.status, r.room_type_id AS old_room_type
         FROM guesthub.reservation_rooms rr
         JOIN guesthub.reservations res ON res.id = rr.reservation_id
@@ -574,6 +625,11 @@ export async function rescheduleReservationRoomAction(raw: {
       await lockRooms(tx, actor.tenantId, lockIds);
 
       const blocking = isBlocking(rr.status);
+      // Manual overrides survive a move — room change included — exactly like the
+      // edit path (§13). For an auto-priced stay: a same-room date change keeps the
+      // committed nightly (§6); a room change re-prices from the target's rates.
+      const isManual = rr.is_manual_rate;
+      const sameRoom = rr.room_id === input.targetRoomId;
       const priced = await validateAndPriceStays(
         tx,
         actor.tenantId,
@@ -585,14 +641,15 @@ export async function rescheduleReservationRoomAction(raw: {
           adults: rr.adults,
           children: rr.children,
           infants: rr.infants,
-          // room change → reprice from the target room's rates; date-only
-          // change keeps the committed nightly rate (guest-agreed price)
-          ratePerNight: rr.room_id === input.targetRoomId ? Number(rr.rate_per_night) : undefined,
+          ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
         }],
         {
           excludeRrIds: [rr.id],
           enforceAvailability: true, // even drafts must not be dropped onto closures/unsellable rooms
           enforceRestrictions: blocking,
+          snapshotByRr: !isManual && sameRoom
+            ? new Map([[rr.id, { ratePerNight: Number(rr.rate_per_night) }]])
+            : undefined,
         },
       );
       const s = priced[0];
@@ -722,23 +779,17 @@ export async function getAvailableRoomsAction(args: {
     });
     const busy = new Set(conflicts.map((c) => c.room_id));
 
-    const rates = await sql<
-      { date: string; room_id: string | null; room_type_id: string | null; price: number | null;
-        min_nights: number | null; max_nights: number | null;
-        closed: boolean; closed_to_arrival: boolean; closed_to_departure: boolean }[]
-    >`
-      SELECT date::text AS date, room_id, room_type_id, price::float8 AS price,
-             min_nights, max_nights, closed, closed_to_arrival, closed_to_departure
-      FROM guesthub.rates
-      WHERE tenant_id = ${actor.tenantId}
-        AND date >= ${args.checkIn} AND date < ${args.checkOut}`;
+    // Canonical commercial prices (§0.4): room → SU → base plan → pricing_plan_rates.
+    const planRates = await getRoomPlanRates(
+      sql, actor.tenantId, rooms.map((r) => r.id), args.checkIn, args.checkOut,
+    );
 
     const nights = eachDay(args.checkIn, args.checkOut);
     const data = rooms.map((r) => {
-      const total = nights.reduce(
-        (sum, d) => sum + effectiveNightlyPrice(rates, d, r.id, r.room_type_id, r.base_price),
-        0,
-      );
+      const rp = planRates.get(r.id);
+      const byDate = indexByDate(rp?.rows ?? []);
+      const base = rp?.basePrice ?? r.base_price;
+      const total = nights.reduce((sum, d) => sum + planNightlyPrice(byDate, d, base), 0);
       return {
         id: r.id,
         room_number: r.room_number,
@@ -770,25 +821,20 @@ export async function getStayQuoteAction(args: {
     const actor = await getActor();
     requirePermission(actor, "reservations.create");
     if (!(args.checkIn < args.checkOut)) return fail("טווח תאריכים לא תקין");
-    const [room] = await sql<{ id: string; room_type_id: string | null; base_price: number }[]>`
-      SELECT r.id, r.room_type_id, COALESCE(rt.base_price, 0)::float8 AS base_price
-      FROM guesthub.rooms r LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
-      WHERE r.id = ${args.roomId} AND r.tenant_id = ${actor.tenantId}`;
+    const [room] = await sql<{ id: string }[]>`
+      SELECT id FROM guesthub.rooms
+      WHERE id = ${args.roomId} AND tenant_id = ${actor.tenantId}`;
     if (!room) return fail("חדר לא נמצא");
-    const rateRows = await getRateRows(
-      sql, actor.tenantId, room.id, room.room_type_id, args.checkIn, args.checkOut,
-    );
+    // Canonical Effective Sell State for this room's Sellable Unit base plan.
+    const rp = await getRoomStayRates(sql, actor.tenantId, room.id, args.checkIn, args.checkOut);
+    const byDate = indexByDate(rp.rows);
     const nights = eachDay(args.checkIn, args.checkOut);
-    const total = nights.reduce(
-      (sum, d) => sum + effectiveNightlyPrice(rateRows, d, room.id, room.room_type_id, room.base_price),
-      0,
-    );
-    const restriction = restrictionViolation(
-      rateRows,
-      { checkIn: args.checkIn, checkOut: args.checkOut, nights },
-      room.id,
-      room.room_type_id,
-    );
+    const total = nights.reduce((sum, d) => sum + planNightlyPrice(byDate, d, rp.basePrice), 0);
+    const restriction = stayRestrictionViolation(byDate, {
+      checkIn: args.checkIn,
+      checkOut: args.checkOut,
+      nights,
+    });
     return {
       success: true,
       data: {
