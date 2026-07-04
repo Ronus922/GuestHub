@@ -10,12 +10,21 @@
 // with SUPABASE_SERVICE_ROLE_KEY from .env.local; there is no signup or client-side path.
 import postgres from "postgres";
 import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 4 });
 
 const ADMIN = process.env.SUPABASE_ADMIN_URL;
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SEED_PASSWORD = "Guesthub!2026";
+// Isolated test envs have no shared GoTrue. SEED_SKIP_AUTH=1 mints a local,
+// deterministic mock auth identity per email instead of calling the auth admin
+// API — satisfies "test-only/mocked auth", never touches a real auth server.
+const SKIP_AUTH = process.env.SEED_SKIP_AUTH === "1";
+const localAuthId = (email) => {
+  const h = createHash("sha1").update(`guesthub-test:${email}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+};
 
 // ---------- helpers ----------
 const authHeaders = {
@@ -277,7 +286,9 @@ async function main() {
   ];
   const userRows = [];
   for (const u of userDefs) {
-    const authId = await upsertAuthUser(u.email, { full_name: u.full_name, tenant: "ginot-hayam" });
+    const authId = SKIP_AUTH
+      ? localAuthId(u.email)
+      : await upsertAuthUser(u.email, { full_name: u.full_name, tenant: "ginot-hayam" });
     userRows.push({
       tenant_id: tenantId, auth_user_id: authId, username: u.username,
       full_name: u.full_name, email: u.email, phone: u.phone,
