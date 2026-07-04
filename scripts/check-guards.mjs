@@ -94,4 +94,12 @@ assert.equal(g.canTogglePermission(manager, "manager", "permissions.update", fal
 assert.equal(g.canTogglePermission(manager, "manager", "permissions.update", true).ok, true);
 assert.equal(g.canTogglePermission(manager, "receptionist", "staff.view", true).ok, true);
 
+// -- channel management: super_admin ONLY, admin does not qualify (Phase 3) --
+assert.equal(g.canManageChannels(su).ok, true, "super_admin manages channels");
+assert.equal(g.canManageChannels(admin).ok, false, "admin must NOT manage channels");
+assert.equal(g.canManageChannels(manager).ok, false);
+assert.equal(g.canManageChannels({ userId: "u-r", roleKey: "receptionist" }).ok, false);
+assert.equal(g.canManageChannels({ userId: "u-s", roleKey: "staff" }).ok, false);
+assert.equal(g.canManageChannels({ userId: "u-c", roleKey: "cleaner" }).ok, false);
+
 console.log("check-guards: all assertions passed");

@@ -121,6 +121,15 @@ export function canGrantOverride(
   return ok;
 }
 
+// ---- channel-manager (Channex) management — Phase 3 locked decision ----
+// ONLY super_admin may touch connections, credentials, mappings, sync or
+// webhook configuration. admin does NOT qualify (unlike requirePermission's
+// generic bypass) — integration secrets outrank ordinary full access.
+export function canManageChannels(actor: GuardActor): GuardResult {
+  if (actor.roleKey === "super_admin") return ok;
+  return no("ניהול חיבורי ערוצים זמין למנהל-על בלבד");
+}
+
 export function canTogglePermission(
   actor: GuardActor,
   targetRoleKey: string,
