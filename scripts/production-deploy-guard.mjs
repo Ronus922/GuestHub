@@ -34,8 +34,13 @@ export function evaluateDeployGuard(env = process.env) {
   if (branch !== "main" && head !== approved) reasons.push(`not on main and HEAD (${head.slice(0, 8)}) != approved (${approved.slice(0, 8)})`);
   if (env.PROD_DEPLOY_OK !== "1") reasons.push("missing explicit opt-in: PROD_DEPLOY_OK=1");
 
+  // Unapproved migrations = migrations that exist on HEAD but NOT on origin/main
+  // (i.e. added on this branch since it diverged). Use three-dot (merge-base…HEAD)
+  // so that new APPROVED migrations arriving FROM origin/main — the normal case
+  // when production is simply behind main — are not misflagged. Two-dot here would
+  // reject every release that adds a migration.
   let pendingMig = [];
-  try { pendingMig = git(["diff", "--name-only", "origin/main..HEAD", "--", "db/migrations"]).split("\n").filter(Boolean); } catch { /* no range */ }
+  try { pendingMig = git(["diff", "--name-only", "origin/main...HEAD", "--", "db/migrations"]).split("\n").filter(Boolean); } catch { /* no range */ }
   if (pendingMig.length) reasons.push(`migrations outside approved release: ${pendingMig.join(", ")}`);
 
   return { ok: reasons.length === 0, reasons, info: { head, branch, originMain, approved } };
