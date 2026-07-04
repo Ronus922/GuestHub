@@ -167,6 +167,60 @@ export function buildRatePayloads(
   return { batches: toBatches(values), unmappedRoomTypeIds: [...unmapped] };
 }
 
+// ---- Effective-Sell-State → Channex inputs (§0.6.11) ----
+// One row of guesthub.effective_sell_state (per Sellable Unit / day).
+export type EssRow = {
+  sellable_unit_id: string;
+  room_type_id: string | null;
+  day: string;
+  availability: number;
+  price: number | null;
+  min_stay_arrival: number | null;
+  max_stay: number | null;
+  closed_to_arrival: boolean;
+  closed_to_departure: boolean;
+  stop_sell: boolean;
+};
+
+// The queue payload is ALWAYS recomputed from Effective Sell State, never taken
+// from UI input. Per room type: availability = SUM of its Sellable Units'
+// availability (pooled count, matching room_type_inventory); the commercial row
+// is the lexicographically-first SU's base-plan state, and stop_sell only when
+// ALL SUs of the type are closed (any open SU keeps the type sellable). Per-SU
+// price divergence within a pooled type is a 4B concern (§16 UI warning).
+export function essToChannexInputs(rows: EssRow[]): {
+  availability: AvailabilityInput[];
+  rates: RateInput[];
+} {
+  const byTypeDay = groupBy(
+    rows.filter((r) => r.room_type_id),
+    (r) => `${r.room_type_id} ${r.day}`,
+  );
+  const availability: AvailabilityInput[] = [];
+  const rates: RateInput[] = [];
+  for (const group of byTypeDay.values()) {
+    const roomTypeId = group[0].room_type_id as string;
+    const day = group[0].day;
+    availability.push({
+      room_type_id: roomTypeId,
+      date: day,
+      availability: group.reduce((n, r) => n + r.availability, 0),
+    });
+    const lead = [...group].sort((a, b) => (a.sellable_unit_id < b.sellable_unit_id ? -1 : 1))[0];
+    rates.push({
+      room_type_id: roomTypeId,
+      date: day,
+      price: lead.price,
+      min_nights: lead.min_stay_arrival,
+      max_nights: lead.max_stay,
+      closed: group.every((r) => r.stop_sell),
+      closed_to_arrival: lead.closed_to_arrival,
+      closed_to_departure: lead.closed_to_departure,
+    });
+  }
+  return { availability, rates };
+}
+
 // Structural validation used by the dry-run provider (local only).
 export function validateAriPayload(batch: { values: unknown[] }): string | null {
   if (!Array.isArray(batch.values)) return "values must be an array";

@@ -81,14 +81,20 @@ export async function getCalendarData(
     WHERE h.tenant_id = ${tenantId} AND h.status = 'active'
       AND h.check_in < ${to} AND h.check_out > ${from}`;
 
-  // Rates for the empty-cell price/min-nights strip (resolved client-side by
-  // the same pure resolver used server-side).
+  // Rates for the empty-cell price/min-nights strip, from the canonical
+  // commercial model (§0.4): each Sellable Unit's base-plan row is projected
+  // onto its member room(s) (room_id set, room_type_id null) so the grid's
+  // room-priority lookup is unchanged. min_nights carries min_stay_arrival.
   const rates = await sql<RateRow[]>`
-    SELECT date::text AS date, room_id, room_type_id, price::float8 AS price,
-           min_nights, max_nights, closed, closed_to_arrival, closed_to_departure
-    FROM guesthub.rates
-    WHERE tenant_id = ${tenantId}
-      AND date >= ${from} AND date < ${to}`;
+    SELECT ppr.date::text AS date, sur.room_id, NULL::uuid AS room_type_id,
+           ppr.price::float8 AS price, ppr.min_stay_arrival AS min_nights,
+           ppr.max_stay AS max_nights, ppr.stop_sell AS closed,
+           ppr.closed_to_arrival, ppr.closed_to_departure
+    FROM guesthub.pricing_plan_rates ppr
+    JOIN guesthub.pricing_plans bp ON bp.id = ppr.pricing_plan_id AND bp.is_base
+    JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = ppr.sellable_unit_id
+    WHERE ppr.tenant_id = ${tenantId}
+      AND ppr.date >= ${from} AND ppr.date < ${to}`;
 
   const kpis = await getKpis(tenantId, today);
 

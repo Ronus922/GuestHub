@@ -69,34 +69,10 @@ assert.equal(rules.paymentState(1000, 0), "unpaid");
 assert.equal(rules.paymentState(1000, 500), "partial");
 assert.equal(rules.paymentState(1000, 1000), "paid");
 
-// ---- rate resolution + restrictions (§K/§9) ----
-const RATES = [
-  { date: "2026-07-10", room_id: "r1", room_type_id: null, price: 500, min_nights: 3, max_nights: null, closed: false, closed_to_arrival: false, closed_to_departure: false },
-  { date: "2026-07-10", room_id: null, room_type_id: "t1", price: 400, min_nights: null, max_nights: null, closed: false, closed_to_arrival: false, closed_to_departure: false },
-  { date: "2026-07-11", room_id: null, room_type_id: "t1", price: 420, min_nights: null, max_nights: null, closed: true, closed_to_arrival: false, closed_to_departure: false },
-  { date: "2026-07-12", room_id: null, room_type_id: "t1", price: null, min_nights: null, max_nights: null, closed: false, closed_to_arrival: true, closed_to_departure: true },
-];
-assert.equal(rules.effectiveNightlyPrice(RATES, "2026-07-10", "r1", "t1", 300), 500, "room rate beats type rate");
-assert.equal(rules.effectiveNightlyPrice(RATES, "2026-07-10", "r2", "t1", 300), 400, "type rate fallback");
-assert.equal(rules.effectiveNightlyPrice(RATES, "2026-07-20", "r2", "t1", 300), 300, "base_price fallback");
-assert.ok(
-  rules.restrictionViolation(RATES, { checkIn: "2026-07-10", checkOut: "2026-07-11", nights: ["2026-07-10"] }, "r1", "t1"),
-  "min_nights enforced on arrival date",
-);
-assert.equal(
-  rules.restrictionViolation(RATES, { checkIn: "2026-07-10", checkOut: "2026-07-13", nights: ["2026-07-10", "2026-07-11", "2026-07-12"] }, "r2", "t1")?.includes("סגור למכירה"),
-  true,
-  "closed night blocks the sale",
-);
-assert.ok(
-  rules.restrictionViolation(RATES, { checkIn: "2026-07-12", checkOut: "2026-07-13", nights: ["2026-07-12"] }, "r2", "t1"),
-  "closed_to_arrival blocks arrival",
-);
-assert.equal(
-  rules.restrictionViolation(RATES, { checkIn: "2026-07-13", checkOut: "2026-07-14", nights: ["2026-07-13"] }, "r2", "t1"),
-  null,
-  "unrestricted stay passes",
-);
+// ---- canonical pricing + restriction rules moved to check-effective-state.mjs ----
+// Phase 4A: the room/type resolveRate is retired; the single validator/pricer is
+// src/lib/rates/rules.ts (planNightlyPrice + stayRestrictionViolation), asserted
+// pure + against the DB by scripts/check-effective-state.mjs.
 
 // ---- dirty-range coalescing (§S) ----
 {

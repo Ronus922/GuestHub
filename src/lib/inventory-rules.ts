@@ -51,7 +51,12 @@ export function paymentState(totalPrice: number, paidAmount: number): PaymentSta
   return "paid";
 }
 
-// One nightly rate row as loaded from guesthub.rates (room- or type-level).
+// Calendar empty-cell price/min-nights strip display shape. Since Phase 4A the
+// commercial source is guesthub.pricing_plan_rates (SU/plan-keyed) — these rows
+// are derived from it per member room (room_id set, room_type_id null) so the
+// grid's O(1) room-priority lookup is unchanged. The canonical pricing +
+// restriction logic lives in src/lib/rates/rules.ts (the single validator);
+// this type is display-only. min_nights carries min_stay_arrival for the strip.
 export type RateRow = {
   date: string; // DateOnly
   room_id: string | null;
@@ -63,60 +68,3 @@ export type RateRow = {
   closed_to_arrival: boolean;
   closed_to_departure: boolean;
 };
-
-// Effective rate resolution for one date (§9/§K): specific room row wins over
-// room-type row; base_price is the documented fallback when neither has price.
-export function resolveRate(
-  rows: RateRow[],
-  date: string,
-  roomId: string,
-  roomTypeId: string | null,
-): RateRow | null {
-  let typeRow: RateRow | null = null;
-  for (const r of rows) {
-    if (r.date !== date) continue;
-    if (r.room_id === roomId) return r;
-    if (r.room_id == null && roomTypeId != null && r.room_type_id === roomTypeId)
-      typeRow = typeRow ?? r;
-  }
-  return typeRow;
-}
-
-export function effectiveNightlyPrice(
-  rows: RateRow[],
-  date: string,
-  roomId: string,
-  roomTypeId: string | null,
-  basePrice: number,
-): number {
-  const rate = resolveRate(rows, date, roomId, roomTypeId);
-  const p = rate?.price;
-  return p == null ? basePrice : Number(p);
-}
-
-// Stay-restriction validation for a NEW sale / reschedule (§K): the calendar
-// must not permit what the reservation engine rejects. `nights(d)` iterates
-// the stay's occupied nights [checkIn, checkOut).
-export function restrictionViolation(
-  rows: RateRow[],
-  stay: { checkIn: string; checkOut: string; nights: string[] },
-  roomId: string,
-  roomTypeId: string | null,
-): string | null {
-  const arrival = resolveRate(rows, stay.checkIn, roomId, roomTypeId);
-  const nightsCount = stay.nights.length;
-  if (arrival) {
-    if (arrival.closed_to_arrival) return "התאריך סגור לצ׳ק-אין (CTA)";
-    if (arrival.min_nights != null && nightsCount < arrival.min_nights)
-      return `מינימום ${arrival.min_nights} לילות בתאריך זה`;
-    if (arrival.max_nights != null && nightsCount > arrival.max_nights)
-      return `מקסימום ${arrival.max_nights} לילות בתאריך זה`;
-  }
-  const departure = resolveRate(rows, stay.checkOut, roomId, roomTypeId);
-  if (departure?.closed_to_departure) return "התאריך סגור לצ׳ק-אאוט (CTD)";
-  for (const d of stay.nights) {
-    const rate = resolveRate(rows, d, roomId, roomTypeId);
-    if (rate?.closed) return `התאריך ${d} סגור למכירה`;
-  }
-  return null;
-}
