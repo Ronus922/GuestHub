@@ -320,3 +320,80 @@ The value lives in `/opt/supabase/docker/.env`, which `docker-compose.yml` (line
 148) maps to `GOTRUE_URI_ALLOW_LIST` — a `docker compose up -d` recreate rereads
 it, so the config survives redeploys. Restarted service: `supabase-auth`
 (compose service `auth`, project `supabase`).
+
+---
+
+# Phase 3 — Occupancy Calendar + Channex-ready foundation
+
+## D31 — Temporary closures are a dedicated `room_closures` table
+Overview §8 lists a `blocked` reservation status, but no runtime data or code used it and a
+closure-as-fake-reservation would need a reservation_number, pollute future reservation lists
+and blur §Q diagnostics (occupied vs closed counted separately). `guesthub.room_closures`
+(004) is a clean date-range mechanism: start-inclusive/end-exclusive like every stay, checked
+inside the SAME `check_room_availability()` — so nothing can be booked/moved/resized over a
+closure. `rooms.status` stays a permanent state and is never used for temporary closures.
+The `blocked` status remains honored by the blocking set (defensive compatibility).
+
+## D32 — One overlap model, one blocking-status source
+The hotel-night rule lives once per layer and is asserted equal across layers:
+`src/lib/dates.ts` (`rangesOverlap`: `a.start < b.end AND b.start < a.end`, checkout-exclusive)
+and `guesthub.check_room_availability()` / `room_type_inventory()` in SQL. Inventory-consuming
+statuses = §8's `confirmed, checked_in, blocked` — single SQL source
+`guesthub.inventory_blocking_statuses()`, TS mirror in `src/lib/inventory-rules.ts`;
+`scripts/check-inventory.mjs` fails if they ever diverge, and also asserts the projection and
+the availability function agree per room-type/day (with closures and holds, rolled back).
+`cancelled`/`draft`/`checked_out`/`no_show` never consume inventory; `cancelled` never renders.
+
+## D33 — Locked per-room reservation model; parent keeps derived aggregates
+`reservation_rooms` gained nullable per-room guest fields (004). Calendar cards render one item
+per reservation-room with the shared reservation_id. The parent `reservations` columns
+(check_in/out, occupancy, totals) are derived: min/max of room dates, summed occupancy,
+Σ price_total − discount + extra_charges — kept in sync by every write path (KPIs/lists stay
+correct). The former global-stay semantics are not restored.
+
+## D34 — Concurrency: room-row FOR UPDATE + in-transaction re-check
+Every availability-checked write (create / edit / move / resize / closure) runs in one
+transaction: `lockRooms()` (SELECT … FOR UPDATE on the target+source room rows, tenant-scoped,
+throws on foreign rooms) → `check_room_availability()` → mutate → audit → dirty-range mark.
+Two concurrent writers on the same room serialize on the row lock, so both can never pass the
+same check. Reservation-number allocation locks the tenant row; the unique index is the
+backstop. No exclusion constraint needed (status lives on the parent table).
+
+## D35 — Channex foundation: structural, tenant-scoped, and OFF
+005 adds channel_connections (state machine disconnected→…→active, api_key ciphertext-only +
+masked hint, webhook token hash), room-type/rate-plan mappings (unique per connection, audit on
+change), transactional dirty ranges (written ONLY when an active outbound-enabled connection
+exists — none does, so local ops stay no-op and no backlog forms; coalescing merges
+overlapping/adjacent pending ranges), a jobs queue (idempotency-key partial unique, FOR UPDATE
+SKIP LOCKED claim, FIFO per connection, backoff+jitter retries, dead_letter), booking revisions
+(unique per connection+revision, quarantine on unmapped, acknowledgement structurally
+impossible before import), webhook events (dedup unique, redacted payloads), inventory holds
+(§R: room-type-level, reduce availability immediately, calendar lane renders only when they
+exist), and sync errors. The provider boundary (`src/lib/channel/provider.ts`) is pure:
+`createChannelProvider` yields Disabled unless `CHANNEX_ENABLED=true` AND an active connection,
+and even then Phase 3 resolves to DryRun — NO HTTP client exists in the repo at all
+(check-calendar asserts no fetch/XHR in the channel modules). Base URLs live only in
+`src/lib/channel/config.ts` (server-only). The webhook route 404s unless an active
+inbound-enabled connection matches the hashed token — i.e., always, in Phase 3.
+
+## D36 — Channel management is super_admin-only, stricter than requirePermission
+`canManageChannels` (guards.ts) admits ONLY `super_admin` — `admin` does not qualify, unlike
+the generic requirePermission bypass, because integration credentials/mappings outrank ordinary
+full access. Every action in `src/lib/channel/admin.ts` enforces it server-side; no channel UI
+ships this phase (foundation only). Covered in check-guards.
+
+## D37 — Rates schema unchanged; Channex fields derived in the payload builder
+guesthub.rates already carries price/min_nights/max_nights/closed/CTA/CTD. Channex-only
+concepts map at projection time (closed→stop_sell, min_nights→min_stay_arrival,
+max_nights→max_stay) in the pure builders (`payloads.ts`) instead of duplicating columns.
+Effective price priority stays: room-level rate → type-level rate → room_type.base_price
+(one resolver used by server pricing AND the calendar's empty-cell strip). Restrictions are
+enforced on new sales and blocking-status reschedules; a calendar operation can never pass
+what the reservation engine rejects.
+
+## D38 — Phase-3 verification data
+Manual verification created reservation #1039 (guest "בדיקה יומן", 2 rooms) through the real
+booking flow, exercised move/resize/invalid-drop/status-edit against it, then CANCELLED it via
+the real cancel flow — it remains in the DB as a cancelled reservation with its ₪300 payment
+row and full audit trail (nothing was deleted; seed was not run). A test closure on room 102
+was created and removed through the UI. Proof screenshots: docs/proof/phase-3-*.png.
