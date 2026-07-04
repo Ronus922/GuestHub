@@ -17,6 +17,9 @@ const stayCore = {
   children: z.number().int().min(0).max(20),
   infants: z.number().int().min(0).max(10),
   ratePerNight: z.number().min(0).max(1_000_000).optional(),
+  // authorized manual override (§13) — explicit, never inferred from a price
+  // being present (the edit panel resubmits the stored rate on every save).
+  isManualRate: z.boolean().optional(),
   guestFirstName: z.string().trim().max(80).optional(),
   guestLastName: z.string().trim().max(80).optional(),
   guestPhone: z.string().trim().max(30).optional(),
