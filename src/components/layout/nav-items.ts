@@ -59,7 +59,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "אוטומציות", icon: "automations", permission: "settings.edit", hidden: true },
       { label: "ערוצים", icon: "channels", permission: "settings.edit", hidden: true },
-      { label: "הגדרות", icon: "settings", permission: "settings.edit", hidden: true },
+      { label: "הגדרות", icon: "settings", href: "/settings", permission: "settings.edit" },
       // "עובדים" moved here from תפעול (hidden section) and renamed — the users
       // screen pairs with הרשאות under מערכת while תפעול stays hidden.
       { label: "משתמשים", icon: "employees", href: "/staff", permission: "staff.view" },
