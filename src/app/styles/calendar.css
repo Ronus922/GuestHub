@@ -340,7 +340,7 @@
   white-space: nowrap;
 }
 .cb-drow {
-  height: 48px;
+  height: 64px;
 }
 .cb-drow .cb-hcorn {
   background: #fff;
@@ -361,10 +361,13 @@
   color: var(--color-faint);
   font-weight: 700;
 }
+/* Day header scaled to the supplied day-header screenshot: small weekday
+   label above a LARGE bold date number, today in a blue rounded pill,
+   weekend weekday labels in amber. */
 .cb-dcell {
   flex: 1 1 0;
   min-width: 0;
-  height: 48px;
+  height: 64px;
   background: #fff;
   border-bottom: 1px solid #e4e8f0;
   border-inline-end: 1px solid #f3f5f9;
@@ -372,34 +375,42 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 1px;
 }
 .cb-dcell.we {
   background: #fbf6e7;
+}
+.cb-dcell.we .cb-dw {
+  color: #b4670a;
 }
 .cb-dcell.ms {
   border-inline-start: 1.5px solid #e1e5ee;
 }
 .cb-dcell .cb-dw {
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 700;
   color: var(--color-faint);
+  line-height: 1.1;
+  white-space: nowrap;
 }
 .cb-dcell .cb-dn {
-  font-size: 13.5px;
+  font-size: 20px;
   font-weight: 800;
   color: #3a4257;
   font-variant-numeric: tabular-nums;
-  min-width: 23px;
-  height: 23px;
+  line-height: 1;
+  min-width: 34px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
-  padding: 0 3px;
+  border-radius: 9px;
+  padding: 0 4px;
 }
 .cb-dcell.td .cb-dn {
   background: var(--color-primary);
   color: #fff;
+  box-shadow: 0 4px 10px rgba(37, 64, 200, 0.28);
 }
 .cb-dcell.td .cb-dw {
   color: var(--color-primary);

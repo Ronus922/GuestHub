@@ -1,9 +1,17 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
-import { addDays, formatFullDate } from "@/lib/dates";
+import {
+  addDays,
+  dayOfWeek,
+  eachDay,
+  formatFullDate,
+  hebrewMonthYear,
+  HEBREW_DAY_LETTERS,
+  type DateOnly,
+} from "@/lib/dates";
 import type { PaymentState } from "@/lib/inventory-rules";
 import type { CalendarData, CalendarView } from "./types";
 import { VIEW_DAYS } from "./types";
@@ -91,7 +99,7 @@ export function CalendarScreen({
             </button>
           ))}
         </div>
-        <div className="cb-rangebox">
+        <div className="cb-rangebox relative">
           <button
             type="button"
             className="cb-nav"
@@ -100,9 +108,12 @@ export function CalendarScreen({
           >
             <Icon name="chevron-right" size={18} />
           </button>
-          <span className="cb-rl">
-            {formatFullDate(data.from)} – {formatFullDate(rangeEnd)}
-          </span>
+          <RangeDatePicker
+            from={data.from}
+            rangeEnd={rangeEnd}
+            today={data.today}
+            onPick={(d) => navigate(d, view)}
+          />
           <button
             type="button"
             className="cb-nav"
@@ -186,8 +197,8 @@ export function CalendarScreen({
 
       <p className="cb-hint px-[30px] pb-[14px] pt-[6px]">
         גרירת הזמנה מזיזה תאריכים או חדר · הפס בקצה השמאלי משנה תאריך עזיבה · לחיצה על
-        הזמנה פותחת כרטיס פעולות · לחיצה כפולה על תא ריק פותחת הזמנה חדשה · לחיצה על
-        סטטוס תשלום מסננת
+        הזמנה פותחת עריכה · ריחוף מציג כרטיס פרטים · גרירה על תאים ריקים יוצרת הזמנה
+        חדשה · לחיצה על סטטוס תשלום מסננת
       </p>
 
       {/* ---- windows ---- */}
@@ -215,6 +226,111 @@ export function CalendarScreen({
       />
     </div>
   );
+}
+
+// Toolbar date picker (§7): the range label is a real button that opens an
+// RTL month popover above the board and its sticky layers; picking a day
+// navigates the board to start at that date. Escape / outside click close
+// without changing the range.
+function RangeDatePicker({
+  from,
+  rangeEnd,
+  today,
+  onPick,
+}: {
+  from: DateOnly;
+  rangeEnd: DateOnly;
+  today: DateOnly;
+  onPick: (d: DateOnly) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState<DateOnly>(monthStart(from));
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const t = setTimeout(() => window.addEventListener("click", onDoc), 0);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("click", onDoc);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const gridStart = addDays(month, -dayOfWeek(month));
+  const cells = eachDay(gridStart, addDays(gridStart, 42));
+
+  return (
+    <div ref={ref} className="contents">
+      <button
+        type="button"
+        className="cb-rl"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-label="בחירת תאריך תצוגה"
+        onClick={() => {
+          setMonth(monthStart(from));
+          setOpen((v) => !v);
+        }}
+      >
+        {formatFullDate(from)} – {formatFullDate(rangeEnd)}
+      </button>
+      {open && (
+        <div className="cb-dpop" role="dialog" aria-label="בחירת תאריך">
+          <div className="cb-dpop-h">
+            <button
+              type="button"
+              className="cb-nav"
+              aria-label="חודש קודם"
+              onClick={() => setMonth(monthStart(addDays(month, -1)))}
+            >
+              <Icon name="chevron-right" size={17} />
+            </button>
+            <span className="cb-dpop-m">{hebrewMonthYear(month)}</span>
+            <button
+              type="button"
+              className="cb-nav"
+              aria-label="חודש הבא"
+              onClick={() => setMonth(monthStart(addDays(month, 35)))}
+            >
+              <Icon name="chevron-left" size={17} />
+            </button>
+          </div>
+          <div className="cb-dpop-g">
+            {HEBREW_DAY_LETTERS.map((l) => (
+              <span key={l} className="cb-dpop-w">
+                {l}
+              </span>
+            ))}
+            {cells.map((d) => (
+              <button
+                key={d}
+                type="button"
+                className={`cb-dpop-d ${d.slice(0, 7) !== month.slice(0, 7) ? "out" : ""} ${
+                  d === today ? "tdy" : ""
+                } ${d === from ? "on" : ""}`}
+                onClick={() => {
+                  setOpen(false);
+                  onPick(d);
+                }}
+              >
+                {Number(d.slice(8, 10))}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function monthStart(d: DateOnly): DateOnly {
+  return `${d.slice(0, 8)}01`;
 }
 
 // Occupancy KPI — donut with the % inside + delta chip (reference .kpi).
