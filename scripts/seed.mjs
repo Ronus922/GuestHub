@@ -9,6 +9,7 @@
 // This is the only sanctioned way to (re)create a super_admin: the seed runs server-side
 // with SUPABASE_SERVICE_ROLE_KEY from .env.local; there is no signup or client-side path.
 import postgres from "postgres";
+import { pathToFileURL } from "node:url";
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 4 });
 
@@ -67,8 +68,92 @@ const addDays = (d, n) => {
 };
 const overlaps = (aIn, aOut, bIn, bOut) => aIn < bOut && aOut > bIn;
 
+// ---------- destructive-seed safety guard (fail-closed) ----------
+// This seed TRUNCATEs the whole guesthub schema. Running it against production
+// wipes real data — that is exactly what deleted the owner user r@bios.co.il on
+// 2026-07-04. The guard refuses to run unless the target is explicitly an
+// approved disposable dev/test DB. Default (no env) = BLOCKED.
+export const PROD_MARKERS = ["bios-vps", "guesthub.bios.co.il", "db.bios.co.il"];
+
+// Parse a libpq URL into safe identifiers only — never returns the password.
+export function parseDbTarget(url) {
+  try {
+    const u = new URL(url);
+    return {
+      host: u.hostname || "?",
+      port: u.port || "?",
+      db: u.pathname.replace(/^\//, "") || "?",
+      user: decodeURIComponent(u.username) || "?",
+    };
+  } catch {
+    return { host: "?", port: "?", db: "?", user: "?" };
+  }
+}
+
+// Pure: given an env object, decide whether a destructive reseed is permitted.
+// Fail-closed — every condition must hold or it returns { ok: false, reasons }.
+export function evaluateSeedGuard(env) {
+  const url = env.DATABASE_URL || "";
+  const target = parseDbTarget(url);
+  const hay = `${url} ${env.NEXT_PUBLIC_APP_URL || ""} ${env.SUPABASE_ADMIN_URL || ""}`.toLowerCase();
+  const reasons = [];
+  if (env.NODE_ENV === "production") reasons.push("NODE_ENV=production");
+  const marker = PROD_MARKERS.find((m) => hay.includes(m.toLowerCase()));
+  if (marker) reasons.push(`known production marker present: "${marker}"`);
+  if (env.ALLOW_DESTRUCTIVE_SEED !== "1") reasons.push("missing explicit opt-in: ALLOW_DESTRUCTIVE_SEED=1");
+  if (!["development", "test"].includes(env.SEED_ENV || "")) {
+    reasons.push('missing dev/test marker: SEED_ENV must be "development" or "test"');
+  }
+  return { ok: reasons.length === 0, reasons, target };
+}
+
+// Enforce the guard. Prints only safe identifiers. Calls exit(1) (before any
+// TRUNCATE) when blocked. `exit` is injectable so tests can assert without dying.
+export function assertSafeToSeed(env = process.env, exit = (c) => process.exit(c)) {
+  const { ok, reasons, target } = evaluateSeedGuard(env);
+  console.log(`seed target → host=${target.host} port=${target.port} db=${target.db} user=${target.user}`);
+  if (!ok) {
+    console.error("✗ DESTRUCTIVE SEED BLOCKED (fail-closed) — refusing to TRUNCATE:");
+    for (const r of reasons) console.error(`  - ${r}`);
+    console.error('Run only against a disposable dev/test DB with: ALLOW_DESTRUCTIVE_SEED=1 SEED_ENV=development (non-production target).');
+    exit(1);
+    return false; // reached only when a test injects a non-terminating exit
+  }
+  console.log("✓ seed guard passed — destructive reseed permitted.");
+  return true;
+}
+
+// ---------- owner application account ----------
+// The hotel owner (r@bios.co.il) is NOT one of the 5 role users and is NOT a
+// seeded auth user: it ADOPTS a pre-existing shared Google identity (DECISIONS
+// D28), which the seed must never create or modify. But the TRUNCATE drops its
+// guesthub.users MAPPING row, so the seed must re-create that mapping every run —
+// otherwise a reseed locks the owner out (the 2026-07-04 incident).
+export const OWNER_AUTH_USER_ID = "d94e462c-0eda-4edd-8e7c-3458b9277e2d";
+export const OWNER = { username: "ronen", full_name: "Ronen Meshulam", email: "r@bios.co.il", phone: null };
+
+// Build the owner guesthub.users row from the freshly-generated tenant + role ids.
+// Derives tenant_id/role_id from the seeded records — never hardcodes generated ids.
+export function ownerUserRow(tenantId, superAdminRoleId) {
+  if (!tenantId || !superAdminRoleId) {
+    throw new Error("ownerUserRow: tenantId and superAdminRoleId are required (derive from seeded records)");
+  }
+  return {
+    tenant_id: tenantId,
+    auth_user_id: OWNER_AUTH_USER_ID,
+    username: OWNER.username,
+    full_name: OWNER.full_name,
+    email: OWNER.email,
+    phone: OWNER.phone,
+    role_id: superAdminRoleId,
+    allow_google_auth: true, // owner logs in via Google — D29 /auth/callback gate requires this
+    is_active: true,
+  };
+}
+
 // ---------- seed ----------
 async function main() {
+  assertSafeToSeed(); // fail-closed — exits before any TRUNCATE unless target is an approved dev/test DB
   console.log("→ truncating guesthub schema…");
   await sql.unsafe(`TRUNCATE
     guesthub.tenants, guesthub.roles, guesthub.permissions, guesthub.role_permissions,
@@ -204,6 +289,13 @@ async function main() {
       "role_id", "allow_google_auth", "is_active")} RETURNING id, username`;
   const managerId = users.find((u) => u.username === "manager").id;
   const cleanerUserId = users.find((u) => u.username === "cleaner").id;
+
+  // --- owner mapping (adopts the existing shared Google identity; NO auth user created) ---
+  await sql`
+    INSERT INTO guesthub.users ${sql([ownerUserRow(tenantId, roleId.super_admin)],
+      "tenant_id", "auth_user_id", "username", "full_name", "email", "phone",
+      "role_id", "allow_google_auth", "is_active")}`;
+  console.log(`  ✓ owner mapping ${OWNER.email} → super_admin (adopts existing Google identity ${OWNER_AUTH_USER_ID}, no auth user created)`);
 
   // --- lookup_items ---
   const lookups = [
@@ -533,8 +625,12 @@ async function main() {
   await sql.end();
 }
 
-main().catch(async (e) => {
-  console.error("SEED FAILED:", e);
-  await sql.end();
-  process.exit(1);
-});
+// Only auto-run when invoked directly (node scripts/seed.mjs) — importing this
+// module (e.g. from the regression tests) must not execute the destructive seed.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(async (e) => {
+    console.error("SEED FAILED:", e);
+    await sql.end();
+    process.exit(1);
+  });
+}
