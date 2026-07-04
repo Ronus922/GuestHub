@@ -1,0 +1,164 @@
+/* ============================================================
+   /rates — Rate Grid (Synchronization Table). Same visual language as the
+   occupancy board (calendar.css cb-*) and the supplied reference
+   ref/html/Synchronization-table.html: a horizontally-scrolling grid with a
+   sticky day header and a sticky Sellable-Unit label column, each SU rendered
+   as a stacked block (price + six restriction rows). Editable commercial cells
+   vs read-only physical decoration. RTL, Azure Ethos tokens.
+   ============================================================ */
+
+@layer components {
+
+.rg-wrap { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; }
+
+/* ---------- filters row (room-type chips) ---------- */
+.rg-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rg-chip {
+  height: 34px; padding: 0 14px; border-radius: 10px; border: 1.5px solid #e4e8f0;
+  background: #fff; color: #5b6478; font-family: inherit; font-size: 13px;
+  font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.rg-chip.on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.rg-chip:hover:not(.on) { background: #f2f4f8; }
+
+/* ---------- board card + scroll ---------- */
+.rg-card {
+  flex: 1; min-height: 0; background: #fff; border: 1px solid #e4e8f0;
+  border-radius: 16px; box-shadow: 0 1px 2px rgba(16,24,40,.03), 0 8px 22px rgba(16,24,40,.05);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.rg-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.rg-grid { min-width: max-content; }
+
+/* ---------- sticky header ---------- */
+.rg-head { position: sticky; top: 0; z-index: 6; background: #fff; }
+.rg-row { display: flex; }
+.rg-corner {
+  position: sticky; inset-inline-start: 0; z-index: 7; background: #fbfcfe;
+  flex: none; width: var(--rg-label, 216px); border-inline-end: 1px solid #e4e8f0;
+}
+.rg-mrow { height: 26px; }
+.rg-mrow .rg-corner { border-bottom: 1px solid #eef0f5; }
+.rg-mseg {
+  height: 26px; background: #fbfcfe; border-bottom: 1px solid #eef0f5;
+  border-inline-start: 1.5px solid #e1e5ee; display: flex; align-items: center; flex: none;
+}
+.rg-mseg:first-child { border-inline-start: none; }
+.rg-mseg span { font-size: 11px; font-weight: 800; color: #4b5266; padding: 0 10px; white-space: nowrap; }
+
+.rg-drow { height: 52px; }
+.rg-drow .rg-corner {
+  background: #fff; border-bottom: 1px solid #e4e8f0; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 14px;
+}
+.rg-drow .rg-corner .rg-htitle { font-size: 13px; font-weight: 800; color: var(--color-ink); }
+.rg-drow .rg-corner .rg-hsub { font-size: 10.5px; font-weight: 700; color: var(--color-faint); }
+.rg-dcell {
+  flex: none; width: var(--rg-cell, 46px); height: 52px; background: #fff;
+  border-bottom: 1px solid #e4e8f0; border-inline-end: 1px solid #f3f5f9;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+}
+.rg-dcell.we { background: #fbf6e7; }
+.rg-dcell.we .rg-dw { color: #b4670a; }
+.rg-dcell.ms { border-inline-start: 1.5px solid #e1e5ee; }
+.rg-dw { font-size: 11px; font-weight: 700; color: var(--color-faint); line-height: 1.1; }
+.rg-dn {
+  font-size: 16px; font-weight: 800; color: #3a4257; font-variant-numeric: tabular-nums;
+  min-width: 28px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; padding: 0 4px;
+}
+.rg-dcell.td .rg-dn { background: var(--color-primary); color: #fff; box-shadow: 0 4px 10px rgba(37,64,200,.28); }
+.rg-dcell.td .rg-dw { color: var(--color-primary); font-weight: 800; }
+
+/* ---------- room-type band header ---------- */
+.rg-typerow { display: flex; background: #f7f9fc; border-block: 1px solid #e4e8f0; }
+.rg-tlabel {
+  position: sticky; inset-inline-start: 0; z-index: 3; background: #f7f9fc;
+  width: var(--rg-label, 216px); flex: none; border-inline-end: 1px solid #e4e8f0;
+  display: flex; align-items: center; gap: 8px; padding: 0 14px; height: 42px;
+}
+.rg-tname { font-size: 13.5px; font-weight: 800; color: var(--color-ink); white-space: nowrap; }
+.rg-tcount { font-size: 11px; font-weight: 700; color: var(--color-faint); white-space: nowrap; }
+.rg-tstrip { flex: 1; display: flex; align-items: center; gap: 16px; padding: 0 14px; height: 42px; }
+.rg-tbase { font-size: 12px; font-weight: 700; color: var(--color-muted); white-space: nowrap; }
+.rg-tbase b { color: var(--color-ink); }
+.rg-tlink {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;
+  color: var(--color-primary); background: none; border: none; cursor: pointer; white-space: nowrap;
+}
+.rg-tlink:hover { text-decoration: underline; }
+
+/* ---------- Sellable-Unit block (price + 6 restriction rows) ---------- */
+.rg-unit { border-bottom: 2px solid #eef0f5; }
+.rg-frow { display: flex; }
+.rg-flabel {
+  position: sticky; inset-inline-start: 0; z-index: 2; background: #fff;
+  width: var(--rg-label, 216px); flex: none; border-inline-end: 1px solid #e4e8f0;
+  display: flex; align-items: center; padding: 0 14px;
+}
+.rg-frow.price .rg-flabel { height: 40px; gap: 7px; }
+.rg-unum { font-size: 15px; font-weight: 800; color: var(--color-ink); }
+.rg-utype { font-size: 11px; font-weight: 700; color: var(--color-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-pool {
+  font-size: 9.5px; font-weight: 800; color: var(--color-primary);
+  background: var(--color-primary-050); padding: 1px 6px; border-radius: 6px; white-space: nowrap;
+}
+.rg-frow.rest .rg-flabel { height: 24px; }
+.rg-flabel-rest { display: flex; align-items: center; justify-content: space-between; gap: 5px; width: 100%; }
+.rg-flabel-rest .rg-lname { font-size: 10.5px; font-weight: 700; color: #8a91a3; white-space: nowrap; }
+.rg-flabel-rest .rg-tag { font-size: 9px; font-weight: 800; color: #b9c0d6; letter-spacing: .02em; }
+
+/* ---------- cells ---------- */
+.rg-cell {
+  flex: none; width: var(--rg-cell, 46px); display: flex; align-items: center; justify-content: center;
+  border-inline-end: 1px solid #f3f5f9; font-variant-numeric: tabular-nums; position: relative;
+}
+.rg-frow.price .rg-cell { height: 40px; }
+.rg-frow.rest .rg-cell { height: 24px; }
+.rg-cell.we { background: #fcf9ef; }
+.rg-cell.td { background: #eef1fd; }
+.rg-cell.ms { border-inline-start: 1.5px solid #e1e5ee; }
+.rg-cell.editable { cursor: pointer; }
+.rg-cell.editable:hover { box-shadow: inset 0 0 0 1.5px var(--color-primary); border-radius: 6px; }
+.rg-cell.blocked {
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, #e7ebf1 5px, #e7ebf1 10px);
+}
+.rg-cell.saving { opacity: .5; }
+
+.rg-price { font-size: 12.5px; font-weight: 800; color: #3a4257; }
+.rg-price.inherited { color: #aab1c4; font-weight: 700; }
+.rg-price.notsell { color: #c0455b; text-decoration: line-through; text-decoration-thickness: 1px; }
+.rg-num { font-size: 11px; font-weight: 800; color: #5b6478; }
+.rg-dash { color: #d2d8e3; font-size: 11px; font-weight: 700; }
+.rg-flag { display: inline-flex; color: #c0455b; }
+.rg-flag.warn { color: #b4670a; }
+.rg-blockicon { color: #9aa2b4; }
+
+.rg-input {
+  width: calc(var(--rg-cell, 46px) - 8px); height: 26px; border: 1.5px solid var(--color-primary);
+  border-radius: 6px; text-align: center; font-family: inherit; font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--color-ink); outline: none; padding: 0;
+}
+
+/* ---------- legend + hint ---------- */
+.rg-legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.rg-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #5b6478; }
+.rg-leg .rg-sw { width: 13px; height: 13px; border-radius: 4px; flex: none; }
+.rg-leg .rg-sw.hatch { background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, #cbd2df 3px, #cbd2df 6px); border: 1px solid #dfe4ee; }
+.rg-hint { font-size: 11.5px; font-weight: 600; color: var(--color-faint); }
+
+/* ---------- cell tooltip (physical breakdown, read-only) ---------- */
+.rg-tip {
+  position: fixed; z-index: 70; background: #111827; color: #fff; border-radius: 10px;
+  padding: 9px 12px; font-size: 11.5px; font-weight: 600; line-height: 1.55;
+  box-shadow: 0 12px 30px rgba(16,24,40,.3); pointer-events: none; direction: rtl; max-width: 240px;
+}
+.rg-tip b { font-weight: 800; }
+.rg-tip .rg-tip-t { font-weight: 800; margin-bottom: 3px; }
+.rg-tip .rg-tip-ok { color: #6ee7a8; }
+.rg-tip .rg-tip-no { color: #fca5a5; }
+
+/* ---------- empty / no-permission states ---------- */
+.rg-empty { padding: 60px 24px; text-align: center; color: var(--color-muted); font-weight: 700; }
+
+} /* @layer components */

@@ -87,6 +87,7 @@ export async function upsertRateCellAction(
       );
     });
 
+    revalidatePath("/rates");
     revalidatePath("/calendar");
     return { success: true };
   } catch (e) {
@@ -200,6 +201,7 @@ export async function bulkUpdateRatesAction(
       return { cells: cells.length, units: plans.length, dates: dates.length };
     });
 
+    revalidatePath("/rates");
     revalidatePath("/calendar");
     return { success: true, data: result };
   } catch (e) {
