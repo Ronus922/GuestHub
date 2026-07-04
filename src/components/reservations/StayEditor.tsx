@@ -10,7 +10,8 @@ import {
 
 // One reservation-room editor block (locked per-room model §C): its own
 // dates, occupancy, physical room and optional per-room guest. Used by both
-// the booking wizard and the edit panel — one flow, no calendar-only editor.
+// the booking wizard and the edit window — one flow, no calendar-only
+// editor. Visuals per ref/screens/new-booking-step-2-stay-details.png.
 
 export type StayDraft = {
   key: string;
@@ -110,82 +111,68 @@ export function StayEditor({
       value.adults + value.children > selected.max_occupancy);
 
   return (
-    <div className="rounded-2xl border border-line bg-surface p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <p className="flex items-center gap-2 text-sm font-bold text-ink">
-          <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary-050 text-xs font-bold text-primary">
-            {index + 1}
-          </span>
-          חדר {index + 1}
-        </p>
+    <div className="bw-roomcard">
+      <div className="bw-rc-top">
+        <span className="bw-rc-badge">{index + 1}</span>
+        <span className="bw-rc-ttl">חדר {index + 1}</span>
         {onRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label="הסרת חדר"
-            className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-status-danger-050 hover:text-status-danger"
-          >
-            <Icon name="trash" size={16} />
+          <button type="button" onClick={onRemove} className="bw-rc-rm">
+            <Icon name="trash" size={15} />
+            הסרה
           </button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-semibold text-text2">תאריך כניסה *</span>
+      <div className="bw-grid3">
+        <label className="bw-fg">
+          <span className="bw-lbl">
+            תאריך כניסה <span className="bw-req">*</span>
+          </span>
           <input
             type="date"
-            className="field"
+            className="bw-fld"
             value={value.checkIn}
             onChange={(e) => onChange({ ...value, checkIn: e.target.value, roomId: "" })}
           />
         </label>
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-semibold text-text2">תאריך יציאה *</span>
+        <label className="bw-fg">
+          <span className="bw-lbl">
+            תאריך יציאה <span className="bw-req">*</span>
+          </span>
           <input
             type="date"
-            className="field"
+            className="bw-fld"
             value={value.checkOut}
             min={value.checkIn}
             onChange={(e) => onChange({ ...value, checkOut: e.target.value, roomId: value.roomId })}
           />
         </label>
-        <div className="block">
-          <span className="mb-1.5 block text-sm font-semibold text-text2">
+        <div className="bw-fg">
+          <span className="bw-lbl">
             לילות <span className="font-normal text-faint">(מחושב)</span>
           </span>
-          <div className="field flex items-center justify-between">
-            <span className="font-bold">{nights || "—"}</span>
-            <Icon name="moon" size={16} className="text-faint" />
+          <div className="bw-readonly">
+            <span>{nights || "—"}</span>
+            <span className="bw-rn">
+              <Icon name="moon" size={15} />
+              אוטומטי
+            </span>
           </div>
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-4">
-        <Counter
-          label="מבוגרים"
-          value={value.adults}
-          min={1}
-          onChange={(adults) => onChange({ ...value, adults })}
-        />
-        <Counter
-          label="ילדים"
-          value={value.children}
-          min={0}
-          onChange={(children) => onChange({ ...value, children })}
-        />
-        <Counter
-          label="תינוקות"
-          value={value.infants}
-          min={0}
-          onChange={(infants) => onChange({ ...value, infants })}
-        />
+      <div className="bw-grid3 mt-4">
+        <Counter label="מבוגרים" value={value.adults} min={1} onChange={(adults) => onChange({ ...value, adults })} />
+        <Counter label="ילדים" value={value.children} min={0} onChange={(children) => onChange({ ...value, children })} />
+        <Counter label="תינוקות" value={value.infants} min={0} onChange={(infants) => onChange({ ...value, infants })} />
       </div>
 
-      <label className="mt-4 block">
-        <span className="mb-1.5 block text-sm font-semibold text-text2">חדר *</span>
+      <label className="bw-fg mt-4">
+        <span className="bw-lbl">
+          חדר <span className="bw-req">*</span>
+        </span>
         <select
-          className="field"
+          className="bw-fld"
           value={value.roomId}
           onChange={(e) => onChange({ ...value, roomId: e.target.value })}
           disabled={!validRange}
@@ -203,13 +190,13 @@ export function StayEditor({
       </label>
 
       {quote && value.roomId && (
-        <div className="mt-3 flex items-center justify-between rounded-xl bg-field px-4 py-3 text-sm">
-          <span className="font-semibold text-text2">
+        <div className="bw-price-line" style={{ borderBottom: "none", marginTop: 6 }}>
+          <span className="bw-plr">
             {nights} לילות × ₪{nights ? Math.round(quote.total / nights) : 0}
           </span>
-          <span className="font-bold text-primary" dir="ltr">
+          <b dir="ltr" style={{ color: "var(--color-primary)" }}>
             ₪{quote.total.toLocaleString()}
-          </span>
+          </b>
         </div>
       )}
       {quote?.restriction && (
@@ -232,21 +219,21 @@ export function StayEditor({
         {showGuest ? "− הסתר אורח לחדר זה" : "+ אורח שונה בחדר זה (אופציונלי)"}
       </button>
       {showGuest && (
-        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="bw-grid3 mt-2">
           <input
-            className="field"
+            className="bw-fld"
             placeholder="שם פרטי"
             value={value.guestFirstName ?? ""}
             onChange={(e) => onChange({ ...value, guestFirstName: e.target.value })}
           />
           <input
-            className="field"
+            className="bw-fld"
             placeholder="שם משפחה"
             value={value.guestLastName ?? ""}
             onChange={(e) => onChange({ ...value, guestLastName: e.target.value })}
           />
           <input
-            className="field"
+            className="bw-fld"
             placeholder="טלפון"
             dir="ltr"
             value={value.guestPhone ?? ""}
@@ -258,6 +245,7 @@ export function StayEditor({
   );
 }
 
+// +/- occupancy stepper (reference .qty: plus right, minus left in RTL)
 function Counter({
   label,
   value,
@@ -270,26 +258,26 @@ function Counter({
   onChange: (n: number) => void;
 }) {
   return (
-    <div>
-      <span className="mb-1.5 block text-sm font-semibold text-text2">{label}</span>
-      <div className="flex items-center justify-between rounded-[13px] bg-field p-1.5">
-        <button
-          type="button"
-          aria-label={`הוספת ${label}`}
-          onClick={() => onChange(Math.min(value + 1, 20))}
-          className="grid h-10 w-10 place-items-center rounded-lg bg-surface text-primary shadow-sm hover:bg-primary-050"
-        >
-          <Icon name="plus" size={16} />
-        </button>
-        <span className="min-w-8 text-center text-base font-bold text-ink">{value}</span>
+    <div className="bw-fg">
+      <span className="bw-lbl">{label}</span>
+      <div className="bw-qty">
         <button
           type="button"
           aria-label={`הפחתת ${label}`}
           onClick={() => onChange(Math.max(value - 1, min))}
-          className="grid h-10 w-10 place-items-center rounded-lg bg-surface text-muted shadow-sm hover:bg-hover disabled:opacity-40"
+          className="bw-qty-b"
           disabled={value <= min}
         >
-          <Icon name="minus" size={16} />
+          <Icon name="minus" size={17} />
+        </button>
+        <span className="bw-qty-v">{value}</span>
+        <button
+          type="button"
+          aria-label={`הוספת ${label}`}
+          onClick={() => onChange(Math.min(value + 1, 20))}
+          className="bw-qty-b"
+        >
+          <Icon name="plus" size={17} />
         </button>
       </div>
     </div>

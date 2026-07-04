@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { SidePanel } from "@/components/ui/SidePanel";
+import { FullWindow } from "@/components/ui/FullWindow";
 import { Icon } from "@/components/shared/Icon";
-import { nightsBetween } from "@/lib/dates";
+import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState } from "@/lib/inventory-rules";
 import {
   getReservationAction,
@@ -14,13 +14,14 @@ import {
 } from "@/app/(dashboard)/reservations/actions";
 import { EDITABLE_STATUSES } from "@/lib/validation/reservation";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
-import { PaymentBadge } from "./BookingPanel";
+import { PaymentBadge, CardTitle, Field } from "./BookingPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
 // עריכת הזמנה — the single reservation detail/edit flow the calendar opens
-// (ref/screens/edit-booking-modal.png). Preserves every reservation room,
-// per-room guests, pricing, status and payments (§F). Status-only edits do
-// not re-validate untouched stays server-side.
+// (ref/screens/edit-booking-modal.png): full-screen window, sectioned form
+// on the right, summary + activity sidebar on the left, sticky footer.
+// Preserves every reservation room, per-room guests, pricing, status and
+// payments (§F).
 export function EditReservationPanel({
   reservationId,
   onClose,
@@ -164,55 +165,80 @@ export function EditReservationPanel({
       }
     });
 
-  const statusColor = statusItems.find((s) => s.key === status)?.color ?? "#6B7385";
+  const statusMeta = detail ? statusItems.find((s) => s.key === detail.status) : null;
+  const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "—";
+  const payState = paymentState(total, paidAfter);
 
   return (
-    <SidePanel
+    <FullWindow
       open={open}
       onClose={onClose}
       title="עריכת הזמנה"
-      subtitle={detail ? `#${detail.reservation_number}` : "טוען…"}
-      icon="reservations"
-      badge={detail ? (statusItems.find((s) => s.key === detail.status)?.label ?? detail.status) : undefined}
+      subtitle={
+        detail
+          ? `נוצרה ${fmtDate(detail.created_at)}${
+              detail.source_label ? ` · מקור: ${detail.source_label}` : ""
+            } · עודכנה לאחרונה ${fmtDateTime(detail.updated_at)}`
+          : "טוען…"
+      }
+      headerChips={
+        detail ? (
+          <>
+            <span className="bw-hd-chip" dir="ltr">
+              #{detail.reservation_number}
+            </span>
+            <span className="bw-hd-chip">
+              <span className="bw-d" style={{ background: statusMeta?.color ?? "#6B7385" }} />
+              {statusMeta?.label ?? detail.status}
+            </span>
+          </>
+        ) : null
+      }
       footer={
-        detail && (
-          <div className="flex items-center justify-between gap-3">
+        detail ? (
+          <>
             {canCancel && detail.status !== "cancelled" ? (
               confirmCancel ? (
                 <span className="flex items-center gap-2">
-                  <button type="button" className="btn !min-h-[40px] bg-status-danger text-white" disabled={saving} onClick={doCancel}>
+                  <button
+                    type="button"
+                    className="bw-btn"
+                    style={{ background: "var(--color-status-danger)", color: "#fff" }}
+                    disabled={saving}
+                    onClick={doCancel}
+                  >
                     אישור ביטול
                   </button>
-                  <button type="button" className="btn btn-outline !min-h-[40px]" onClick={() => setConfirmCancel(false)}>
+                  <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setConfirmCancel(false)}>
                     חזרה
                   </button>
                 </span>
               ) : (
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 rounded-xl border border-[#F4B9B9] px-4 py-2 text-sm font-bold text-status-danger hover:bg-status-danger-050"
-                  onClick={() => setConfirmCancel(true)}
-                >
-                  <Icon name="close" size={15} />
+                <button type="button" className="bw-btn bw-btn-danger" onClick={() => setConfirmCancel(true)}>
+                  <Icon name="circle-slash" size={15} />
                   בטל הזמנה
                 </button>
               )
             ) : (
               <span />
             )}
-            <div className="flex items-center gap-3">
-              <button type="button" className="text-sm font-semibold text-muted hover:text-ink" onClick={onClose}>
-                סגור
+            <span className="flex-1" />
+            <button type="button" className="bw-btn bw-btn-ghost" onClick={onClose}>
+              סגור
+            </button>
+            {canEdit && (
+              <button
+                type="button"
+                className="bw-btn bw-btn-primary"
+                disabled={saving || !staysValid}
+                onClick={save}
+              >
+                <Icon name="check" size={16} />
+                {saving ? "שומר…" : "שמור שינויים"}
               </button>
-              {canEdit && (
-                <button type="button" className="btn btn-primary" disabled={saving || !staysValid} onClick={save}>
-                  <Icon name="check" size={16} />
-                  {saving ? "שומר…" : "שמור שינויים"}
-                </button>
-              )}
-            </div>
-          </div>
-        )
+            )}
+          </>
+        ) : undefined
       }
     >
       {loadError ? (
@@ -223,229 +249,300 @@ export function EditReservationPanel({
           </div>
         </div>
       ) : !detail ? (
-        <div className="space-y-4" aria-busy="true">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 animate-pulse rounded-2xl bg-hover" />
-          ))}
+        <div className="bw-main" aria-busy="true">
+          <div className="bw-col-main">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-40 animate-pulse rounded-2xl bg-white/70" />
+            ))}
+          </div>
+          <div className="bw-col-side max-lg:hidden">
+            <div className="h-72 animate-pulse rounded-2xl bg-white/70" />
+          </div>
         </div>
       ) : (
-        <div className="space-y-5">
-          {/* guest */}
-          <section className="rounded-2xl border border-line bg-surface p-5">
-            <p className="mb-4 flex items-center gap-2.5 text-base font-bold text-ink">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary-050 text-primary">
-                <Icon name="user" size={17} />
-              </span>
-              פרטי אורח
-            </p>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-semibold text-text2">
-                  שם פרטי <span className="text-status-danger">*</span>
-                </span>
-                <input className="field" value={guest.firstName} disabled={!canEdit}
-                  onChange={(e) => setGuest({ ...guest, firstName: e.target.value })} />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-semibold text-text2">
-                  שם משפחה <span className="text-status-danger">*</span>
-                </span>
-                <input className="field" value={guest.lastName} disabled={!canEdit}
-                  onChange={(e) => setGuest({ ...guest, lastName: e.target.value })} />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-semibold text-text2">טלפון</span>
-                <input className="field" dir="ltr" value={guest.phone} disabled={!canEdit}
-                  onChange={(e) => setGuest({ ...guest, phone: e.target.value })} />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-semibold text-text2">אימייל</span>
-                <input className="field" dir="ltr" type="email" value={guest.email} disabled={!canEdit}
-                  onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
-              </label>
-            </div>
-          </section>
-
-          {/* status + source */}
-          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="block rounded-2xl border border-line bg-surface p-5">
-              <span className="mb-1.5 flex items-center gap-2 text-sm font-semibold text-text2">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: statusColor }} />
-                סטטוס הזמנה
-              </span>
-              <select className="field" value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value)}>
-                {EDITABLE_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {statusItems.find((x) => x.key === s)?.label ?? s}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block rounded-2xl border border-line bg-surface p-5">
-              <span className="mb-1.5 block text-sm font-semibold text-text2">מקור הזמנה</span>
-              <select className="field" value={sourceId} disabled={!canEdit} onChange={(e) => setSourceId(e.target.value)}>
-                <option value="">—</option>
-                {bookingSources.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </section>
-
-          {/* stays */}
-          <section className="space-y-4">
-            <p className="flex items-center gap-2.5 text-base font-bold text-ink">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary-050 text-primary">
-                <Icon name="rooms" size={17} />
-              </span>
-              שהות וחדרים
-            </p>
-            {stays.map((s, i) => (
-              <StayEditor
-                key={s.key}
-                index={i}
-                value={s}
-                excludeReservationId={detail.id}
-                onChange={(next) => canEdit && setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}
-                onRemove={
-                  canEdit && stays.length > 1
-                    ? () => setStays((all) => all.filter((x) => x.key !== s.key))
-                    : undefined
-                }
-              />
-            ))}
-            {canEdit && (
-              <button
-                type="button"
-                className="flex min-h-[48px] w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line text-sm font-semibold text-primary hover:border-primary hover:bg-primary-050"
-                onClick={() =>
-                  setStays((all) => [
-                    ...all,
-                    {
-                      key: newStayKey(),
-                      roomId: "",
-                      checkIn: all[all.length - 1]?.checkIn ?? "",
-                      checkOut: all[all.length - 1]?.checkOut ?? "",
-                      adults: 2,
-                      children: 0,
-                      infants: 0,
-                    },
-                  ])
-                }
-              >
-                <Icon name="plus" size={16} />
-                הוסף חדר נוסף
-              </button>
-            )}
-          </section>
-
-          {/* pricing & payment */}
-          <section className="rounded-2xl border border-line bg-surface p-5">
-            <p className="mb-4 flex items-center gap-2.5 text-base font-bold text-ink">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary-050 text-primary">
-                <Icon name="finance" size={17} />
-              </span>
-              תמחור ותשלום
-            </p>
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="rounded-xl bg-field p-3">
-                <p className="text-xs text-muted">סה״כ</p>
-                <p className="text-lg font-extrabold text-ink" dir="ltr">₪{total.toLocaleString()}</p>
-              </div>
-              <div className="rounded-xl bg-field p-3">
-                <p className="text-xs text-muted">שולם</p>
-                <p className="text-lg font-extrabold text-[#15803D]" dir="ltr">₪{paidAfter.toLocaleString()}</p>
-              </div>
-              <div className="rounded-xl bg-field p-3">
-                <p className="text-xs text-muted">יתרה לתשלום</p>
-                <p className="text-lg font-extrabold text-[#B4231F]" dir="ltr">
-                  ₪{Math.max(0, total - paidAfter).toLocaleString()}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <PaymentBadge state={paymentState(total, paidAfter)} />
-            </div>
-            {canEdit && (
-              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-semibold text-text2">הנחה (₪)</span>
-                  <input type="number" min={0} className="field" value={discount || ""}
-                    placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
-                </label>
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-semibold text-text2">תשלום נוסף (₪)</span>
-                  <input type="number" min={0} className="field" value={addPay || ""}
-                    placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
-                </label>
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-semibold text-text2">אמצעי תשלום</span>
-                  <select className="field" value={method} onChange={(e) => setMethod(e.target.value)}>
-                    <option value="">בחירה…</option>
-                    {paymentMethods.map((m) => (
-                      <option key={m.id} value={m.key}>{m.label}</option>
+        <div className="bw-main">
+          <div className="bw-col-main">
+            {/* guest */}
+            <section className="bw-card">
+              <CardTitle icon="user" title="פרטי אורח" />
+              <div className="bw-grid2">
+                <Field label="שם פרטי" required>
+                  <input className="bw-fld" value={guest.firstName} disabled={!canEdit}
+                    onChange={(e) => setGuest({ ...guest, firstName: e.target.value })} />
+                </Field>
+                <Field label="שם משפחה" required>
+                  <input className="bw-fld" value={guest.lastName} disabled={!canEdit}
+                    onChange={(e) => setGuest({ ...guest, lastName: e.target.value })} />
+                </Field>
+                <Field label="טלפון">
+                  <input className="bw-fld" dir="ltr" value={guest.phone} disabled={!canEdit}
+                    onChange={(e) => setGuest({ ...guest, phone: e.target.value })} />
+                </Field>
+                <Field label="אימייל">
+                  <input className="bw-fld" dir="ltr" type="email" value={guest.email} disabled={!canEdit}
+                    onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
+                </Field>
+                <Field label="סטטוס הזמנה">
+                  <select className="bw-fld" value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value)}>
+                    {EDITABLE_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {statusItems.find((x) => x.key === s)?.label ?? s}
+                      </option>
                     ))}
                   </select>
-                </label>
+                </Field>
+                <Field label="מקור הזמנה">
+                  <select className="bw-fld" value={sourceId} disabled={!canEdit} onChange={(e) => setSourceId(e.target.value)}>
+                    <option value="">—</option>
+                    {bookingSources.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </section>
+
+            {/* stays */}
+            <section className="bw-card">
+              <CardTitle icon="rooms" title="שהות וחדרים" />
+              <div className="flex flex-col gap-4">
+                {stays.map((s, i) => (
+                  <StayEditor
+                    key={s.key}
+                    index={i}
+                    value={s}
+                    excludeReservationId={detail.id}
+                    onChange={(next) => canEdit && setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}
+                    onRemove={
+                      canEdit && stays.length > 1
+                        ? () => setStays((all) => all.filter((x) => x.key !== s.key))
+                        : undefined
+                    }
+                  />
+                ))}
+                {canEdit && (
+                  <button
+                    type="button"
+                    className="bw-addroom"
+                    onClick={() =>
+                      setStays((all) => [
+                        ...all,
+                        {
+                          key: newStayKey(),
+                          roomId: "",
+                          checkIn: all[all.length - 1]?.checkIn ?? "",
+                          checkOut: all[all.length - 1]?.checkOut ?? "",
+                          adults: 2,
+                          children: 0,
+                          infants: 0,
+                        },
+                      ])
+                    }
+                  >
+                    <Icon name="plus" size={16} />
+                    הוסף חדר נוסף
+                  </button>
+                )}
+              </div>
+            </section>
+
+            {/* pricing & payment */}
+            <section className="bw-card">
+              <CardTitle icon="finance" title="תמחור ותשלום" />
+              {stays.map((s, i) => {
+                const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
+                const line = (s.ratePerNight ?? 0) * nights;
+                return (
+                  <div key={s.key} className="bw-price-line">
+                    <div>
+                      <b>חדר {i + 1}</b>
+                      <div className="bw-plr">
+                        {nights} לילות × ₪{Math.round(s.ratePerNight ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <b dir="ltr">₪{Math.round(line).toLocaleString()}</b>
+                  </div>
+                );
+              })}
+              {detail.extra_charges > 0 && (
+                <div className="bw-price-line">
+                  <span className="bw-plr">חיובים נוספים</span>
+                  <b dir="ltr">₪{detail.extra_charges.toLocaleString()}</b>
+                </div>
+              )}
+              {discount > 0 && (
+                <div className="bw-price-line">
+                  <span className="bw-plr">הנחה</span>
+                  <b dir="ltr" style={{ color: "#B4231F" }}>
+                    -₪{discount.toLocaleString()}
+                  </b>
+                </div>
+              )}
+              <div className="bw-price-total">
+                <span>סה״כ לתשלום</span>
+                <span className="bw-amt" dir="ltr">
+                  ₪{Math.round(total).toLocaleString()}
+                </span>
+              </div>
+
+              <div className="bw-grid3 mt-5">
+                <div className="bw-tile">
+                  <p className="bw-tl">סה״כ</p>
+                  <p className="bw-tv" dir="ltr">₪{Math.round(total).toLocaleString()}</p>
+                </div>
+                <div className="bw-tile">
+                  <p className="bw-tl">שולם</p>
+                  <p className="bw-tv" style={{ color: "#15803D" }} dir="ltr">₪{Math.round(paidAfter).toLocaleString()}</p>
+                </div>
+                <div className="bw-tile">
+                  <p className="bw-tl">יתרה לתשלום</p>
+                  <p className="bw-tv" style={{ color: "#B4231F" }} dir="ltr">
+                    ₪{Math.round(Math.max(0, total - paidAfter)).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              {canEdit && (
+                <div className="bw-grid3 mt-5">
+                  <Field label="הנחה (₪)">
+                    <input type="number" min={0} className="bw-fld" value={discount || ""}
+                      placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                  <Field label="תשלום נוסף (₪)">
+                    <input type="number" min={0} className="bw-fld" value={addPay || ""}
+                      placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                  <Field label="אמצעי תשלום">
+                    <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+                      <option value="">בחירה…</option>
+                      {paymentMethods.map((m) => (
+                        <option key={m.id} value={m.key}>{m.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              )}
+              {detail.payments.length > 0 && (
+                <ul className="mt-5 flex flex-col gap-2 border-t border-line pt-4">
+                  {detail.payments.map((p) => (
+                    <li key={p.id} className="bw-sum-line">
+                      <span>
+                        התקבל תשלום ₪{p.amount.toLocaleString()}
+                        {p.method ? ` (${paymentMethods.find((m) => m.key === p.method)?.label ?? p.method})` : ""}
+                      </span>
+                      <span dir="ltr">{p.paid_at ? p.paid_at.slice(0, 16).replace("T", " ") : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {/* notes */}
+            <section className="bw-card">
+              <CardTitle icon="documents" title="הערות להזמנה" />
+              <textarea className="bw-fld" value={notes} disabled={!canEdit}
+                placeholder="בקשות מיוחדות, שעת הגעה…" onChange={(e) => setNotes(e.target.value)} />
+            </section>
+          </div>
+
+          {/* ---- sidebar: summary + activity (reference) ---- */}
+          <aside className="bw-col-side max-lg:hidden">
+            <div className="bw-sum">
+              <div className="bw-sum-h">
+                <Icon name="reservations" size={18} className="text-primary" />
+                סיכום הזמנה
+              </div>
+              <div className="bw-sum-b">
+                <div className="bw-sum-guest">
+                  <span className="bw-sum-ava">{(guest.firstName || "א").slice(0, 1)}</span>
+                  <div className="min-w-0">
+                    <p className="bw-sum-gname truncate">{guestDisplay}</p>
+                    <p className="bw-sum-gsrc truncate" dir="ltr">
+                      {detail.source_label ? `${detail.source_label} · ` : ""}#{detail.reservation_number}
+                    </p>
+                  </div>
+                </div>
+                <div className="bw-sum-sec">
+                  {detail.rooms.map((r) => (
+                    <div key={r.rrId} className="bw-sum-room">
+                      <div className="bw-sum-rt">
+                        <span>
+                          חדר {r.roomLabel}
+                          {r.roomTypeName ? ` · ${r.roomTypeName}` : ""}
+                        </span>
+                        <span className="bw-p" dir="ltr">
+                          ₪{Math.round(r.priceTotal).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="bw-sum-rd">
+                        <Icon name="calendar" size={14} />
+                        <span dir="ltr">
+                          {formatFullDate(r.checkIn)} – {formatFullDate(r.checkOut)}
+                        </span>
+                        <Icon name="moon" size={14} />
+                        <span>{nightsBetween(r.checkIn, r.checkOut)} ל׳</span>
+                        <Icon name="users-round" size={14} />
+                        <span>{r.adults + r.children + r.infants}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="bw-sum-sec">
+                  <div className="bw-sum-line">
+                    <span>לילות סה״כ</span>
+                    <span>{detail.rooms.reduce((n, r) => n + nightsBetween(r.checkIn, r.checkOut), 0)}</span>
+                  </div>
+                  <div className="bw-sum-line">
+                    <span>אורחים</span>
+                    <span>{detail.rooms.reduce((n, r) => n + r.adults + r.children + r.infants, 0)}</span>
+                  </div>
+                </div>
+                <div className="bw-sum-total">
+                  <span className="bw-l">סה״כ</span>
+                  <span className="bw-v" dir="ltr">₪{Math.round(total).toLocaleString()}</span>
+                </div>
+                <div className="bw-sum-pay">
+                  <span>סטטוס תשלום</span>
+                  <PaymentBadge state={payState} />
+                </div>
+              </div>
+            </div>
+
+            {detail.activity.length > 0 && (
+              <div className="bw-sum">
+                <div className="bw-sum-h">
+                  <Icon name="refresh" size={17} className="text-primary" />
+                  יומן פעילות
+                </div>
+                <div className="bw-sum-b">
+                  <div className="bw-act">
+                    {detail.activity.map((a, i) => (
+                      <div key={i} className="bw-act-row">
+                        <span className="bw-act-t">
+                          {ACTIVITY_LABEL[a.action] ?? a.action}
+                          {a.user_name ? ` · ${a.user_name}` : ""}
+                        </span>
+                        <span className="bw-act-d">{a.created_at.slice(0, 16).replace("T", " ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
-            {detail.payments.length > 0 && (
-              <ul className="mt-4 space-y-1 border-t border-line pt-3 text-xs text-muted">
-                {detail.payments.map((p) => (
-                  <li key={p.id} className="flex justify-between">
-                    <span>
-                      התקבל תשלום ₪{p.amount.toLocaleString()}
-                      {p.method ? ` (${paymentMethods.find((m) => m.key === p.method)?.label ?? p.method})` : ""}
-                    </span>
-                    <span dir="ltr">{p.paid_at ? p.paid_at.slice(0, 16).replace("T", " ") : ""}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          {/* notes */}
-          <section className="rounded-2xl border border-line bg-surface p-5">
-            <p className="mb-3 flex items-center gap-2.5 text-base font-bold text-ink">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary-050 text-primary">
-                <Icon name="documents" size={17} />
-              </span>
-              הערות להזמנה
-            </p>
-            <textarea className="field min-h-24" value={notes} disabled={!canEdit}
-              placeholder="בקשות מיוחדות, שעת הגעה…" onChange={(e) => setNotes(e.target.value)} />
-          </section>
-
-          {/* activity trail */}
-          {detail.activity.length > 0 && (
-            <section className="rounded-2xl border border-line bg-surface p-5">
-              <p className="mb-3 flex items-center gap-2.5 text-base font-bold text-ink">
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary-050 text-primary">
-                  <Icon name="refresh" size={17} />
-                </span>
-                יומן פעילות
-              </p>
-              <ul className="space-y-2">
-                {detail.activity.map((a, i) => (
-                  <li key={i} className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-text2">
-                      {ACTIVITY_LABEL[a.action] ?? a.action}
-                      {a.user_name ? ` · ${a.user_name}` : ""}
-                    </span>
-                    <span className="text-faint" dir="ltr">
-                      {a.created_at.slice(0, 16).replace("T", " ")}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+          </aside>
         </div>
       )}
-    </SidePanel>
+    </FullWindow>
   );
+}
+
+function fmtDate(iso: string): string {
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+}
+function fmtDateTime(iso: string): string {
+  return `${fmtDate(iso)} ${iso.slice(11, 16)}`;
 }
 
 const ACTIVITY_LABEL: Record<string, string> = {
