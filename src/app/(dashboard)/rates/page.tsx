@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getActor, hasPermission } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
-import { addDays, clampRatesFrom, isDateOnly, todayInTz } from "@/lib/dates";
+import { addDays, addYears, clampRatesFrom, isDateOnly, RATES_HORIZON_YEARS, todayInTz } from "@/lib/dates";
 import { getRateGridState } from "@/lib/rates/grid-state";
 import { RateGridScreen } from "./RateGridScreen";
 import { RATE_VIEW_DAYS, type RateView } from "./types";
@@ -29,7 +29,12 @@ export default async function RatesPage({
   // grid is future-facing (Step 6). Historical rows stay in the DB for audit but
   // are not reachable through the editor.
   const requestedFrom = params.from && isDateOnly(params.from) ? params.from : today;
-  const from = clampRatesFrom(requestedFrom, today);
+  // Keep the WHOLE visible window inside the horizon: cap the start so the last
+  // rendered day never exceeds today+5y (otherwise those tail cells render but
+  // the server rejects edits). Floor stays today.
+  const maxFrom = addDays(addYears(today, RATES_HORIZON_YEARS), -(RATE_VIEW_DAYS[view] - 1));
+  const clampedStart = clampRatesFrom(requestedFrom, today);
+  const from = clampedStart > maxFrom ? maxFrom : clampedStart;
   const toInclusive = addDays(from, RATE_VIEW_DAYS[view] - 1);
 
   const state = await getRateGridState(sql, actor.tenantId, from, toInclusive);
