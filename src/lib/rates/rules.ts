@@ -76,6 +76,69 @@ export function stayRestrictionViolation(
   return null;
 }
 
+// ============================================================
+// Sale-state reason codes (Step 2). The read model must not collapse unrelated
+// causes into one generic "hatched" state. classifySellState returns exactly
+// ONE reason per (SU, date) in strict precedence. IMPORTANT: CTA / CTD / min /
+// max stay are NOT closure reasons here — they keep their own chips and never
+// mark a cell universally unsellable (a restriction only fails a SPECIFIC stay,
+// which stayRestrictionViolation handles). This type is import-free on purpose
+// so the module stays standalone-compilable by the check scripts.
+// ============================================================
+export type SellReason =
+  | "SELLABLE"
+  | "COMMERCIAL_STOP_SELL"
+  | "PHYSICAL_INVENTORY_ZERO"
+  | "ROOM_INACTIVE"
+  | "ROOM_OUT_OF_ORDER"
+  | "PHYSICAL_BLOCK"
+  | "RESERVED"
+  | "NO_ACTIVE_RATE_PLAN"
+  | "MISSING_EFFECTIVE_PRICE"
+  | "INVALID_EFFECTIVE_PRICE"
+  | "MAPPING_ERROR";
+
+export type SellStateInput = {
+  hasBasePlan: boolean;
+  totalRooms: number; // member rooms mapped to the SU
+  sellableRooms: number; // members that are status='available' AND is_active
+  occupiedRooms: number; // members consumed by a blocking reservation this day
+  closedRooms: number; // members consumed by a room_closure this day
+  inactiveRooms: number; // members status='inactive' OR is_active=false
+  outOfOrderRooms: number; // members status='out_of_order'
+  availability: number; // GREATEST(0, sellable − consumed)
+  effectivePrice: number | null;
+  stopSell: boolean;
+};
+
+// Precedence: mapping → plan → physical (why zero) → explicit commercial close →
+// price. Physical wins over commercial because a physically-absent room can't be
+// opened by a commercial toggle (the exact conflation that made close feel
+// one-way). A cell is genuinely sellable only when it clears every axis.
+export function classifySellState(s: SellStateInput): SellReason {
+  if (s.totalRooms <= 0) return "MAPPING_ERROR";
+  if (!s.hasBasePlan) return "NO_ACTIVE_RATE_PLAN";
+  if (s.availability <= 0) {
+    if (s.sellableRooms <= 0) {
+      // no physically-eligible member at all — surface which switch is off.
+      if (s.outOfOrderRooms > 0) return "ROOM_OUT_OF_ORDER";
+      if (s.inactiveRooms > 0) return "ROOM_INACTIVE";
+      return "PHYSICAL_INVENTORY_ZERO";
+    }
+    // eligible rooms exist but every one is consumed today.
+    // ponytail: a pooled SU with mixed causes reports the dominant one
+    // (reserved before blocked); single-room SUs (the common case) are exact.
+    if (s.occupiedRooms > 0) return "RESERVED";
+    if (s.closedRooms > 0) return "PHYSICAL_BLOCK";
+    return "PHYSICAL_INVENTORY_ZERO";
+  }
+  if (s.stopSell) return "COMMERCIAL_STOP_SELL";
+  if (s.effectivePrice == null || Number.isNaN(s.effectivePrice)) return "MISSING_EFFECTIVE_PRICE";
+  if (s.effectivePrice < 0) return "INVALID_EFFECTIVE_PRICE";
+  if (s.effectivePrice === 0) return "MISSING_EFFECTIVE_PRICE";
+  return "SELLABLE";
+}
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // Resolve the committed price for ONE stay (§6). Precedence:

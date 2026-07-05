@@ -3,7 +3,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { Icon } from "@/components/shared/Icon";
 import type { DateOnly } from "@/lib/dates";
-import type { RateCellState, RateGridUnit } from "./types";
+import { SELL_REASON_KIND, SELL_REASON_TEXT, type RateCellState, type RateGridUnit } from "./types";
 
 // Pure cell renderers for the Rate Grid. Editing/saving/hover state lives in the
 // grid; these components only draw a cell and forward intent. Each keeps a
@@ -22,6 +22,9 @@ export type CellCtx = {
   cancel: () => void;
   commitNumber: (unit: RateGridUnit, field: "price" | NumField, date: DateOnly, raw: string) => void;
   toggleBool: (unit: RateGridUnit, field: BoolField, date: DateOnly, current: boolean) => void;
+  // Writes an EXPLICIT boolean (open→false, close→true) — never a toggle — so a
+  // commercial re-open always persists stop_sell=false (Step 3, never one-way).
+  setBool: (unit: RateGridUnit, field: BoolField, date: DateOnly, value: boolean) => void;
   hover: (e: ReactMouseEvent, unit: RateGridUnit, cell: RateCellState) => void;
   leave: () => void;
 };
@@ -30,13 +33,23 @@ const cls = (col: ColGeom, extra: string[]) =>
   ["rg-cell", col.weekend ? "we" : "", col.today ? "td" : "", col.monthStart ? "ms" : "", ...extra]
     .filter(Boolean).join(" ");
 
-// The price cell: physically-blocked → hatch + ⊘ (read-only); else the effective
-// price, muted when inherited from base, red when commercially not sellable.
+// The price cell state is driven by the SINGLE sale-state reason, so unrelated
+// causes look different (Step 7): physical → hatch + ⊘; mapping/plan error →
+// error box; missing/invalid price → amber "no-price"; commercial stop-sell →
+// red price (still editable/re-openable); sellable → normal (muted if inherited).
 export function PriceCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cell: RateCellState; col: ColGeom; ctx: CellCtx }) {
   const k = ctx.key(unit.sellableUnitId, cell.date, "price");
   const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === "price" && ctx.editing.date === cell.date;
-  const blocked = cell.availability === 0;
-  const className = cls(col, [ctx.editable ? "editable" : "", blocked ? "blocked" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const kind = SELL_REASON_KIND[cell.sellReason];
+  const physical = kind === "physical";
+  const errored = kind === "error";
+  const noPrice = kind === "price";
+  const commercial = kind === "commercial";
+  const className = cls(col, [
+    ctx.editable ? "editable" : "",
+    physical ? "blocked" : "", errored ? "errored" : "", noPrice ? "noprice" : "",
+    ctx.saving.has(k) ? "saving" : "",
+  ]);
 
   if (isEditing) {
     return (
@@ -52,17 +65,20 @@ export function PriceCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cell: 
       </div>
     );
   }
-  const priceCls = ["rg-price", cell.priceSource === "inherited" ? "inherited" : "", !cell.sellable && !blocked ? "notsell" : ""].filter(Boolean).join(" ");
+  const priceCls = ["rg-price", cell.priceSource === "inherited" ? "inherited" : "", commercial ? "notsell" : ""].filter(Boolean).join(" ");
   return (
     <div
       className={className}
-      data-su={unit.sellableUnitId} data-date={cell.date} data-field="price"
+      data-su={unit.sellableUnitId} data-date={cell.date} data-field="price" data-reason={cell.sellReason}
       onClick={ctx.editable ? () => ctx.startEdit(unit.sellableUnitId, "price", cell.date) : undefined}
       onMouseEnter={(e) => ctx.hover(e, unit, cell)}
       onMouseMove={(e) => ctx.hover(e, unit, cell)}
       onMouseLeave={ctx.leave}
     >
-      {blocked ? <Icon name="circle-slash" size={12} className="rg-blk" /> : <span className={priceCls}>{Math.round(cell.effectivePrice)}</span>}
+      {physical ? <Icon name="circle-slash" size={12} className="rg-blk" />
+        : errored ? <Icon name="warning" size={12} className="rg-err" />
+        : noPrice ? <span className="rg-price nomprice">—</span>
+        : <span className={priceCls}>{Math.round(cell.effectivePrice)}</span>}
     </div>
   );
 }
@@ -126,8 +142,42 @@ export function CellTip({ x, y, unit, cell }: { x: number; y: number; unit: Rate
       <div>זמינות פיזית: <b>{cell.availability}</b> מתוך {cell.sellableRooms}/{cell.totalRooms}</div>
       {cell.occupiedRooms > 0 && <div>תפוסים: {cell.occupiedRooms}</div>}
       {cell.closedRooms > 0 && <div>חסומים פיזית: {cell.closedRooms}</div>}
-      {cell.stopSell && <div className="rg-tip-no">סגור למכירה (מסחרי)</div>}
-      <div className={cell.sellable ? "rg-tip-ok" : "rg-tip-no"}>{cell.sellable ? "✓ ניתן למכירה" : "✕ לא ניתן למכירה"}</div>
+      <div className={cell.sellable ? "rg-tip-ok" : "rg-tip-no"}>{cell.sellable ? "✓ " : "✕ "}{SELL_REASON_TEXT[cell.sellReason]}</div>
+    </div>
+  );
+}
+
+// stop_sell is the COMMERCIAL open/close switch — an explicit two-state editor
+// (Step 3), not a bare toggle, so "פתוח למכירה" always writes stop_sell=false
+// and a close is never one-way. (The column is NOT NULL DEFAULT false, so there
+// is no nullable "inherit" state to offer — open/closed is the full model.)
+// Physical unavailability is a SEPARATE axis shown on the price row; opening the
+// commercial switch here never overrides a real physical block.
+export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cell: RateCellState; col: ColGeom; ctx: CellCtx }) {
+  const k = ctx.key(unit.sellableUnitId, cell.date, "stopSell");
+  const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === "stopSell" && ctx.editing.date === cell.date;
+  const closed = cell.stopSell;
+  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  if (isEditing) {
+    return (
+      <div className={className}>
+        <div className="rg-ss-edit">
+          <button data-testid="ss-open" className={`rg-ss-b open${!closed ? " on" : ""}`} title="פתוח למכירה"
+            onClick={() => ctx.setBool(unit, "stopSell", cell.date, false)}><Icon name="check" size={11} /></button>
+          <button data-testid="ss-close" className={`rg-ss-b close${closed ? " on" : ""}`} title="סגור למכירה"
+            onClick={() => ctx.setBool(unit, "stopSell", cell.date, true)}><Icon name="circle-slash" size={11} /></button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div
+      className={className}
+      data-su={unit.sellableUnitId} data-date={cell.date} data-field="stopSell" data-closed={closed ? "1" : "0"}
+      onClick={ctx.editable ? () => ctx.startEdit(unit.sellableUnitId, "stopSell", cell.date) : undefined}
+      title={closed ? "סגור למכירה · לחיצה לפתיחה" : ctx.editable ? "פתוח למכירה · לחיצה לסגירה" : "פתוח למכירה"}
+    >
+      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={12} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }

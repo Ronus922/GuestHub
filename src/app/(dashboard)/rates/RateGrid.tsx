@@ -6,7 +6,7 @@ import { Icon } from "@/components/shared/Icon";
 import { dayOfWeek, HEBREW_DAY_LETTERS, hebrewMonthYear, type DateOnly } from "@/lib/dates";
 import { upsertRateCellAction } from "./actions";
 import type { RateCan, RateCellState, RateGridType, RateGridUnit } from "./types";
-import { BoolCell, CellTip, MetricCell, PriceCell, type BoolField, type CellCtx, type ColGeom, type NumField } from "./RateCells";
+import { BoolCell, CellTip, MetricCell, PriceCell, StopSellCell, type BoolField, type CellCtx, type ColGeom, type NumField } from "./RateCells";
 
 const LABEL_W = 224;
 const MIN_COL = 46;
@@ -84,6 +84,7 @@ export function RateGrid({
       void submit(unit, date, { [field]: value } as CellPatch);
     },
     toggleBool: (unit, field, date, current) => void submit(unit, date, { [field]: !current } as CellPatch),
+    setBool: (unit, field, date, value) => void submit(unit, date, { [field]: value } as CellPatch),
     hover: (e, unit, cell) => setTip({ x: e.clientX, y: e.clientY, unit, cell }),
     leave: () => setTip(null),
   };
@@ -164,7 +165,9 @@ export function RateGrid({
                           {unit.cells.map((cell, i) =>
                             m.kind === "num"
                               ? <MetricCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />
-                              : <BoolCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />,
+                              : m.field === "stopSell"
+                                ? <StopSellCell key={cell.date} unit={unit} cell={cell} col={cols[i]} ctx={ctx} />
+                                : <BoolCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />,
                           )}
                         </div>
                       </div>

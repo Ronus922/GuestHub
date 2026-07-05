@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
-import { addDays, eachDay, dayOfWeek, todayInTz } from "@/lib/dates";
+import { addDays, eachDay, dayOfWeek, todayInTz, ratesWritableWindow, type DateOnly } from "@/lib/dates";
 import { markAriDirty } from "@/lib/channel/outbox";
 import { writeRateCells, type RateCell, type RateCellPatch } from "@/lib/rates/service";
 import { applyPriceMode } from "@/lib/rates/rules";
@@ -35,6 +35,16 @@ function errorMessage(e: unknown): string {
   return "אירעה שגיאה בלתי צפויה";
 }
 
+// Tenant-local today (property timezone, never UTC) → the writable window. The
+// SAME server-side date policy the grid/UI use, re-enforced at the trust
+// boundary (Step 6): past dates and beyond-horizon dates are rejected here even
+// if a client bypasses the pickers.
+async function tenantWritableWindow(tenantId: string): Promise<{ earliest: DateOnly; latest: DateOnly }> {
+  const [t] = await sql<{ timezone: string }[]>`
+    SELECT timezone FROM guesthub.tenants WHERE id = ${tenantId}`;
+  return ratesWritableWindow(todayInTz(t?.timezone || "Asia/Jerusalem"));
+}
+
 // camelCase validated patch → the snake_case service patch (touched keys only).
 function toServicePatch(p: UpsertRateCellInput["patch"]): RateCellPatch {
   const out: RateCellPatch = {};
@@ -60,6 +70,10 @@ export async function upsertRateCellAction(
     const parsed = upsertRateCellSchema.safeParse(raw);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
     const input = parsed.data;
+
+    const { earliest, latest } = await tenantWritableWindow(actor.tenantId);
+    if (input.date < earliest) return fail("לא ניתן לעדכן תעריף לתאריך שעבר");
+    if (input.date > latest) return fail(`ניתן לעדכן תעריפים עד ${latest}`);
 
     await sql.begin(async (tx) => {
       let planId = input.pricingPlanId;
@@ -107,6 +121,10 @@ export async function bulkUpdateRatesAction(
     const parsed = bulkUpdateRatesSchema.safeParse(raw);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
     const input = parsed.data;
+
+    const { earliest, latest } = await tenantWritableWindow(actor.tenantId);
+    if (input.dateFrom < earliest) return fail("לא ניתן לעדכן תאריכים שעברו — התחל מהיום");
+    if (input.dateTo > latest) return fail(`ניתן לעדכן תעריפים עד ${latest}`);
 
     // dates in [from, to] inclusive, filtered by weekday chips (§7b)
     const allDays = eachDay(input.dateFrom, addDays(input.dateTo, 1));
@@ -222,17 +240,22 @@ export async function setRoomStatusAction(raw: RoomStatusInput): Promise<ActionR
     const input = parsed.data;
 
     await sql.begin(async (tx) => {
-      const [room] = await tx<{ id: string; status: string; room_type_id: string | null; timezone: string }[]>`
-        SELECT r.id, r.status, r.room_type_id, t.timezone
+      const [room] = await tx<{ id: string; status: string; is_active: boolean; room_type_id: string | null; timezone: string }[]>`
+        SELECT r.id, r.status, r.is_active, r.room_type_id, t.timezone
         FROM guesthub.rooms r
         JOIN guesthub.tenants t ON t.id = r.tenant_id
         WHERE r.id = ${input.roomId} AND r.tenant_id = ${actor.tenantId}
         FOR UPDATE OF r`;
       if (!room) throw new DomainError("חדר לא נמצא");
-      if (room.status === input.status) return;
+      // Physical eligibility is status='available' AND is_active across every read
+      // model, but these are two switches. Keep them coupled so the status control
+      // is the SINGLE physical toggle — setting 'available' also clears a stale
+      // is_active=false (the exact state that stranded G4 with no UI to reopen it).
+      const nextActive = input.status === "available";
+      if (room.status === input.status && room.is_active === nextActive) return;
 
       await tx`
-        UPDATE guesthub.rooms SET status = ${input.status}
+        UPDATE guesthub.rooms SET status = ${input.status}, is_active = ${nextActive}
         WHERE id = ${input.roomId} AND tenant_id = ${actor.tenantId}`;
 
       await writeAudit(
@@ -241,8 +264,8 @@ export async function setRoomStatusAction(raw: RoomStatusInput): Promise<ActionR
           entityType: "room",
           entityId: input.roomId,
           action: "status",
-          before: { status: room.status },
-          after: { status: input.status },
+          before: { status: room.status, is_active: room.is_active },
+          after: { status: input.status, is_active: nextActive },
         },
         tx,
       );

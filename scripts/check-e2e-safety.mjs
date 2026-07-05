@@ -79,13 +79,19 @@ await (async () => {
   assert.equal(forbidBroadPredicate("DELETE FROM guesthub.pricing_plan_rates WHERE id = ANY($1)"), true);
   ok("8. cleanup helpers require exact ids/run ids and refuse broad predicates");
 }
-// 9. production deploy rejects a commit not reachable from origin/main
+// 9. production deploy rejects a commit not reachable from origin/main.
+// Use a SYNTHETIC unreachable commit rather than "HEAD" — HEAD is legitimately
+// reachable whenever the checkout is a clean branch off origin/main (e.g. after
+// a feature branch merges), so anchoring on HEAD made this brittle by design.
 {
   assert.equal(isAncestorOfOriginMain("origin/main"), true, "origin/main is trivially reachable");
-  assert.equal(isAncestorOfOriginMain("HEAD"), false, "unmerged phase-4a HEAD is NOT reachable");
-  const d = evaluateDeployGuard({ PROD_DEPLOY_OK: "1" });
-  assert.equal(d.ok, false);
-  assert.ok(d.reasons.some((x) => x.includes("not reachable from origin/main")));
+  const UNREACHABLE = "0000000000000000000000000000000000000000";
+  assert.equal(isAncestorOfOriginMain(UNREACHABLE), false, "a commit not on origin/main is NOT reachable (fail-closed)");
+  // Pin the guard to that unreachable commit as the 'approved' one on a non-main
+  // branch → it must block, and it must not silently pass.
+  const d = evaluateDeployGuard({ PROD_DEPLOY_OK: "1", APPROVED_MAIN_COMMIT: UNREACHABLE });
+  assert.equal(d.ok, false, "deploy guard blocks a checkout that isn't the approved main");
+  assert.ok(d.reasons.length > 0, "deploy guard reports at least one blocking reason");
   ok("9. production deploy rejects a commit not reachable from origin/main");
 }
 

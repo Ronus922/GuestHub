@@ -1,6 +1,7 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { eachDay, type DateOnly } from "@/lib/dates";
+import { classifySellState } from "@/lib/rates/rules";
 import type {
   RateCellState,
   RateGridUnit,
@@ -110,6 +111,22 @@ export async function getRateGridState(
     FROM guesthub.sellable_unit_inventory(${tenantId}, ${from}, ${toExclusive})`;
   const invByKey = new Map(inv.map((r) => [key(r.sellable_unit_id, r.day), r]));
 
+  // 3b. Per-SU member-room administrative status (day-independent) → lets the
+  // reason classifier say WHY physical inventory is zero (inactive vs out_of_order
+  // vs mapping) rather than a generic hatch. A room is physically eligible only
+  // when status='available' AND is_active (the invariant every read model shares).
+  const suStatus = await db<
+    { sellable_unit_id: string; inactive: number; out_of_order: number }[]
+  >`
+    SELECT sur.sellable_unit_id,
+           count(*) FILTER (WHERE r.status = 'inactive' OR NOT r.is_active)::int AS inactive,
+           count(*) FILTER (WHERE r.status = 'out_of_order')::int AS out_of_order
+    FROM guesthub.sellable_unit_rooms sur
+    JOIN guesthub.rooms r ON r.id = sur.room_id
+    WHERE sur.tenant_id = ${tenantId}
+    GROUP BY sur.sellable_unit_id`;
+  const statusBySu = new Map(suStatus.map((r) => [r.sellable_unit_id, r]));
+
   // 4. Raw canonical rows → EXPLICIT editable values + hasRow, keyed by plan/date.
   const planIds = units.map((u) => u.plan_id).filter((x): x is string => !!x);
   const ppr = planIds.length
@@ -132,6 +149,22 @@ export async function getRateGridState(
 
       const explicitPrice = row?.price ?? null;
       const effectivePrice = e ? e.price : explicitPrice ?? u.base_price;
+      const st = statusBySu.get(u.id);
+      const availability = iv?.availability ?? e?.availability ?? 0;
+      const stopSell = row?.stop_sell ?? false;
+      const totalRooms = iv?.total_rooms ?? u.room_count;
+      const sellReason = classifySellState({
+        hasBasePlan: !!u.plan_id,
+        totalRooms,
+        sellableRooms: iv?.sellable_rooms ?? 0,
+        occupiedRooms: iv?.occupied_rooms ?? 0,
+        closedRooms: iv?.closed_rooms ?? 0,
+        inactiveRooms: st?.inactive ?? 0,
+        outOfOrderRooms: st?.out_of_order ?? 0,
+        availability,
+        effectivePrice,
+        stopSell,
+      });
       return {
         date: d,
         price: explicitPrice,
@@ -140,16 +173,19 @@ export async function getRateGridState(
         maxStay: row?.max_stay ?? null,
         closedToArrival: row?.closed_to_arrival ?? false,
         closedToDeparture: row?.closed_to_departure ?? false,
-        stopSell: row?.stop_sell ?? false,
+        stopSell,
         hasRow: !!row,
         effectivePrice,
         priceSource: explicitPrice != null ? "explicit" : "inherited",
-        totalRooms: iv?.total_rooms ?? u.room_count,
+        totalRooms,
         sellableRooms: iv?.sellable_rooms ?? 0,
         occupiedRooms: iv?.occupied_rooms ?? 0,
         closedRooms: iv?.closed_rooms ?? 0,
-        availability: iv?.availability ?? e?.availability ?? 0,
-        sellable: e ? e.sellable : false,
+        availability,
+        // A cell is sellable iff the single reason says so (includes a valid
+        // price) — the DB `sellable` only covers availability ∧ ¬stop_sell.
+        sellable: sellReason === "SELLABLE",
+        sellReason,
       };
     });
     return {

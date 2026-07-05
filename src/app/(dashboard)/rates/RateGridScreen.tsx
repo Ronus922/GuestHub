@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
-import type { DateOnly } from "@/lib/dates";
+import { addYears, clampRatesFrom, RATES_HORIZON_YEARS, type DateOnly } from "@/lib/dates";
 import { RateToolbar } from "./RateToolbar";
 import { RateGrid } from "./RateGrid";
 import { GroupUpdatePanel } from "./GroupUpdatePanel";
@@ -42,7 +42,11 @@ export function RateGridScreen({
     router.push(panelHref(false));
   };
 
-  const navigate = (from: DateOnly, v: RateView) => router.push(`/rates?from=${from}&view=${v}`);
+  // Navigation is clamped to [today, today+horizon] so the grid never opens on a
+  // past window (Step 6). horizonLatest bounds the Group Update date pickers.
+  const horizonLatest = addYears(today, RATES_HORIZON_YEARS);
+  const navigate = (from: DateOnly, v: RateView) =>
+    router.push(`/rates?from=${clampRatesFrom(from, today)}&view=${v}`);
   const visibleTypes = useMemo(
     () => (typeFilter === "all" ? state.types : state.types.filter((t) => (t.roomTypeId ?? "—") === typeFilter)),
     [state.types, typeFilter],
@@ -76,7 +80,9 @@ export function RateGridScreen({
           <span className="rg-leg"><span className="rg-sw" style={{ background: "#eef1fd" }} />היום</span>
           <span className="rg-leg"><span className="rg-sw" style={{ background: "#eef1fb" }} />סוף שבוע</span>
           <span className="rg-leg"><span className="rg-sw hatch" />לא זמין פיזית</span>
-          <span className="rg-leg"><Icon name="circle-slash" size={12} className="text-[#c0455b]" />סגור למכירה</span>
+          <span className="rg-leg"><Icon name="circle-slash" size={12} className="text-[#c0455b]" />סגור למכירה (מסחרי)</span>
+          <span className="rg-leg"><span className="rg-sw" style={{ background: "#fbeecd", border: "1px solid #f0d9a8" }} />חסר מחיר</span>
+          <span className="rg-leg"><Icon name="warning" size={12} className="text-[#c0455b]" />שגיאת מיפוי</span>
           <span className="rg-leg"><span className="rg-price inherited">₪350</span>מחיר בסיס (מוסק)</span>
         </div>
         <span className="rg-hint">לחיצה על תא לעריכה · Enter לשמירה · Esc לביטול</span>
@@ -85,6 +91,7 @@ export function RateGridScreen({
       <GroupUpdatePanel
         open={groupOpen}
         types={state.types} from={state.from} toInclusive={state.toInclusive}
+        minDate={today} maxDate={horizonLatest}
         presetUnitIds={preset} onClose={closeGroupUpdate}
       />
     </div>
