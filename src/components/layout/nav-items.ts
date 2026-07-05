@@ -29,7 +29,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "רשת תעריפים", icon: "credit-card", href: "/rates", permission: "rates.view" },
       { label: "הזמנות", icon: "reservations", permission: "reservations.view", hidden: true },
       { label: "אורחים", icon: "guests", permission: "guests.view", hidden: true },
-      { label: "חדרים", icon: "rooms", permission: "rooms.view", hidden: true },
+      { label: "חדרים", icon: "rooms", href: "/rooms", permission: "rooms.view" },
       { label: "חסימות חדרים", icon: "room-blocks", permission: "rooms.view", hidden: true },
       { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?panel=group-update", permission: "rates.bulk_update" },
     ],

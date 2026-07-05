@@ -15,6 +15,9 @@
     "check:e2e-safety": "node scripts/check-e2e-safety.mjs",
     "check:commercial": "node scripts/check-commercial.mjs",
     "check:commercial-db": "node scripts/check-commercial-db.mjs",
+    "check:room-pricing": "node scripts/check-room-pricing.mjs",
+    "check:room-db": "node scripts/check-room-db.mjs",
+    "check:settings-regression": "node scripts/check-settings-regression.mjs",
     "guard:deploy": "node scripts/production-deploy-guard.mjs"
   },
   "dependencies": {

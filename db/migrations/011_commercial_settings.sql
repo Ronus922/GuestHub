@@ -32,25 +32,16 @@ SET search_path TO "guesthub", public;
 
 -- ============================================================
 --  A. Extra-guest pricing defaults — jsonb singleton on tenants.settings
---     Seeded ONLY where absent (never overwrites an existing value). Amounts are
---     JSON numbers with 2-decimal money semantics; ages are integers.
---       adult_min_age is DERIVED (= child_max_age + 1), never stored.
+--     DELIBERATELY NOT SEEDED. The original brief forbids inventing business
+--     prices, and 0 is a valid explicit commercial value that must NOT double as
+--     "not configured". A tenant with no 'extra_guest' key is UNCONFIGURED
+--     (configured=false); the reader (normalizeExtraGuestDefaults) returns null
+--     amounts, the UI shows "טרם הוגדר", and only an explicit save writes
+--     configured=true with real (possibly-zero) amounts. Structural fields
+--     (ages / flags / rounding) default in the reader, not here — they are not
+--     prices. adult_min_age is DERIVED (= child_max_age + 1), never stored.
 -- ============================================================
-UPDATE tenants
-SET settings = jsonb_set(settings, '{extra_guest}', jsonb_build_object(
-  'extra_adult',             0,
-  'extra_child',             0,
-  'extra_infant',            0,
-  'charge_frequency',        'per_night',      -- per_night | per_stay
-  'infant_max_age',          2,
-  'child_max_age',           12,
-  'infants_count_occupancy', false,            -- do infants count toward room occupancy
-  'infants_use_included',    false,            -- do infants consume a base-price-included guest
-  'tax_mode',                'inclusive',      -- inclusive | canonical (follow vat_rate)
-  'rounding_mode',           'none',           -- none | unit | increment
-  'rounding_increment',      1                 -- used only when rounding_mode = 'increment'
-), true)
-WHERE NOT settings ? 'extra_guest';
+-- (no-op on purpose — see the note above)
 
 -- ============================================================
 --  B. Cancellation policy templates

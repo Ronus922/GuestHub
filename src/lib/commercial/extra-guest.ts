@@ -1,22 +1,28 @@
 // Extra-guest / occupancy pricing DEFAULTS (Commercial Settings §A). A per-tenant
 // singleton stored in tenants.settings->'extra_guest' (same jsonb store as
 // vat_rate) — NOT a table. Currency stays tenants.currency; tax follows
-// tenants.settings->vat_rate. Pure so the Server Action, the settings UI and the
-// DB check all share one definition. Money is 2-decimal; no floats persisted.
+// tenants.settings->vat_rate. Pure so the Server Action, the settings UI, the
+// resolver and the DB checks all share one definition. Money is 2-decimal; no
+// floats persisted.
+//
+// FAKE-ZERO FIX: prices are NULLABLE and gated by an explicit `configured` flag,
+// so "not configured" (null / configured=false) is distinct from a deliberate 0.
+// A tenant is never silently given zero prices; the UI shows "טרם הוגדר" until an
+// authorized user explicitly saves (0 is a valid explicit value).
 //
 // Concepts are kept deliberately separate (§A terminology): these are the DEFAULT
 // extra-adult/child/infant amounts only. included_occupancy / min_booking /
-// default / max occupancy are ROOM-level fields the next Rooms phase adds — they
-// are NOT stored here.
+// default / max occupancy are ROOM-level fields — see src/lib/commercial/room-pricing.ts.
 
 export type ChargeFrequency = "per_night" | "per_stay";
 export type TaxMode = "inclusive" | "canonical";
 export type RoundingMode = "none" | "unit" | "increment";
 
 export type ExtraGuestDefaults = {
-  extra_adult: number;
-  extra_child: number;
-  extra_infant: number;
+  configured: boolean; // false until an authorized user explicitly saves the section
+  extra_adult: number | null;
+  extra_child: number | null;
+  extra_infant: number | null;
   charge_frequency: ChargeFrequency;
   infant_max_age: number;
   child_max_age: number;
@@ -27,10 +33,14 @@ export type ExtraGuestDefaults = {
   rounding_increment: number;
 };
 
-export const EXTRA_GUEST_DEFAULTS: ExtraGuestDefaults = {
-  extra_adult: 0,
-  extra_child: 0,
-  extra_infant: 0,
+// The shape a tenant with no saved extra-guest settings reads as: UNCONFIGURED.
+// Structural fields (ages / flags / rounding) carry sensible non-price defaults —
+// they are policy choices, not invented prices; the PRICES stay null.
+export const EXTRA_GUEST_UNCONFIGURED: ExtraGuestDefaults = {
+  configured: false,
+  extra_adult: null,
+  extra_child: null,
+  extra_infant: null,
   charge_frequency: "per_night",
   infant_max_age: 2,
   child_max_age: 12,
@@ -61,18 +71,22 @@ export function roundMoney(value: number, mode: RoundingMode, increment: number)
   return round2(value);
 }
 
+// A valid explicit money amount: a non-negative number with ≤2 decimals. 0 is valid.
 const isMoney = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v) && v >= 0 && round2(v) === v;
 const isAge = (v: unknown): v is number =>
   typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 120;
 
-// Validates a candidate defaults object. Returns Hebrew error messages
-// (empty array = valid). Enforced server-side by the Server Action.
+// Validates a candidate defaults object. Returns Hebrew error messages (empty =
+// valid). When `configured` is true every amount must be a valid explicit money
+// value (0 allowed); when false the amounts are ignored (still "not configured").
 export function validateExtraGuestDefaults(v: ExtraGuestDefaults): string[] {
   const errors: string[] = [];
-  if (!isMoney(v.extra_adult)) errors.push("סכום אורח בוגר נוסף חייב להיות מספר אי-שלילי (עד שתי ספרות)");
-  if (!isMoney(v.extra_child)) errors.push("סכום ילד נוסף חייב להיות מספר אי-שלילי (עד שתי ספרות)");
-  if (!isMoney(v.extra_infant)) errors.push("סכום תינוק נוסף חייב להיות מספר אי-שלילי (עד שתי ספרות)");
+  if (v.configured) {
+    if (!isMoney(v.extra_adult)) errors.push("סכום אורח בוגר נוסף חייב להיות מספר אי-שלילי (עד שתי ספרות)");
+    if (!isMoney(v.extra_child)) errors.push("סכום ילד נוסף חייב להיות מספר אי-שלילי (עד שתי ספרות)");
+    if (!isMoney(v.extra_infant)) errors.push("סכום תינוק נוסף חייב להיות מספר אי-שלילי (עד שתי ספרות)");
+  }
   if (v.charge_frequency !== "per_night" && v.charge_frequency !== "per_stay")
     errors.push("תדירות החיוב חייבת להיות ללילה או לשהות");
   if (!isAge(v.infant_max_age)) errors.push("גיל תינוק מרבי חייב להיות מספר שלם תקין");
@@ -88,10 +102,13 @@ export function validateExtraGuestDefaults(v: ExtraGuestDefaults): string[] {
   return errors;
 }
 
-// Coerces stored jsonb (unknown shape) into a valid defaults object, filling any
-// missing/invalid field from EXTRA_GUEST_DEFAULTS. Never throws — a reader helper.
+// Coerces stored jsonb (unknown shape) into a valid defaults object. Missing or
+// invalid PRICES become null (unconfigured), never 0. `configured` is honoured
+// only when explicitly true. Never throws — a reader helper.
 export function normalizeExtraGuestDefaults(input: unknown): ExtraGuestDefaults {
   const o = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const money = (k: keyof ExtraGuestDefaults): number | null =>
+    typeof o[k] === "number" && Number.isFinite(o[k] as number) ? round2(o[k] as number) : null;
   const num = (k: keyof ExtraGuestDefaults, d: number) =>
     typeof o[k] === "number" && Number.isFinite(o[k] as number) ? (o[k] as number) : d;
   const bool = (k: keyof ExtraGuestDefaults, d: boolean) =>
@@ -99,9 +116,10 @@ export function normalizeExtraGuestDefaults(input: unknown): ExtraGuestDefaults 
   const one = <T extends string>(k: keyof ExtraGuestDefaults, allowed: readonly T[], d: T): T =>
     allowed.includes(o[k] as T) ? (o[k] as T) : d;
   return {
-    extra_adult: round2(num("extra_adult", 0)),
-    extra_child: round2(num("extra_child", 0)),
-    extra_infant: round2(num("extra_infant", 0)),
+    configured: o.configured === true,
+    extra_adult: money("extra_adult"),
+    extra_child: money("extra_child"),
+    extra_infant: money("extra_infant"),
     charge_frequency: one("charge_frequency", ["per_night", "per_stay"] as const, "per_night"),
     infant_max_age: num("infant_max_age", 2),
     child_max_age: num("child_max_age", 12),
@@ -111,4 +129,9 @@ export function normalizeExtraGuestDefaults(input: unknown): ExtraGuestDefaults 
     rounding_mode: one("rounding_mode", ["none", "unit", "increment"] as const, "none"),
     rounding_increment: num("rounding_increment", 1),
   };
+}
+
+// True only when the property has explicit prices for all three categories.
+export function isExtraGuestConfigured(d: ExtraGuestDefaults): boolean {
+  return d.configured && d.extra_adult !== null && d.extra_child !== null && d.extra_infant !== null;
 }

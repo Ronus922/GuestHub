@@ -14,10 +14,14 @@ const translations = z
   .default({});
 
 // ---- §A extra-guest defaults ----
+// Amounts are nullable (null = not configured); `configured` gates whether they
+// are required. The pure validateExtraGuestDefaults enforces presence when
+// configured (0 allowed). Never coerce a missing price to 0.
 export const extraGuestSchema = z.object({
-  extra_adult: money,
-  extra_child: money,
-  extra_infant: money,
+  configured: z.boolean(),
+  extra_adult: money.nullable(),
+  extra_child: money.nullable(),
+  extra_infant: money.nullable(),
   charge_frequency: z.enum(["per_night", "per_stay"]),
   infant_max_age: z.number().int().min(0).max(120),
   child_max_age: z.number().int().min(0).max(120),
@@ -73,6 +77,24 @@ export const paymentStageSchema = z.object({
   staff_instructions: longText.optional().nullable(),
   guest_text: longText.optional().nullable(),
 });
+
+// ---- §3/§7 room occupancy + extra-guest override ----
+const occ = z.number().int().min(1).max(50);
+export const roomOccupancySchema = z.object({
+  id: z.uuid(),
+  max_occupancy: occ,
+  max_adults: z.number().int().min(0).max(50),
+  max_children: z.number().int().min(0).max(50),
+  max_infants: z.number().int().min(0).max(50),
+  default_occupancy: occ.nullable(),
+  included_occupancy: occ.nullable(),
+  extra_guest_pricing_mode: z.enum(["inherit", "override"]),
+  extra_adult_override: money.nullable(),
+  extra_child_override: money.nullable(),
+  extra_infant_override: money.nullable(),
+  charge_frequency_override: z.enum(["per_night", "per_stay"]).nullable(),
+});
+export type RoomOccupancyInput = z.infer<typeof roomOccupancySchema>;
 
 export const paymentPolicySchema = z.object({
   id: z.uuid().optional(),

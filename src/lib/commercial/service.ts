@@ -7,6 +7,11 @@ import {
 } from "./extra-guest";
 import type { CancellationTier } from "./cancellation";
 import type { PaymentStage } from "./payment";
+import {
+  resolveEffectivePricing,
+  type RoomExtraGuestOverride,
+  type EffectiveExtraGuestPricing,
+} from "./room-pricing";
 
 // ============================================================
 // Canonical commercial-settings READ layer (§D). The ONE server-side path the
@@ -119,4 +124,84 @@ export async function listPaymentPolicies(tenantId: string): Promise<PaymentPoli
     byPolicy.set(policy_id, arr);
   }
   return policies.map((p) => ({ ...p, stages: byPolicy.get(p.id) ?? [] }));
+}
+
+// ============================================================
+// Rooms — occupancy + per-room extra-guest override (§3/§5/§7)
+// ============================================================
+export type RoomRow = {
+  id: string;
+  room_number: string;
+  name: string | null;
+  floor: string | null;
+  status: string;
+  is_active: boolean;
+  max_occupancy: number;
+  max_adults: number;
+  max_children: number;
+  max_infants: number;
+  default_occupancy: number | null;
+  included_occupancy: number | null;
+  extra_guest_pricing_mode: "inherit" | "override";
+  extra_adult_override: number | null;
+  extra_child_override: number | null;
+  extra_infant_override: number | null;
+  charge_frequency_override: "per_night" | "per_stay" | null;
+  area_name: string | null;
+  room_type_name: string | null;
+};
+
+export async function listRooms(tenantId: string): Promise<RoomRow[]> {
+  return sql<RoomRow[]>`
+    SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
+           r.max_occupancy, r.max_adults, r.max_children, r.max_infants,
+           r.default_occupancy, r.included_occupancy, r.extra_guest_pricing_mode,
+           r.extra_adult_override::float8  AS extra_adult_override,
+           r.extra_child_override::float8  AS extra_child_override,
+           r.extra_infant_override::float8 AS extra_infant_override,
+           r.charge_frequency_override,
+           a.name  AS area_name,
+           rt.name AS room_type_name
+    FROM guesthub.rooms r
+    LEFT JOIN guesthub.areas a       ON a.id  = r.area_id
+    LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
+    WHERE r.tenant_id = ${tenantId}
+    ORDER BY r.room_number`;
+}
+
+export async function getRoom(tenantId: string, roomId: string): Promise<RoomRow | null> {
+  const [row] = await sql<RoomRow[]>`
+    SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
+           r.max_occupancy, r.max_adults, r.max_children, r.max_infants,
+           r.default_occupancy, r.included_occupancy, r.extra_guest_pricing_mode,
+           r.extra_adult_override::float8  AS extra_adult_override,
+           r.extra_child_override::float8  AS extra_child_override,
+           r.extra_infant_override::float8 AS extra_infant_override,
+           r.charge_frequency_override,
+           a.name AS area_name, rt.name AS room_type_name
+    FROM guesthub.rooms r
+    LEFT JOIN guesthub.areas a       ON a.id  = r.area_id
+    LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
+    WHERE r.tenant_id = ${tenantId} AND r.id = ${roomId}`;
+  return row ?? null;
+}
+
+// §5 canonical server resolver: effective extra-guest pricing for a room, with the
+// source of each value (room override ↓ property default). The one server path the
+// future quote reads through. Tenant-scoped.
+export async function resolveEffectiveExtraGuestPricing(
+  tenantId: string,
+  roomId: string,
+): Promise<EffectiveExtraGuestPricing | null> {
+  const room = await getRoom(tenantId, roomId);
+  if (!room) return null;
+  const property = await getExtraGuestDefaults(tenantId);
+  const override: RoomExtraGuestOverride = {
+    mode: room.extra_guest_pricing_mode,
+    extra_adult: room.extra_adult_override,
+    extra_child: room.extra_child_override,
+    extra_infant: room.extra_infant_override,
+    charge_frequency: room.charge_frequency_override,
+  };
+  return resolveEffectivePricing(override, property);
 }

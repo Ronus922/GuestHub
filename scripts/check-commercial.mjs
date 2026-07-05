@@ -35,19 +35,35 @@ assert.equal(eg.adultMinAge(12), 13);
 assert.equal(eg.adultMinAge(11), 12);
 ok("adultMinAge derived = child_max_age + 1");
 
-const validEg = { ...eg.EXTRA_GUEST_DEFAULTS, extra_adult: 50, child_max_age: 12, infant_max_age: 2 };
-assert.deepEqual(eg.validateExtraGuestDefaults(validEg), []);
-assert.ok(eg.validateExtraGuestDefaults({ ...validEg, extra_adult: -1 }).length);
-assert.ok(eg.validateExtraGuestDefaults({ ...validEg, extra_adult: 1.234 }).length, "more than 2 decimals rejected");
-assert.ok(eg.validateExtraGuestDefaults({ ...validEg, child_max_age: 2, infant_max_age: 2 }).length, "child must exceed infant");
-assert.ok(eg.validateExtraGuestDefaults({ ...validEg, rounding_mode: "increment", rounding_increment: 0 }).length);
+// FAKE-ZERO FIX: unconfigured defaults carry NULL prices, never 0.
+assert.equal(eg.EXTRA_GUEST_UNCONFIGURED.configured, false);
+assert.equal(eg.EXTRA_GUEST_UNCONFIGURED.extra_adult, null);
+assert.equal(eg.EXTRA_GUEST_UNCONFIGURED.extra_child, null);
+assert.equal(eg.EXTRA_GUEST_UNCONFIGURED.extra_infant, null);
+ok("unconfigured defaults have null prices (never fake zero)");
+
+const configured = { ...eg.EXTRA_GUEST_UNCONFIGURED, configured: true, extra_adult: 50, extra_child: 30, extra_infant: 0 };
+assert.deepEqual(eg.validateExtraGuestDefaults(configured), []);
+assert.ok(eg.isExtraGuestConfigured(configured), "explicit prices incl. 0 → configured");
+assert.ok(eg.validateExtraGuestDefaults({ ...configured, extra_child: null }).length, "configured requires all amounts");
+assert.deepEqual(eg.validateExtraGuestDefaults(eg.EXTRA_GUEST_UNCONFIGURED), [], "unconfigured ignores amounts");
+assert.ok(!eg.isExtraGuestConfigured({ ...configured, extra_child: null }), "missing amount → not configured");
+ok("configured requires all amounts (0 allowed); unconfigured ignores them");
+
+assert.ok(eg.validateExtraGuestDefaults({ ...configured, extra_adult: -1 }).length);
+assert.ok(eg.validateExtraGuestDefaults({ ...configured, extra_adult: 1.234 }).length, "more than 2 decimals rejected");
+assert.ok(eg.validateExtraGuestDefaults({ ...configured, child_max_age: 2, infant_max_age: 2 }).length, "child must exceed infant");
+assert.ok(eg.validateExtraGuestDefaults({ ...configured, rounding_mode: "increment", rounding_increment: 0 }).length);
 ok("validateExtraGuestDefaults: age order, negatives, decimals, increment guard");
 
-const norm = eg.normalizeExtraGuestDefaults({ extra_adult: 10, junk: 1, child_max_age: "x" });
-assert.equal(norm.extra_adult, 10);
-assert.equal(norm.child_max_age, 12, "invalid field falls back to default");
-assert.equal(norm.charge_frequency, "per_night");
-ok("normalizeExtraGuestDefaults fills defaults from partial/garbage input");
+assert.equal(eg.normalizeExtraGuestDefaults(undefined).configured, false);
+assert.equal(eg.normalizeExtraGuestDefaults(undefined).extra_adult, null, "absent → null price");
+assert.equal(eg.normalizeExtraGuestDefaults({ extra_adult: "x", configured: true }).extra_adult, null, "invalid price → null, never 0");
+const nZero = eg.normalizeExtraGuestDefaults({ configured: true, extra_adult: 0, extra_child: 0, extra_infant: 0 });
+assert.equal(nZero.extra_adult, 0);
+assert.ok(eg.isExtraGuestConfigured(nZero), "explicit zeros round-trip as configured");
+assert.equal(eg.normalizeExtraGuestDefaults({ child_max_age: "x" }).child_max_age, 12, "invalid structural field falls back");
+ok("normalize distinguishes missing (null) from explicit 0");
 
 // ============================================================
 // §B cancellation tiers

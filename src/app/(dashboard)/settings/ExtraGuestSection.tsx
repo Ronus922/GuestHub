@@ -15,8 +15,8 @@ import type { ExtraGuestView } from "./types";
 
 // §A — default extra-adult/child/infant pricing for the property. Currency is the
 // canonical tenants.currency (referenced, read-only here); tax follows the
-// canonical VAT setting. These are DEFAULTS only — rooms inherit or override next
-// phase (included_occupancy etc. are room-level, not here).
+// canonical VAT setting. Prices are nullable: "טרם הוגדר" until an authorized user
+// explicitly saves (0 is a valid explicit value, never a silent default).
 export function ExtraGuestSection({
   value,
   currency,
@@ -31,20 +31,28 @@ export function ExtraGuestSection({
 
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(strip(value)), [form, value]);
   useUnsavedGuard(dirty);
-  const errors = validateExtraGuestDefaults(form);
+  // Saving the section configures it — validate as configured so amounts are required.
+  const errors = validateExtraGuestDefaults({ ...form, configured: true });
 
   const set = <K extends keyof ExtraGuestDefaults>(k: K, v: ExtraGuestDefaults[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
   const save = () =>
     startSaving(async () => {
-      const res = await saveExtraGuestDefaultsAction(form);
+      const res = await saveExtraGuestDefaultsAction({ ...form, configured: true });
       if (res.success) toast.success("הגדרות התמחור נשמרו");
       else toast.error(res.error);
     });
 
   return (
     <div className="flex max-w-2xl flex-col gap-5">
+      {!value.configured && (
+        <div className="flex items-center gap-2 rounded-xl border border-status-warning-050 bg-status-warning-050 px-4 py-3 text-sm" style={{ color: "#B4670A" }}>
+          <Icon name="info" size={16} />
+          תמחור אורח נוסף <strong>טרם הוגדר</strong> לנכס. חדרים היורשים מהנכס יסומנו כדורשים השלמה עד שתגדיר ותשמור כאן.
+        </div>
+      )}
+
       <section className="bw-card">
         <CardTitle icon="users-round" title="סכומי אורח נוסף (ברירת מחדל)" />
         <div className="bw-grid2">
@@ -63,7 +71,7 @@ export function ExtraGuestSection({
             />
           </Field>
         </div>
-        <p className="bw-hint">המטבע נקבע לפי הגדרת המטבע הקנונית של הנכס ({currency}).</p>
+        <p className="bw-hint">המטבע נקבע לפי הגדרת המטבע הקנונית של הנכס ({currency}). ניתן לשמור 0 כערך מפורש.</p>
       </section>
 
       <section className="bw-card">
@@ -126,7 +134,7 @@ export function ExtraGuestSection({
           {form.rounding_mode === "increment" && (
             <Field label="מרווח עיגול" required>
               <input className="bw-fld max-w-[160px]" dir="ltr" inputMode="decimal" value={form.rounding_increment}
-                onChange={(e) => set("rounding_increment", numOf(e.target.value))} />
+                onChange={(e) => set("rounding_increment", numOf(e.target.value) ?? 0)} />
             </Field>
           )}
         </div>
@@ -157,20 +165,28 @@ function MoneyField({
 }: {
   label: string;
   currency: string;
-  value: number;
-  onChange: (v: number) => void;
+  value: number | null;
+  onChange: (v: number | null) => void;
 }) {
   return (
     <Field label={`${label} (${currency})`}>
-      <input className="bw-fld" dir="ltr" inputMode="decimal" value={value}
-        onChange={(e) => onChange(numOf(e.target.value))} />
+      <input
+        className="bw-fld"
+        dir="ltr"
+        inputMode="decimal"
+        placeholder="טרם הוגדר"
+        value={value ?? ""}
+        onChange={(e) => onChange(numOf(e.target.value))}
+      />
     </Field>
   );
 }
 
-const numOf = (s: string) => {
+// empty string → null (not configured); a number → 2-decimal money (0 allowed)
+const numOf = (s: string): number | null => {
+  if (s.trim() === "") return null;
   const n = Number(s);
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 };
 const intOf = (s: string) => {
   const n = parseInt(s, 10);
