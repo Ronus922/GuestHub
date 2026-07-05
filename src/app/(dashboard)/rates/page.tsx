@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getActor, hasPermission } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
-import { addDays, isDateOnly, todayInTz } from "@/lib/dates";
+import { addDays, clampRatesFrom, isDateOnly, todayInTz } from "@/lib/dates";
 import { getRateGridState } from "@/lib/rates/grid-state";
 import { RateGridScreen } from "./RateGridScreen";
 import { RATE_VIEW_DAYS, type RateView } from "./types";
@@ -25,7 +25,11 @@ export default async function RatesPage({
   const [tenant] = await sql<{ timezone: string }[]>`
     SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
   const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
-  const from = params.from && isDateOnly(params.from) ? params.from : today;
+  // Never render a window that starts before today or beyond the horizon — the
+  // grid is future-facing (Step 6). Historical rows stay in the DB for audit but
+  // are not reachable through the editor.
+  const requestedFrom = params.from && isDateOnly(params.from) ? params.from : today;
+  const from = clampRatesFrom(requestedFrom, today);
   const toInclusive = addDays(from, RATE_VIEW_DAYS[view] - 1);
 
   const state = await getRateGridState(sql, actor.tenantId, from, toInclusive);

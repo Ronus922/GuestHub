@@ -34,6 +34,45 @@ export function addDays(d: DateOnly, days: number): DateOnly {
   return toDateOnly(t);
 }
 
+// Add whole CALENDAR years (not 365-day multiples), so a 5-year horizon lands on
+// the same month/day. A day that doesn't exist in the target year (Feb 29 → a
+// non-leap year) clamps to the last valid day of that month (Feb 28).
+export function addYears(d: DateOnly, years: number): DateOnly {
+  const y = Number(d.slice(0, 4));
+  const m = Number(d.slice(5, 7)); // 1-based
+  const day = Number(d.slice(8, 10));
+  const targetYear = y + years;
+  const lastDayOfMonth = new Date(Date.UTC(targetYear, m, 0)).getUTCDate();
+  const clampedDay = Math.min(day, lastDayOfMonth);
+  const t = new Date(Date.UTC(targetYear, m - 1, clampedDay, 12));
+  return toDateOnly(t);
+}
+
+// ---- Rates writable-date policy (Step 6) — the SINGLE horizon rule shared by
+// the grid loader, navigation, direct edits, Group Update, and the server
+// actions. Commercial rates are future-facing: earliest writable = tenant-local
+// today, latest = today + 5 calendar years. Compute `today` with todayInTz.
+export const RATES_HORIZON_YEARS = 5;
+
+export function ratesWritableWindow(today: DateOnly): { earliest: DateOnly; latest: DateOnly } {
+  return { earliest: today, latest: addYears(today, RATES_HORIZON_YEARS) };
+}
+
+// A single date is writable iff today ≤ date ≤ today + horizon.
+export function isRateDateWritable(date: DateOnly, today: DateOnly): boolean {
+  const { earliest, latest } = ratesWritableWindow(today);
+  return date >= earliest && date <= latest;
+}
+
+// Clamp a requested grid start into [today, latest] — the grid never opens on a
+// past window and never past the horizon.
+export function clampRatesFrom(from: DateOnly, today: DateOnly): DateOnly {
+  const { earliest, latest } = ratesWritableWindow(today);
+  if (from < earliest) return earliest;
+  if (from > latest) return latest;
+  return from;
+}
+
 // Nights between check-in and check-out (checkout-exclusive).
 export function nightsBetween(checkIn: DateOnly, checkOut: DateOnly): number {
   return Math.round(

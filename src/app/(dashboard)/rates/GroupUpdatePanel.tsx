@@ -29,6 +29,8 @@ export function GroupUpdatePanel({
   types,
   from,
   toInclusive,
+  minDate,
+  maxDate,
   presetUnitIds,
   onClose,
 }: {
@@ -36,9 +38,15 @@ export function GroupUpdatePanel({
   types: RateGridType[];
   from: DateOnly;
   toInclusive: DateOnly;
+  // Writable horizon (Step 6): minDate = tenant-local today, maxDate = today + 5y.
+  // Group Update spans the FULL horizon, not just the grid's visible window.
+  minDate: DateOnly;
+  maxDate: DateOnly;
   presetUnitIds: string[];
   onClose: () => void;
 }) {
+  // Clamp a requested date into [minDate, maxDate].
+  const clampDate = (d: DateOnly): DateOnly => (d < minDate ? minDate : d > maxDate ? maxDate : d);
   const router = useRouter();
   const allCards: SuCard[] = useMemo(
     () =>
@@ -61,8 +69,8 @@ export function GroupUpdatePanel({
   const [cardType, setCardType] = useState<string>("all");
   const [search, setSearch] = useState("");
 
-  const [dateFrom, setDateFrom] = useState<DateOnly>(from);
-  const [dateTo, setDateTo] = useState<DateOnly>(toInclusive);
+  const [dateFrom, setDateFrom] = useState<DateOnly>(clampDate(from));
+  const [dateTo, setDateTo] = useState<DateOnly>(clampDate(toInclusive));
   const [weekdays, setWeekdays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5, 6]));
 
   // field controls (each defaults to "no change")
@@ -90,8 +98,10 @@ export function GroupUpdatePanel({
     setSelected(new Set(presetUnitIds));
     setCardType("all");
     setSearch("");
-    setDateFrom(from);
-    setDateTo(toInclusive);
+    // clamp the reset window into the writable horizon (inline so the effect deps
+    // stay primitive and it never re-fires mid-edit).
+    setDateFrom(from < minDate ? minDate : from > maxDate ? maxDate : from);
+    setDateTo(toInclusive < minDate ? minDate : toInclusive > maxDate ? maxDate : toInclusive);
     setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]));
     setPriceOn(false);
     setPriceMode("percent_add");
@@ -106,7 +116,7 @@ export function GroupUpdatePanel({
     setCta("nochange");
     setCtd("nochange");
     setError(null);
-  }, [open, presetUnitIds, from, toInclusive]);
+  }, [open, presetUnitIds, from, toInclusive, minDate, maxDate]);
 
   const cards = allCards.filter(
     (c) =>
@@ -251,12 +261,12 @@ export function GroupUpdatePanel({
           <Section n={2} title="תאריכים" badge={`${effectiveDates.length} לילות`}>
             <div className="flex items-center gap-2 flex-wrap mb-3">
               <label className="text-[12px] font-bold text-[var(--color-muted)]">טווח</label>
-              <input data-testid="gu-date-from" type="date" value={dateFrom} min={from} max={toInclusive} onChange={(e) => setDateFrom(e.target.value)} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white outline-none" />
+              <input data-testid="gu-date-from" type="date" value={dateFrom} min={minDate} max={maxDate} onChange={(e) => setDateFrom(clampDate(e.target.value))} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white outline-none" />
               <span className="text-[var(--color-faint)]">–</span>
-              <input data-testid="gu-date-to" type="date" value={dateTo} min={from} max={toInclusive} onChange={(e) => setDateTo(e.target.value)} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white outline-none" />
+              <input data-testid="gu-date-to" type="date" value={dateTo} min={dateFrom} max={maxDate} onChange={(e) => setDateTo(clampDate(e.target.value))} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white outline-none" />
               <span className="mx-1 w-px h-6 bg-[#e4e8f0]" />
               {([7, 14, 30] as const).map((n) => (
-                <button key={n} className="rg-chip" onClick={() => setDateTo(minDate(addDays(dateFrom, n - 1), toInclusive))}>{n} ימים</button>
+                <button key={n} className="rg-chip" onClick={() => setDateTo(earlier(addDays(dateFrom, n - 1), maxDate))}>{n} ימים</button>
               ))}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
@@ -332,7 +342,7 @@ export function GroupUpdatePanel({
   );
 }
 
-function minDate(a: DateOnly, b: DateOnly): DateOnly {
+function earlier(a: DateOnly, b: DateOnly): DateOnly {
   return a < b ? a : b;
 }
 

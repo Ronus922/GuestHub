@@ -28,6 +28,9 @@ export function RateToolbar({
   onGroupUpdate: () => void;
 }) {
   const days = RATE_VIEW_DAYS[view];
+  // Commercial rates are future-facing: never navigate into a window before
+  // tenant-local today (Step 6). The floor is today; prev is disabled there.
+  const prevDisabled = state.from <= today;
   return (
     <>
       {/* title row */}
@@ -79,7 +82,7 @@ export function RateToolbar({
             <button className={view === "month" ? "on" : ""} onClick={() => onNavigate(state.from, "month")}>חודש</button>
           </div>
           <div className="cb-rangebox">
-            <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, -days), view)} aria-label="הקודם"><Icon name="chevron-right" size={18} /></button>
+            <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, -days), view)} disabled={prevDisabled} aria-label="הקודם" title={prevDisabled ? "לא ניתן לנווט לתאריכים שעברו" : undefined}><Icon name="chevron-right" size={18} /></button>
             <span className="cb-rl">{rangeLabel(state.from, state.toInclusive)}</span>
             <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, days), view)} aria-label="הבא"><Icon name="chevron-left" size={18} /></button>
           </div>
