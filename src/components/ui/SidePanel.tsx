@@ -24,6 +24,7 @@ export function SidePanel({
   headerChips,
   band,
   bodyClassName,
+  widthClassName,
   children,
   footer,
 }: {
@@ -42,6 +43,8 @@ export function SidePanel({
   band?: React.ReactNode;
   // body padding/background override (default p-6 glass)
   bodyClassName?: string;
+  // panel width override (default 55% desktop / full mobile; e.g. rooms drawer = 60vw)
+  widthClassName?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
@@ -114,7 +117,7 @@ export function SidePanel({
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
-            className="absolute inset-y-0 left-0 flex h-full w-[55%] flex-col overflow-hidden rounded-tr-[0.65rem] rounded-br-[0.65rem] bg-white/90 shadow-pop outline-none backdrop-blur-md max-sm:w-full"
+            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[55%]"} flex-col overflow-hidden rounded-tr-[0.65rem] rounded-br-[0.65rem] bg-white/90 shadow-pop outline-none backdrop-blur-md max-sm:w-full`}
           >
             <header className="flex shrink-0 items-center justify-between gap-3 bg-primary px-6 py-4 text-white">
               <div className="flex min-w-0 items-center gap-3">

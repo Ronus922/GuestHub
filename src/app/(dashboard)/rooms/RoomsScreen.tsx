@@ -1,408 +1,532 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Icon } from "@/components/shared/Icon";
-import { SidePanel } from "@/components/ui/SidePanel";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
-import { Segmented } from "@/app/(dashboard)/settings/controls";
-import {
-  resolveEffectivePricing,
-  validateRoomOccupancy,
-  type RoomExtraGuestOverride,
-  type PricingSource,
-} from "@/lib/commercial/room-pricing";
+import { Icon, type IconName } from "@/components/shared/Icon";
+import type {
+  AmenityOption,
+  BoardRoom,
+  BuildingOption,
+  OperationalArea,
+  RoomDerivedStatus,
+  RoomTypeOption,
+} from "@/lib/rooms/service";
 import type { ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
-import type { RoomRow } from "@/lib/commercial/service";
-import { saveRoomOccupancyAction } from "./actions";
+import { RoomWizard } from "./RoomWizard";
+import { AreaPanel } from "./AreaPanel";
+import { updateAreaStatusAction, updateRoomBoardStatusAction } from "./actions";
+
+// ============================================================
+// Rooms & Areas board — ported 1:1 from ref/html/RoomsAndAreas.html +
+// ref/screens/RoomsAndAreas.png (D49): header with count chip, quick filters
+// (kind + status dots), floor sections, reference cards (strip / kind chip /
+// icon status badge / capacity row / contextual line), and the card-click
+// status popover. Editing opens the room/area window from the popover.
+// ============================================================
 
 type Property = ExtraGuestDefaults & { adult_min_age: number };
+export type Can = { create: boolean; edit: boolean; del: boolean };
 
-const SOURCE_LABEL: Record<PricingSource, string> = {
-  room_override: "חריגת חדר",
-  property_default: "ברירת מחדל של הנכס",
-  unconfigured: "טרם הוגדר",
+type StatusMeta = { label: string; stripe: string; bg: string; fg: string; icon: IconName };
+
+// exact reference colors (extracted from the rendered RoomsAndAreas bundle)
+export const STATUS_META: Record<RoomDerivedStatus, StatusMeta> = {
+  free: { label: "פנוי", stripe: "#16A34A", bg: "#E1F4E9", fg: "#0F6B3C", icon: "check-circle" },
+  occupied: { label: "תפוס", stripe: "#2540C8", bg: "#EEF1FD", fg: "#1C2E9A", icon: "user" },
+  dirty: { label: "מלוכלך", stripe: "#EA9314", bg: "#FDF2E1", fg: "#8A5207", icon: "droplets" },
+  cleaning: { label: "בניקיון", stripe: "#D9A400", bg: "#FBF4D8", fg: "#7A6203", icon: "brush" },
+  blocked: { label: "חסום", stripe: "#E5484D", bg: "#FDEBEC", fg: "#B4232D", icon: "room-blocks" },
+  maintenance: { label: "תחזוקה", stripe: "#C81E3C", bg: "#FBE7EB", fg: "#A3123B", icon: "maintenance" },
 };
 
-const overrideOf = (r: RoomRow): RoomExtraGuestOverride => ({
-  mode: r.extra_guest_pricing_mode,
-  extra_adult: r.extra_adult_override,
-  extra_child: r.extra_child_override,
-  extra_infant: r.extra_infant_override,
-  charge_frequency: r.charge_frequency_override,
-});
+export const AREA_STATUS_META: Record<OperationalArea["status"], StatusMeta> = {
+  ok: { label: "תקין", stripe: "#16A34A", bg: "#E1F4E9", fg: "#0F6B3C", icon: "check-circle" },
+  cleaning: { label: "בניקיון", stripe: "#D9A400", bg: "#FBF4D8", fg: "#7A6203", icon: "brush" },
+  maintenance: { label: "תחזוקה", stripe: "#C81E3C", bg: "#FBE7EB", fg: "#A3123B", icon: "maintenance" },
+  blocked: { label: "חסום", stripe: "#E5484D", bg: "#FDEBEC", fg: "#B4232D", icon: "room-blocks" },
+};
+
+export const AREA_TYPE_LABEL: Record<string, string> = {
+  lobby: "לובי",
+  elevator: "מעלית",
+  corridor: "מסדרון",
+  gym: "חדר כושר",
+  pool: "בריכה",
+  parking: "חניון",
+  storage: "מחסן",
+  other: "אחר",
+};
+
+function floorLabel(floor: string | null): string {
+  if (floor === null || floor === "") return "ללא קומה";
+  if (floor === "0") return "קרקע";
+  return `קומה ${floor}`;
+}
+
+function fmtDM(date: string, today: string): string {
+  if (date === today) return "היום";
+  const [, m, d] = date.split("-");
+  return `${Number(d)}/${Number(m)}`;
+}
+
+type PopoverSeed = { kind: "room"; room: BoardRoom } | { kind: "area"; area: OperationalArea };
+type Popover = PopoverSeed & { x: number; y: number };
 
 export function RoomsScreen({
   rooms,
+  areas,
+  buildings,
+  roomTypes,
+  amenities,
   property,
   currency,
-  canEdit,
+  today,
+  can,
 }: {
-  rooms: RoomRow[];
+  rooms: BoardRoom[];
+  areas: OperationalArea[];
+  buildings: BuildingOption[];
+  roomTypes: RoomTypeOption[];
+  amenities: AmenityOption[];
   property: Property;
   currency: string;
-  canEdit: boolean;
+  today: string;
+  can: Can;
 }) {
-  const [editing, setEditing] = useState<RoomRow | null>(null);
-  const incomplete = rooms.filter((r) => r.included_occupancy === null).length;
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState<"all" | "rooms" | "areas">("all");
+  const [status, setStatus] = useState<"all" | RoomDerivedStatus>("all");
+  const [wizard, setWizard] = useState<{ room: BoardRoom | null } | null>(null);
+  const [areaPanel, setAreaPanel] = useState<{ area: OperationalArea | null } | null>(null);
+  const [pop, setPop] = useState<Popover | null>(null);
+
+  const needle = q.trim().toLowerCase();
+  const filteredRooms = useMemo(
+    () =>
+      kind === "areas"
+        ? []
+        : rooms.filter((r) => {
+            if (needle) {
+              const hay = [r.room_number, r.name, ...r.translations.map((t) => t.name ?? "")].join(" ").toLowerCase();
+              if (!hay.includes(needle)) return false;
+            }
+            if (status !== "all" && r.derived_status !== status) return false;
+            return true;
+          }),
+    [rooms, kind, needle, status],
+  );
+
+  const filteredAreas = useMemo(
+    () =>
+      kind === "rooms"
+        ? []
+        : areas.filter((a) => {
+            if (needle && !`${a.name} ${a.code ?? ""}`.toLowerCase().includes(needle)) return false;
+            if (status !== "all") {
+              const map: Partial<Record<RoomDerivedStatus, OperationalArea["status"]>> = {
+                blocked: "blocked",
+                maintenance: "maintenance",
+                cleaning: "cleaning",
+                free: "ok",
+              };
+              if (map[status] !== a.status) return false;
+            }
+            return true;
+          }),
+    [areas, kind, needle, status],
+  );
+
+  const groups = useMemo(() => {
+    const byFloor = new Map<string, BoardRoom[]>();
+    for (const r of filteredRooms) {
+      const key = r.floor ?? "";
+      const arr = byFloor.get(key) ?? [];
+      arr.push(r);
+      byFloor.set(key, arr);
+    }
+    return [...byFloor.entries()].sort(([a], [b]) => {
+      if (a === "") return 1;
+      if (b === "") return -1;
+      return Number(a) - Number(b);
+    });
+  }, [filteredRooms]);
+
+  const openPopover = (e: React.MouseEvent, p: PopoverSeed) => {
+    if (!can.edit) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = Math.max(12, Math.min(rect.left, window.innerWidth - 276));
+    const y = Math.min(rect.bottom + 6, window.innerHeight - 320);
+    setPop({ ...p, x, y });
+  };
 
   return (
-    <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
-      <div>
-        <h1 className="text-2xl font-extrabold text-ink">חדרים</h1>
-        <p className="mt-1 text-sm font-semibold text-muted">תפוסה ותמחור אורח נוסף לכל חדר</p>
+    <div className="flex min-h-full flex-col" dir="rtl">
+      {/* header (reference .hd) */}
+      <div className="rm-hd">
+        <h1 className="rm-hd-t">חדרים ואזורים</h1>
+        <span className="rm-hd-count">
+          {rooms.length} חדרים · {areas.length} אזורים
+        </span>
+        <span className="rm-hd-sp" />
+        <div className="rm-search">
+          <Icon name="search" size={20} />
+          <input placeholder="חיפוש לפי מספר או שם…" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        {can.create && (
+          <button type="button" className="rm-btn-primary" onClick={() => setWizard({ room: null })}>
+            <Icon name="plus" size={17} />
+            הוספת חדר
+          </button>
+        )}
+        {can.edit && (
+          <button type="button" className="rm-btn-secondary" onClick={() => setAreaPanel({ area: null })}>
+            <Icon name="plus" size={17} />
+            הוספת אזור
+          </button>
+        )}
       </div>
 
-      {!property.configured && (
-        <div className="flex items-center gap-2 rounded-xl bg-status-warning-050 px-4 py-3 text-sm" style={{ color: "#B4670A" }}>
-          <Icon name="info" size={16} />
-          תמחור אורח נוסף של הנכס טרם הוגדר. חדרים היורשים מהנכס יסומנו כדורשים השלמה.
-        </div>
-      )}
-      {incomplete > 0 && (
-        <div className="flex items-center gap-2 rounded-xl bg-status-warning-050 px-4 py-3 text-sm" style={{ color: "#B4670A" }}>
-          <Icon name="warning" size={16} />
-          {incomplete} חדרים דורשים השלמה — לא הוגדרו ״אורחים הכלולים במחיר הבסיס״.
-        </div>
-      )}
-
-      <div className="overflow-x-auto rounded-2xl border border-line bg-surface">
-        <table className="w-full min-w-[720px] text-sm">
-          <thead>
-            <tr className="border-b border-line text-faint">
-              <th className="px-4 py-3 text-start font-semibold">חדר</th>
-              <th className="px-4 py-3 text-start font-semibold">תפוסה מקס׳</th>
-              <th className="px-4 py-3 text-start font-semibold">כלולים במחיר</th>
-              <th className="px-4 py-3 text-start font-semibold">תמחור אורח נוסף</th>
-              <th className="px-4 py-3 text-start font-semibold">מצב</th>
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody>
-            {rooms.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-8 text-center text-faint">אין חדרים</td></tr>
-            )}
-            {rooms.map((r) => {
-              const eff = resolveEffectivePricing(overrideOf(r), property);
-              const priceText = eff.complete
-                ? `${eff.extra_adult.value} / ${eff.extra_child.value} / ${eff.extra_infant.value} ${currency}`
-                : "טרם הוגדר";
-              return (
-                <tr key={r.id} className="border-b border-line last:border-0 hover:bg-hover">
-                  <td className="px-4 py-3">
-                    <span className="font-bold text-ink" dir="ltr">{r.room_number}</span>
-                    {r.name ? <span className="text-faint"> · {r.name}</span> : null}
-                    {r.room_type_name ? <div className="text-xs text-faint">{r.room_type_name}</div> : null}
-                  </td>
-                  <td className="px-4 py-3">{r.max_occupancy}</td>
-                  <td className="px-4 py-3">
-                    {r.included_occupancy ?? <span className="text-status-warning">טרם הוגדר</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div>{priceText}</div>
-                    <div className="text-xs text-faint">
-                      {r.extra_guest_pricing_mode === "override" ? "חריגת חדר" : "ירושה מהנכס"} ·{" "}
-                      {SOURCE_LABEL[eff.extra_adult.source]}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {r.included_occupancy === null
-                      ? <span className="rounded-full bg-status-warning-050 px-2 py-0.5 text-xs font-semibold text-status-warning">דורש השלמה</span>
-                      : <span className="rounded-full bg-status-success-050 px-2 py-0.5 text-xs font-semibold text-status-success">מוגדר</span>}
-                  </td>
-                  <td className="px-4 py-3 text-end">
-                    <button
-                      type="button"
-                      className="grid h-9 w-9 place-items-center rounded-lg text-text2 hover:bg-hover disabled:opacity-40"
-                      aria-label="עריכה"
-                      disabled={!canEdit}
-                      onClick={() => setEditing(r)}
-                    >
-                      <Icon name="edit" size={16} />
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      {/* quick filters (reference .quick) */}
+      <div className="rm-quick">
+        <span className="rm-quick-l">סוג:</span>
+        {(
+          [
+            { v: "all", label: "הכל", icon: "grid" },
+            { v: "rooms", label: "חדרים", icon: "hotel" },
+            { v: "areas", label: "אזורים", icon: "building" },
+          ] as const
+        ).map((o) => (
+          <button key={o.v} type="button" onClick={() => setKind(o.v)} className={`rm-qchip${kind === o.v ? " on" : ""}`}>
+            <Icon name={o.icon} size={17} />
+            {o.label}
+          </button>
+        ))}
+        <span className="rm-vsep" />
+        <span className="rm-quick-l">סטטוס:</span>
+        <button type="button" onClick={() => setStatus("all")} className={`rm-qchip${status === "all" ? " on" : ""}`}>
+          הכל
+        </button>
+        {(Object.keys(STATUS_META) as RoomDerivedStatus[]).map((s) => (
+          <button key={s} type="button" onClick={() => setStatus(s)} className={`rm-qchip${status === s ? " on" : ""}`}>
+            <span className="rm-d" style={{ background: STATUS_META[s].stripe }} />
+            {STATUS_META[s].label}
+          </button>
+        ))}
       </div>
 
-      {editing && (
-        <RoomEditPanel room={editing} property={property} currency={currency} onClose={() => setEditing(null)} />
+      <div className="rm-body">
+        {/* floor sections */}
+        {groups.map(([floorKey, floorRooms]) => {
+          const freeCount = floorRooms.filter((r) => r.derived_status === "free").length;
+          return (
+            <section key={floorKey || "none"}>
+              <div className="rm-sech">
+                <Icon name="layers" size={19} />
+                <span className="rm-t">{floorLabel(floorKey || null)}</span>
+                <span className="rm-c">
+                  {floorRooms.length} חדרים · {freeCount} פנויים
+                </span>
+              </div>
+              <div className="rm-grid">
+                {floorRooms.map((r) => (
+                  <RoomCard key={r.id} room={r} today={today} canEdit={can.edit} onOpen={(e) => openPopover(e, { kind: "room", room: r })} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+        {filteredRooms.length === 0 && kind !== "areas" && (
+          <div className="rm-empty">לא נמצאו חדרים תואמים</div>
+        )}
+
+        {/* areas section */}
+        {filteredAreas.length > 0 && (
+          <section>
+            <div className="rm-sech">
+              <Icon name="building" size={19} />
+              <span className="rm-t">אזורים</span>
+              <span className="rm-c">{filteredAreas.length} אזורים · ללא קומה</span>
+            </div>
+            <div className="rm-grid">
+              {filteredAreas.map((a) => (
+                <AreaCard key={a.id} area={a} canEdit={can.edit} onOpen={(e) => openPopover(e, { kind: "area", area: a })} />
+              ))}
+            </div>
+          </section>
+        )}
+        {filteredAreas.length === 0 && kind === "areas" && (
+          <div className="rm-empty">לא נמצאו אזורים תואמים</div>
+        )}
+      </div>
+
+      {pop && (
+        <StatusPopover
+          pop={pop}
+          can={can}
+          onClose={() => setPop(null)}
+          onEdit={() => {
+            if (pop.kind === "room") setWizard({ room: pop.room });
+            else setAreaPanel({ area: pop.area });
+            setPop(null);
+          }}
+        />
+      )}
+
+      {wizard && (
+        <RoomWizard
+          room={wizard.room}
+          buildings={buildings}
+          roomTypes={roomTypes}
+          amenities={amenities}
+          property={property}
+          currency={currency}
+          can={can}
+          onClose={() => setWizard(null)}
+        />
+      )}
+      {areaPanel && (
+        <AreaPanel area={areaPanel.area} buildings={buildings} can={can} onClose={() => setAreaPanel(null)} />
       )}
     </div>
   );
 }
 
-type Draft = {
-  id: string;
-  max_occupancy: number;
-  max_adults: number;
-  max_children: number;
-  max_infants: number;
-  default_occupancy: number | null;
-  included_occupancy: number | null;
-  extra_guest_pricing_mode: "inherit" | "override";
-  extra_adult_override: number | null;
-  extra_child_override: number | null;
-  extra_infant_override: number | null;
-  charge_frequency_override: "per_night" | "per_stay" | null;
-};
+// ---------- cards (reference .card anatomy) ----------
 
-function RoomEditPanel({
+function RoomCard({
   room,
-  property,
-  currency,
-  onClose,
+  today,
+  canEdit,
+  onOpen,
 }: {
-  room: RoomRow;
-  property: Property;
-  currency: string;
+  room: BoardRoom;
+  today: string;
+  canEdit: boolean;
+  onOpen: (e: React.MouseEvent) => void;
+}) {
+  const meta = STATUS_META[room.derived_status];
+  const line: { icon: IconName; text: string } | null =
+    room.derived_status === "occupied" && room.current_guest
+      ? { icon: "user", text: `${room.current_guest} · עד ${fmtDM(room.current_until!, today)}` }
+      : room.next_arrival
+        ? { icon: "login", text: `הגעה קרובה: ${fmtDM(room.next_arrival, today)} · ${room.next_guest ?? ""}` }
+        : null;
+
+  return (
+    <button
+      type="button"
+      className="rm-bcard"
+      title={`חדר ${room.room_number} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
+      onClick={onOpen}
+    >
+      <span className="rm-strip" style={{ background: meta.stripe }} />
+      <div className="rm-cr1">
+        <span className="rm-num" dir="ltr">{room.room_number}</span>
+        <span className="rm-kind room">חדר</span>
+        <span className="rm-csp" />
+        <span className="rm-stbadge" style={{ background: meta.bg, color: meta.fg }}>
+          <Icon name={meta.icon} size={14} />
+          {meta.label}
+        </span>
+      </div>
+      <div className="rm-cr2">
+        {room.room_type_name ?? room.name ?? "—"}
+        <span className="rm-dotsep" />
+        <span className="rm-cap">
+          <Icon name="users-round" size={15} />
+          {room.max_occupancy} אורחים
+        </span>
+      </div>
+      <div className="rm-cr3">
+        {line && (
+          <>
+            <Icon name={line.icon} size={14} />
+            {line.text}
+          </>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function AreaCard({
+  area,
+  canEdit,
+  onOpen,
+}: {
+  area: OperationalArea;
+  canEdit: boolean;
+  onOpen: (e: React.MouseEvent) => void;
+}) {
+  const meta = AREA_STATUS_META[area.status];
+  return (
+    <button
+      type="button"
+      className="rm-bcard"
+      title={`${area.name} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
+      onClick={onOpen}
+    >
+      <span className="rm-strip" style={{ background: meta.stripe }} />
+      <div className="rm-cr1">
+        <span className="rm-num">{area.name}</span>
+        <span className="rm-kind area">אזור</span>
+        <span className="rm-csp" />
+        <span className="rm-stbadge" style={{ background: meta.bg, color: meta.fg }}>
+          <Icon name={meta.icon} size={14} />
+          {meta.label}
+        </span>
+      </div>
+      <div className="rm-cr2">{AREA_TYPE_LABEL[area.area_type] ?? area.area_type}</div>
+      <div className="rm-cr3">
+        {area.status !== "ok" && area.status_note ? (
+          <>
+            <Icon name={meta.icon} size={14} />
+            {area.status_note}
+          </>
+        ) : area.building_name ? (
+          area.building_name
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+// ---------- status popover (reference .pop) ----------
+
+const ROOM_TARGETS: { target: "free" | "dirty" | "cleaning" | "blocked" | "maintenance"; status: RoomDerivedStatus }[] = [
+  { target: "free", status: "free" },
+  { target: "dirty", status: "dirty" },
+  { target: "cleaning", status: "cleaning" },
+  { target: "blocked", status: "blocked" },
+  { target: "maintenance", status: "maintenance" },
+];
+
+function StatusPopover({
+  pop,
+  can,
+  onClose,
+  onEdit,
+}: {
+  pop: Popover;
+  can: Can;
   onClose: () => void;
+  onEdit: () => void;
 }) {
   const router = useRouter();
   const [saving, startSaving] = useTransition();
-  const [d, setD] = useState<Draft>({
-    id: room.id,
-    max_occupancy: room.max_occupancy,
-    max_adults: room.max_adults,
-    max_children: room.max_children,
-    max_infants: room.max_infants,
-    default_occupancy: room.default_occupancy,
-    included_occupancy: room.included_occupancy,
-    extra_guest_pricing_mode: room.extra_guest_pricing_mode,
-    extra_adult_override: room.extra_adult_override,
-    extra_child_override: room.extra_child_override,
-    extra_infant_override: room.extra_infant_override,
-    charge_frequency_override: room.charge_frequency_override,
-  });
-  const published = room.is_active && room.status === "available";
-  const isOverride = d.extra_guest_pricing_mode === "override";
+  const busy = useRef(false);
 
-  const effective = useMemo(
-    () =>
-      resolveEffectivePricing(
-        {
-          mode: d.extra_guest_pricing_mode,
-          extra_adult: d.extra_adult_override,
-          extra_child: d.extra_child_override,
-          extra_infant: d.extra_infant_override,
-          charge_frequency: d.charge_frequency_override,
-        },
-        property,
-      ),
-    [d, property],
-  );
-
-  const { errors, warnings } = validateRoomOccupancy({
-    maxOccupancy: d.max_occupancy,
-    maxAdults: d.max_adults,
-    maxChildren: d.max_children,
-    maxInfants: d.max_infants,
-    defaultOccupancy: d.default_occupancy,
-    includedOccupancy: d.included_occupancy,
-    mode: d.extra_guest_pricing_mode,
-    extra_adult: isOverride ? d.extra_adult_override : null,
-    extra_child: isOverride ? d.extra_child_override : null,
-    extra_infant: isOverride ? d.extra_infant_override : null,
-    published,
-    propertyConfigured: property.configured,
-  });
-
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((s) => ({ ...s, [k]: v }));
-
-  const save = () =>
+  const apply = (fn: () => Promise<{ success: boolean; error?: string }>) =>
     startSaving(async () => {
-      const res = await saveRoomOccupancyAction(d);
-      if (res.success) {
-        toast.success("החדר נשמר");
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const res = await fn();
+        if (!res.success) return void toast.error(res.error ?? "שגיאה");
+        toast.success("הסטטוס עודכן");
         router.refresh();
         onClose();
-      } else {
-        toast.error(res.error);
+      } finally {
+        busy.current = false;
       }
     });
 
+  const title =
+    pop.kind === "room" ? (
+      <>עדכון סטטוס — חדר {pop.room.room_number}</>
+    ) : (
+      <>עדכון סטטוס — {pop.area.name}</>
+    );
+  const sub =
+    pop.kind === "room"
+      ? [pop.room.room_type_name, floorLabel(pop.room.floor)].filter(Boolean).join(" · ")
+      : [AREA_TYPE_LABEL[pop.area.area_type], pop.area.building_name].filter(Boolean).join(" · ");
+
   return (
-    <SidePanel
-      open
-      onClose={onClose}
-      title={`חדר ${room.room_number}`}
-      subtitle={room.name ?? undefined}
-      icon="rooms"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-faint">{warnings[0] ?? ""}</span>
-          <div className="flex gap-2">
-            <button type="button" className="bw-btn bw-btn-o" onClick={onClose}>ביטול</button>
-            <button type="button" className="bw-btn bw-btn-primary" disabled={saving || errors.length > 0} onClick={save}>
-              <Icon name="check" size={16} />
-              {saving ? "שומר…" : "שמירה"}
-            </button>
+    <>
+      <div className="rm-pov" onClick={onClose} aria-hidden="true" />
+      <div className="rm-pop" style={{ left: pop.x, top: pop.y }} role="dialog" aria-label="עדכון סטטוס">
+        <div className="rm-pop-h">
+          <div>
+            <div>{title}</div>
+            <div className="rm-sub">{sub}</div>
           </div>
+          <button type="button" className="rm-pop-x" onClick={onClose} aria-label="סגירה">
+            <Icon name="close" size={16} />
+          </button>
         </div>
-      }
-    >
-      <div className="flex flex-col gap-5">
-        <section className="bw-card">
-          <CardTitle icon="rooms" title="תפוסה" />
-          <div className="bw-grid2">
-            <NumField label="תפוסה מקסימלית" value={d.max_occupancy} onChange={(v) => set("max_occupancy", v ?? 1)} />
-            <NumField label="תפוסת ברירת מחדל" value={d.default_occupancy} nullable placeholder="טרם הוגדר" onChange={(v) => set("default_occupancy", v)} />
-            <NumField label="אורחים הכלולים במחיר הבסיס" value={d.included_occupancy} nullable placeholder="טרם הוגדר" onChange={(v) => set("included_occupancy", v)} />
-            <NumField label="מקסימום מבוגרים" value={d.max_adults} onChange={(v) => set("max_adults", v ?? 0)} />
-            <NumField label="מקסימום ילדים" value={d.max_children} onChange={(v) => set("max_children", v ?? 0)} />
-            <NumField label="מקסימום תינוקות" value={d.max_infants} onChange={(v) => set("max_infants", v ?? 0)} />
-          </div>
-          <p className="bw-hint">
-            ״אורחים הכלולים במחיר הבסיס״ קובע מאיזה אורח מתחיל חיוב נוסף (ערך 2 → חיוב מהאורח השלישי).
-          </p>
-        </section>
-
-        <section className="bw-card">
-          <div className="mb-3 flex items-center justify-between">
-            <CardTitle icon="finance" title="תמחור תפוסה" />
-            <Segmented
-              ariaLabel="מצב תמחור"
-              value={d.extra_guest_pricing_mode}
-              onChange={(v) => set("extra_guest_pricing_mode", v)}
-              options={[
-                { value: "inherit", label: "ירושה מהנכס" },
-                { value: "override", label: "חריגה לחדר" },
-              ]}
-            />
-          </div>
-
-          {!isOverride ? (
-            <div className="flex flex-col gap-2">
-              <EffRow label="אורח בוגר נוסף" amount={effective.extra_adult.value} source={SOURCE_LABEL[effective.extra_adult.source]} currency={currency} />
-              <EffRow label="ילד נוסף" amount={effective.extra_child.value} source={SOURCE_LABEL[effective.extra_child.source]} currency={currency} />
-              <EffRow label="תינוק נוסף" amount={effective.extra_infant.value} source={SOURCE_LABEL[effective.extra_infant.source]} currency={currency} />
-              <div className="text-sm text-text2">
-                תדירות: {effective.charge_frequency.value === "per_night" ? "לכל לילה" : "לכל השהות"}
-                <span className="text-faint"> · {SOURCE_LABEL[effective.charge_frequency.source]}</span>
-              </div>
-              <p className="bw-hint">
-                {property.configured
-                  ? "החדר יורש את ערכי הנכס. לחיצה על ״חריגה לחדר״ תאפשר עריכה — ערכי הנכס לא יועתקו לחדר."
-                  : "תמחור הנכס טרם הוגדר. הגדר בהגדרות ← תמחור תפוסה, או קבע חריגה לחדר זה."}
-              </p>
-            </div>
+        <div className="rm-pop-b">
+          {pop.kind === "room" ? (
+            <>
+              {/* free / occupied / dirty / cleaning / blocked / maintenance — reference order */}
+              <StOpt
+                meta={STATUS_META.free}
+                cur={pop.room.derived_status === "free"}
+                disabled={saving}
+                onClick={() => apply(() => updateRoomBoardStatusAction({ room_id: pop.room.id, target: "free" }))}
+              />
+              <StOpt
+                meta={STATUS_META.occupied}
+                cur={pop.room.derived_status === "occupied"}
+                disabled
+                title="נקבע אוטומטית לפי ההזמנות"
+              />
+              {ROOM_TARGETS.slice(1).map(({ target, status }) => (
+                <StOpt
+                  key={target}
+                  meta={STATUS_META[status]}
+                  cur={pop.room.derived_status === status}
+                  disabled={saving}
+                  onClick={() => apply(() => updateRoomBoardStatusAction({ room_id: pop.room.id, target }))}
+                />
+              ))}
+            </>
           ) : (
-            <div className="flex flex-col gap-3">
-              <div className="bw-grid2">
-                <MoneyField label="אורח בוגר נוסף" currency={currency} value={d.extra_adult_override} onChange={(v) => set("extra_adult_override", v)} />
-                <MoneyField label="ילד נוסף" currency={currency} value={d.extra_child_override} onChange={(v) => set("extra_child_override", v)} />
-                <MoneyField label="תינוק נוסף" currency={currency} value={d.extra_infant_override} onChange={(v) => set("extra_infant_override", v)} />
-                <Field label="תדירות חיוב">
-                  <Segmented
-                    ariaLabel="תדירות חריגה"
-                    value={d.charge_frequency_override ?? "per_night"}
-                    onChange={(v) => set("charge_frequency_override", v)}
-                    options={[
-                      { value: "per_night", label: "לכל לילה" },
-                      { value: "per_stay", label: "לכל השהות" },
-                    ]}
-                  />
-                </Field>
-              </div>
-              <p className="bw-hint">
-                שדה ריק יורש מהנכס עבור אותה קטגוריה. ניתן לשמור 0 כחריגה מפורשת.
-                {" "}
-                <button type="button" className="font-semibold text-primary underline" onClick={() => set("extra_guest_pricing_mode", "inherit")}>
-                  חזרה לירושה מהנכס
-                </button>
-              </p>
+            (Object.keys(AREA_STATUS_META) as OperationalArea["status"][]).map((s) => (
+              <StOpt
+                key={s}
+                meta={AREA_STATUS_META[s]}
+                cur={pop.area.status === s}
+                disabled={saving}
+                onClick={() => apply(() => updateAreaStatusAction({ area_id: pop.area.id, status: s }))}
+              />
+            ))
+          )}
+          {can.edit && (
+            <div className="rm-pop-edit">
+              <button type="button" className="rm-stopt" onClick={onEdit}>
+                <Icon name="edit" size={15} />
+                {pop.kind === "room" ? "עריכת פרטי החדר" : "עריכת פרטי האזור"}
+              </button>
             </div>
           )}
-        </section>
-
-        {errors.length > 0 && (
-          <section className="bw-card">
-            {errors.map((e, i) => (
-              <p key={i} className="flex items-center gap-2 text-sm text-status-danger">
-                <Icon name="warning" size={14} /> {e}
-              </p>
-            ))}
-          </section>
-        )}
+        </div>
       </div>
-    </SidePanel>
+    </>
   );
 }
 
-function EffRow({ label, amount, source, currency }: { label: string; amount: number | null; source: string; currency: string }) {
+function StOpt({
+  meta,
+  cur,
+  disabled,
+  title,
+  onClick,
+}: {
+  meta: StatusMeta;
+  cur: boolean;
+  disabled?: boolean;
+  title?: string;
+  onClick?: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-2.5">
-      <span className="text-sm text-ink">{label}</span>
-      <span className="text-sm">
-        {amount === null ? <span className="text-status-warning">טרם הוגדר</span> : <strong dir="ltr">{amount} {currency}</strong>}
-        <span className="text-xs text-faint"> · {source}</span>
+    <button type="button" className={`rm-stopt${cur ? " cur" : ""}`} disabled={disabled} title={title} onClick={onClick}>
+      <span className="rm-d" style={{ background: meta.stripe }} />
+      {meta.label}
+      <span className="rm-chk">
+        <Icon name="check" size={16} />
       </span>
-    </div>
-  );
-}
-
-function NumField({
-  label,
-  value,
-  onChange,
-  nullable,
-  placeholder,
-}: {
-  label: string;
-  value: number | null;
-  onChange: (v: number | null) => void;
-  nullable?: boolean;
-  placeholder?: string;
-}) {
-  return (
-    <Field label={label}>
-      <input
-        className="bw-fld"
-        dir="ltr"
-        inputMode="numeric"
-        placeholder={placeholder}
-        value={value ?? ""}
-        onChange={(e) => {
-          const s = e.target.value.trim();
-          if (s === "") return onChange(nullable ? null : 0);
-          const n = parseInt(s, 10);
-          onChange(Number.isFinite(n) ? n : nullable ? null : 0);
-        }}
-      />
-    </Field>
-  );
-}
-
-function MoneyField({
-  label,
-  currency,
-  value,
-  onChange,
-}: {
-  label: string;
-  currency: string;
-  value: number | null;
-  onChange: (v: number | null) => void;
-}) {
-  return (
-    <Field label={`${label} (${currency})`}>
-      <input
-        className="bw-fld"
-        dir="ltr"
-        inputMode="decimal"
-        placeholder="יורש מהנכס"
-        value={value ?? ""}
-        onChange={(e) => {
-          const s = e.target.value.trim();
-          if (s === "") return onChange(null);
-          const n = Number(s);
-          onChange(Number.isFinite(n) ? Math.round(n * 100) / 100 : null);
-        }}
-      />
-    </Field>
+    </button>
   );
 }

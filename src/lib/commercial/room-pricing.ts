@@ -162,6 +162,7 @@ export type RoomOccupancyDraft = {
   maxInfants: number;
   defaultOccupancy: number | null;
   includedOccupancy: number | null;
+  minOccupancy?: number | null; // rooms.min_occupancy (D49 §5)
   minBookingOccupancy?: number | null;
   mode: PricingMode;
   extra_adult: number | null;
@@ -187,6 +188,14 @@ export function validateRoomOccupancy(r: RoomOccupancyDraft): { errors: string[]
   if (r.defaultOccupancy !== null && r.defaultOccupancy > max) errors.push("תפוסת ברירת מחדל חורגת מהתפוסה המקסימלית");
   if (r.minBookingOccupancy != null && r.minBookingOccupancy > max)
     errors.push("תפוסת הזמנה מינימלית חורגת מהתפוסה המקסימלית");
+
+  // min_occupancy (D49 §5): 1 ≤ min ≤ max, default not below min
+  if (r.minOccupancy != null) {
+    if (r.minOccupancy < 1) errors.push("תפוסה מינימלית חייבת להיות לפחות 1");
+    if (r.minOccupancy > max) errors.push("תפוסה מינימלית חורגת מהתפוסה המקסימלית");
+    if (r.defaultOccupancy !== null && r.defaultOccupancy < r.minOccupancy)
+      errors.push("תפוסת ברירת מחדל נמוכה מהתפוסה המינימלית");
+  }
 
   // impossible capacity: the sum of category limits cannot reach max_occupancy
   const categorySum = r.maxAdults + r.maxChildren + r.maxInfants;
