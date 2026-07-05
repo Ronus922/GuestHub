@@ -46,12 +46,19 @@ export function SidePanel({
   footer?: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
+  // Keep the latest onClose in a ref so the effect below can depend on [open]
+  // ALONE. Owners pass a fresh onClose closure every render (e.g. requestClose);
+  // if it were a dep, every keystroke would re-run the effect and its
+  // panelRef.focus() would yank focus off the field being typed in — the input
+  // would accept only one character before losing focus.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       // minimal focus trap: Tab cycles inside the panel
@@ -79,7 +86,7 @@ export function SidePanel({
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [open, onClose]);
+  }, [open]);
 
   return (
     <AnimatePresence>

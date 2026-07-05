@@ -589,9 +589,18 @@ export function EditReservationPanel({
                   canReveal={canRevealCard}
                   canManage={canSaveCard && canEdit}
                   canCharge={canChargeCard}
+                  canRecordPayment={canChargeCard && canEdit}
                   chargeAmount={Math.max(0, total - paidAfter)}
+                  reservationId={detail.id}
                   onReplace={() => setReplacingCard(true)}
                   onDelete={deleteCard}
+                  onPaymentRecorded={(p) =>
+                    setDetail((d) =>
+                      d
+                        ? { ...d, paid_amount: p.paid, balance: p.balance, payments: [p.payment, ...d.payments] }
+                        : d,
+                    )
+                  }
                   deleting={cardBusy}
                 />
               )}
@@ -794,6 +803,7 @@ const ACTIVITY_LABEL: Record<string, string> = {
   card_charge_attempt: "ניסיון סליקת כרטיס",
   card_import_channel: "כרטיס יובא מערוץ",
   card_delete: "כרטיס אשראי הוסר",
+  payment_external_record: "נרשם תשלום שבוצע חיצונית",
 };
 
 // dirty-state fingerprint of everything the user can edit (stay "key"

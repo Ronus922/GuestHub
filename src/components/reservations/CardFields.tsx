@@ -22,10 +22,20 @@ import {
 } from "@/lib/card-rules";
 import {
   chargeReservationCardAction,
+  recordExternalPaymentAction,
   revealReservationCardAction,
   type RevealedCard,
   type StoredCardMeta,
 } from "@/app/(dashboard)/reservations/card-actions";
+
+// no PSP is wired yet — the live-charge button is shown disabled with this text
+const NO_GATEWAY_MESSAGE = "לא מוגדר ספק סליקה פעיל";
+
+export type RecordedPayment = {
+  paid: number;
+  balance: number;
+  payment: { id: string; amount: number; method: string | null; paid_at: string };
+};
 
 // פרטי כרטיס אשראי (reference .ccbox) — the ENTRY form + the saved-card box.
 //
@@ -79,7 +89,9 @@ export function CardFields({
   chargeAmount,
 }: {
   value: CardDraft;
-  onChange: (c: CardDraft) => void;
+  // functional updater (owners pass setCc): each field patches the PREVIOUS
+  // draft, never a captured snapshot, so keystrokes can never clobber each other
+  onChange: (updater: (prev: CardDraft) => CardDraft) => void;
   chargeAmount: number;
 }) {
   const digits = normalizePan(value.number);
@@ -106,7 +118,7 @@ export function CardFields({
             placeholder="שם כפי שמופיע על הכרטיס"
             autoComplete="off"
             value={value.holder}
-            onChange={(e) => onChange({ ...value, holder: e.target.value })}
+            onChange={(e) => onChange((p) => ({ ...p, holder: e.target.value }))}
           />
         </label>
         <label className="bw-fg">
@@ -122,7 +134,7 @@ export function CardFields({
               placeholder="0000 0000 0000 0000"
               autoComplete="off"
               value={value.number}
-              onChange={(e) => onChange({ ...value, number: formatCardNumber(e.target.value) })}
+              onChange={(e) => onChange((p) => ({ ...p, number: formatCardNumber(e.target.value) }))}
             />
           </div>
         </label>
@@ -139,7 +151,7 @@ export function CardFields({
             placeholder="MM/YY"
             autoComplete="off"
             value={value.exp}
-            onChange={(e) => onChange({ ...value, exp: formatExpiry(e.target.value) })}
+            onChange={(e) => onChange((p) => ({ ...p, exp: formatExpiry(e.target.value) }))}
           />
         </label>
         <label className="bw-fg">
@@ -154,7 +166,7 @@ export function CardFields({
             autoComplete="off"
             maxLength={4}
             value={value.cvv}
-            onChange={(e) => onChange({ ...value, cvv: formatCvv(e.target.value) })}
+            onChange={(e) => onChange((p) => ({ ...p, cvv: formatCvv(e.target.value) }))}
           />
         </label>
       </div>
@@ -171,7 +183,7 @@ export function CardFields({
             autoComplete="off"
             maxLength={9}
             value={value.idNum}
-            onChange={(e) => onChange({ ...value, idNum: e.target.value.replace(/\D/g, "") })}
+            onChange={(e) => onChange((p) => ({ ...p, idNum: e.target.value.replace(/\D/g, "") }))}
           />
         </label>
         <label className="bw-fg">
@@ -179,7 +191,7 @@ export function CardFields({
           <select
             className="bw-fld"
             value={value.source}
-            onChange={(e) => onChange({ ...value, source: e.target.value as CardSource })}
+            onChange={(e) => onChange((p) => ({ ...p, source: e.target.value as CardSource }))}
           >
             {MANUAL_CARD_SOURCES.map((s) => (
               <option key={s} value={s}>
@@ -199,7 +211,7 @@ export function CardFields({
           autoComplete="off"
           maxLength={500}
           value={value.billingNotes}
-          onChange={(e) => onChange({ ...value, billingNotes: e.target.value })}
+          onChange={(e) => onChange((p) => ({ ...p, billingNotes: e.target.value }))}
         />
       </label>
       <div className="bw-cc-foot">
@@ -254,24 +266,63 @@ export function StoredCardBox({
   canReveal,
   canManage,
   canCharge = false,
+  canRecordPayment = false,
   chargeAmount = 0,
+  reservationId,
   onReplace,
   onDelete,
+  onPaymentRecorded,
   deleting,
 }: {
   card: StoredCardMeta | Omit<StoredCardMeta, "holderIdNumber">;
   canReveal: boolean;
   canManage: boolean;
   canCharge?: boolean;
+  canRecordPayment?: boolean;
   chargeAmount?: number;
+  reservationId?: string;
   onReplace?: () => void;
   onDelete?: () => void;
+  onPaymentRecorded?: (p: RecordedPayment) => void;
   deleting?: boolean;
 }) {
   const [revealed, setRevealed] = useState<RevealedCard | null>(null);
   const [revealing, startReveal] = useTransition();
   const [charging, startCharge] = useTransition();
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // "record payment collected externally" inline form (NOT a GuestHub charge)
+  const [payOpen, setPayOpen] = useState(false);
+  const [payAmount, setPayAmount] = useState(0);
+  const [payRef, setPayRef] = useState("");
+  const [payConfirm, setPayConfirm] = useState(false);
+  const [recording, startRecord] = useTransition();
+
+  const openPay = () => {
+    setPayAmount(Math.round(Math.max(0, chargeAmount)));
+    setPayRef("");
+    setPayConfirm(false);
+    setPayOpen(true);
+  };
+  const record = () =>
+    startRecord(async () => {
+      if (!reservationId) return;
+      const res = await recordExternalPaymentAction({
+        reservationId,
+        amount: payAmount,
+        method: "credit_card",
+        reference: payRef.trim() || undefined,
+        confirmed: true,
+      });
+      if (!res.success || !res.data) {
+        toast.error(res.success ? "רישום התשלום נכשל" : res.error);
+        return;
+      }
+      toast.success("התשלום נרשם");
+      onPaymentRecorded?.(res.data);
+      setPayOpen(false);
+      setPayConfirm(false);
+    });
 
   const hide = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
@@ -401,9 +452,26 @@ export function StoredCardBox({
             </button>
           ))}
         {canCharge && (
-          <button type="button" className="bw-btn bw-btn-o" disabled={charging} onClick={charge}>
+          /* live charge stays VISIBLE but DISABLED until a PSP is wired
+             (chargeReservationCardAction is fail-closed) */
+          <span className="flex items-center gap-2">
+            <button
+              type="button"
+              className="bw-btn bw-btn-o"
+              disabled
+              onClick={charge}
+              title={NO_GATEWAY_MESSAGE}
+            >
+              <Icon name="finance" size={15} />
+              {charging ? "מחייב…" : `סליקה · ₪${Math.round(Math.max(0, chargeAmount)).toLocaleString()}`}
+            </button>
+            <span className="text-xs font-semibold text-muted">{NO_GATEWAY_MESSAGE}</span>
+          </span>
+        )}
+        {canRecordPayment && reservationId && !payOpen && (
+          <button type="button" className="bw-btn bw-btn-o" onClick={openPay}>
             <Icon name="finance" size={15} />
-            {charging ? "מחייב…" : `סליקה · ₪${Math.round(Math.max(0, chargeAmount)).toLocaleString()}`}
+            רישום תשלום שבוצע חיצונית
           </button>
         )}
         {canManage && onReplace && (
@@ -424,6 +492,77 @@ export function StoredCardBox({
           </button>
         )}
       </div>
+
+      {/* record a payment collected OUTSIDE GuestHub — not a charge; updates
+          paid/balance only after explicit staff confirmation */}
+      {payOpen && (
+        <div className="mt-3 rounded-lg bg-black/[0.03] p-3">
+          <p className="mb-2 text-xs font-semibold text-muted">
+            רישום תשלום שבוצע חיצונית — GuestHub אינו מבצע כאן חיוב. אשרו רק לאחר
+            שהתשלום נגבה בפועל בטרמינל או אצל ספק חיצוני.
+          </p>
+          <div className="bw-grid2">
+            <label className="bw-fg">
+              <span className="bw-lbl">סכום (₪)</span>
+              <input
+                className="bw-fld"
+                type="text"
+                inputMode="numeric"
+                dir="ltr"
+                value={payAmount || ""}
+                onChange={(e) => setPayAmount(Math.max(0, Number(e.target.value.replace(/\D/g, "")) || 0))}
+              />
+            </label>
+            <label className="bw-fg">
+              <span className="bw-lbl">
+                אסמכתא / מספר אישור <span className="bw-opt">(לא חובה)</span>
+              </span>
+              <input
+                className="bw-fld"
+                dir="ltr"
+                maxLength={120}
+                value={payRef}
+                onChange={(e) => setPayRef(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            {payConfirm ? (
+              <>
+                <span className="text-sm font-bold text-ink">לאשר שהתשלום נגבה בפועל?</span>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  className="bw-btn bw-btn-primary"
+                  disabled={recording || payAmount <= 0}
+                  onClick={record}
+                >
+                  <Icon name="check" size={15} />
+                  {recording ? "רושם…" : "אשר וסכם תשלום"}
+                </button>
+                <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setPayConfirm(false)}>
+                  חזרה
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="bw-btn bw-btn-o"
+                  disabled={payAmount <= 0}
+                  onClick={() => setPayConfirm(true)}
+                >
+                  <Icon name="finance" size={15} />
+                  רישום תשלום
+                </button>
+                <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setPayOpen(false)}>
+                  ביטול
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
