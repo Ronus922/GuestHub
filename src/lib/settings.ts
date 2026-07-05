@@ -10,3 +10,11 @@ export async function getTenantVatRate(tenantId: string): Promise<number> {
     FROM guesthub.tenants WHERE id = ${tenantId}`;
   return parseVatRate(row?.vat_rate) ?? DEFAULT_VAT_RATE;
 }
+
+// Canonical property currency (tenants.currency). Commercial modules REFERENCE
+// this — they never store their own currency.
+export async function getTenantCurrency(tenantId: string): Promise<string> {
+  const [row] = await sql<{ currency: string }[]>`
+    SELECT currency FROM guesthub.tenants WHERE id = ${tenantId}`;
+  return row?.currency ?? "ILS";
+}
