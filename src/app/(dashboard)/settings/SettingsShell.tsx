@@ -43,8 +43,8 @@ export function SettingsShell({
         </p>
       </div>
 
-      <div className="flex flex-col gap-5 lg:flex-row-reverse lg:items-start">
-        {/* right-hand settings navigation */}
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+        {/* right-hand settings navigation — first child = right side in RTL (like Shell's Sidebar) */}
         <nav className="shrink-0 rounded-2xl border border-line bg-surface p-3 lg:w-[280px]" aria-label="ניווט הגדרות">
           {SETTINGS_GROUPS.map((group) => (
             <div key={group.title} className="mb-3 last:mb-0">
