@@ -10,7 +10,13 @@ import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 import { roomOccupancySchema } from "@/lib/validation/commercial";
 import { validateRoomOccupancy } from "@/lib/commercial/room-pricing";
 import { getExtraGuestDefaults } from "@/lib/commercial/service";
-import { roomWizardSchema, areaSchema, roomImageMetaSchema } from "@/lib/validation/rooms";
+import {
+  roomWizardSchema,
+  areaSchema,
+  roomImageMetaSchema,
+  boardStatusSchema,
+  areaStatusSchema,
+} from "@/lib/validation/rooms";
 import { LANGS } from "@/lib/rooms/service";
 import { z } from "zod";
 
@@ -146,6 +152,7 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
       maxAdults: r.max_adults,
       maxChildren: r.max_children,
       maxInfants: r.max_infants,
+      minOccupancy: r.min_occupancy,
       defaultOccupancy: r.default_occupancy,
       includedOccupancy: r.included_occupancy,
       mode: r.extra_guest_pricing_mode,
@@ -180,12 +187,14 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
             size_sqm = ${r.size_sqm},
             max_occupancy = ${r.max_occupancy}, max_adults = ${r.max_adults},
             max_children = ${r.max_children}, max_infants = ${r.max_infants},
+            min_occupancy = ${r.min_occupancy},
             default_occupancy = ${r.default_occupancy}, included_occupancy = ${r.included_occupancy},
             extra_guest_pricing_mode = ${r.extra_guest_pricing_mode},
             extra_adult_override = ${oa}, extra_child_override = ${oc},
             extra_infant_override = ${oi}, charge_frequency_override = ${of},
             single_beds = ${r.single_beds}, double_beds = ${r.double_beds},
             queen_beds = ${r.queen_beds}, sofa_beds = ${r.sofa_beds}, cribs = ${r.cribs},
+            notes = ${r.notes ?? null},
             name = COALESCE(${heName}, name)
           WHERE id = ${roomId} AND tenant_id = ${actor.tenantId}`;
       } else {
@@ -194,19 +203,19 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
             tenant_id, room_number, room_type_id, area_id, floor, status, is_active,
             show_on_website, sort_order, size_sqm,
             max_occupancy, max_adults, max_children, max_infants,
-            default_occupancy, included_occupancy, extra_guest_pricing_mode,
+            min_occupancy, default_occupancy, included_occupancy, extra_guest_pricing_mode,
             extra_adult_override, extra_child_override, extra_infant_override,
             charge_frequency_override,
-            single_beds, double_beds, queen_beds, sofa_beds, cribs, name)
+            single_beds, double_beds, queen_beds, sofa_beds, cribs, name, notes)
           VALUES (
             ${actor.tenantId}, ${r.room_number}, ${r.room_type_id}, ${r.area_id},
             ${r.floor}, ${r.status}, ${r.is_active},
             ${r.show_on_website}, ${r.sort_order}, ${r.size_sqm},
             ${r.max_occupancy}, ${r.max_adults}, ${r.max_children}, ${r.max_infants},
-            ${r.default_occupancy}, ${r.included_occupancy}, ${r.extra_guest_pricing_mode},
+            ${r.min_occupancy}, ${r.default_occupancy}, ${r.included_occupancy}, ${r.extra_guest_pricing_mode},
             ${oa}, ${oc}, ${oi}, ${of},
             ${r.single_beds}, ${r.double_beds}, ${r.queen_beds}, ${r.sofa_beds},
-            ${r.cribs}, ${heName})
+            ${r.cribs}, ${heName}, ${r.notes ?? null})
           RETURNING id`;
         roomId = row.id;
       }
@@ -289,13 +298,13 @@ export async function duplicateRoomAction(roomId: string): Promise<ActionResult 
         INSERT INTO guesthub.rooms (
           tenant_id, room_number, room_type_id, area_id, floor, status, is_active,
           show_on_website, sort_order, size_sqm, max_occupancy, max_adults,
-          max_children, max_infants, default_occupancy, included_occupancy,
+          max_children, max_infants, min_occupancy, default_occupancy, included_occupancy,
           extra_guest_pricing_mode, extra_adult_override, extra_child_override,
           extra_infant_override, charge_frequency_override,
           single_beds, double_beds, queen_beds, sofa_beds, cribs, name, notes)
         SELECT tenant_id, ${newNumber}, room_type_id, area_id, floor, status, false,
                false, sort_order, size_sqm, max_occupancy, max_adults,
-               max_children, max_infants, default_occupancy, included_occupancy,
+               max_children, max_infants, min_occupancy, default_occupancy, included_occupancy,
                extra_guest_pricing_mode, extra_adult_override, extra_child_override,
                extra_infant_override, charge_frequency_override,
                single_beds, double_beds, queen_beds, sofa_beds, cribs,
@@ -552,6 +561,111 @@ export async function deleteRoomImageAction(imageId: string): Promise<ActionResu
   } catch (e) {
     if (e instanceof AuthorizationError) return { success: false, error: e.message };
     console.error("[rooms:image-delete]", e);
+    return { success: false, error: "אירעה שגיאה בלתי צפויה" };
+  }
+}
+
+// Board status popover (approved RoomsAndAreas interaction). Honest mapping to
+// the canonical model — the popover never invents state the system can't hold:
+//   פנוי     → rooms.status='available' + open housekeeping tasks completed
+//   מלוכלך   → open housekeeping task set 'pending'   (created if none)
+//   בניקיון  → open housekeeping task set 'in_progress' (created if none)
+//   חסום     → rooms.status='out_of_order'
+//   תחזוקה   → rooms.status='inactive'
+// "תפוס" is derived from reservations and is not settable (schema rejects it).
+export async function updateRoomBoardStatusAction(raw: unknown): Promise<ActionResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "rooms.edit");
+    const parsed = boardStatusSchema.safeParse(raw);
+    if (!parsed.success) return { success: false, error: "קלט לא תקין" };
+    const { room_id, target } = parsed.data;
+
+    await sql.begin(async (tx) => {
+      const [room] = await tx<{ status: string }[]>`
+        SELECT status FROM guesthub.rooms
+        WHERE id = ${room_id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+      if (!room) throw new AuthorizationError("החדר לא נמצא");
+
+      if (target === "blocked" || target === "maintenance") {
+        await tx`
+          UPDATE guesthub.rooms SET status = ${target === "blocked" ? "out_of_order" : "inactive"}
+          WHERE id = ${room_id} AND tenant_id = ${actor.tenantId}`;
+      } else {
+        // free / dirty / cleaning all mean the room itself is operational
+        await tx`
+          UPDATE guesthub.rooms SET status = 'available'
+          WHERE id = ${room_id} AND tenant_id = ${actor.tenantId}`;
+        if (target === "free") {
+          await tx`
+            UPDATE guesthub.housekeeping_tasks
+            SET status = 'completed', completed_at = now()
+            WHERE tenant_id = ${actor.tenantId} AND room_id = ${room_id}
+              AND status IN ('pending', 'in_progress')`;
+        } else {
+          const hk = target === "dirty" ? "pending" : "in_progress";
+          const updated = await tx`
+            UPDATE guesthub.housekeeping_tasks SET status = ${hk}
+            WHERE tenant_id = ${actor.tenantId} AND room_id = ${room_id}
+              AND status IN ('pending', 'in_progress')
+            RETURNING id`;
+          if (updated.length === 0) {
+            await tx`
+              INSERT INTO guesthub.housekeeping_tasks (tenant_id, room_id, status, notes)
+              VALUES (${actor.tenantId}, ${room_id}, ${hk}, 'נוצר מלוח חדרים ואזורים')`;
+          }
+        }
+      }
+
+      await writeAudit(actor, {
+        entityType: "room_board_status",
+        entityId: room_id,
+        action: "update",
+        before: { status: room.status },
+        after: { target },
+      }, tx);
+    });
+
+    revalidatePath("/rooms");
+    return { success: true };
+  } catch (e) {
+    if (e instanceof AuthorizationError) return { success: false, error: e.message };
+    console.error("[rooms:board-status]", e);
+    return { success: false, error: "אירעה שגיאה בלתי צפויה" };
+  }
+}
+
+export async function updateAreaStatusAction(raw: unknown): Promise<ActionResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "rooms.edit");
+    const parsed = areaStatusSchema.safeParse(raw);
+    if (!parsed.success) return { success: false, error: "קלט לא תקין" };
+    const { area_id, status } = parsed.data;
+
+    await sql.begin(async (tx) => {
+      const [area] = await tx<{ status: string }[]>`
+        SELECT status FROM guesthub.operational_areas
+        WHERE id = ${area_id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+      if (!area) throw new AuthorizationError("האזור לא נמצא");
+      await tx`
+        UPDATE guesthub.operational_areas
+        SET status = ${status}, status_note = CASE WHEN ${status} = 'ok' THEN NULL ELSE status_note END
+        WHERE id = ${area_id} AND tenant_id = ${actor.tenantId}`;
+      await writeAudit(actor, {
+        entityType: "operational_area",
+        entityId: area_id,
+        action: "update",
+        before: { status: area.status },
+        after: { status },
+      }, tx);
+    });
+
+    revalidatePath("/rooms");
+    return { success: true };
+  } catch (e) {
+    if (e instanceof AuthorizationError) return { success: false, error: e.message };
+    console.error("[rooms:area-status]", e);
     return { success: false, error: "אירעה שגיאה בלתי צפויה" };
   }
 }

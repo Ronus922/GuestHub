@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Icon } from "@/components/shared/Icon";
+import { useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Icon, type IconName } from "@/components/shared/Icon";
 import type {
   AmenityOption,
   BoardRoom,
@@ -13,24 +15,36 @@ import type {
 import type { ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import { RoomWizard } from "./RoomWizard";
 import { AreaPanel } from "./AreaPanel";
+import { updateAreaStatusAction, updateRoomBoardStatusAction } from "./actions";
+
+// ============================================================
+// Rooms & Areas board — ported 1:1 from ref/html/RoomsAndAreas.html +
+// ref/screens/RoomsAndAreas.png (D49): header with count chip, quick filters
+// (kind + status dots), floor sections, reference cards (strip / kind chip /
+// icon status badge / capacity row / contextual line), and the card-click
+// status popover. Editing opens the room/area window from the popover.
+// ============================================================
 
 type Property = ExtraGuestDefaults & { adult_min_age: number };
 export type Can = { create: boolean; edit: boolean; del: boolean };
 
-const STATUS_META: Record<RoomDerivedStatus, { label: string; dot: string; chip: string; stripe: string }> = {
-  free: { label: "פנוי", dot: "bg-status-success", chip: "bg-status-success-050 text-status-success", stripe: "var(--color-status-success)" },
-  occupied: { label: "תפוס", dot: "bg-status-info", chip: "bg-primary-050 text-primary", stripe: "var(--color-status-info)" },
-  dirty: { label: "מלוכלך", dot: "bg-status-warning", chip: "bg-status-warning-050 text-status-warning", stripe: "var(--color-status-warning)" },
-  cleaning: { label: "בניקיון", dot: "bg-status-warning", chip: "bg-status-warning-050 text-status-warning", stripe: "var(--color-status-warning)" },
-  blocked: { label: "חסום", dot: "bg-status-danger", chip: "bg-status-danger-050 text-status-danger", stripe: "var(--color-status-danger)" },
-  maintenance: { label: "תחזוקה", dot: "bg-status-danger", chip: "bg-status-danger-050 text-status-danger", stripe: "var(--color-status-purple)" },
+type StatusMeta = { label: string; stripe: string; bg: string; fg: string; icon: IconName };
+
+// exact reference colors (extracted from the rendered RoomsAndAreas bundle)
+export const STATUS_META: Record<RoomDerivedStatus, StatusMeta> = {
+  free: { label: "פנוי", stripe: "#16A34A", bg: "#E1F4E9", fg: "#0F6B3C", icon: "check-circle" },
+  occupied: { label: "תפוס", stripe: "#2540C8", bg: "#EEF1FD", fg: "#1C2E9A", icon: "user" },
+  dirty: { label: "מלוכלך", stripe: "#EA9314", bg: "#FDF2E1", fg: "#8A5207", icon: "droplets" },
+  cleaning: { label: "בניקיון", stripe: "#D9A400", bg: "#FBF4D8", fg: "#7A6203", icon: "brush" },
+  blocked: { label: "חסום", stripe: "#E5484D", bg: "#FDEBEC", fg: "#B4232D", icon: "room-blocks" },
+  maintenance: { label: "תחזוקה", stripe: "#C81E3C", bg: "#FBE7EB", fg: "#A3123B", icon: "maintenance" },
 };
 
-const AREA_STATUS_META: Record<OperationalArea["status"], { label: string; chip: string }> = {
-  ok: { label: "תקין", chip: "bg-status-success-050 text-status-success" },
-  maintenance: { label: "תחזוקה", chip: "bg-status-danger-050 text-status-danger" },
-  cleaning: { label: "בניקיון", chip: "bg-status-warning-050 text-status-warning" },
-  blocked: { label: "חסום", chip: "bg-status-danger-050 text-status-danger" },
+export const AREA_STATUS_META: Record<OperationalArea["status"], StatusMeta> = {
+  ok: { label: "תקין", stripe: "#16A34A", bg: "#E1F4E9", fg: "#0F6B3C", icon: "check-circle" },
+  cleaning: { label: "בניקיון", stripe: "#D9A400", bg: "#FBF4D8", fg: "#7A6203", icon: "brush" },
+  maintenance: { label: "תחזוקה", stripe: "#C81E3C", bg: "#FBE7EB", fg: "#A3123B", icon: "maintenance" },
+  blocked: { label: "חסום", stripe: "#E5484D", bg: "#FDEBEC", fg: "#B4232D", icon: "room-blocks" },
 };
 
 export const AREA_TYPE_LABEL: Record<string, string> = {
@@ -56,6 +70,9 @@ function fmtDM(date: string, today: string): string {
   return `${Number(d)}/${Number(m)}`;
 }
 
+type PopoverSeed = { kind: "room"; room: BoardRoom } | { kind: "area"; area: OperationalArea };
+type Popover = PopoverSeed & { x: number; y: number };
+
 export function RoomsScreen({
   rooms,
   areas,
@@ -80,15 +97,9 @@ export function RoomsScreen({
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<"all" | "rooms" | "areas">("all");
   const [status, setStatus] = useState<"all" | RoomDerivedStatus>("all");
-  const [building, setBuilding] = useState<string>("all");
-  const [floor, setFloor] = useState<string>("all");
   const [wizard, setWizard] = useState<{ room: BoardRoom | null } | null>(null);
   const [areaPanel, setAreaPanel] = useState<{ area: OperationalArea | null } | null>(null);
-
-  const floors = useMemo(
-    () => [...new Set(rooms.map((r) => r.floor ?? ""))].sort((a, b) => Number(a) - Number(b)),
-    [rooms],
-  );
+  const [pop, setPop] = useState<Popover | null>(null);
 
   const needle = q.trim().toLowerCase();
   const filteredRooms = useMemo(
@@ -101,11 +112,9 @@ export function RoomsScreen({
               if (!hay.includes(needle)) return false;
             }
             if (status !== "all" && r.derived_status !== status) return false;
-            if (building !== "all" && r.area_id !== building) return false;
-            if (floor !== "all" && (r.floor ?? "") !== floor) return false;
             return true;
           }),
-    [rooms, kind, needle, status, building, floor],
+    [rooms, kind, needle, status],
   );
 
   const filteredAreas = useMemo(
@@ -114,8 +123,6 @@ export function RoomsScreen({
         ? []
         : areas.filter((a) => {
             if (needle && !`${a.name} ${a.code ?? ""}`.toLowerCase().includes(needle)) return false;
-            if (building !== "all" && a.building_area_id !== building) return false;
-            if (floor !== "all" && (a.floor ?? "") !== floor) return false;
             if (status !== "all") {
               const map: Partial<Record<RoomDerivedStatus, OperationalArea["status"]>> = {
                 blocked: "blocked",
@@ -127,7 +134,7 @@ export function RoomsScreen({
             }
             return true;
           }),
-    [areas, kind, needle, status, building, floor],
+    [areas, kind, needle, status],
   );
 
   const groups = useMemo(() => {
@@ -145,161 +152,125 @@ export function RoomsScreen({
     });
   }, [filteredRooms]);
 
-  const incomplete = rooms.filter((r) => r.incomplete).length;
+  const openPopover = (e: React.MouseEvent, p: PopoverSeed) => {
+    if (!can.edit) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = Math.max(12, Math.min(rect.left, window.innerWidth - 276));
+    const y = Math.min(rect.bottom + 6, window.innerHeight - 320);
+    setPop({ ...p, x, y });
+  };
 
   return (
-    <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
-      {/* header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold text-ink">חדרים ואזורים</h1>
-          <p className="mt-1 text-sm font-semibold text-primary">
-            {rooms.length} חדרים · {areas.length} אזורים
-          </p>
+    <div className="flex min-h-full flex-col" dir="rtl">
+      {/* header (reference .hd) */}
+      <div className="rm-hd">
+        <h1 className="rm-hd-t">חדרים ואזורים</h1>
+        <span className="rm-hd-count">
+          {rooms.length} חדרים · {areas.length} אזורים
+        </span>
+        <span className="rm-hd-sp" />
+        <div className="rm-search">
+          <Icon name="search" size={20} />
+          <input placeholder="חיפוש לפי מספר או שם…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
-            <Icon name="search" size={16} className="pointer-events-none absolute end-3 top-1/2 -translate-y-1/2 text-faint" />
-            <input
-              className="h-11 w-64 rounded-xl border border-line bg-surface pe-9 ps-3 text-sm outline-none focus:border-primary"
-              placeholder="חיפוש לפי מספר או שם…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
-          {can.create && (
-            <button type="button" className="bw-btn bw-btn-primary" onClick={() => setWizard({ room: null })}>
-              <Icon name="plus" size={16} />
-              הוספת חדר
-            </button>
-          )}
-          {can.edit && (
-            <button type="button" className="bw-btn bw-btn-o" onClick={() => setAreaPanel({ area: null })}>
-              <Icon name="plus" size={16} />
-              הוספת אזור
-            </button>
-          )}
-        </div>
+        {can.create && (
+          <button type="button" className="rm-btn-primary" onClick={() => setWizard({ room: null })}>
+            <Icon name="plus" size={17} />
+            הוספת חדר
+          </button>
+        )}
+        {can.edit && (
+          <button type="button" className="rm-btn-secondary" onClick={() => setAreaPanel({ area: null })}>
+            <Icon name="plus" size={17} />
+            הוספת אזור
+          </button>
+        )}
       </div>
 
-      {/* filters */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-muted">סוג:</span>
+      {/* quick filters (reference .quick) */}
+      <div className="rm-quick">
+        <span className="rm-quick-l">סוג:</span>
         {(
           [
-            { v: "all", label: "הכל", icon: "dashboard" },
-            { v: "rooms", label: "חדרים", icon: "rooms" },
+            { v: "all", label: "הכל", icon: "grid" },
+            { v: "rooms", label: "חדרים", icon: "hotel" },
             { v: "areas", label: "אזורים", icon: "building" },
           ] as const
         ).map((o) => (
-          <button
-            key={o.v}
-            type="button"
-            onClick={() => setKind(o.v)}
-            className={`flex min-h-10 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${
-              kind === o.v ? "border-primary bg-primary text-white" : "border-line bg-surface text-text2 hover:bg-hover"
-            }`}
-          >
-            <Icon name={o.icon} size={14} />
+          <button key={o.v} type="button" onClick={() => setKind(o.v)} className={`rm-qchip${kind === o.v ? " on" : ""}`}>
+            <Icon name={o.icon} size={17} />
             {o.label}
           </button>
         ))}
-
-        <span className="ms-3 text-sm font-semibold text-muted">סטטוס:</span>
-        <button
-          type="button"
-          onClick={() => setStatus("all")}
-          className={`min-h-10 rounded-xl border px-3 py-1.5 text-sm font-semibold ${
-            status === "all" ? "border-primary bg-primary text-white" : "border-line bg-surface text-text2 hover:bg-hover"
-          }`}
-        >
+        <span className="rm-vsep" />
+        <span className="rm-quick-l">סטטוס:</span>
+        <button type="button" onClick={() => setStatus("all")} className={`rm-qchip${status === "all" ? " on" : ""}`}>
           הכל
         </button>
         {(Object.keys(STATUS_META) as RoomDerivedStatus[]).map((s) => (
-          <button
-            key={s}
-            type="button"
-            onClick={() => setStatus(s)}
-            className={`flex min-h-10 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold ${
-              status === s ? "border-primary bg-primary-050 text-primary" : "border-line bg-surface text-text2 hover:bg-hover"
-            }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${STATUS_META[s].dot}`} />
+          <button key={s} type="button" onClick={() => setStatus(s)} className={`rm-qchip${status === s ? " on" : ""}`}>
+            <span className="rm-d" style={{ background: STATUS_META[s].stripe }} />
             {STATUS_META[s].label}
           </button>
         ))}
-
-        {buildings.length > 0 && (
-          <select
-            className="h-10 rounded-xl border border-line bg-surface px-3 text-sm text-text2 outline-none"
-            value={building}
-            onChange={(e) => setBuilding(e.target.value)}
-            aria-label="סינון לפי בניין/אגף"
-          >
-            <option value="all">כל הבניינים</option>
-            {buildings.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}</option>
-            ))}
-          </select>
-        )}
-        <select
-          className="h-10 rounded-xl border border-line bg-surface px-3 text-sm text-text2 outline-none"
-          value={floor}
-          onChange={(e) => setFloor(e.target.value)}
-          aria-label="סינון לפי קומה"
-        >
-          <option value="all">כל הקומות</option>
-          {floors.map((f) => (
-            <option key={f || "none"} value={f}>{floorLabel(f || null)}</option>
-          ))}
-        </select>
       </div>
 
-      {incomplete > 0 && (
-        <div className="flex items-center gap-2 rounded-xl bg-status-warning-050 px-4 py-3 text-sm" style={{ color: "#B4670A" }}>
-          <Icon name="warning" size={16} />
-          {incomplete} חדרים דורשים השלמה — חסרים בהם פרטים חיוניים (מסומנים על הכרטיס).
-        </div>
-      )}
+      <div className="rm-body">
+        {/* floor sections */}
+        {groups.map(([floorKey, floorRooms]) => {
+          const freeCount = floorRooms.filter((r) => r.derived_status === "free").length;
+          return (
+            <section key={floorKey || "none"}>
+              <div className="rm-sech">
+                <Icon name="layers" size={19} />
+                <span className="rm-t">{floorLabel(floorKey || null)}</span>
+                <span className="rm-c">
+                  {floorRooms.length} חדרים · {freeCount} פנויים
+                </span>
+              </div>
+              <div className="rm-grid">
+                {floorRooms.map((r) => (
+                  <RoomCard key={r.id} room={r} today={today} canEdit={can.edit} onOpen={(e) => openPopover(e, { kind: "room", room: r })} />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+        {filteredRooms.length === 0 && kind !== "areas" && (
+          <div className="rm-empty">לא נמצאו חדרים תואמים</div>
+        )}
 
-      {/* floor groups */}
-      {groups.map(([floorKey, floorRooms]) => {
-        const freeCount = floorRooms.filter((r) => r.derived_status === "free").length;
-        return (
-          <section key={floorKey || "none"} className="flex flex-col gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-bold text-ink">
-              <Icon name="building" size={16} className="text-faint" />
-              {floorLabel(floorKey || null)}
-              <span className="font-semibold text-faint">
-                {floorRooms.length} חדרים · {freeCount} פנויים
-              </span>
-            </h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {floorRooms.map((r) => (
-                <RoomCard key={r.id} room={r} today={today} onOpen={() => can.edit && setWizard({ room: r })} />
+        {/* areas section */}
+        {filteredAreas.length > 0 && (
+          <section>
+            <div className="rm-sech">
+              <Icon name="building" size={19} />
+              <span className="rm-t">אזורים</span>
+              <span className="rm-c">{filteredAreas.length} אזורים · ללא קומה</span>
+            </div>
+            <div className="rm-grid">
+              {filteredAreas.map((a) => (
+                <AreaCard key={a.id} area={a} canEdit={can.edit} onOpen={(e) => openPopover(e, { kind: "area", area: a })} />
               ))}
             </div>
           </section>
-        );
-      })}
-      {filteredRooms.length === 0 && kind !== "areas" && (
-        <p className="py-6 text-center text-sm text-faint">לא נמצאו חדרים תואמים</p>
-      )}
+        )}
+        {filteredAreas.length === 0 && kind === "areas" && (
+          <div className="rm-empty">לא נמצאו אזורים תואמים</div>
+        )}
+      </div>
 
-      {/* areas */}
-      {filteredAreas.length > 0 && (
-        <section className="flex flex-col gap-3">
-          <h2 className="flex items-center gap-2 text-sm font-bold text-ink">
-            <Icon name="building" size={16} className="text-faint" />
-            אזורים
-            <span className="font-semibold text-faint">{filteredAreas.length} אזורים · ללא קומה</span>
-          </h2>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filteredAreas.map((a) => (
-              <AreaCard key={a.id} area={a} onOpen={() => can.edit && setAreaPanel({ area: a })} />
-            ))}
-          </div>
-        </section>
+      {pop && (
+        <StatusPopover
+          pop={pop}
+          can={can}
+          onClose={() => setPop(null)}
+          onEdit={() => {
+            if (pop.kind === "room") setWizard({ room: pop.room });
+            else setAreaPanel({ area: pop.area });
+            setPop(null);
+          }}
+        />
       )}
 
       {wizard && (
@@ -321,76 +292,241 @@ export function RoomsScreen({
   );
 }
 
-function RoomCard({ room, today, onOpen }: { room: BoardRoom; today: string; onOpen: () => void }) {
+// ---------- cards (reference .card anatomy) ----------
+
+function RoomCard({
+  room,
+  today,
+  canEdit,
+  onOpen,
+}: {
+  room: BoardRoom;
+  today: string;
+  canEdit: boolean;
+  onOpen: (e: React.MouseEvent) => void;
+}) {
   const meta = STATUS_META[room.derived_status];
-  const bottom =
+  const line: { icon: IconName; text: string } | null =
     room.derived_status === "occupied" && room.current_guest
-      ? `${room.current_guest} · עד ${fmtDM(room.current_until!, today)}`
+      ? { icon: "user", text: `${room.current_guest} · עד ${fmtDM(room.current_until!, today)}` }
       : room.next_arrival
-        ? `הגעה קרובה: ${fmtDM(room.next_arrival, today)} · ${room.next_guest ?? ""}`
+        ? { icon: "login", text: `הגעה קרובה: ${fmtDM(room.next_arrival, today)} · ${room.next_guest ?? ""}` }
         : null;
 
   return (
     <button
       type="button"
+      className="rm-bcard"
+      title={`חדר ${room.room_number} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
       onClick={onOpen}
-      className="flex min-h-[110px] flex-col gap-2 rounded-2xl border border-line bg-surface p-4 text-start shadow-card transition-shadow hover:shadow-pop"
-      style={{ borderInlineStart: `4px solid ${meta.stripe}` }}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span className="text-lg font-extrabold text-ink" dir="ltr">{room.room_number}</span>
-          <span className="rounded-full bg-primary-050 px-2 py-0.5 text-xs font-semibold text-primary">חדר</span>
-        </span>
-        <span className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${meta.chip}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+      <span className="rm-strip" style={{ background: meta.stripe }} />
+      <div className="rm-cr1">
+        <span className="rm-num" dir="ltr">{room.room_number}</span>
+        <span className="rm-kind room">חדר</span>
+        <span className="rm-csp" />
+        <span className="rm-stbadge" style={{ background: meta.bg, color: meta.fg }}>
+          <Icon name={meta.icon} size={14} />
           {meta.label}
         </span>
       </div>
-      <div className="flex items-center gap-2 text-sm text-text2">
-        <span className="font-semibold">{room.room_type_name ?? room.name ?? "—"}</span>
-        <span className="text-faint">·</span>
-        <span className="flex items-center gap-1 text-faint">
-          <Icon name="users-round" size={14} />
+      <div className="rm-cr2">
+        {room.room_type_name ?? room.name ?? "—"}
+        <span className="rm-dotsep" />
+        <span className="rm-cap">
+          <Icon name="users-round" size={15} />
           {room.max_occupancy} אורחים
         </span>
       </div>
-      <div className="mt-auto flex items-center justify-between gap-2">
-        <span className="truncate text-xs text-faint">{bottom ?? " "}</span>
-        {room.incomplete && (
-          <span
-            className="flex shrink-0 items-center gap-1 rounded-full bg-status-warning-050 px-2 py-0.5 text-xs font-semibold text-status-warning"
-            title={`חסר: ${room.missing.join(", ")}`}
-          >
-            <Icon name="warning" size={12} />
-            דורש השלמה
-          </span>
+      <div className="rm-cr3">
+        {line && (
+          <>
+            <Icon name={line.icon} size={14} />
+            {line.text}
+          </>
         )}
       </div>
     </button>
   );
 }
 
-function AreaCard({ area, onOpen }: { area: OperationalArea; onOpen: () => void }) {
+function AreaCard({
+  area,
+  canEdit,
+  onOpen,
+}: {
+  area: OperationalArea;
+  canEdit: boolean;
+  onOpen: (e: React.MouseEvent) => void;
+}) {
   const meta = AREA_STATUS_META[area.status];
   return (
     <button
       type="button"
+      className="rm-bcard"
+      title={`${area.name} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
       onClick={onOpen}
-      className="flex min-h-[110px] flex-col gap-2 rounded-2xl border border-line bg-surface p-4 text-start shadow-card transition-shadow hover:shadow-pop"
-      style={{ borderInlineStart: "4px solid var(--color-status-purple)" }}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span className="text-lg font-extrabold text-ink">{area.name}</span>
-          <span className="rounded-full px-2 py-0.5 text-xs font-semibold" style={{ background: "#f3e8ff", color: "var(--color-status-purple)" }}>
-            אזור
-          </span>
+      <span className="rm-strip" style={{ background: meta.stripe }} />
+      <div className="rm-cr1">
+        <span className="rm-num">{area.name}</span>
+        <span className="rm-kind area">אזור</span>
+        <span className="rm-csp" />
+        <span className="rm-stbadge" style={{ background: meta.bg, color: meta.fg }}>
+          <Icon name={meta.icon} size={14} />
+          {meta.label}
         </span>
-        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${meta.chip}`}>{meta.label}</span>
       </div>
-      <div className="text-sm font-semibold text-text2">{AREA_TYPE_LABEL[area.area_type] ?? area.area_type}</div>
-      <div className="mt-auto truncate text-xs text-faint">{area.status_note ?? area.building_name ?? " "}</div>
+      <div className="rm-cr2">{AREA_TYPE_LABEL[area.area_type] ?? area.area_type}</div>
+      <div className="rm-cr3">
+        {area.status !== "ok" && area.status_note ? (
+          <>
+            <Icon name={meta.icon} size={14} />
+            {area.status_note}
+          </>
+        ) : area.building_name ? (
+          area.building_name
+        ) : null}
+      </div>
+    </button>
+  );
+}
+
+// ---------- status popover (reference .pop) ----------
+
+const ROOM_TARGETS: { target: "free" | "dirty" | "cleaning" | "blocked" | "maintenance"; status: RoomDerivedStatus }[] = [
+  { target: "free", status: "free" },
+  { target: "dirty", status: "dirty" },
+  { target: "cleaning", status: "cleaning" },
+  { target: "blocked", status: "blocked" },
+  { target: "maintenance", status: "maintenance" },
+];
+
+function StatusPopover({
+  pop,
+  can,
+  onClose,
+  onEdit,
+}: {
+  pop: Popover;
+  can: Can;
+  onClose: () => void;
+  onEdit: () => void;
+}) {
+  const router = useRouter();
+  const [saving, startSaving] = useTransition();
+  const busy = useRef(false);
+
+  const apply = (fn: () => Promise<{ success: boolean; error?: string }>) =>
+    startSaving(async () => {
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const res = await fn();
+        if (!res.success) return void toast.error(res.error ?? "שגיאה");
+        toast.success("הסטטוס עודכן");
+        router.refresh();
+        onClose();
+      } finally {
+        busy.current = false;
+      }
+    });
+
+  const title =
+    pop.kind === "room" ? (
+      <>עדכון סטטוס — חדר {pop.room.room_number}</>
+    ) : (
+      <>עדכון סטטוס — {pop.area.name}</>
+    );
+  const sub =
+    pop.kind === "room"
+      ? [pop.room.room_type_name, floorLabel(pop.room.floor)].filter(Boolean).join(" · ")
+      : [AREA_TYPE_LABEL[pop.area.area_type], pop.area.building_name].filter(Boolean).join(" · ");
+
+  return (
+    <>
+      <div className="rm-pov" onClick={onClose} aria-hidden="true" />
+      <div className="rm-pop" style={{ left: pop.x, top: pop.y }} role="dialog" aria-label="עדכון סטטוס">
+        <div className="rm-pop-h">
+          <div>
+            <div>{title}</div>
+            <div className="rm-sub">{sub}</div>
+          </div>
+          <button type="button" className="rm-pop-x" onClick={onClose} aria-label="סגירה">
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+        <div className="rm-pop-b">
+          {pop.kind === "room" ? (
+            <>
+              {/* free / occupied / dirty / cleaning / blocked / maintenance — reference order */}
+              <StOpt
+                meta={STATUS_META.free}
+                cur={pop.room.derived_status === "free"}
+                disabled={saving}
+                onClick={() => apply(() => updateRoomBoardStatusAction({ room_id: pop.room.id, target: "free" }))}
+              />
+              <StOpt
+                meta={STATUS_META.occupied}
+                cur={pop.room.derived_status === "occupied"}
+                disabled
+                title="נקבע אוטומטית לפי ההזמנות"
+              />
+              {ROOM_TARGETS.slice(1).map(({ target, status }) => (
+                <StOpt
+                  key={target}
+                  meta={STATUS_META[status]}
+                  cur={pop.room.derived_status === status}
+                  disabled={saving}
+                  onClick={() => apply(() => updateRoomBoardStatusAction({ room_id: pop.room.id, target }))}
+                />
+              ))}
+            </>
+          ) : (
+            (Object.keys(AREA_STATUS_META) as OperationalArea["status"][]).map((s) => (
+              <StOpt
+                key={s}
+                meta={AREA_STATUS_META[s]}
+                cur={pop.area.status === s}
+                disabled={saving}
+                onClick={() => apply(() => updateAreaStatusAction({ area_id: pop.area.id, status: s }))}
+              />
+            ))
+          )}
+          {can.edit && (
+            <div className="rm-pop-edit">
+              <button type="button" className="rm-stopt" onClick={onEdit}>
+                <Icon name="edit" size={15} />
+                {pop.kind === "room" ? "עריכת פרטי החדר" : "עריכת פרטי האזור"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function StOpt({
+  meta,
+  cur,
+  disabled,
+  title,
+  onClick,
+}: {
+  meta: StatusMeta;
+  cur: boolean;
+  disabled?: boolean;
+  title?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button type="button" className={`rm-stopt${cur ? " cur" : ""}`} disabled={disabled} title={title} onClick={onClick}>
+      <span className="rm-d" style={{ background: meta.stripe }} />
+      {meta.label}
+      <span className="rm-chk">
+        <Icon name="check" size={16} />
+      </span>
     </button>
   );
 }

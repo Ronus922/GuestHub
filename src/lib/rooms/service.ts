@@ -48,8 +48,10 @@ export type BoardRoom = {
   max_adults: number;
   max_children: number;
   max_infants: number;
+  min_occupancy: number | null;
   default_occupancy: number | null;
   included_occupancy: number | null;
+  notes: string | null;
   extra_guest_pricing_mode: "inherit" | "override";
   extra_adult_override: number | null;
   extra_child_override: number | null;
@@ -100,7 +102,13 @@ export type OperationalArea = {
 
 export type BuildingOption = { id: string; name: string };
 export type RoomTypeOption = { id: string; name: string };
-export type AmenityOption = { id: string; key: string; label: string };
+export type AmenityOption = {
+  id: string;
+  key: string;
+  label: string;
+  icon: string | null;
+  group: string | null; // approved catalog groups: חדר רחצה / בידור / כללי / מטבח / יוקרה
+};
 
 type StayRow = {
   room_id: string;
@@ -131,7 +139,8 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
       SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
              r.show_on_website, r.sort_order, r.size_sqm::float8 AS size_sqm,
              r.max_occupancy, r.max_adults, r.max_children, r.max_infants,
-             r.default_occupancy, r.included_occupancy, r.extra_guest_pricing_mode,
+             r.min_occupancy, r.default_occupancy, r.included_occupancy, r.notes,
+             r.extra_guest_pricing_mode,
              r.extra_adult_override::float8  AS extra_adult_override,
              r.extra_child_override::float8  AS extra_child_override,
              r.extra_infant_override::float8 AS extra_infant_override,
@@ -277,7 +286,8 @@ export async function listRoomTypes(tenantId: string): Promise<RoomTypeOption[]>
 
 export async function listAmenities(tenantId: string): Promise<AmenityOption[]> {
   return sql<AmenityOption[]>`
-    SELECT id, key, label FROM guesthub.lookup_items
+    SELECT id, key, label, icon, metadata->>'group' AS "group"
+    FROM guesthub.lookup_items
     WHERE tenant_id = ${tenantId} AND category = 'amenities' AND is_active
     ORDER BY sort_order, label`;
 }

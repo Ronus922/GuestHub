@@ -3,19 +3,36 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Icon } from "@/components/shared/Icon";
+import { Icon, type IconName } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
-import { Segmented, ToggleRow } from "@/app/(dashboard)/settings/controls";
+import { Segmented, Switch } from "@/app/(dashboard)/settings/controls";
 import type { BuildingOption, OperationalArea } from "@/lib/rooms/service";
 import type { Can } from "./RoomsScreen";
-import { AREA_TYPE_LABEL } from "./RoomsScreen";
-import { StepField } from "./RoomWizard";
+import { AREA_TYPE_LABEL, AREA_STATUS_META } from "./RoomsScreen";
+import { Sec, F } from "./RoomWizard";
 import { deleteAreaAction, saveAreaAction } from "./actions";
 
-const AREA_TYPES = ["lobby", "elevator", "corridor", "gym", "pool", "parking", "storage", "other"] as const;
-type AreaType = (typeof AREA_TYPES)[number];
+// ============================================================
+// Area window — ported 1:1 from ref/html/WindowNewArea.html +
+// ref/screens/NewArea.png (D49). 45vw drawer, two columns: form (פרטים
+// כלליים + הגדרות תפעוליות with icon rows) and a sticky live preview of the
+// board card + requirements checklist. Status controls appear on edit only
+// (the approved create window has none; the board popover manages status).
+// ============================================================
+
+const AREA_TYPES: { key: string; icon: IconName }[] = [
+  { key: "lobby", icon: "armchair" },
+  { key: "elevator", icon: "elevator" },
+  { key: "corridor", icon: "corridor" },
+  { key: "gym", icon: "dumbbell" },
+  { key: "pool", icon: "waves" },
+  { key: "parking", icon: "parking" },
+  { key: "storage", icon: "package" },
+];
 type AreaStatus = OperationalArea["status"];
+
+const FLOOR_OPTIONS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+const floorLabel = (f: string) => (f === "0" ? "קרקע" : `קומה ${f}`);
 
 export function AreaPanel({
   area,
@@ -33,7 +50,7 @@ export function AreaPanel({
   const [d, setD] = useState({
     name: area?.name ?? "",
     code: area?.code ?? "",
-    area_type: (area?.area_type as AreaType) ?? ("lobby" as AreaType),
+    area_type: area?.area_type ?? "",
     building_area_id: area?.building_area_id ?? null,
     floor: area?.floor ?? "",
     is_active: area?.is_active ?? true,
@@ -45,6 +62,9 @@ export function AreaPanel({
     notes: area?.notes ?? "",
   });
   const set = <K extends keyof typeof d>(k: K, v: (typeof d)[K]) => setD((s) => ({ ...s, [k]: v }));
+
+  const valid = Boolean(d.name.trim() && d.area_type);
+  const statusMeta = AREA_STATUS_META[d.status];
 
   const save = () =>
     startSaving(async () => {
@@ -80,6 +100,11 @@ export function AreaPanel({
       onClose();
     });
 
+  // reference type list + the legacy "אחר" only when an existing area uses it
+  const typeChips = area?.area_type === "other"
+    ? [...AREA_TYPES, { key: "other", icon: "more" as IconName }]
+    : AREA_TYPES;
+
   return (
     <SidePanel
       open
@@ -87,148 +112,254 @@ export function AreaPanel({
       title={area ? `עריכת אזור · ${area.name}` : "אזור חדש"}
       subtitle="הוספת אזור תפעולי · חדרים ואזורים"
       icon="building"
+      widthClassName="w-[45vw] max-lg:w-[70%]"
+      bodyClassName="p-4"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-faint">
-            {!d.name.trim() ? "נדרשים שם אזור וסוג אזור" : ""}
-          </span>
-          <div className="flex gap-2">
-            {area && can.del && (
-              <button
-                type="button"
-                className="bw-btn bw-btn-o text-status-danger"
-                disabled={saving}
-                onClick={doDelete}
-              >
-                <Icon name="trash" size={14} />
-                מחק אזור
-              </button>
+        <div className="flex items-center gap-2.5">
+          <span className="rm-ftnote">
+            {!valid && (
+              <>
+                <Icon name="info" size={15} />
+                נדרשים שם אזור וסוג אזור
+              </>
             )}
-            <button type="button" className="bw-btn bw-btn-o" onClick={onClose}>ביטול</button>
-            <button
-              type="button"
-              className="bw-btn bw-btn-primary"
-              disabled={saving || !d.name.trim()}
-              onClick={save}
-            >
-              <Icon name="check" size={16} />
-              {saving ? "שומר…" : area ? "שמירה" : "צור אזור"}
+          </span>
+          <span className="flex-1" />
+          {area && can.del && (
+            <button type="button" className="rm-lnkd" disabled={saving} onClick={doDelete}>
+              <Icon name="trash" size={17} />
+              מחק אזור
             </button>
-          </div>
+          )}
+          <button type="button" className="rm-btng" onClick={onClose}>ביטול</button>
+          <button
+            type="button"
+            className={`rm-btn${!valid ? " dis" : ""}`}
+            disabled={saving || !valid}
+            onClick={save}
+          >
+            <Icon name="check" size={17} />
+            {saving ? "שומר…" : area ? "שמור" : "צור אזור"}
+          </button>
         </div>
       }
     >
-      <div className="flex flex-col gap-5">
-        <section className="bw-card">
-          <CardTitle icon="info" title="פרטים כלליים" />
-          <div className="bw-grid2">
-            <Field label="שם אזור *">
-              <input
-                className="bw-fld"
-                placeholder="לדוגמה: לובי ראשי"
-                value={d.name}
-                onChange={(e) => set("name", e.target.value)}
-              />
-            </Field>
-            <Field label="קוד אזור">
-              <input
-                className="bw-fld"
-                dir="ltr"
-                placeholder="לדוגמה: LOBBY-1"
-                value={d.code}
-                onChange={(e) => set("code", e.target.value)}
-              />
-              <p className="mt-1 text-xs text-faint">נוצר אוטומטית לפי הסוג — ניתן לעריכה</p>
-            </Field>
-          </div>
-          <Field label="סוג אזור *">
-            <div className="flex flex-wrap gap-2">
-              {AREA_TYPES.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => set("area_type", t)}
-                  className={`min-h-10 rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${
-                    d.area_type === t
-                      ? "border-primary bg-primary-050 text-primary"
-                      : "border-line bg-surface text-text2 hover:bg-hover"
-                  }`}
-                >
-                  {AREA_TYPE_LABEL[t]}
-                </button>
-              ))}
-            </div>
-          </Field>
-          <div className="bw-grid2 mt-3">
-            <Field label="בניין / אגף">
-              <select
-                className="bw-fld"
-                value={d.building_area_id ?? ""}
-                onChange={(e) => set("building_area_id", e.target.value || null)}
-              >
-                <option value="">ללא</option>
-                {buildings.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="קומה">
-              <input
-                className="bw-fld"
-                dir="ltr"
-                placeholder="ללא"
-                value={d.floor}
-                onChange={(e) => set("floor", e.target.value)}
-              />
-            </Field>
-          </div>
-        </section>
-
-        <section className="bw-card">
-          <CardTitle icon="settings" title="הגדרות תפעוליות" />
-          <div className="flex flex-col gap-3">
-            <ToggleRow label="פעיל" hint="האזור מוצג ברשימות ובמערכת" checked={d.is_active} onChange={(v) => set("is_active", v)} />
-            <ToggleRow label="רלוונטי לניקיון" hint="האזור נכלל במשימות ניקיון" checked={d.relevant_cleaning} onChange={(v) => set("relevant_cleaning", v)} />
-            <ToggleRow label="רלוונטי לתחזוקה" hint="ניתן לפתוח תקלות תחזוקה עבור אזור זה" checked={d.relevant_maintenance} onChange={(v) => set("relevant_maintenance", v)} />
-            <div className="flex items-center justify-between gap-3">
-              <Field label="מצב האזור">
-                <Segmented
-                  ariaLabel="מצב האזור"
-                  value={d.status}
-                  onChange={(v) => set("status", v)}
-                  options={[
-                    { value: "ok", label: "תקין" },
-                    { value: "cleaning", label: "בניקיון" },
-                    { value: "maintenance", label: "תחזוקה" },
-                    { value: "blocked", label: "חסום" },
-                  ]}
-                />
-              </Field>
-            </div>
-            {d.status !== "ok" && (
-              <Field label="הערת מצב">
+      <div className="rm-cols">
+        <div className="rm-colmain">
+          <Sec icon="info" title="פרטים כלליים">
+            <div className="rm-frow">
+              <F label="שם אזור" required>
                 <input
-                  className="bw-fld"
-                  placeholder="לדוגמה: טכנאי הוזמן · עד 9/7"
-                  value={d.status_note}
-                  onChange={(e) => set("status_note", e.target.value)}
+                  className="rm-fld"
+                  placeholder="לדוגמה: לובי ראשי"
+                  value={d.name}
+                  onChange={(e) => set("name", e.target.value)}
                 />
-              </Field>
-            )}
-            <StepField label="סדר תצוגה" value={d.sort_order} onChange={(v) => set("sort_order", v ?? 0)} />
-            <Field label="הערות תפעוליות">
-              <textarea
-                className="bw-fld min-h-0 resize-y"
-                style={{ height: "auto" }}
-                rows={3}
-                placeholder="הערות פנימיות לצוות…"
-                value={d.notes}
-                onChange={(e) => set("notes", e.target.value)}
+              </F>
+              <F label="קוד אזור">
+                <input
+                  className="rm-fld text-right"
+                  dir="ltr"
+                  placeholder="לדוגמה: LOBBY-1"
+                  value={d.code}
+                  onChange={(e) => set("code", e.target.value)}
+                />
+                <span className="rm-hint">נוצר אוטומטית לפי הסוג — ניתן לעריכה</span>
+              </F>
+            </div>
+            <F label="סוג אזור" required>
+              <div className="rm-tchips">
+                {typeChips.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => set("area_type", t.key)}
+                    className={`rm-tchip${d.area_type === t.key ? " on" : ""}`}
+                  >
+                    <Icon name={t.icon} size={17} />
+                    {AREA_TYPE_LABEL[t.key]}
+                  </button>
+                ))}
+              </div>
+              <span className="rm-hint">סוגי אזורים מנוהלים מתוך ההגדרות</span>
+            </F>
+            <div className="rm-frow">
+              <F label="בניין / אגף">
+                <select
+                  className="rm-fld"
+                  value={d.building_area_id ?? ""}
+                  onChange={(e) => set("building_area_id", e.target.value || null)}
+                >
+                  <option value="">ללא</option>
+                  {buildings.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+              </F>
+              <F label="קומה">
+                <select className="rm-fld" value={d.floor} onChange={(e) => set("floor", e.target.value)}>
+                  <option value="">ללא</option>
+                  {!FLOOR_OPTIONS.includes(d.floor) && d.floor !== "" && (
+                    <option value={d.floor}>{floorLabel(d.floor)}</option>
+                  )}
+                  {FLOOR_OPTIONS.map((f) => (
+                    <option key={f} value={f}>{floorLabel(f)}</option>
+                  ))}
+                </select>
+              </F>
+            </div>
+          </Sec>
+
+          <Sec icon="filter" title="הגדרות תפעוליות" note="קובעות איפה האזור מופיע במערכת">
+            <div className="flex flex-col">
+              <SwLine icon="eye" label="פעיל" hint="האזור מוצג ברשימות ובמערכת" checked={d.is_active} onChange={(v) => set("is_active", v)} />
+              <SwLine icon="brush" label="רלוונטי לניקיון" hint="האזור נכלל במשימות ניקיון" checked={d.relevant_cleaning} onChange={(v) => set("relevant_cleaning", v)} />
+              <SwLine icon="maintenance" label="רלוונטי לתחזוקה" hint="ניתן לפתוח תקלות עבור אזור זה" checked={d.relevant_maintenance} onChange={(v) => set("relevant_maintenance", v)} />
+              <div className="rm-swline">
+                <span className="rm-swic">
+                  <Icon name="sort" size={18} />
+                </span>
+                <div className="min-w-0">
+                  <p className="rm-swt">סדר תצוגה</p>
+                  <p className="rm-swd">מיקום האזור ברשימות — נמוך מוצג קודם</p>
+                </div>
+                <span className="flex-1" />
+                <span className="rm-step">
+                  <button type="button" aria-label="הוספה" onClick={() => set("sort_order", d.sort_order + 1)}>
+                    <Icon name="plus" size={17} />
+                  </button>
+                  <input
+                    className="rm-v"
+                    dir="ltr"
+                    inputMode="numeric"
+                    aria-label="סדר תצוגה"
+                    value={d.sort_order}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      set("sort_order", Number.isFinite(n) ? Math.max(0, n) : 0);
+                    }}
+                  />
+                  <button type="button" aria-label="הפחתה" onClick={() => set("sort_order", Math.max(0, d.sort_order - 1))}>
+                    <Icon name="minus" size={17} />
+                  </button>
+                </span>
+              </div>
+              <div className="pt-3.5">
+                <F label="הערות תפעוליות">
+                  <textarea
+                    className="rm-fld"
+                    rows={3}
+                    placeholder="הערות פנימיות לצוות…"
+                    value={d.notes}
+                    onChange={(e) => set("notes", e.target.value)}
+                  />
+                </F>
+              </div>
+            </div>
+          </Sec>
+
+          {/* status lives on the board popover; kept here for edit so an open
+              incident (תחזוקה/חסום + note) can be adjusted from the window */}
+          {area && (
+            <Sec icon="warning" title="מצב האזור">
+              <Segmented
+                ariaLabel="מצב האזור"
+                value={d.status}
+                onChange={(v) => set("status", v)}
+                options={[
+                  { value: "ok", label: "תקין" },
+                  { value: "cleaning", label: "בניקיון" },
+                  { value: "maintenance", label: "תחזוקה" },
+                  { value: "blocked", label: "חסום" },
+                ]}
               />
-            </Field>
-          </div>
-        </section>
+              {d.status !== "ok" && (
+                <F label="הערת מצב">
+                  <input
+                    className="rm-fld"
+                    placeholder="לדוגמה: טכנאי הוזמן · עד 9/7"
+                    value={d.status_note}
+                    onChange={(e) => set("status_note", e.target.value)}
+                  />
+                </F>
+              )}
+            </Sec>
+          )}
+        </div>
+
+        {/* live preview + requirements (reference side column) */}
+        <div className="rm-colside">
+          <Sec icon="eye" title="תצוגה מקדימה">
+            <div className="rm-bcard" style={{ cursor: "default" }}>
+              <span className="rm-strip" style={{ background: statusMeta.stripe }} />
+              <div className="rm-cr1">
+                <span className="rm-num">{d.name.trim() || "שם האזור"}</span>
+                <span className="rm-kind area">אזור</span>
+                <span className="rm-csp" />
+                <span className="rm-stbadge" style={{ background: statusMeta.bg, color: statusMeta.fg }}>
+                  <Icon name={statusMeta.icon} size={14} />
+                  {statusMeta.label}
+                </span>
+              </div>
+              <div className="rm-cr2">
+                {d.area_type ? AREA_TYPE_LABEL[d.area_type] : "סוג אזור"}
+              </div>
+              <div className="rm-cr3">
+                {d.status !== "ok" && d.status_note ? (
+                  <>
+                    <Icon name={statusMeta.icon} size={14} />
+                    {d.status_note}
+                  </>
+                ) : null}
+              </div>
+            </div>
+            <div className="rm-pvnote">כך ייראה האזור במסך חדרים ואזורים</div>
+            <div className="rm-chklist">
+              <ChkItem ok={Boolean(d.name.trim())} label="שם אזור" />
+              <ChkItem ok={Boolean(d.area_type)} label="סוג אזור" />
+              <ChkItem ok={d.relevant_cleaning} label="ייכלל במשימות ניקיון" />
+              <ChkItem ok={d.relevant_maintenance} label="פתיחת תקלות תחזוקה" />
+            </div>
+          </Sec>
+        </div>
       </div>
     </SidePanel>
+  );
+}
+
+function SwLine({
+  icon,
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  icon: IconName;
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="rm-swline">
+      <span className="rm-swic">
+        <Icon name={icon} size={18} />
+      </span>
+      <div className="min-w-0">
+        <p className="rm-swt">{label}</p>
+        <p className="rm-swd">{hint}</p>
+      </div>
+      <span className="flex-1" />
+      <Switch checked={checked} onChange={onChange} label={label} />
+    </div>
+  );
+}
+
+function ChkItem({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <div className={`rm-chki ${ok ? "ok" : "no"}`}>
+      <Icon name={ok ? "check-circle" : "circle"} size={16} />
+      {label}
+    </div>
   );
 }

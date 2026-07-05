@@ -61,6 +61,33 @@ const [{ n: amenLinked }] = await sql`
   SELECT COUNT(DISTINCT room_id)::int AS n FROM guesthub.room_amenities WHERE tenant_id = ${TENANT}`;
 ok(amenLinked === 14, `all 14 rooms have amenities (${amenLinked})`);
 
+// ---- 2b. migration 014 (D49): min_occupancy + grouped amenity catalog ----
+const cols014 = await sql`
+  SELECT column_name FROM information_schema.columns
+  WHERE table_schema = 'guesthub' AND table_name = 'rooms' AND column_name = 'min_occupancy'`;
+ok(cols014.length === 1, "rooms has min_occupancy (014)");
+
+const [{ n: minBackfilled }] = await sql`
+  SELECT COUNT(*)::int AS n FROM guesthub.rooms
+  WHERE tenant_id = ${TENANT} AND min_occupancy IS NOT NULL`;
+ok(minBackfilled >= 14, `min_occupancy backfilled on existing rooms (${minBackfilled})`);
+
+let minChkRejected = false;
+try {
+  await sql`INSERT INTO guesthub.rooms (tenant_id, room_number, max_occupancy, max_adults, min_occupancy)
+            VALUES (${TENANT}, 'ZZTEST-MIN-CHK', 2, 2, 5)`;
+  await sql`DELETE FROM guesthub.rooms WHERE tenant_id = ${TENANT} AND room_number = 'ZZTEST-MIN-CHK'`;
+} catch (e) {
+  minChkRejected = e.code === "23514";
+}
+ok(minChkRejected, "min_occupancy > max_occupancy rejected by DB CHECK");
+
+const [{ n: catalogSize }] = await sql`
+  SELECT COUNT(*)::int AS n FROM guesthub.lookup_items
+  WHERE tenant_id = ${TENANT} AND category = 'amenities'
+    AND metadata->>'group' IN ('חדר רחצה', 'בידור', 'כללי', 'מטבח', 'יוקרה')`;
+ok(catalogSize === 38, `approved amenity catalog: 38 grouped items (${catalogSize})`);
+
 // ---- 3 + 4. DB-enforced uniqueness + cascade round-trip ----
 const TEST_NUMBER = "ZZTEST-ROOMS-CHECK";
 await sql`DELETE FROM guesthub.rooms WHERE tenant_id = ${TENANT} AND room_number = ${TEST_NUMBER}`;

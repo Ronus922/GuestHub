@@ -3,9 +3,8 @@
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Icon } from "@/components/shared/Icon";
+import { Icon, type IconName } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
 import { Segmented, Switch } from "@/app/(dashboard)/settings/controls";
 import {
   resolveEffectivePricing,
@@ -31,6 +30,14 @@ import {
   updateRoomImagesAction,
 } from "./actions";
 
+// ============================================================
+// Room window — ported 1:1 from ref/html/WindowNewRoom.html +
+// ref/screens/WindowAddRoom.png (D49). ONE shared form for create + edit:
+// 60vw drawer, white steps strip, three steps (פרטים כלליים / איבזור ותמונות /
+// אתר-SEO), reference cards/fields/counters/steppers. Persistence goes through
+// saveRoomAction (canonical occupancy + extra-guest pricing seam preserved).
+// ============================================================
+
 type Property = ExtraGuestDefaults & { adult_min_age: number };
 
 const LANG_META: Record<Lang, { label: string; tag: string }> = {
@@ -45,6 +52,15 @@ const SOURCE_LABEL: Record<PricingSource, string> = {
   property_default: "ברירת מחדל של הנכס",
   unconfigured: "טרם הוגדר",
 };
+
+// reference counters: description 724, summary 140 (target 80–140), SEO 60/160
+const DESC_MAX = 724;
+const SUMMARY_MAX = 140;
+const SEO_TITLE_MAX = 60;
+const SEO_DESC_MAX = 160;
+
+const FLOOR_OPTIONS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+const floorLabel = (f: string) => (f === "0" ? "קרקע" : `קומה ${f}`);
 
 type TrDraft = {
   name: string;
@@ -78,8 +94,10 @@ type BaseDraft = {
   max_adults: number;
   max_children: number;
   max_infants: number;
+  min_occupancy: number | null;
   default_occupancy: number | null;
   included_occupancy: number | null;
+  notes: string;
   extra_guest_pricing_mode: "inherit" | "override";
   extra_adult_override: number | null;
   extra_child_override: number | null;
@@ -91,16 +109,6 @@ type BaseDraft = {
   sofa_beds: number;
   cribs: number;
 };
-
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
 
 export function RoomWizard({
   room,
@@ -142,8 +150,10 @@ export function RoomWizard({
     max_adults: room?.max_adults ?? 2,
     max_children: room?.max_children ?? 0,
     max_infants: room?.max_infants ?? 0,
+    min_occupancy: room?.min_occupancy ?? 1,
     default_occupancy: room?.default_occupancy ?? null,
     included_occupancy: room?.included_occupancy ?? null,
+    notes: room?.notes ?? "",
     extra_guest_pricing_mode: room?.extra_guest_pricing_mode ?? "inherit",
     extra_adult_override: room?.extra_adult_override ?? null,
     extra_child_override: room?.extra_child_override ?? null,
@@ -203,6 +213,7 @@ export function RoomWizard({
     maxAdults: base.max_adults,
     maxChildren: base.max_children,
     maxInfants: base.max_infants,
+    minOccupancy: base.min_occupancy,
     defaultOccupancy: base.default_occupancy,
     includedOccupancy: base.included_occupancy,
     mode: base.extra_guest_pricing_mode,
@@ -233,8 +244,10 @@ export function RoomWizard({
     max_adults: base.max_adults,
     max_children: base.max_children,
     max_infants: base.max_infants,
+    min_occupancy: base.min_occupancy,
     default_occupancy: base.default_occupancy,
     included_occupancy: base.included_occupancy,
+    notes: base.notes.trim() || null,
     extra_guest_pricing_mode: base.extra_guest_pricing_mode,
     extra_adult_override: base.extra_adult_override,
     extra_child_override: base.extra_child_override,
@@ -331,6 +344,10 @@ export function RoomWizard({
 
   const allAmenities = [...amenities, ...customAmenities];
 
+  // language completion (reference: שם · כותרת SEO · תיאור SEO → N / 3 שדות)
+  const langDone = (l: Lang) =>
+    [trs[l].name.trim(), trs[l].seo_title.trim(), trs[l].meta_description.trim()].filter(Boolean).length;
+
   return (
     <SidePanel
       open
@@ -338,191 +355,182 @@ export function RoomWizard({
       title={roomId ? `עריכת חדר ${base.room_number}` : "הקמת חדר"}
       subtitle="הגדרת פרטי חדר, איבזור ותוכן"
       icon="rooms"
-      band={<Stepper step={step} onStep={(s) => (roomId ? setStep(s) : s === 1 && setStep(1))} />}
+      widthClassName="w-[60vw]"
+      bodyClassName="p-4"
+      band={<StepsBar step={step} onStep={(s) => (roomId ? setStep(s) : s === 1 && setStep(1))} />}
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-faint">שלב {step} מתוך 3{warnings[0] ? ` · ${warnings[0]}` : ""}</span>
-          <div className="flex gap-2">
-            <button type="button" className="bw-btn bw-btn-o" onClick={onClose}>ביטול</button>
-            {step > 1 && (
-              <button type="button" className="bw-btn bw-btn-o" onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as 1 | 2)))}>
-                חזרה
-              </button>
-            )}
-            {step < 3 ? (
-              <button type="button" className="bw-btn bw-btn-primary" disabled={saving} onClick={goNext}>
-                הבא
-                <Icon name="chevron-left" size={16} />
-              </button>
-            ) : (
-              <button type="button" className="bw-btn bw-btn-primary" disabled={saving || blocked} onClick={() => save({ close: true })}>
-                <Icon name="check" size={16} />
-                {saving ? "שומר…" : "שמירה"}
-              </button>
-            )}
-          </div>
+        <div className="flex items-center gap-2.5">
+          <span className="rm-ftnote">
+            <Icon name="info" size={15} />
+            שלב {step} מתוך 3{warnings[0] ? ` · ${warnings[0]}` : ""}
+          </span>
+          <span className="flex-1" />
+          {step > 1 && (
+            <button type="button" className="rm-btnsec" onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as 1 | 2)))}>
+              חזרה
+              <Icon name="chevron-right" size={17} />
+            </button>
+          )}
+          <button type="button" className="rm-btng" onClick={onClose}>ביטול</button>
+          {step < 3 ? (
+            <button type="button" className="rm-btn" disabled={saving} onClick={goNext}>
+              הבא
+              <Icon name="chevron-left" size={17} />
+            </button>
+          ) : (
+            <button type="button" className={`rm-btn${blocked ? " dis" : ""}`} disabled={saving || blocked} onClick={() => save({ close: true })}>
+              <Icon name="check" size={17} />
+              {saving ? "שומר…" : "שמור"}
+            </button>
+          )}
         </div>
       }
     >
-      <div className="flex flex-col gap-5">
-        {/* language tabs + room-level actions */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex gap-1 rounded-xl border border-line bg-surface p-1">
-            {ALL_LANGS.map((l) => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => setLang(l)}
-                className={`flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                  lang === l ? "bg-primary text-white" : "text-text2 hover:bg-hover"
-                }`}
-              >
-                <span className="text-[10px] opacity-70">{LANG_META[l].tag}</span>
-                {LANG_META[l].label}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <CopyFromMenu current={lang} onCopy={copyFromLang} />
-            {roomId && can.create && (
-              <button type="button" className="bw-btn bw-btn-o" disabled={saving} onClick={doDuplicate}>
-                <Icon name="copy" size={14} />
-                שכפל חדר
-              </button>
-            )}
-            {roomId && can.del && (
-              <button
-                type="button"
-                className="bw-btn bw-btn-o text-status-danger"
-                style={{ borderColor: "var(--color-status-danger-050)", background: "var(--color-status-danger-050)" }}
-                disabled={saving}
-                onClick={doDelete}
-              >
-                <Icon name="trash" size={14} />
-                מחק חדר
-              </button>
-            )}
-          </div>
+      <div className="flex flex-col gap-3.5">
+        {/* language chips + room-level actions (reference row) */}
+        <div className="flex flex-wrap items-center gap-2">
+          {ALL_LANGS.map((l) => (
+            <button key={l} type="button" onClick={() => setLang(l)} className={`rm-lchip${lang === l ? " on" : ""}`}>
+              {LANG_META[l].label}
+              <span className="rm-cc">{LANG_META[l].tag}</span>
+            </button>
+          ))}
+          <span className="flex-1" />
+          <CopyFromMenu current={lang} onCopy={copyFromLang} />
+          {roomId && can.create && (
+            <button type="button" className="rm-lnk" disabled={saving} onClick={doDuplicate}>
+              <Icon name="copy" size={17} />
+              שכפל חדר
+            </button>
+          )}
+          {roomId && can.del && (
+            <button type="button" className="rm-lnkd" disabled={saving} onClick={doDelete}>
+              <Icon name="trash" size={17} />
+              מחק חדר
+            </button>
+          )}
         </div>
 
         {step === 1 && (
           <>
-            <section className="bw-card">
-              <div className="mb-1 flex items-center justify-between">
-                <CardTitle icon="info" title="פרטים כלליים" />
-                <span className="text-xs text-faint">עריכה בשפה: {LANG_META[lang].label}</span>
-              </div>
-              <div className="bw-grid2">
-                <Field label="שם החדר *">
+            <Sec icon="info" title="פרטים כלליים" note={`עריכה בשפה: ${LANG_META[lang].label}`}>
+              <div className="rm-frow">
+                <F label="שם החדר" required>
                   <input
-                    className="bw-fld"
-                    dir={lang === "en" ? "ltr" : "rtl"}
+                    className="rm-fld"
+                    dir="auto"
                     placeholder="לדוגמה: סוויטת פרימיום פנטהאוס עם נוף לים"
                     value={tr.name}
                     onChange={(e) => setT("name", e.target.value)}
                   />
-                </Field>
-                <Field label="מספר חדר *">
+                </F>
+                <F label="מספר חדר" required>
                   <input
-                    className="bw-fld"
+                    className="rm-fld text-right"
                     dir="ltr"
                     placeholder="לדוגמה: 101"
                     value={base.room_number}
                     onChange={(e) => setB("room_number", e.target.value)}
                   />
-                </Field>
-                <Field label="סוג חדר">
-                  <select className="bw-fld" value={base.room_type_id ?? ""} onChange={(e) => setB("room_type_id", e.target.value || null)}>
+                </F>
+              </div>
+              <div className="rm-frow3">
+                <F label="סוג חדר" required>
+                  <select className="rm-fld" value={base.room_type_id ?? ""} onChange={(e) => setB("room_type_id", e.target.value || null)}>
                     <option value="">בחר סוג חדר</option>
                     {roomTypes.map((t) => (
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
-                </Field>
-                <Field label="בניין / אגף">
-                  <select className="bw-fld" value={base.area_id ?? ""} onChange={(e) => setB("area_id", e.target.value || null)}>
-                    <option value="">ללא</option>
+                </F>
+                <F label="בניין / אגף">
+                  <select className="rm-fld" value={base.area_id ?? ""} onChange={(e) => setB("area_id", e.target.value || null)}>
+                    <option value="">בניין</option>
                     {buildings.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
                     ))}
                   </select>
-                </Field>
-                <Field label="קומה">
-                  <input
-                    className="bw-fld"
-                    dir="ltr"
-                    placeholder="לדוגמה: 1 (0 = קרקע)"
-                    value={base.floor}
-                    onChange={(e) => setB("floor", e.target.value)}
-                  />
-                </Field>
+                </F>
+                <F label="קומה">
+                  <select className="rm-fld" value={base.floor} onChange={(e) => setB("floor", e.target.value)}>
+                    <option value="">קומה</option>
+                    {!FLOOR_OPTIONS.includes(base.floor) && base.floor !== "" && (
+                      <option value={base.floor}>{floorLabel(base.floor)}</option>
+                    )}
+                    {FLOOR_OPTIONS.map((f) => (
+                      <option key={f} value={f}>{floorLabel(f)}</option>
+                    ))}
+                  </select>
+                </F>
               </div>
-              <div className="mt-3 flex flex-col gap-3">
-                <CountedTextarea
-                  label="תיאור החדר"
-                  placeholder="תיאור מפורט של החדר או האירוח…"
-                  value={tr.description}
-                  max={4000}
-                  rows={5}
-                  onChange={(v) => setT("description", v)}
-                />
-                <CountedTextarea
-                  label="תקציר SEO / Meta Summary"
+              <RichTextArea
+                label="תיאור החדר"
+                placeholder="תיאור מפורט של החדר או האירוח…"
+                value={tr.description}
+                max={DESC_MAX}
+                onChange={(v) => setT("description", v)}
+              />
+              <F label="תקציר SEO / Meta Summary">
+                <textarea
+                  className="rm-fld"
+                  rows={2}
+                  dir="auto"
+                  maxLength={SUMMARY_MAX}
                   placeholder="תקציר קצר לתוצאות חיפוש…"
                   value={tr.summary}
-                  max={200}
-                  rows={2}
-                  hint="יעד: 80–140 תווים"
-                  onChange={(v) => setT("summary", v)}
+                  onChange={(e) => setT("summary", e.target.value)}
                 />
-              </div>
-            </section>
+                <span className={`rm-cnt${tr.summary.length >= 80 && tr.summary.length <= 140 ? " ok" : ""}`} dir="rtl">
+                  {tr.summary.length} / {SUMMARY_MAX} · יעד: 80–140 תווים
+                </span>
+              </F>
+            </Sec>
 
-            <section className="bw-card">
-              <CardTitle icon="users-round" title="תפוסה" />
-              <div className="bw-grid2">
-                <StepField label="תפוסת ברירת מחדל" value={base.default_occupancy} nullable onChange={(v) => setB("default_occupancy", v)} />
-                <StepField label="תפוסה מקסימלית" value={base.max_occupancy} min={1} onChange={(v) => setB("max_occupancy", v ?? 1)} />
-                <StepField label="אורחים הכלולים במחיר הבסיס" value={base.included_occupancy} nullable onChange={(v) => setB("included_occupancy", v)} />
-                <StepField label="מקסימום מבוגרים" value={base.max_adults} onChange={(v) => setB("max_adults", v ?? 0)} />
-                <StepField label="מקסימום ילדים" value={base.max_children} hint={base.max_children === 0 ? "החדר אינו מאפשר ילדים" : undefined} onChange={(v) => setB("max_children", v ?? 0)} />
-                <StepField label="מקסימום תינוקות" value={base.max_infants} hint={base.max_infants === 0 ? "החדר אינו מאפשר תינוקות" : undefined} onChange={(v) => setB("max_infants", v ?? 0)} />
+            <Sec icon="users-round" title="תפוסה">
+              <div className="rm-frow3">
+                <QtyStep label="תפוסה מינימלית" value={base.min_occupancy} min={1} nullable onChange={(v) => setB("min_occupancy", v)} />
+                <QtyStep label="תפוסת ברירת מחדל" value={base.default_occupancy} min={1} nullable onChange={(v) => setB("default_occupancy", v)} />
+                <QtyStep label="תפוסה מקסימלית" value={base.max_occupancy} min={1} onChange={(v) => setB("max_occupancy", v ?? 1)} />
               </div>
-              <p className="bw-hint">
-                ״אורחים הכלולים במחיר הבסיס״ קובע מאיזה אורח מתחיל חיוב נוסף (ערך 2 → חיוב מהאורח השלישי).
-              </p>
-            </section>
+              <div className="rm-frow3">
+                <QtyStep label="מקסימום מבוגרים" value={base.max_adults} onChange={(v) => setB("max_adults", v ?? 0)} />
+                <QtyStep label="מקסימום ילדים" value={base.max_children} hint={base.max_children === 0 ? "החדר אינו מאפשר ילדים" : undefined} onChange={(v) => setB("max_children", v ?? 0)} />
+                <QtyStep label="מקסימום תינוקות" value={base.max_infants} hint={base.max_infants === 0 ? "החדר אינו מאפשר תינוקות" : undefined} onChange={(v) => setB("max_infants", v ?? 0)} />
+              </div>
+            </Sec>
 
-            <section className="bw-card">
-              <div className="mb-3 flex items-center justify-between">
-                <CardTitle icon="finance" title="תמחור אורח נוסף" />
-                <Segmented
-                  ariaLabel="מצב תמחור"
-                  value={base.extra_guest_pricing_mode}
-                  onChange={(v) => setB("extra_guest_pricing_mode", v)}
-                  options={[
-                    { value: "inherit", label: "ירושה מהנכס" },
-                    { value: "override", label: "חריגה לחדר" },
-                  ]}
-                />
+            <Sec icon="finance" title="תמחור אורח נוסף">
+              <div className="rm-frow">
+                <QtyStep label="אורחים הכלולים במחיר הבסיס" value={base.included_occupancy} min={1} nullable onChange={(v) => setB("included_occupancy", v)} />
+                <F label="מצב תמחור">
+                  <Segmented
+                    ariaLabel="מצב תמחור"
+                    value={base.extra_guest_pricing_mode}
+                    onChange={(v) => setB("extra_guest_pricing_mode", v)}
+                    options={[
+                      { value: "inherit", label: "ירושה מהנכס" },
+                      { value: "override", label: "חריגה לחדר" },
+                    ]}
+                  />
+                </F>
               </div>
               {!isOverride ? (
                 <div className="flex flex-col gap-2">
                   <EffRow label="אורח בוגר נוסף" amount={effective.extra_adult.value} source={SOURCE_LABEL[effective.extra_adult.source]} currency={currency} />
                   <EffRow label="ילד נוסף" amount={effective.extra_child.value} source={SOURCE_LABEL[effective.extra_child.source]} currency={currency} />
                   <EffRow label="תינוק נוסף" amount={effective.extra_infant.value} source={SOURCE_LABEL[effective.extra_infant.source]} currency={currency} />
-                  <p className="bw-hint">
+                  <p className="rm-hint">
                     {property.configured
-                      ? "החדר יורש את ערכי הנכס. ״חריגה לחדר״ מאפשרת עריכה — ערכי הנכס לא יועתקו לחדר."
+                      ? "״אורחים הכלולים במחיר הבסיס״ קובע מאיזה אורח מתחיל חיוב נוסף (ערך 2 → חיוב מהאורח השלישי). החדר יורש את ערכי הנכס."
                       : "תמחור הנכס טרם הוגדר. הגדירו בהגדרות ← תמחור תפוסה, או קבעו חריגה לחדר זה."}
                   </p>
                 </div>
               ) : (
-                <div className="bw-grid2">
+                <div className="rm-frow">
                   <MoneyField label="אורח בוגר נוסף" currency={currency} value={base.extra_adult_override} onChange={(v) => setB("extra_adult_override", v)} />
                   <MoneyField label="ילד נוסף" currency={currency} value={base.extra_child_override} onChange={(v) => setB("extra_child_override", v)} />
                   <MoneyField label="תינוק נוסף" currency={currency} value={base.extra_infant_override} onChange={(v) => setB("extra_infant_override", v)} />
-                  <Field label="תדירות חיוב">
+                  <F label="תדירות חיוב">
                     <Segmented
                       ariaLabel="תדירות חריגה"
                       value={base.charge_frequency_override ?? "per_night"}
@@ -532,29 +540,45 @@ export function RoomWizard({
                         { value: "per_stay", label: "לכל השהות" },
                       ]}
                     />
-                  </Field>
+                  </F>
                 </div>
               )}
-            </section>
+            </Sec>
 
-            <section className="bw-card">
-              <CardTitle icon="settings" title="סטטוס וזמינות" />
-              <div className="flex flex-col gap-3">
-                <Field label="סטטוס חדר">
-                  <select className="bw-fld" value={base.status} onChange={(e) => setB("status", e.target.value as BaseDraft["status"])}>
-                    <option value="available">זמין</option>
-                    <option value="out_of_order">חסימה זמנית</option>
-                    <option value="inactive">בשיפוץ</option>
-                  </select>
-                </Field>
-                <p className="bw-hint">חדר פעיל — זמין להזמנות · לחסימה זמנית (תחזוקה, ניקיון יסודי וכד׳) — ניהול חסימות</p>
-                <div className="bw-grid2">
-                  <ToggleCard label="חדר פעיל" hint="חדר זמין להזמנות" checked={base.is_active} onChange={(v) => setB("is_active", v)} />
-                  <ToggleCard label="מוצג באתר" hint="חדר נראה לאורחים" checked={base.show_on_website} onChange={(v) => setB("show_on_website", v)} />
-                </div>
-                <StepField label="סדר מיון" value={base.sort_order} onChange={(v) => setB("sort_order", v ?? 0)} />
+            <Sec icon="filter" title="סטטוס וזמינות">
+              <F label="סטטוס חדר">
+                <select className="rm-fld" value={base.status} onChange={(e) => setB("status", e.target.value as BaseDraft["status"])}>
+                  <option value="available">זמין</option>
+                  <option value="out_of_order">חסימה זמנית</option>
+                  <option value="inactive">בשיפוץ</option>
+                </select>
+                <span className="rm-hint">חדר פעיל — זמין להזמנות · לחסימה זמנית (תחזוקה, ניקיון יסודי וכד׳) — ניהול חסימות</span>
+              </F>
+              <div className="rm-frow3">
+                <SwRow label="חדר פעיל" hint="חדר זמין להזמנות" checked={base.is_active} onChange={(v) => setB("is_active", v)} />
+                <SwRow label="מוצג באתר" hint="חדר נראה לאורחים" checked={base.show_on_website} onChange={(v) => setB("show_on_website", v)} />
+                <QtyStep label="סדר מיון" value={base.sort_order} onChange={(v) => setB("sort_order", v ?? 0)} />
               </div>
-            </section>
+              <F label="הערות פנימיות">
+                <textarea
+                  className="rm-fld"
+                  rows={2}
+                  placeholder="הערות פנימיות לצוות…"
+                  value={base.notes}
+                  onChange={(e) => setB("notes", e.target.value)}
+                />
+              </F>
+            </Sec>
+
+            {occupancyErrors.length > 0 && (
+              <div className="rm-vlist">
+                {occupancyErrors.map((e, i) => (
+                  <p key={i} className="rm-vitem w">
+                    <Icon name="warning" size={17} /> {e}
+                  </p>
+                ))}
+              </div>
+            )}
           </>
         )}
 
@@ -571,22 +595,21 @@ export function RoomWizard({
                 if (!res.success) return void toast.error(res.error);
                 if (!res.id) return;
                 const id = res.id;
-                setCustomAmenities((s) => [...s, { id, key: "custom", label }]);
+                setCustomAmenities((s) => [...s, { id, key: "custom", label, icon: null, group: null }]);
                 setAmenityIds((s) => [...s, id]);
               }}
             />
 
-            <section className="bw-card">
-              <CardTitle icon="rooms" title="הסדרי שינה וגודל" />
-              <div className="bw-grid2">
-                <StepField label="מיטות יחיד" value={base.single_beds} onChange={(v) => setB("single_beds", v ?? 0)} />
-                <StepField label="מיטות זוגיות" value={base.double_beds} onChange={(v) => setB("double_beds", v ?? 0)} />
-                <StepField label="מיטות קווין" value={base.queen_beds} onChange={(v) => setB("queen_beds", v ?? 0)} />
-                <StepField label="ספות נפתחות" value={base.sofa_beds} onChange={(v) => setB("sofa_beds", v ?? 0)} />
-                <StepField label="עריסות (לתינוק)" value={base.cribs} onChange={(v) => setB("cribs", v ?? 0)} />
-                <Field label="גודל החדר (מ״ר)">
+            <Sec icon="rooms" title="הסדרי שינה וגודל">
+              <div className="rm-frow3">
+                <QtyStep label="מיטות יחיד" value={base.single_beds} onChange={(v) => setB("single_beds", v ?? 0)} />
+                <QtyStep label="מיטות זוגיות" value={base.double_beds} onChange={(v) => setB("double_beds", v ?? 0)} />
+                <QtyStep label="מיטות קווין" value={base.queen_beds} onChange={(v) => setB("queen_beds", v ?? 0)} />
+                <QtyStep label="ספות נפתחות" value={base.sofa_beds} onChange={(v) => setB("sofa_beds", v ?? 0)} />
+                <QtyStep label="עריסות (לתינוק)" value={base.cribs} onChange={(v) => setB("cribs", v ?? 0)} />
+                <F label="גודל החדר (מ״ר)">
                   <input
-                    className="bw-fld"
+                    className="rm-fld"
                     dir="ltr"
                     inputMode="decimal"
                     placeholder="לדוגמה: 32"
@@ -597,9 +620,9 @@ export function RoomWizard({
                       setB("size_sqm", s === "" || !Number.isFinite(n) ? null : n);
                     }}
                   />
-                </Field>
+                </F>
               </div>
-            </section>
+            </Sec>
 
             <ImagesSection
               roomId={roomId}
@@ -616,122 +639,100 @@ export function RoomWizard({
 
         {step === 3 && (
           <>
-            <section className="bw-card">
-              <div className="mb-1 flex items-center justify-between">
-                <CardTitle icon="link" title="הגדרות SEO" />
-                <span className="text-xs text-faint">עריכה בשפה: {LANG_META[lang].label}</span>
-              </div>
-              <div className="flex flex-col gap-3">
-                <Field label="כתובת URL (Slug) — ייחודית לכל שפה">
-                  <div className="flex gap-2">
-                    <input
-                      className="bw-fld"
-                      dir="ltr"
-                      placeholder="premium-suite-sea-view"
-                      value={tr.slug}
-                      onChange={(e) => setT("slug", e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="bw-btn bw-btn-o shrink-0"
-                      onClick={() => setT("slug", slugify(tr.name))}
-                      title="יצירה אוטומטית מהשם"
-                    >
-                      <Icon name="refresh" size={14} />
-                    </button>
-                  </div>
-                </Field>
-                <p className="bw-hint" dir="ltr">/{lang}/rooms/{tr.slug || "…"}</p>
-                <CountedTextarea
-                  label="כותרת SEO (Title Tag)"
+            <Sec icon="globe" title="הגדרות SEO" note={`עריכה בשפה: ${LANG_META[lang].label}`}>
+              <F label="כותרת SEO (Title Tag)">
+                <input
+                  className="rm-fld"
+                  dir="auto"
+                  maxLength={SEO_TITLE_MAX}
                   placeholder="כותרת המופיעה בתוצאות חיפוש…"
                   value={tr.seo_title}
-                  max={160}
-                  rows={1}
-                  hint="מומלץ עד 60 תווים"
-                  onChange={(v) => setT("seo_title", v)}
+                  onChange={(e) => setT("seo_title", e.target.value)}
                 />
-                <CountedTextarea
-                  label="תיאור SEO (Meta Description)"
+                <span className="rm-cnt" dir="rtl">{tr.seo_title.length} / {SEO_TITLE_MAX}</span>
+              </F>
+              <F label="תיאור SEO (Meta Description)">
+                <textarea
+                  className="rm-fld"
+                  rows={3}
+                  dir="auto"
+                  maxLength={SEO_DESC_MAX}
                   placeholder="תיאור קצר המופיע בתוצאות גוגל…"
                   value={tr.meta_description}
-                  max={320}
-                  rows={2}
-                  hint="מומלץ 120–160 תווים"
-                  onChange={(v) => setT("meta_description", v)}
+                  onChange={(e) => setT("meta_description", e.target.value)}
                 />
-                <div className="bw-grid2">
-                  <Field label="כותרת לשיתוף (OG Title)">
-                    <input className="bw-fld" value={tr.og_title} onChange={(e) => setT("og_title", e.target.value)} />
-                  </Field>
-                  <Field label="תיאור לשיתוף (OG Description)">
-                    <input className="bw-fld" value={tr.og_description} onChange={(e) => setT("og_description", e.target.value)} />
-                  </Field>
-                </div>
-                <ToggleCard
-                  label="מוסתר ממנועי חיפוש (noindex)"
-                  hint="העמוד לא יופיע בתוצאות חיפוש בשפה זו"
-                  checked={tr.noindex}
-                  onChange={(v) => setT("noindex", v)}
-                />
-              </div>
-            </section>
+                <span className="rm-cnt" dir="rtl">{tr.meta_description.length} / {SEO_DESC_MAX}</span>
+              </F>
+            </Sec>
 
-            <section className="bw-card">
-              <CardTitle icon="search" title="תצוגה בתוצאות חיפוש" />
-              <div className="rounded-xl border border-line bg-surface px-4 py-3" dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}>
-                <p className="truncate text-base font-semibold" style={{ color: "#1a0dab" }}>
-                  {tr.seo_title || tr.name || "כותרת העמוד"}
-                </p>
-                <p className="truncate text-xs" style={{ color: "#006621" }} dir="ltr">
-                  {`example.com/${lang}/rooms/${tr.slug || slugify(tr.name) || "room"}`}
-                </p>
-                <p className="line-clamp-2 text-sm text-text2">
-                  {tr.meta_description || tr.summary || "תיאור העמוד יופיע כאן…"}
-                </p>
-              </div>
-            </section>
-
-            <section className="bw-card">
-              <CardTitle icon="languages" title="מצב השלמת שפות" />
-              <div className="flex flex-col gap-2">
-                {ALL_LANGS.map((l) => {
-                  const t = trs[l];
-                  const done = Boolean(t.name && t.seo_title && t.meta_description);
-                  return (
-                    <div key={l} className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-2.5">
-                      <span className="text-sm font-semibold text-ink">{LANG_META[l].label}</span>
-                      <span className={`flex items-center gap-1.5 text-xs font-semibold ${done ? "text-status-success" : "text-status-warning"}`}>
-                        <Icon name={done ? "check" : "warning"} size={14} />
-                        {done ? "הושלם" : "שם · כותרת SEO · תיאור SEO"}
+            <div className="rm-frow">
+              <Sec icon="eye" title="תצוגה מקדימה באתר">
+                <div className="rm-pvsite">
+                  <div className="rm-im">
+                    {images.find((i) => i.is_main) ?? images[0] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={(images.find((i) => i.is_main) ?? images[0]).url} alt="" />
+                    ) : (
+                      <Icon name="image" size={40} />
+                    )}
+                  </div>
+                  <div className="rm-bd">
+                    <div className="rm-nm">{tr.name || "שם החדר"}</div>
+                    <div className="rm-ds">{tr.summary || "תקציר החדר…"}</div>
+                    <div className="rm-mt">
+                      <span className="inline-flex items-center gap-1.5">
+                        <Icon name="users-round" size={16} />
+                        עד {base.max_occupancy} אורחים
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Icon name="star" size={16} />
+                        {amenityIds.length} שירותים
                       </span>
                     </div>
+                  </div>
+                </div>
+              </Sec>
+              <Sec icon="search" title="תצוגה בתוצאות חיפוש">
+                <div className="rm-pvg">
+                  <div className="rm-u">www.yourhotel.com/rooms/{base.room_number || "101"}</div>
+                  <div className="rm-t">{tr.seo_title || "כותרת SEO של החדר"}</div>
+                  <div className="rm-d">{tr.meta_description || "תיאור SEO המופיע בתוצאות חיפוש של גוגל…"}</div>
+                </div>
+              </Sec>
+            </div>
+
+            <Sec icon="languages" title="מצב השלמת שפות" note="שם · כותרת SEO · תיאור SEO">
+              <div className="rm-langst">
+                {ALL_LANGS.map((l) => {
+                  const n = langDone(l);
+                  const cls = n === 3 ? "ok" : n > 0 ? "mid" : "no";
+                  return (
+                    <button key={l} type="button" className={`rm-lst${lang === l ? " on" : ""}`} onClick={() => setLang(l)}>
+                      <div className="rm-cc">{LANG_META[l].tag}</div>
+                      <div className="rm-nm">{LANG_META[l].label}</div>
+                      <div className={`rm-st ${cls}`}>{n} / 3 שדות</div>
+                    </button>
                   );
                 })}
               </div>
-            </section>
+            </Sec>
 
-            {(requiredErrors.length > 0 || occupancyErrors.length > 0) && (
-              <section className="bw-card">
-                <CardTitle icon="warning" title="סיכום אימות" />
-                {[...requiredErrors, ...occupancyErrors].map((e, i) => (
-                  <p key={i} className="flex items-center gap-2 text-sm text-status-danger">
-                    <Icon name="warning" size={14} /> {e}
+            <Sec icon="list-checks" title="סיכום אימות">
+              <div className="rm-vlist">
+                <VItem ok={Boolean(trs.he.name.trim())} okLabel="שם חדר הוגדר" missLabel="שם חדר חסר" />
+                <VItem ok={Boolean(base.room_number.trim())} okLabel="מספר חדר הוגדר" missLabel="מספר חדר חסר" />
+                <VItem ok={Boolean(base.room_type_id)} okLabel="סוג חדר נבחר" missLabel="סוג חדר לא נבחר" />
+                <VItem ok={Boolean(tr.seo_title.trim())} okLabel="כותרת SEO הוגדרה" missLabel="כותרת SEO חסרה" />
+                <VItem ok={Boolean(tr.meta_description.trim())} okLabel="תיאור SEO הוגדר" missLabel="תיאור SEO חסר" />
+                <VItem ok={amenityIds.length > 0} okLabel={`${amenityIds.length} פריטי איבזור נבחרו`} missLabel="אין איבזור נבחר" />
+                {occupancyErrors.map((e, i) => (
+                  <p key={i} className="rm-vitem w">
+                    <Icon name="warning" size={17} /> {e}
                   </p>
                 ))}
-              </section>
-            )}
+              </div>
+            </Sec>
           </>
-        )}
-
-        {step === 1 && occupancyErrors.length > 0 && (
-          <section className="bw-card">
-            {occupancyErrors.map((e, i) => (
-              <p key={i} className="flex items-center gap-2 text-sm text-status-danger">
-                <Icon name="warning" size={14} /> {e}
-              </p>
-            ))}
-          </section>
         )}
       </div>
     </SidePanel>
@@ -755,57 +756,60 @@ function AmenitiesSection({
   const [newLabel, setNewLabel] = useState("");
   const needle = q.trim().toLowerCase();
   const visible = needle ? all.filter((a) => a.label.toLowerCase().includes(needle)) : all;
+
+  // group in catalog order (reference: חדר רחצה / בידור / כללי / מטבח / יוקרה)
+  const groups: { name: string; items: AmenityOption[] }[] = [];
+  for (const a of visible) {
+    const name = a.group ?? "מותאם אישית";
+    const g = groups.find((x) => x.name === name);
+    if (g) g.items.push(a);
+    else groups.push({ name, items: [a] });
+  }
+
   return (
-    <section className="bw-card">
-      <CardTitle icon="star" title="איבזור ושירותים" />
-      <div className="flex flex-col gap-3">
-        <input
-          className="bw-fld"
-          placeholder="חיפוש איבזור…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <div className="flex flex-wrap gap-2">
-          {visible.map((a) => {
-            const on = selected.includes(a.id);
-            return (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => onToggle(a.id)}
-                className={`flex min-h-10 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold transition-colors ${
-                  on ? "border-primary bg-primary-050 text-primary" : "border-line bg-surface text-text2 hover:bg-hover"
-                }`}
-              >
-                {on && <Icon name="check" size={14} />}
-                {a.label}
-              </button>
-            );
-          })}
-          {visible.length === 0 && <p className="text-sm text-faint">לא נמצא איבזור תואם.</p>}
-        </div>
-        <div className="flex gap-2">
-          <input
-            className="bw-fld"
-            placeholder="איבזור מותאם אישית…"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-          />
-          <button
-            type="button"
-            className="bw-btn bw-btn-o shrink-0"
-            disabled={!newLabel.trim()}
-            onClick={async () => {
-              await onAdd(newLabel.trim());
-              setNewLabel("");
-            }}
-          >
-            <Icon name="plus" size={14} />
-            הוסף
-          </button>
-        </div>
+    <Sec icon="approve-requests" title="איבזור ושירותים" note={`${selected.length} פריטים נבחרו`}>
+      <div className="rm-search">
+        <Icon name="search" size={19} />
+        <input placeholder="חיפוש איבזור…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-    </section>
+      {groups.map((g) => (
+        <div key={g.name} className="contents">
+          <div className="rm-agrp">{g.name}</div>
+          <div className="rm-achips">
+            {g.items.map((a) => {
+              const on = selected.includes(a.id);
+              return (
+                <button key={a.id} type="button" onClick={() => onToggle(a.id)} className={`rm-achip${on ? " on" : ""}`}>
+                  {a.icon && <Icon name={a.icon as IconName} size={15} />}
+                  {a.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {visible.length === 0 && <p className="rm-hint">לא נמצא איבזור תואם.</p>}
+      <div className="rm-addrow">
+        <input
+          className="rm-fld"
+          placeholder="הוסף איבזור חדש…"
+          value={newLabel}
+          onChange={(e) => setNewLabel(e.target.value)}
+        />
+        <button
+          type="button"
+          className="rm-addbtn"
+          disabled={!newLabel.trim()}
+          onClick={async () => {
+            await onAdd(newLabel.trim());
+            setNewLabel("");
+          }}
+        >
+          <Icon name="plus" size={16} />
+          הוסף
+        </button>
+      </div>
+    </Sec>
   );
 }
 
@@ -855,109 +859,161 @@ function ImagesSection({
     onChange(next);
   };
 
+  const main = images.find((i) => i.is_main) ?? images[0] ?? null;
+
   return (
-    <section className="bw-card">
-      <CardTitle icon="documents" title="תמונות" />
-      <div className="flex flex-col gap-3">
+    <Sec icon="image" title="תמונות" note="JPG, PNG, WEBP · עד 20 תמונות · עד 15MB לתמונה · מומלץ 1600×900">
+      <div className="rm-imgrow">
         <button
           type="button"
           disabled={!roomId || uploading}
           onClick={() => fileRef.current?.click()}
-          className="flex min-h-[96px] flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-line bg-surface p-4 text-sm text-faint hover:border-primary hover:text-primary disabled:opacity-50"
+          className="rm-imgslot"
+          style={main ? { padding: 0, borderStyle: "solid", overflow: "hidden" } : undefined}
         >
-          <Icon name="plus" size={20} />
-          {uploading ? "מעלה…" : "גררו לכאן את התמונה הראשית או לחצו לבחירה"}
-          <span className="text-xs">JPG, PNG, WEBP · עד 20 תמונות · עד 15MB לתמונה · מומלץ 1600×900</span>
+          {main ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={main.url} alt={main.alt_text ?? ""} className="h-full min-h-[140px] w-full object-cover" />
+          ) : (
+            <>
+              <Icon name="plus" size={20} />
+              {uploading ? "מעלה…" : "גררו לכאן את התמונה הראשית או לחצו לבחירה"}
+            </>
+          )}
         </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          multiple
-          hidden
-          onChange={(e) => upload(e.target.files)}
-        />
-        <p className="bw-hint">התמונה הראשית מוצגת באתר ובתוצאות החיפוש.</p>
+        <button
+          type="button"
+          disabled={!roomId || uploading}
+          onClick={() => fileRef.current?.click()}
+          className="rm-imgslot"
+        >
+          <Icon name="plus" size={18} />
+          {uploading ? "מעלה…" : "תמונת גלריה"}
+        </button>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        multiple
+        hidden
+        onChange={(e) => upload(e.target.files)}
+      />
+      {!roomId && <p className="rm-hint">שמרו את שלב 1 כדי לאפשר העלאת תמונות.</p>}
 
-        {images.length > 0 && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {images.map((img, i) => (
-              <div key={img.id} className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={img.url} alt={img.alt_text ?? ""} className="h-32 w-full rounded-lg object-cover" />
-                <input
-                  className="bw-fld"
-                  placeholder="טקסט חלופי (Alt) לתמונה…"
-                  value={img.alt_text ?? ""}
-                  onChange={(e) =>
-                    onChange(images.map((x) => (x.id === img.id ? { ...x, alt_text: e.target.value } : x)))
-                  }
-                />
-                <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${
-                      img.is_main ? "bg-primary-050 text-primary" : "text-text2 hover:bg-hover"
-                    }`}
-                    onClick={() =>
-                      onChange(images.map((x) => ({ ...x, is_main: x.id === img.id })))
-                    }
-                  >
-                    <Icon name="star" size={12} />
-                    {img.is_main ? "תמונה ראשית" : "קבע כראשית"}
-                  </button>
-                  <div className="flex gap-1">
-                    <IconBtn label="הזז ימינה" icon="chevron-right" onClick={() => move(i, -1)} />
-                    <IconBtn label="הזז שמאלה" icon="chevron-left" onClick={() => move(i, 1)} />
-                    <IconBtn
-                      label="מחיקת תמונה"
-                      icon="trash"
-                      onClick={async () => {
-                        const res = await deleteRoomImageAction(img.id);
-                        if (!res.success) return void toast.error(res.error);
-                        onDeleted(img.id);
-                      }}
-                    />
-                  </div>
+      {images.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {images.map((img, i) => (
+            <div key={img.id} className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img.url} alt={img.alt_text ?? ""} className="h-32 w-full rounded-lg object-cover" />
+              <input
+                className="rm-fld"
+                placeholder="טקסט חלופי (Alt) לתמונה…"
+                value={img.alt_text ?? ""}
+                onChange={(e) =>
+                  onChange(images.map((x) => (x.id === img.id ? { ...x, alt_text: e.target.value } : x)))
+                }
+              />
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${
+                    img.is_main ? "bg-primary-050 text-primary" : "text-text2 hover:bg-hover"
+                  }`}
+                  onClick={() => onChange(images.map((x) => ({ ...x, is_main: x.id === img.id })))}
+                >
+                  <Icon name="star" size={12} />
+                  {img.is_main ? "תמונה ראשית" : "קבע כראשית"}
+                </button>
+                <div className="flex gap-1">
+                  <IconBtn label="הזז ימינה" icon="chevron-right" onClick={() => move(i, -1)} />
+                  <IconBtn label="הזז שמאלה" icon="chevron-left" onClick={() => move(i, 1)} />
+                  <IconBtn
+                    label="מחיקת תמונה"
+                    icon="trash"
+                    onClick={async () => {
+                      const res = await deleteRoomImageAction(img.id);
+                      if (!res.success) return void toast.error(res.error);
+                      onDeleted(img.id);
+                    }}
+                  />
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="rm-imgnote">התמונה הראשית מוצגת באתר ובתוצאות החיפוש</div>
+    </Sec>
+  );
+}
+
+// ---------- reference building blocks ----------
+
+// section card: rm-card > rm-ch (icon + title + optional note) > rm-cb
+export function Sec({
+  icon,
+  title,
+  note,
+  children,
+}: {
+  icon: IconName;
+  title: string;
+  note?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rm-card">
+      <div className="rm-ch">
+        <Icon name={icon} size={19} />
+        <span className="rm-ct">{title}</span>
+        {note ? <span className="rm-cd">{note}</span> : null}
       </div>
+      <div className="rm-cb">{children}</div>
     </section>
   );
 }
 
-// ---------- small shared bits ----------
+export function F({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rm-fg">
+      <span className="rm-lbl">
+        {label}
+        {required && <span className="rm-req">*</span>}
+      </span>
+      {children}
+    </div>
+  );
+}
 
-function Stepper({ step, onStep }: { step: 1 | 2 | 3; onStep: (s: 1 | 2 | 3) => void }) {
+function StepsBar({ step, onStep }: { step: 1 | 2 | 3; onStep: (s: 1 | 2 | 3) => void }) {
   const steps: { n: 1 | 2 | 3; label: string }[] = [
     { n: 1, label: "פרטים כלליים" },
     { n: 2, label: "איבזור ותמונות" },
     { n: 3, label: "אתר / SEO" },
   ];
   return (
-    <div className="flex items-center justify-center gap-2 py-1" dir="rtl">
+    <div className="rm-steps" dir="rtl">
       {steps.map((s, i) => (
-        <span key={s.n} className="flex items-center gap-2">
+        <span key={s.n} className="contents">
           <button
             type="button"
             onClick={() => onStep(s.n)}
-            className={`flex min-h-9 items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${
-              step === s.n ? "bg-white/20 text-white" : "text-white/70 hover:text-white"
-            }`}
+            className={`rm-stp${step === s.n ? " on" : step > s.n ? " done" : ""}`}
           >
-            <span
-              className={`grid h-6 w-6 place-items-center rounded-full text-xs font-bold ${
-                step >= s.n ? "bg-white text-primary" : "border border-white/50 text-white/80"
-              }`}
-            >
-              {s.n}
-            </span>
-            {s.label}
+            <span className="rm-n">{step > s.n ? <Icon name="check" size={16} /> : s.n}</span>
+            <span className="rm-l">{s.label}</span>
           </button>
-          {i < steps.length - 1 && <span className="h-px w-6 bg-white/40" />}
+          {i < steps.length - 1 && <span className={`rm-stln${step > s.n ? " done" : ""}`} />}
         </span>
       ))}
     </div>
@@ -969,8 +1025,8 @@ function CopyFromMenu({ current, onCopy }: { current: Lang; onCopy: (src: Lang) 
   const others = ALL_LANGS.filter((l) => l !== current);
   return (
     <span className="relative">
-      <button type="button" className="bw-btn bw-btn-o" onClick={() => setOpen((s) => !s)}>
-        <Icon name="languages" size={14} />
+      <button type="button" className="rm-lnk" onClick={() => setOpen((s) => !s)}>
+        <Icon name="languages" size={17} />
         שכפל משפה אחרת
       </button>
       {open && (
@@ -1008,19 +1064,21 @@ function IconBtn({ label, icon, onClick }: { label: string; icon: "chevron-right
   );
 }
 
-function ToggleCard({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void }) {
+// reference sw-row: bordered row with title/hint + switch
+function SwRow({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-      <div className="min-w-0">
-        <p className="text-sm font-semibold text-ink">{label}</p>
-        <p className="text-xs text-faint">{hint}</p>
+    <div className="rm-swrow">
+      <div className="min-w-0 flex-1">
+        <p className="rm-swt">{label}</p>
+        <p className="rm-swd">{hint}</p>
       </div>
       <Switch checked={checked} onChange={onChange} label={label} />
     </div>
   );
 }
 
-export function StepField({
+// reference numeric stepper: [add][value][remove] — RTL puts + on the right
+export function QtyStep({
   label,
   value,
   onChange,
@@ -1037,21 +1095,18 @@ export function StepField({
 }) {
   const shown = value ?? (nullable ? null : min);
   return (
-    <Field label={label}>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          aria-label={`הפחתת ${label}`}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-line text-text2 hover:bg-hover"
-          onClick={() => onChange(Math.max(min, (shown ?? min) - 1))}
-        >
-          <Icon name="minus" size={14} />
+    <div className="rm-occg">
+      <span className="rm-lbl">{label}</span>
+      <span className="rm-step">
+        <button type="button" aria-label={`הוספת ${label}`} onClick={() => onChange((shown ?? min) + 1)}>
+          <Icon name="plus" size={17} />
         </button>
         <input
-          className="bw-fld text-center"
+          className="rm-v"
           dir="ltr"
           inputMode="numeric"
-          placeholder={nullable ? "טרם הוגדר" : undefined}
+          aria-label={label}
+          placeholder={nullable ? "—" : undefined}
           value={shown ?? ""}
           onChange={(e) => {
             const s = e.target.value.trim();
@@ -1060,60 +1115,115 @@ export function StepField({
             onChange(Number.isFinite(n) ? Math.max(min, n) : nullable ? null : min);
           }}
         />
-        <button
-          type="button"
-          aria-label={`הוספת ${label}`}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-line text-text2 hover:bg-hover"
-          onClick={() => onChange((shown ?? min) + 1)}
-        >
-          <Icon name="plus" size={14} />
+        <button type="button" aria-label={`הפחתת ${label}`} onClick={() => onChange(Math.max(min, (shown ?? min) - 1))}>
+          <Icon name="minus" size={17} />
         </button>
-      </div>
-      {hint ? <p className="mt-1 text-xs text-faint">{hint}</p> : null}
-    </Field>
+      </span>
+      {hint ? <span className="rm-hint">{hint}</span> : null}
+    </div>
   );
 }
 
-function CountedTextarea({
+// rich-text toolbar (reference rtb) — wraps the selection with markdown markers
+function RichTextArea({
   label,
   placeholder,
   value,
   max,
-  rows,
-  hint,
   onChange,
 }: {
   label: string;
   placeholder: string;
   value: string;
   max: number;
-  rows: number;
-  hint?: string;
   onChange: (v: string) => void;
 }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  const wrap = (before: string, after = before) => {
+    const el = ref.current;
+    if (!el) return;
+    const { selectionStart: a, selectionEnd: b } = el;
+    const sel = value.slice(a, b) || "טקסט";
+    onChange(value.slice(0, a) + before + sel + after + value.slice(b));
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(a + before.length, a + before.length + sel.length);
+    });
+  };
+  const linePrefix = (prefix: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const a = el.selectionStart;
+    const lineStart = value.lastIndexOf("\n", a - 1) + 1;
+    onChange(value.slice(0, lineStart) + prefix + value.slice(lineStart));
+    requestAnimationFrame(() => el.focus());
+  };
+
+  const tools: { icon: IconName; title: string; run: () => void }[] = [
+    { icon: "bold", title: "מודגש", run: () => wrap("**") },
+    { icon: "italic", title: "נטוי", run: () => wrap("*") },
+    { icon: "underline", title: "קו תחתון", run: () => wrap("__") },
+  ];
+  const tools2: { icon: IconName; title: string; run: () => void }[] = [
+    { icon: "list", title: "רשימה", run: () => linePrefix("- ") },
+    { icon: "list-ordered", title: "רשימה ממוספרת", run: () => linePrefix("1. ") },
+  ];
+  const tools3: { icon: IconName; title: string; run: () => void }[] = [
+    { icon: "link", title: "קישור", run: () => wrap("[", "](url)") },
+    { icon: "image", title: "תמונה", run: () => wrap("![", "](url)") },
+  ];
+
   return (
-    <Field label={label}>
+    <div className="rm-fg">
+      <span className="rm-lbl">{label}</span>
+      <div className="rm-rtb">
+        {tools.map((t) => (
+          <button key={t.icon} type="button" title={t.title} onClick={t.run}>
+            <Icon name={t.icon} size={17} />
+          </button>
+        ))}
+        <span className="rm-sep" />
+        {tools2.map((t) => (
+          <button key={t.icon} type="button" title={t.title} onClick={t.run}>
+            <Icon name={t.icon} size={17} />
+          </button>
+        ))}
+        <span className="rm-sep" />
+        {tools3.map((t) => (
+          <button key={t.icon} type="button" title={t.title} onClick={t.run}>
+            <Icon name={t.icon} size={17} />
+          </button>
+        ))}
+      </div>
       <textarea
-        className="bw-fld min-h-0 resize-y"
-        style={{ height: "auto" }}
-        rows={rows}
+        ref={ref}
+        className="rm-fld rm-rtxt"
+        rows={5}
+        dir="auto"
         maxLength={max}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
-      <p className="mt-1 flex justify-between text-xs text-faint">
-        <span>{hint ?? ""}</span>
-        <span dir="ltr">{value.length} / {max}</span>
-      </p>
-    </Field>
+      <span className="rm-cnt" dir="rtl">{value.length} / {max}</span>
+    </div>
+  );
+}
+
+function VItem({ ok, okLabel, missLabel }: { ok: boolean; okLabel: string; missLabel: string }) {
+  return (
+    <p className={`rm-vitem ${ok ? "ok" : "w"}`}>
+      <Icon name={ok ? "check-circle" : "warning"} size={17} />
+      {ok ? okLabel : missLabel}
+    </p>
   );
 }
 
 function EffRow({ label, amount, source, currency }: { label: string; amount: number | null; source: string; currency: string }) {
   return (
-    <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-2.5">
-      <span className="text-sm text-ink">{label}</span>
+    <div className="rm-swrow">
+      <span className="rm-swt flex-1">{label}</span>
       <span className="text-sm">
         {amount === null ? <span className="text-status-warning">טרם הוגדר</span> : <strong dir="ltr">{amount} {currency}</strong>}
         <span className="text-xs text-faint"> · {source}</span>
@@ -1134,9 +1244,9 @@ function MoneyField({
   onChange: (v: number | null) => void;
 }) {
   return (
-    <Field label={`${label} (${currency})`}>
+    <F label={`${label} (${currency})`}>
       <input
-        className="bw-fld"
+        className="rm-fld"
         dir="ltr"
         inputMode="decimal"
         placeholder="יורש מהנכס"
@@ -1148,6 +1258,6 @@ function MoneyField({
           onChange(Number.isFinite(n) ? Math.round(n * 100) / 100 : null);
         }}
       />
-    </Field>
+    </F>
   );
 }

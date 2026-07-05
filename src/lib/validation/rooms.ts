@@ -49,6 +49,7 @@ export const roomWizardSchema = z.object({
   max_adults: count,
   max_children: count,
   max_infants: count,
+  min_occupancy: z.number().int().min(1, "תפוסה מינימלית חייבת להיות לפחות 1").max(50).nullable(),
   default_occupancy: z.number().int().min(1).max(50).nullable(),
   included_occupancy: z.number().int().min(1).max(50).nullable(),
 
@@ -67,6 +68,8 @@ export const roomWizardSchema = z.object({
   cribs: count,
 
   amenity_ids: z.array(z.uuid()).max(100),
+  // internal team notes (rooms.notes — approved brief §4)
+  notes: longText.optional().nullable(),
   // only languages present here are written — protects the others from overwrite
   translations: z.partialRecord(z.enum(["he", "en", "ar"]), roomTranslationSchema),
 });
@@ -94,6 +97,20 @@ export const areaSchema = z.object({
   notes: longText.optional().nullable(),
 });
 export type AreaInput = z.infer<typeof areaSchema>;
+
+// Board status popover (approved RoomsAndAreas interaction). "occupied" is
+// derived from reservations and is NOT settable — deliberately absent here.
+export const boardStatusSchema = z.object({
+  room_id: z.uuid(),
+  target: z.enum(["free", "dirty", "cleaning", "blocked", "maintenance"]),
+});
+export type BoardStatusInput = z.infer<typeof boardStatusSchema>;
+
+export const areaStatusSchema = z.object({
+  area_id: z.uuid(),
+  status: z.enum(["ok", "cleaning", "maintenance", "blocked"]),
+});
+export type AreaStatusInput = z.infer<typeof areaStatusSchema>;
 
 export const roomImageMetaSchema = z.object({
   id: z.uuid(),
