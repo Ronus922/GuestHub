@@ -30,6 +30,7 @@ export type CalendarCan = {
   viewReservation: boolean;
   saveCard: boolean;
   revealCard: boolean;
+  chargeCard: boolean;
 };
 
 // ONE open panel at a time — the single source of truth for the booking /
@@ -233,6 +234,7 @@ export function CalendarScreen({
         vatRate={vatRate}
         canSaveCard={can.saveCard}
         canRevealCard={can.revealCard}
+        canChargeCard={can.chargeCard}
       />
       <ClosurePanel
         open={panel?.kind === "closure"}

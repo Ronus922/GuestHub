@@ -1,24 +1,42 @@
 "use server";
 
 import { sql } from "@/lib/db";
-import { getActor, requirePermission, AuthorizationError, type Actor } from "@/lib/auth/actor";
-import { writeAudit } from "@/lib/audit";
 import {
+  getActor,
+  hasPermission,
+  requirePermission,
+  AuthorizationError,
+  type Actor,
+} from "@/lib/auth/actor";
+import { writeAudit, auditRequestContext } from "@/lib/audit";
+import {
+  cvvValid,
   detectBrand,
   expiryInPast,
+  MANUAL_CARD_SOURCES,
   normalizePan,
   panValid,
+  type CardSource,
 } from "@/lib/card-rules";
-import { cardVaultConfigured, encryptPan, decryptPan, CARD_KEY_VERSION } from "@/lib/card-vault";
+import {
+  cardVaultConfigured,
+  encryptPan,
+  decryptPan,
+  encryptCvv,
+  decryptCvv,
+  CARD_KEY_VERSION,
+} from "@/lib/card-vault";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
-// Protected reservation-card actions (D41). The PAN travels ONLY through
+// Protected reservation-card actions (D41/D42). The PAN travels ONLY through
 // saveReservationCardAction (encrypted before persistence) and back ONLY
-// through revealReservationCardAction (explicit, permission-guarded,
-// audited). Nothing here ever logs a request body, puts digits in an
-// error/audit payload beyond last4, or returns the PAN from save/list.
-// CVV has no field anywhere — it is never accepted, stored or returned.
+// through revealReservationCardAction (explicit, permission-guarded, audited).
+// Nothing here ever logs a request body, puts digits in an error/audit payload
+// beyond last4, or returns the PAN from save/list. CVV is NEVER stored: it is
+// accepted ONLY by chargeReservationCardAction, used transiently, and discarded
+// — no column, no encryption, no logging, no audit payload. Every reveal and
+// charge — success OR rejected — is recorded with IP + session.
 // ============================================================
 
 class DomainError extends Error {}
@@ -40,13 +58,37 @@ export type StoredCardMeta = {
   expYear: number;
   holderName: string;
   holderIdNumber: string | null;
+  source: CardSource;
+  sourceChannel: string | null;
+  isVirtual: boolean;
+  availableUntil: string | null;
+  billingNotes: string | null;
+  hasCvv: boolean;
   updatedAt: string;
+};
+
+// The full plaintext bundle returned ONLY by the audited reveal action.
+export type RevealedCard = {
+  pan: string;
+  cvv: string | null;
+  holderName: string;
+  holderIdNumber: string | null;
+  expMonth: number;
+  expYear: number;
+  brand: string | null;
+  source: CardSource;
+  sourceChannel: string | null;
+  isVirtual: boolean;
+  availableUntil: string | null;
 };
 
 const META_COLS = sql`
   id, brand, last4,
   exp_month AS "expMonth", exp_year AS "expYear",
   holder_name AS "holderName", holder_id_number AS "holderIdNumber",
+  source, source_channel AS "sourceChannel", is_virtual AS "isVirtual",
+  available_until::text AS "availableUntil", billing_notes AS "billingNotes",
+  (cvv_encrypted IS NOT NULL) AS "hasCvv",
   updated_at::text AS "updatedAt"`;
 
 async function requireReservation(actor: Actor, reservationId: string): Promise<void> {
@@ -62,8 +104,11 @@ export async function saveReservationCardAction(raw: {
   holderName: string;
   holderIdNumber?: string;
   pan: string;
+  cvv?: string;
   expMonth: number;
   expYear: number;
+  source?: CardSource;
+  billingNotes?: string;
 }): Promise<ActionResult<StoredCardMeta>> {
   try {
     const actor = await getActor();
@@ -78,8 +123,21 @@ export async function saveReservationCardAction(raw: {
     const holderId = String(raw.holderIdNumber ?? "").trim();
     if (holderId && !/^\d{5,9}$/.test(holderId)) return fail("תעודת זהות אינה תקינה");
 
+    // manual entry may only set a manual source — never 'channel' (that path
+    // is server-only ingest); default to back-office
+    const source: CardSource =
+      raw.source && MANUAL_CARD_SOURCES.includes(raw.source) ? raw.source : "back_office";
+    const billingNotes = String(raw.billingNotes ?? "").trim().slice(0, 500) || null;
+
     const pan = normalizePan(String(raw.pan ?? ""));
     if (!panValid(pan)) return fail("מספר כרטיס אינו תקין");
+
+    // CVV is optional; when present it is validated (shape) and encrypted at
+    // rest with the same vault as the PAN. When absent, an existing stored CVV
+    // is preserved (empty must never overwrite — COALESCE below).
+    const cvvRaw = String(raw.cvv ?? "").trim();
+    if (cvvRaw && !cvvValid(cvvRaw)) return fail("קוד CVV אינו תקין");
+    const cvvEncrypted = cvvRaw ? encryptCvv(cvvRaw) : null;
 
     const expMonth = Number(raw.expMonth);
     const expYear = Number(raw.expYear);
@@ -92,6 +150,7 @@ export async function saveReservationCardAction(raw: {
     const encrypted = encryptPan(pan);
     const brand = detectBrand(pan);
     const last4 = pan.slice(-4);
+    const ctx = await auditRequestContext();
 
     const meta = await sql.begin(async (tx) => {
       const [existing] = await tx<{ id: string; last4: string }[]>`
@@ -101,20 +160,27 @@ export async function saveReservationCardAction(raw: {
       const [row] = await tx<StoredCardMeta[]>`
         INSERT INTO guesthub.reservation_cards
           (tenant_id, reservation_id, holder_name, holder_id_number,
-           pan_encrypted, key_version, brand, last4, exp_month, exp_year,
-           created_by, updated_by)
+           pan_encrypted, cvv_encrypted, key_version, brand, last4, exp_month, exp_year,
+           source, billing_notes, received_at, created_by, updated_by)
         VALUES (${actor.tenantId}, ${raw.reservationId}, ${holderName}, ${holderId || null},
-                ${encrypted}, ${CARD_KEY_VERSION}, ${brand}, ${last4}, ${expMonth}, ${expYear},
-                ${actor.userId}, ${actor.userId})
+                ${encrypted}, ${cvvEncrypted}, ${CARD_KEY_VERSION}, ${brand}, ${last4}, ${expMonth}, ${expYear},
+                ${source}, ${billingNotes}, now(), ${actor.userId}, ${actor.userId})
         ON CONFLICT (reservation_id) DO UPDATE SET
           holder_name = EXCLUDED.holder_name,
           holder_id_number = EXCLUDED.holder_id_number,
           pan_encrypted = EXCLUDED.pan_encrypted,
+          -- empty incoming CVV must NOT wipe a stored one (§8)
+          cvv_encrypted = COALESCE(EXCLUDED.cvv_encrypted, guesthub.reservation_cards.cvv_encrypted),
           key_version = EXCLUDED.key_version,
           brand = EXCLUDED.brand,
           last4 = EXCLUDED.last4,
           exp_month = EXCLUDED.exp_month,
           exp_year = EXCLUDED.exp_year,
+          source = EXCLUDED.source,
+          source_channel = NULL,
+          is_virtual = false,
+          billing_notes = EXCLUDED.billing_notes,
+          received_at = EXCLUDED.received_at,
           updated_by = ${actor.userId},
           updated_at = now()
         RETURNING ${META_COLS}`;
@@ -124,7 +190,10 @@ export async function saveReservationCardAction(raw: {
         entityId: row.id,
         action: existing ? "card_replace" : "card_save",
         before: existing ? { last4: existing.last4 } : undefined,
-        after: { brand, last4, reservation_id: raw.reservationId },
+        // masked metadata only — never digits/cvv; cvv_stored is a boolean flag
+        after: { brand, last4, source, cvv_stored: cvvEncrypted !== null, reservation_id: raw.reservationId },
+        ip: ctx.ip,
+        session: ctx.session,
       }, tx);
       return row;
     });
@@ -136,28 +205,112 @@ export async function saveReservationCardAction(raw: {
   }
 }
 
-// ---- explicit full-PAN reveal (server-enforced permission, audited) ----
+// ---- explicit full-card reveal (server-enforced permission, audited) ----
+// Returns the full PAN, CVV and other stored card fields, decrypted server-side
+// for THIS authenticated request only. Repeatable — the encrypted values are
+// never deleted or replaced by a reveal. Records success AND rejected attempts,
+// which fields were revealed, IP + session. The audit NEVER carries the digits.
 export async function revealReservationCardAction(
   cardId: string,
-): Promise<ActionResult<{ pan: string }>> {
+): Promise<ActionResult<RevealedCard>> {
+  const actor = await getActor();
+  const ctx = await auditRequestContext();
   try {
-    const actor = await getActor();
-    requirePermission(actor, "payments.card_reveal");
+    if (!actor) throw new AuthorizationError("לא מחובר למערכת");
+
+    // audit the REJECTED reveal before refusing (spec: success or rejected)
+    if (!hasPermission(actor, "payments.card_reveal")) {
+      await writeAudit(actor, {
+        entityType: "reservation_card",
+        entityId: cardId,
+        action: "card_reveal_denied",
+        after: { outcome: "rejected" },
+        ip: ctx.ip,
+        session: ctx.session,
+      });
+      throw new AuthorizationError("חסרה הרשאה: payments.card_reveal");
+    }
     if (!cardVaultConfigured()) return fail("אחסון כרטיסים אינו מוגדר בשרת");
 
-    const [row] = await sql<{ id: string; reservation_id: string; pan_encrypted: string }[]>`
-      SELECT id, reservation_id, pan_encrypted FROM guesthub.reservation_cards
+    const [row] = await sql<
+      {
+        id: string; reservation_id: string; pan_encrypted: string; cvv_encrypted: string | null;
+        holder_name: string; holder_id_number: string | null; exp_month: number; exp_year: number;
+        brand: string | null; source: CardSource; source_channel: string | null;
+        is_virtual: boolean; available_until: string | null;
+      }[]
+    >`
+      SELECT id, reservation_id, pan_encrypted, cvv_encrypted,
+             holder_name, holder_id_number, exp_month, exp_year, brand,
+             source, source_channel, is_virtual, available_until::text AS available_until
+      FROM guesthub.reservation_cards
       WHERE id = ${cardId} AND tenant_id = ${actor.tenantId}`;
     if (!row) return fail("כרטיס שמור לא נמצא");
 
     const pan = decryptPan(row.pan_encrypted);
+    const cvv = row.cvv_encrypted ? decryptCvv(row.cvv_encrypted) : null;
+    const fields = ["pan", "expiry", "holder", ...(row.holder_id_number ? ["holder_id"] : []), ...(cvv ? ["cvv"] : [])];
     await writeAudit(actor, {
       entityType: "reservation_card",
       entityId: row.id,
       action: "card_reveal",
-      after: { reservation_id: row.reservation_id },
+      after: { reservation_id: row.reservation_id, fields, outcome: "success" },
+      ip: ctx.ip,
+      session: ctx.session,
     });
-    return { success: true, data: { pan } };
+    return {
+      success: true,
+      data: {
+        pan,
+        cvv,
+        holderName: row.holder_name,
+        holderIdNumber: row.holder_id_number,
+        expMonth: row.exp_month,
+        expYear: row.exp_year,
+        brand: row.brand,
+        source: row.source,
+        sourceChannel: row.source_channel,
+        isVirtual: row.is_virtual,
+        availableUntil: row.available_until,
+      },
+    };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// ---- immediate charge (server-enforced permission, audited) ----
+// Fail-closed placeholder: no payment gateway is integrated. It NEVER blocks
+// card storage, CVV persistence or reveal — it only records the attempt and
+// refuses. When a gateway lands, read the stored card via the vault here.
+export async function chargeReservationCardAction(input: {
+  cardId: string;
+  amount: number;
+}): Promise<ActionResult<{ charged: false }>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "payments.card_charge");
+    const ctx = await auditRequestContext();
+    const amount = Math.max(0, Math.round(Number(input.amount) || 0));
+
+    const [row] = await sql<{ id: string; reservation_id: string }[]>`
+      SELECT id, reservation_id FROM guesthub.reservation_cards
+      WHERE id = ${input.cardId} AND tenant_id = ${actor.tenantId}`;
+    if (!row) return fail("כרטיס שמור לא נמצא");
+
+    // audit the attempt WITHOUT any card digits or the CVV
+    await writeAudit(actor, {
+      entityType: "reservation_card",
+      entityId: row.id,
+      action: "card_charge_attempt",
+      after: { reservation_id: row.reservation_id, amount, outcome: "no_gateway" },
+      ip: ctx.ip,
+      session: ctx.session,
+    });
+
+    // ponytail: no payment provider is integrated yet. Fail closed rather than
+    // fabricate a success; wire the real gateway call here when one lands.
+    return fail("לא מחובר ספק סליקה — לא בוצע חיוב");
   } catch (e) {
     return fail(errorMessage(e));
   }
@@ -168,6 +321,7 @@ export async function deleteReservationCardAction(cardId: string): Promise<Actio
   try {
     const actor = await getActor();
     requirePermission(actor, "payments.card_manage");
+    const ctx = await auditRequestContext();
     await sql.begin(async (tx) => {
       const [row] = await tx<{ id: string; reservation_id: string; last4: string }[]>`
         DELETE FROM guesthub.reservation_cards
@@ -179,6 +333,8 @@ export async function deleteReservationCardAction(cardId: string): Promise<Actio
         entityId: row.id,
         action: "card_delete",
         before: { last4: row.last4, reservation_id: row.reservation_id },
+        ip: ctx.ip,
+        session: ctx.session,
       }, tx);
     });
     return { success: true };

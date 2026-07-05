@@ -48,6 +48,7 @@ export function EditReservationPanel({
   vatRate,
   canSaveCard,
   canRevealCard,
+  canChargeCard,
 }: {
   reservationId: string | null;
   onClose: () => void;
@@ -59,6 +60,7 @@ export function EditReservationPanel({
   vatRate: number;
   canSaveCard: boolean;
   canRevealCard: boolean;
+  canChargeCard: boolean;
 }) {
   const [detail, setDetail] = useState<ReservationDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -255,8 +257,11 @@ export function EditReservationPanel({
         holderName: cc.holder.trim(),
         holderIdNumber: cc.idNum || undefined,
         pan: normalizePan(cc.number),
+        cvv: cc.cvv || undefined,
         expMonth: exp.month,
         expYear: exp.year,
+        source: cc.source,
+        billingNotes: cc.billingNotes.trim() || undefined,
       });
       if (res.success && res.data) {
         // raw values are cleared; only masked metadata remains client-side
@@ -583,6 +588,8 @@ export function EditReservationPanel({
                   card={cardMeta}
                   canReveal={canRevealCard}
                   canManage={canSaveCard && canEdit}
+                  canCharge={canChargeCard}
+                  chargeAmount={Math.max(0, total - paidAfter)}
                   onReplace={() => setReplacingCard(true)}
                   onDelete={deleteCard}
                   deleting={cardBusy}
@@ -783,6 +790,9 @@ const ACTIVITY_LABEL: Record<string, string> = {
   card_save: "כרטיס אשראי נשמר",
   card_replace: "כרטיס אשראי הוחלף",
   card_reveal: "מספר כרטיס נחשף",
+  card_reveal_denied: "ניסיון חשיפת כרטיס נדחה",
+  card_charge_attempt: "ניסיון סליקת כרטיס",
+  card_import_channel: "כרטיס יובא מערוץ",
   card_delete: "כרטיס אשראי הוסר",
 };
 

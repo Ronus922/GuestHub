@@ -25,13 +25,43 @@ assert.equal(ix.dragActivated(7, 0), true, "past the threshold horizontally = dr
 assert.equal(ix.dragActivated(0, -7), true, "past the threshold vertically = drag");
 assert.equal(ix.dragActivated(-4, 5), false, "diagonal jitter under threshold = click");
 
-// ---- click vs drag outcomes (§6/§7) ----
-assert.equal(ix.dragEndAction("move", false), "open", "plain click on the card opens the FULL editor");
-assert.equal(ix.dragEndAction("move", true), "commit", "an activated drag commits, never opens");
+// ---- click vs drag/resize outcomes (§3/§4). A plain click opens the side
+// panel; an activated move/resize of an EXISTING reservation CONFIRMS (never
+// opens, never persists yet); an empty-cell drag commits to the new-booking
+// panel. ----
+assert.equal(ix.dragEndAction("move", false), "open", "1. plain click on the card opens the side panel");
+assert.equal(ix.dragEndAction("move", true), "confirm", "2/3. an activated room/date move confirms, never opens");
 assert.equal(ix.dragEndAction("resize", false), "none", "clicking the resize handle NEVER opens");
-assert.equal(ix.dragEndAction("resize", true), "commit");
+assert.equal(ix.dragEndAction("resize", true), "confirm", "4/5. a resize extend/reduce confirms, never opens");
 assert.equal(ix.dragEndAction("create", false), "none", "a plain click on an empty cell never opens anything");
-assert.equal(ix.dragEndAction("create", true), "commit", "an activated cell drag hands off to the booking window");
+assert.equal(ix.dragEndAction("create", true), "commit", "9. an activated cell drag hands off to the new-booking panel");
+
+// ---- operation classification for the confirmation dialog (§2) ----
+const RA = "room-a", RB = "room-b";
+assert.equal(
+  ix.describeReschedule({ roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" },
+    { roomId: RB, checkIn: "2026-08-01", checkOut: "2026-08-03" }), "room",
+  "same dates, different room → שינוי חדר");
+assert.equal(
+  ix.describeReschedule({ roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" },
+    { roomId: RA, checkIn: "2026-08-02", checkOut: "2026-08-04" }), "dates",
+  "same nights, shifted → שינוי תאריכים");
+assert.equal(
+  ix.describeReschedule({ roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" },
+    { roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-05" }), "extend",
+  "later checkout → הארכת שהות");
+assert.equal(
+  ix.describeReschedule({ roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-05" },
+    { roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" }), "shorten",
+  "earlier checkout → קיצור שהות");
+assert.equal(
+  ix.describeReschedule({ roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" },
+    { roomId: RB, checkIn: "2026-08-02", checkOut: "2026-08-05" }), "room_dates",
+  "room + dates → שינוי חדר ותאריכים");
+assert.equal(
+  ix.describeReschedule({ roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" },
+    { roomId: RA, checkIn: "2026-08-01", checkOut: "2026-08-03" }), "none",
+  "no change → none");
 
 // ---- hover tooltip timing (§2): deliberate open, shorter close grace ----
 assert.ok(ix.TOOLTIP_OPEN_MS >= 200 && ix.TOOLTIP_OPEN_MS <= 800, "tooltip opens after a short, deliberate delay");
@@ -135,7 +165,7 @@ const { readFileSync, existsSync } = await import("node:fs");
 // comments stripped — rules are about code, not the explanatory notes
 const src = (p) => readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
-// tooltip is informational only — zero write paths
+// tooltip is informational only — zero write paths, and NON-INTERACTIVE (D44)
 const tooltip = src("src/app/(dashboard)/calendar/ReservationTooltip.tsx");
 assert.ok(!tooltip.includes("אישור הזמנה"), "tooltip has NO confirmation button");
 assert.ok(!/updateReservationAction|createReservationAction|cancelReservationAction|Action\(/.test(tooltip),
@@ -144,7 +174,15 @@ assert.ok(!/useTransition|toast\./.test(tooltip), "tooltip has no mutation/loadi
 assert.ok(/role="tooltip"/.test(tooltip), "accessibility role preserved");
 assert.ok(/draft/.test(tooltip), "pending/draft badge stays as informational content");
 assert.ok(/room_count > 1/.test(tooltip), "multi-room information preserved");
-assert.ok(/onEdit\(stay\.reservation_id\)/.test(tooltip), "עריכה only hands off to the editor");
+// D44 §1/§7: the tooltip cannot be a pointer/click/drag target at all
+const cssPop = readFileSync("src/app/styles/calendar.css", "utf8")
+  .match(/\.cb-pop\s*\{[^}]*\}/);
+assert.ok(cssPop && /pointer-events:\s*none/.test(cssPop[0]), "1/7. tooltip is pointer-events:none");
+assert.ok(!/onPointerDown|onPointerUp|onClick|onPointerEnter|onPointerLeave/.test(tooltip),
+  "7. tooltip binds no pointer/click handlers (cannot capture or become a drop target)");
+assert.ok(!/onEdit|cb-pbtn/.test(tooltip), "7. tooltip has NO interactive edit button");
+assert.ok(/const GAP/.test(tooltip) && /anchor\.top - h - GAP/.test(tooltip) && /anchor\.bottom \+ GAP/.test(tooltip),
+  "2. tooltip is offset OUTSIDE the pill (above with a gap, flipping below)");
 
 // booking + edit flows live in the shared SidePanel shell — no full screen
 assert.ok(!existsSync("src/components/ui/FullWindow.tsx"), "FullWindow was removed");
@@ -165,5 +203,63 @@ assert.ok(!/FullWindow/.test(screen), "the calendar screen never opens a full-sc
 // the panel stacks above every calendar layer (tooltip 60, date picker 80)
 const sidePanel = src("src/components/ui/SidePanel.tsx");
 assert.ok(/z-\[90\]/.test(sidePanel), "side panel renders above tooltip/context-menu/date-picker");
+
+// ============================================================
+// D44 deterministic interaction lifecycle + tooltip, asserted on the sources
+// (the real browser sequence is exercised by scripts/verify-calendar-browser)
+// ============================================================
+const grid = src("src/app/(dashboard)/calendar/CalendarGrid.tsx");
+// a completed move/resize opens the confirmation dialog and does NOT persist at
+// pointer-up — the reschedule action is reachable ONLY from the dialog's confirm
+// handler (runReschedule), never directly from openConfirm.
+assert.ok(/action === "confirm"/.test(grid) && /openConfirm\(s\)/.test(grid),
+  "a confirmed drag/resize opens the confirmation flow, not the panel");
+assert.ok(/setConfirmMove\(/.test(grid) && /MoveConfirmDialog/.test(grid),
+  "6. a completed drag/resize renders the floating confirmation dialog");
+const openConfirmBody = grid.match(/const openConfirm = useCallback\(([\s\S]*?)\n  \);/);
+assert.ok(openConfirmBody && !/rescheduleReservationRoomAction/.test(openConfirmBody[1]),
+  "8/18. openConfirm NEVER persists — it only proposes; the server runs on confirm");
+assert.ok(/const runReschedule =[\s\S]*?rescheduleReservationRoomAction\(/.test(grid),
+  "8/18. persistence happens only in runReschedule (the אישור handler)");
+// deterministic lifecycle (D44) — an explicit phase model, NOT a one-shot flag
+assert.ok(/phaseRef = useRef<[\s\S]*?"awaiting_confirmation"/.test(grid),
+  "3. an explicit interaction phase model exists (idle→pressed→dragging/resizing→awaiting_confirmation)");
+assert.ok(/phaseRef\.current = s\.mode === "resize" \? "resizing" : "dragging"/.test(grid),
+  "3. crossing the threshold records dragging/resizing");
+// 4/13/14: the post-drag synthetic click is swallowed in the CAPTURE phase,
+// tied to the pointer id (not a timeout), before any handler can open the editor
+assert.ok(/suppressClickRef = useRef<number \| null>/.test(grid),
+  "4/13. the completed-drag marker is the pointer id (deterministic, not a boolean+timeout)");
+assert.ok(/suppressClickRef\.current = e\.pointerId/.test(grid) && !/setTimeout\(\(\) => \(suppressClickRef/.test(grid),
+  "4. the marker is set on the activated pointer-up and NOT reset on a timeout");
+assert.ok(/onBodyClickCapture[\s\S]*?stopPropagation\(\)[\s\S]*?preventDefault\(\)/.test(grid),
+  "4/14. a capture-phase suppressor consumes the synthetic click and blocks bubbling");
+assert.ok(/onClickCapture=\{onBodyClickCapture\}/.test(grid),
+  "14. the capture handler is bound on the grid body so parents cannot reopen the editor");
+const openEditorBody = grid.match(/const openEditor = useCallback\(([\s\S]*?)\n  \);/);
+assert.ok(openEditorBody &&
+  /suppressClickRef\.current !== null/.test(openEditorBody[1]) &&
+  /phaseRef\.current === "awaiting_confirmation"/.test(openEditorBody[1]),
+  "6–12. openEditor opens ONLY on a genuine click — never mid/after a drag or while confirming");
+// tooltip hides on pointer-down and never shows during drag/confirm
+assert.ok(/const onBarPointerDown[\s\S]*?phaseRef\.current = "pressed"[\s\S]*?setTip\(null\)/.test(grid),
+  "3. pointer-down on a reservation hides the tooltip immediately");
+assert.ok(/const onBarHoverStart[\s\S]*?phaseRef\.current !== "idle"[\s\S]*?return/.test(grid),
+  "4. the tooltip never reopens during a drag/resize or pending confirmation");
+// 17: empty-cell drag still opens the new-booking panel
+assert.ok(/onCellPointerUp[\s\S]*?onNewBooking\(/.test(grid),
+  "17. an empty-cell drag still opens the new-reservation panel");
+// the tooltip is rendered non-interactively (only target + statusLabel props)
+assert.ok(/<ReservationTooltip target=\{tip\} statusLabel=\{statusLabel\} \/>/.test(grid),
+  "1. the tooltip is rendered with no interaction callbacks");
+
+// the dialog: confirm persists, reject is a pure no-op, Escape/outside reject
+const dialog = src("src/app/(dashboard)/calendar/MoveConfirmDialog.tsx");
+assert.ok(/previewRescheduleAction\(/.test(dialog), "the dialog shows a server-computed pre-commit price");
+assert.ok(/onConfirm\b/.test(dialog) && /onReject\b/.test(dialog), "אישור / דחייה actions");
+assert.ok(!/rescheduleReservationRoomAction/.test(dialog),
+  "7. rejecting/mounting the dialog never persists (no commit action inside it)");
+assert.ok(/e\.key === "Escape"/.test(dialog) && /onReject\(\)/.test(dialog), "Escape rejects");
+assert.ok(/onClick=\{onReject\}/.test(dialog), "outside (backdrop) click rejects");
 
 console.log("check-calendar-ui: all interaction/geometry rules hold ✔");

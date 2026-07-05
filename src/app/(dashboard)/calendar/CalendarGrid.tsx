@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
@@ -25,6 +25,7 @@ import {
   cellRangeGeometry,
   createActivated,
   createRangeTarget,
+  describeReschedule,
   dragActivated,
   dragEndAction,
   moveTarget,
@@ -37,6 +38,7 @@ import {
   type DragMode,
 } from "@/lib/calendar-interactions";
 import { rescheduleReservationRoomAction } from "@/app/(dashboard)/reservations/actions";
+import { MoveConfirmDialog, type MoveProposal } from "./MoveConfirmDialog";
 import { deleteClosureAction } from "./actions";
 import type {
   CalendarClosure,
@@ -131,8 +133,24 @@ export function CalendarGrid({
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
   const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
+  // a completed move/resize proposes a change and waits for confirmation (§2/§3);
+  // NOTHING is persisted until "אישור". null = no pending confirmation.
+  const [confirmMove, setConfirmMove] = useState<MoveProposal | null>(null);
+  const [committing, startCommit] = useTransition();
 
   const sessionRef = useRef<DragSession | null>(null);
+  // ---- deterministic reservation-interaction lifecycle (D44) ----
+  // phaseRef: where the current pointer sequence is. openEditor may run ONLY
+  // from a genuine click (phase "pressed", threshold not crossed) — never from
+  // "dragging"/"resizing"/"awaiting_confirmation". A ref (not state) so the
+  // per-pointer path never re-renders and reads are synchronous.
+  const phaseRef = useRef<
+    "idle" | "pressed" | "dragging" | "resizing" | "awaiting_confirmation"
+  >("idle");
+  // completed-drag marker: the pointerId whose ONE synthetic click must be
+  // swallowed. Set on an activated pointer-up, consumed by the matching
+  // capture-phase click, or cleared by the next pointer-down (never a timeout).
+  const suppressClickRef = useRef<number | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const ghostRef = useRef<HTMLDivElement | null>(null);
   const gnRef = useRef<HTMLSpanElement | null>(null);
@@ -305,8 +323,19 @@ export function CalendarGrid({
     return () => window.removeEventListener("keydown", onKey);
   }, [dragUi, endDrag]);
 
-  const commitDrag = useCallback(
-    async (s: DragSession) => {
+  const roomLabelOf = useCallback(
+    (roomId: string): string => {
+      const r = data.rooms.find((x) => x.id === roomId);
+      return r ? (r.name || r.room_number || "—") : "—";
+    },
+    [data.rooms],
+  );
+
+  // A completed move/resize does NOT persist — it computes the proposed change,
+  // runs the client-side availability PREVIEW (the server re-validates on
+  // confirm), and opens the floating confirmation dialog (§2/§3).
+  const openConfirm = useCallback(
+    (s: DragSession) => {
       const stay = s.stay;
       if (!stay) return;
       const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
@@ -331,36 +360,105 @@ export function CalendarGrid({
         // cell's minimum stay is rejected client-side too (§1)
         if (changed && co < stay.check_out && nightsBetween(ci, co) < s.minNights) {
           toast.error("קיצור מתחת לשהות המינימלית אינו אפשרי");
+          phaseRef.current = "idle"; // no dialog opened → interaction is done
           return;
         }
       }
-      if (!changed) return;
-      if (previewInvalid(stay, targetRoom, ci, co)) {
-        toast.error("היעד אינו זמין — הפעולה בוטלה");
+      if (!changed) {
+        phaseRef.current = "idle";
         return;
       }
-      setPending((p) => new Set(p).add(stay.rr_id));
-      const res = await rescheduleReservationRoomAction({
+      if (previewInvalid(stay, targetRoom, ci, co)) {
+        toast.error("היעד אינו זמין — הפעולה בוטלה");
+        phaseRef.current = "idle";
+        return;
+      }
+      const op = describeReschedule(
+        { roomId: stay.room_id, checkIn: stay.check_in, checkOut: stay.check_out },
+        { roomId: targetRoom.id, checkIn: ci, checkOut: co },
+      );
+      if (op === "none") {
+        phaseRef.current = "idle";
+        return;
+      }
+      // the dialog opens (§5): clear tooltip state, keep the edit panel closed
+      phaseRef.current = "awaiting_confirmation";
+      cancelTipTimers();
+      setTip(null);
+      setConfirmMove({
         rrId: stay.rr_id,
+        op,
+        guestName: stay.guest_name,
+        reservationNumber: stay.reservation_number,
         targetRoomId: targetRoom.id,
-        checkIn: ci,
-        checkOut: co,
+        before: {
+          roomLabel: roomLabelOf(stay.room_id),
+          checkIn: stay.check_in,
+          checkOut: stay.check_out,
+          nights: nightsBetween(stay.check_in, stay.check_out),
+          total: stay.total_price,
+        },
+        after: {
+          roomLabel: roomLabelOf(targetRoom.id),
+          checkIn: ci,
+          checkOut: co,
+          nights: nightsBetween(ci, co),
+        },
       });
-      setPending((p) => {
-        const n = new Set(p);
-        n.delete(stay.rr_id);
-        return n;
-      });
-      if (res.success) toast.success(s.mode === "move" ? "ההזמנה הועברה" : "התאריכים עודכנו");
-      else toast.error(res.error);
     },
-    [data.rooms, previewInvalid],
+    [data.rooms, previewInvalid, roomLabelOf, cancelTipTimers],
+  );
+
+  // close the confirmation dialog and return the interaction to idle so the
+  // NEXT genuine click may open the editor and the next drag confirms again (§5)
+  const closeConfirm = useCallback(() => {
+    setConfirmMove(null);
+    phaseRef.current = "idle";
+  }, []);
+
+  // "אישור" — persist atomically via the server action (it re-validates
+  // availability, overlaps, closures, restrictions, re-prices, updates
+  // inventory and queues Channex), then close and stay on the calendar.
+  const runReschedule = useCallback(
+    (p: MoveProposal) => {
+      startCommit(async () => {
+        setPending((prev) => new Set(prev).add(p.rrId));
+        const res = await rescheduleReservationRoomAction({
+          rrId: p.rrId,
+          targetRoomId: p.targetRoomId,
+          checkIn: p.after.checkIn,
+          checkOut: p.after.checkOut,
+        });
+        setPending((prev) => {
+          const n = new Set(prev);
+          n.delete(p.rrId);
+          return n;
+        });
+        setConfirmMove(null);
+        phaseRef.current = "idle"; // dialog closed → next click may open the editor
+        if (res.success) toast.success(p.op === "room" ? "ההזמנה הועברה" : "התאריכים עודכנו");
+        else toast.error(res.error);
+      });
+    },
+    [],
   );
 
   // ---- click → the FULL edit window, directly (§3; hover shows the
   // tooltip, clicking edits) ----
   const openEditor = useCallback(
     (stay: CalendarStay) => {
+      // opens ONLY for a genuine click: never mid-drag/resize, never while a
+      // completed drag's synthetic click is still pending, never while a move
+      // confirmation is open (§4). Belt-and-suspenders — the capture-phase
+      // suppressor below already neutralises the post-drag synthetic click.
+      if (
+        suppressClickRef.current !== null ||
+        phaseRef.current === "dragging" ||
+        phaseRef.current === "resizing" ||
+        phaseRef.current === "awaiting_confirmation"
+      ) {
+        return;
+      }
       if (!can.viewReservation) return;
       cancelTipTimers();
       setTip(null);
@@ -372,19 +470,33 @@ export function CalendarGrid({
     [can.viewReservation, cancelTipTimers, closeCellTip, onOpenReservation],
   );
 
+  // Capture-phase click suppressor on the grid body (§4). Exactly one synthetic
+  // click follows a completed drag/resize; consume it here — in the CAPTURE
+  // phase, before it can reach any pill / row / cell / grid handler — so no
+  // parent can reopen the editor through bubbling. Tied to the pointer sequence
+  // (the marker), not a timeout, so it is reliable on every repeated drag.
+  const onBodyClickCapture = useCallback((e: React.MouseEvent) => {
+    if (suppressClickRef.current !== null) {
+      suppressClickRef.current = null;
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, []);
+
   // ---- hover tooltip wiring (§2): open after a deliberate delay, close
   // with a short grace so the pointer can travel into the tooltip ----
   const onBarHoverStart = useCallback(
     (e: React.PointerEvent, stay: CalendarStay, room: CalendarRoom) => {
       if (e.pointerType !== "mouse" || !can.viewReservation) return;
-      if (sessionRef.current) return; // never during a drag/resize/selection
+      // never open the tooltip during a drag/resize or a pending confirmation
+      if (sessionRef.current || phaseRef.current !== "idle") return;
       const el = e.currentTarget as HTMLElement;
       if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
       tipCloseTimer.current = null;
       if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
       tipOpenTimer.current = setTimeout(() => {
         tipOpenTimer.current = null;
-        if (sessionRef.current || !el.isConnected) return;
+        if (sessionRef.current || phaseRef.current !== "idle" || !el.isConnected) return;
         const r = el.getBoundingClientRect();
         setTip({ stay, room, anchor: { x: r.left + r.width / 2, top: r.top, bottom: r.bottom } });
       }, TOOLTIP_OPEN_MS);
@@ -400,11 +512,6 @@ export function CalendarGrid({
       tipCloseTimer.current = null;
       setTip(null);
     }, TOOLTIP_CLOSE_MS);
-  }, []);
-
-  const keepTipAlive = useCallback(() => {
-    if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
-    tipCloseTimer.current = null;
   }, []);
 
   // hovering the resize handle never opens the tooltip (§2)
@@ -461,7 +568,13 @@ export function CalendarGrid({
       if (!canDragCard(can.edit, pending.has(stay.rr_id))) return;
       if (e.button !== 0) return;
       e.preventDefault();
-      cancelTipOpen();
+      // a new pointer sequence starts: clear any stale completed-drag marker
+      // (the previous sequence's synthetic click has already fired by now) and
+      // hide the tooltip immediately so it can never sit over the pill (§1)
+      suppressClickRef.current = null;
+      phaseRef.current = "pressed";
+      cancelTipTimers();
+      setTip(null);
       setMenu(null);
       setClosurePop(null);
       const body = bodyRef.current;
@@ -487,7 +600,7 @@ export function CalendarGrid({
         raf: 0,
       };
     },
-    [can.edit, pending, data.days, data.rooms, cellRate, cancelTipOpen],
+    [can.edit, pending, data.days, data.rooms, cellRate, cancelTipTimers],
   );
 
   const onBarPointerMove = useCallback(
@@ -499,7 +612,9 @@ export function CalendarGrid({
       if (!s.activated) {
         if (!dragActivated(e.clientX - s.startX, e.clientY - s.startY)) return;
         s.activated = true;
-        // crossing the threshold closes the tooltip and never opens it (§2)
+        // threshold crossed → this is a drag/resize, not a click. Record the
+        // phase, close the tooltip and never reopen it during the gesture (§1/§2)
+        phaseRef.current = s.mode === "resize" ? "resizing" : "dragging";
         cancelTipTimers();
         setTip(null);
         setDragUi({ mode: s.mode, rrId: s.stay?.rr_id ?? "" });
@@ -522,14 +637,29 @@ export function CalendarGrid({
       if (!s || e.pointerId !== s.pointerId) return;
       const action = dragEndAction(s.mode, s.activated);
       endDrag();
-      if (action === "open") openEditor(stay);
-      else if (action === "commit") void commitDrag(s);
+      if (action === "open") {
+        // genuine click (threshold never crossed) → open the side panel
+        phaseRef.current = "idle";
+        openEditor(stay);
+      } else if (action === "confirm") {
+        // completed drag/resize → mark the pending synthetic click for this
+        // pointer (consumed by onBodyClickCapture) and open the confirmation
+        // dialog. NEVER open the editor, NEVER persist here (§3/§4). The marker
+        // is NOT cleared on a timeout — only by the matching click or next press.
+        suppressClickRef.current = e.pointerId;
+        phaseRef.current = "awaiting_confirmation";
+        openConfirm(s);
+      } else {
+        // resize-handle click with no movement, etc. → back to idle
+        phaseRef.current = "idle";
+      }
     },
-    [endDrag, openEditor, commitDrag],
+    [endDrag, openEditor, openConfirm],
   );
 
   const onBarPointerCancel = useCallback(() => {
     if (sessionRef.current) endDrag();
+    if (phaseRef.current !== "awaiting_confirmation") phaseRef.current = "idle";
   }, [endDrag]);
 
   // ---- empty-cell range selection → prefilled new booking (§4).
@@ -804,7 +934,10 @@ export function CalendarGrid({
             )}
 
             {/* ===== room rows + drag ghost layer ===== */}
-            <div ref={bodyRef} className="relative">
+            {/* onClickCapture swallows the ONE synthetic click that follows a
+                completed drag/resize, in the capture phase, before any child or
+                parent handler can open the editor (§4) */}
+            <div ref={bodyRef} className="relative" onClickCapture={onBodyClickCapture}>
               {data.rooms.map((room, roomIndex) => (
                 <RoomRow
                   key={room.id}
@@ -958,29 +1091,27 @@ export function CalendarGrid({
         </div>
       )}
 
-      {/* ===== reservation hover tooltip (reference .pop / Tooltip.png) ===== */}
-      <ReservationTooltip
-        target={tip}
-        statusLabel={statusLabel}
-        onClose={() => {
-          cancelTipTimers();
-          setTip(null);
-        }}
-        onEdit={(reservationId) => {
-          cancelTipTimers();
-          setTip(null);
-          onOpenReservation(reservationId);
-        }}
-        onKeepAlive={keepTipAlive}
-        onRelease={scheduleTipClose}
-      />
+      {/* ===== reservation hover tooltip — informational, pointer-events:none,
+           positioned OUTSIDE the pill; never an interaction target (§1) ===== */}
+      <ReservationTooltip target={tip} statusLabel={statusLabel} />
 
-      {/* ===== empty-cell commercial (rate) hover tooltip (§2) ===== */}
+      {/* ===== empty-cell commercial (rate) hover tooltip (§2, #11) ===== */}
       <RateCellTooltip
         target={cellTip}
         onKeepAlive={keepCellTipAlive}
         onRelease={scheduleCellTipClose}
       />
+
+      {/* ===== drag/resize confirmation (§2/§3): persists only on אישור ===== */}
+      {confirmMove && (
+        <MoveConfirmDialog
+          proposal={confirmMove}
+          currency={data.currency}
+          committing={committing}
+          onConfirm={() => runReschedule(confirmMove)}
+          onReject={closeConfirm}
+        />
+      )}
     </div>
   );
 }

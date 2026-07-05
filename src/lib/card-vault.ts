@@ -39,3 +39,14 @@ export function decryptPan(ciphertext: string): string {
   decipher.setAuthTag(Buffer.from(tag, "base64"));
   return Buffer.concat([decipher.update(Buffer.from(data, "base64")), decipher.final()]).toString("utf8");
 }
+
+// CVV uses the SAME authenticated envelope + key as the PAN (a short secret
+// string). Kept as named wrappers so call sites read clearly and a future
+// CVV-specific policy (e.g. a separate key) has one place to change.
+export function encryptCvv(cvv: string): string {
+  return encryptPan(cvv);
+}
+
+export function decryptCvv(ciphertext: string): string {
+  return decryptPan(ciphertext);
+}
