@@ -258,3 +258,94 @@ export function redactPayload(value: unknown): unknown {
   }
   return value;
 }
+
+// ---- Channel card extraction (§Z reconciliation, D42) ----
+// PURE parse of a raw inbound booking payload into normalized card fields. NO
+// crypto, NO storage — encryption + persistence live server-only in
+// src/lib/channel/card-ingest.ts. This runs on the RAW payload BEFORE
+// redactPayload() strips card fields from the stored/logged revision, so the
+// digits are lifted into the encrypted vault and never survive in a log.
+// The CVV (when a channel sends one, e.g. virtual cards) is carried here only
+// to be encrypted at rest by the ingest — it is never persisted plaintext (D43).
+export type ChannelCardData = {
+  holderName: string | null;
+  pan: string | null;
+  cvv: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+  brand: string | null;
+  isVirtual: boolean;
+  availableFrom: string | null; // DateOnly, channel-supplied availability window
+  availableUntil: string | null;
+};
+
+function firstString(obj: Record<string, unknown>, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number") return String(v);
+  }
+  return null;
+}
+
+// Accepts "MM/YY", "MM/YYYY", "MM-YY", "YYYY-MM" and explicit month/year fields.
+function parseChannelExpiry(
+  obj: Record<string, unknown>,
+): { month: number | null; year: number | null } {
+  const explicitM = Number(obj.exp_month ?? obj.expiry_month ?? obj.expiration_month);
+  const explicitY = Number(obj.exp_year ?? obj.expiry_year ?? obj.expiration_year);
+  if (Number.isInteger(explicitM) && Number.isInteger(explicitY)) {
+    return { month: explicitM, year: explicitY < 100 ? 2000 + explicitY : explicitY };
+  }
+  const raw = firstString(obj, ["expiration_date", "expiry_date", "expire_date", "expiration", "expiry"]);
+  if (!raw) return { month: null, year: null };
+  const parts = raw.split(/[/\-.]/).map((s) => Number(s.trim()));
+  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) return { month: null, year: null };
+  let [a, b] = parts;
+  // YYYY-MM vs MM/YY(YY)
+  if (a > 12) [a, b] = [b, a];
+  const month = a;
+  const year = b < 100 ? 2000 + b : b;
+  if (month < 1 || month > 12) return { month: null, year: null };
+  return { month, year };
+}
+
+export function extractChannelCard(payload: unknown): ChannelCardData | null {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as Record<string, unknown>;
+  // the card object may sit under several common keys
+  const card =
+    [root.credit_card, root.card, root.payment_card, root.guarantee, root.payment].find(
+      (v) => v && typeof v === "object",
+    ) ?? root;
+  const obj = card as Record<string, unknown>;
+
+  const pan = firstString(obj, ["card_number", "number", "pan", "cardNumber"]);
+  const cvv = firstString(obj, ["cvv", "cvc", "security_code", "card_cvv", "cvv2"]);
+  const holderName = firstString(obj, ["cardholder_name", "holder_name", "name", "cardHolder"]);
+  const brand = firstString(obj, ["card_type", "brand", "type", "scheme"]);
+  const { month, year } = parseChannelExpiry(obj);
+  const availableFrom = firstString(obj, ["available_from", "activation_date", "valid_from"]);
+  const availableUntil = firstString(obj, [
+    "available_until",
+    "expiration",
+    "valid_until",
+    "deadline",
+  ]);
+  const virtualRaw = obj.is_virtual ?? obj.virtual_card ?? obj.virtual ?? obj.vcc;
+  const isVirtual = virtualRaw === true || virtualRaw === "true" || virtualRaw === 1;
+
+  // nothing card-like present → no card (not an empty stub)
+  if (!pan && !holderName && month === null) return null;
+  return {
+    holderName,
+    pan,
+    cvv,
+    expMonth: month,
+    expYear: year,
+    brand,
+    isVirtual,
+    availableFrom,
+    availableUntil,
+  };
+}

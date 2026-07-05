@@ -6,6 +6,7 @@ import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
 import { eachDay, nightsBetween, rangesOverlap, type DateOnly } from "@/lib/dates";
+import type { CardSource } from "@/lib/card-rules";
 import {
   checkRoomAvailability,
   lockRooms,
@@ -701,6 +702,97 @@ export async function rescheduleReservationRoomAction(raw: {
   }
 }
 
+// ---- pre-commit price preview for the drag/resize confirmation dialog ----
+// Runs the SAME validation + pricing as the reschedule commit but persists
+// NOTHING (the transaction is rolled back). Returns the current and proposed
+// reservation totals so the floating dialog can show an accurate price
+// difference before the user confirms. The commit re-validates server-side.
+export async function previewRescheduleAction(raw: {
+  rrId: string;
+  targetRoomId: string;
+  checkIn: DateOnly;
+  checkOut: DateOnly;
+}): Promise<ActionResult<{ currentTotal: number; proposedTotal: number }>> {
+  const ROLLBACK = Symbol("preview-rollback");
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "reservations.edit");
+    const parsed = rescheduleSchema.safeParse(raw);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
+    const input = parsed.data;
+
+    let result: { currentTotal: number; proposedTotal: number } | null = null;
+    try {
+      await sql.begin(async (tx) => {
+        const [rr] = await tx<
+          {
+            id: string; reservation_id: string; room_id: string | null;
+            adults: number; children: number; infants: number;
+            rate_per_night: string; is_manual_rate: boolean; status: string;
+            price_total: string;
+          }[]
+        >`
+          SELECT rr.id, rr.reservation_id, rr.room_id,
+                 rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
+                 res.status, rr.price_total
+          FROM guesthub.reservation_rooms rr
+          JOIN guesthub.reservations res ON res.id = rr.reservation_id
+          WHERE rr.id = ${input.rrId} AND rr.tenant_id = ${actor.tenantId}`;
+        if (!rr) throw new DomainError("הזמנה לא נמצאה");
+        if (rr.status === "cancelled") throw new DomainError("הזמנה מבוטלת — לא ניתן להזיז");
+
+        const isManual = rr.is_manual_rate;
+        const sameRoom = rr.room_id === input.targetRoomId;
+        const priced = await validateAndPriceStays(
+          tx,
+          actor.tenantId,
+          [{
+            rrId: rr.id,
+            roomId: input.targetRoomId,
+            checkIn: input.checkIn,
+            checkOut: input.checkOut,
+            adults: rr.adults,
+            children: rr.children,
+            infants: rr.infants,
+            ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
+          }],
+          {
+            excludeRrIds: [rr.id],
+            enforceAvailability: true,
+            enforceRestrictions: isBlocking(rr.status),
+            snapshotByRr: !isManual && sameRoom
+              ? new Map([[rr.id, { ratePerNight: Number(rr.rate_per_night) }]])
+              : undefined,
+          },
+        );
+
+        const [agg] = await tx<{ others: number; discount: number; extra: number; current_total: number }[]>`
+          SELECT
+            COALESCE(SUM(rr.price_total) FILTER (WHERE rr.id <> ${rr.id}), 0)::float8 AS others,
+            res.discount_amount::float8 AS discount,
+            res.extra_charges::float8 AS extra,
+            res.total_price::float8 AS current_total
+          FROM guesthub.reservations res
+          JOIN guesthub.reservation_rooms rr ON rr.reservation_id = res.id
+          WHERE res.id = ${rr.reservation_id} AND res.tenant_id = ${actor.tenantId}
+          GROUP BY res.discount_amount, res.extra_charges, res.total_price`;
+
+        const proposedRooms = (agg?.others ?? 0) + priced[0].priceTotal;
+        const proposedTotal = Math.max(0, proposedRooms - (agg?.discount ?? 0) + (agg?.extra ?? 0));
+        result = { currentTotal: agg?.current_total ?? 0, proposedTotal };
+        throw ROLLBACK; // never persist a preview
+      });
+    } catch (e) {
+      if (e !== ROLLBACK) throw e;
+    }
+
+    if (!result) return fail("חישוב המחיר נכשל");
+    return { success: true, data: result };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
 // ---------------------------------------------------------------
 // reads for the booking / edit panels
 // ---------------------------------------------------------------
@@ -902,6 +994,12 @@ export type ReservationDetail = {
     expMonth: number;
     expYear: number;
     holderName: string;
+    source: CardSource;
+    sourceChannel: string | null;
+    isVirtual: boolean;
+    availableUntil: string | null;
+    billingNotes: string | null;
+    hasCvv: boolean;
     updatedAt: string;
   } | null;
 };
@@ -971,9 +1069,14 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
     // masked metadata only — no decryption on the normal read path (D41)
     const [card] = await sql<
       { id: string; brand: string | null; last4: string; exp_month: number; exp_year: number;
-        holder_name: string; updated_at: string }[]
+        holder_name: string; source: string; source_channel: string | null; is_virtual: boolean;
+        available_until: string | null; billing_notes: string | null; has_cvv: boolean; updated_at: string }[]
     >`
-      SELECT id, brand, last4, exp_month, exp_year, holder_name, updated_at::text AS updated_at
+      SELECT id, brand, last4, exp_month, exp_year, holder_name,
+             source, source_channel, is_virtual,
+             available_until::text AS available_until, billing_notes,
+             (cvv_encrypted IS NOT NULL) AS has_cvv,
+             updated_at::text AS updated_at
       FROM guesthub.reservation_cards
       WHERE reservation_id = ${id} AND tenant_id = ${actor.tenantId}`;
 
@@ -1040,6 +1143,12 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
               expMonth: card.exp_month,
               expYear: card.exp_year,
               holderName: card.holder_name,
+              source: card.source as CardSource,
+              sourceChannel: card.source_channel,
+              isVirtual: card.is_virtual,
+              availableUntil: card.available_until,
+              billingNotes: card.billing_notes,
+              hasCvv: card.has_cvv,
               updatedAt: card.updated_at,
             }
           : null,

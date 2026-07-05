@@ -5,43 +5,62 @@ import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import {
   BRAND_LABEL,
+  CARD_SOURCE_LABEL,
+  MANUAL_CARD_SOURCES,
+  cvvValid,
   expiryInPast,
   formatCardNumber,
+  formatCvv,
   formatExpiry,
+  maskedCvv,
   maskedPan,
   normalizePan,
   panValid,
   parseExpiry,
   type CardBrand,
+  type CardSource,
 } from "@/lib/card-rules";
 import {
+  chargeReservationCardAction,
   revealReservationCardAction,
+  type RevealedCard,
   type StoredCardMeta,
 } from "@/app/(dashboard)/reservations/card-actions";
 
 // פרטי כרטיס אשראי (reference .ccbox) — the ENTRY form + the saved-card box.
 //
-// SECURITY (D41): the PAN is sent ONLY through the dedicated guarded save
-// action (saveReservationCardAction — encrypted server-side, AES-256-GCM),
-// and read back ONLY via the explicit, permission-guarded, audited reveal.
-// CVV was removed from the form entirely: with no live gateway there is no
-// immediate authorization, and CVV must never be persisted or recoverable,
-// so it is not collected at all. "סלוק עכשיו" stays permanently disabled
-// (no gateway → no charge, no fabricated success); saving a card never
-// changes payment status or amounts.
+// SECURITY (D41/D42/D43): PAN and CVV are sent ONLY through the dedicated
+// guarded save action (encrypted server-side, AES-256-GCM), and read back ONLY
+// via the explicit, permission-guarded, audited reveal. The saved card is
+// masked by default (PAN → •••• last4, CVV → •••); the full values appear only
+// after an explicit "הצגת פרטי אשראי" and are dropped from client state on hide,
+// card change, unmount and after a short inactivity window. Saving never charges.
 
 export type CardDraft = {
   holder: string;
   number: string;
   exp: string;
+  cvv: string;
   idNum: string;
+  source: CardSource;
+  billingNotes: string;
 };
 
-export const EMPTY_CARD: CardDraft = { holder: "", number: "", exp: "", idNum: "" };
+export const EMPTY_CARD: CardDraft = {
+  holder: "",
+  number: "",
+  exp: "",
+  cvv: "",
+  idNum: "",
+  source: "back_office",
+  billingNotes: "",
+};
 
-// "empty" → nothing entered; "valid" → save-ready; "invalid" → block submit
+// "empty" → nothing entered; "valid" → save-ready; "invalid" → block submit.
+// source/billingNotes never make a card "non-empty" on their own.
 export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
-  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.idNum.trim()) return "empty";
+  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.cvv.trim() && !c.idNum.trim())
+    return "empty";
   const pan = normalizePan(c.number);
   const exp = parseExpiry(c.exp);
   const ok =
@@ -49,6 +68,7 @@ export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
     panValid(pan) &&
     exp !== null &&
     !expiryInPast(exp.month, exp.year, new Date()) &&
+    (!c.cvv || cvvValid(c.cvv)) &&
     (!c.idNum || /^\d{5,9}$/.test(c.idNum));
   return ok ? "valid" : "invalid";
 }
@@ -67,6 +87,7 @@ export function CardFields({
   const exp = parseExpiry(value.exp);
   const expiryBad =
     value.exp.length > 0 && (exp === null || expiryInPast(exp.month, exp.year, new Date()));
+  const cvvBad = value.cvv.length > 0 && !cvvValid(value.cvv);
   const idBad = value.idNum.length > 0 && !/^\d{5,9}$/.test(value.idNum);
 
   return (
@@ -123,6 +144,23 @@ export function CardFields({
         </label>
         <label className="bw-fg">
           <span className="bw-lbl">
+            CVV <span className="bw-opt">(3–4 ספרות)</span>
+          </span>
+          <input
+            className={`bw-fld ${cvvBad ? "bad" : ""}`}
+            dir="ltr"
+            inputMode="numeric"
+            placeholder="•••"
+            autoComplete="off"
+            maxLength={4}
+            value={value.cvv}
+            onChange={(e) => onChange({ ...value, cvv: formatCvv(e.target.value) })}
+          />
+        </label>
+      </div>
+      <div className="bw-grid2 mt-4">
+        <label className="bw-fg">
+          <span className="bw-lbl">
             תעודת זהות <span className="bw-opt">(לא חובה)</span>
           </span>
           <input
@@ -136,13 +174,40 @@ export function CardFields({
             onChange={(e) => onChange({ ...value, idNum: e.target.value.replace(/\D/g, "") })}
           />
         </label>
+        <label className="bw-fg">
+          <span className="bw-lbl">מקור פרטי הכרטיס</span>
+          <select
+            className="bw-fld"
+            value={value.source}
+            onChange={(e) => onChange({ ...value, source: e.target.value as CardSource })}
+          >
+            {MANUAL_CARD_SOURCES.map((s) => (
+              <option key={s} value={s}>
+                {CARD_SOURCE_LABEL[s]}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
+      <label className="bw-fg mt-4 block">
+        <span className="bw-lbl">
+          הערות חיוב <span className="bw-opt">(לא חובה)</span>
+        </span>
+        <input
+          className="bw-fld"
+          placeholder="הערה לחיוב"
+          autoComplete="off"
+          maxLength={500}
+          value={value.billingNotes}
+          onChange={(e) => onChange({ ...value, billingNotes: e.target.value })}
+        />
+      </label>
       <div className="bw-cc-foot">
         <button
           type="button"
           className="bw-btn-charge"
           disabled
-          title="לא מחובר ספק סליקה — אין אפשרות לחיוב מתוך המערכת"
+          title="שמור את הכרטיס תחילה — הסליקה מתבצעת על כרטיס שמור"
         >
           <Icon name="finance" size={18} />
           סלוק עכשיו · ₪{Math.round(Math.max(0, chargeAmount)).toLocaleString()}
@@ -156,17 +221,40 @@ export function CardFields({
   );
 }
 
-// how long a revealed number stays on screen without interaction
+// how long revealed details stay on screen without interaction
 const REVEAL_TIMEOUT_MS = 45_000;
 
-// Saved-card box: masked by default; the full number appears ONLY after an
-// explicit, permission-guarded reveal request, and is re-masked on hide,
-// on card change, on unmount (panel close) and after a short inactivity
-// window. The revealed value is never logged or toasted.
+function CopyBtn({ value, label }: { value: string; label: string }) {
+  return (
+    <button
+      type="button"
+      className="bw-btn bw-btn-ghost"
+      title={`העתקת ${label}`}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          toast.success(`${label} הועתק`);
+        } catch {
+          toast.error("העתקה נכשלה");
+        }
+      }}
+    >
+      <Icon name="copy" size={14} />
+    </button>
+  );
+}
+
+// Saved-card box: masked by default (PAN + CVV); the full details appear ONLY
+// after an explicit, permission-guarded, audited reveal ("הצגת פרטי אשראי"),
+// are re-masked on hide/close/card-change/inactivity, and are never logged or
+// toasted. The encrypted values on the server are untouched by a reveal, so it
+// is repeatable. Charging (fail-closed placeholder) is separate.
 export function StoredCardBox({
   card,
   canReveal,
   canManage,
+  canCharge = false,
+  chargeAmount = 0,
   onReplace,
   onDelete,
   deleting,
@@ -174,22 +262,31 @@ export function StoredCardBox({
   card: StoredCardMeta | Omit<StoredCardMeta, "holderIdNumber">;
   canReveal: boolean;
   canManage: boolean;
+  canCharge?: boolean;
+  chargeAmount?: number;
   onReplace?: () => void;
   onDelete?: () => void;
   deleting?: boolean;
 }) {
-  const [pan, setPan] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<RevealedCard | null>(null);
   const [revealing, startReveal] = useTransition();
+  const [charging, startCharge] = useTransition();
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hide = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = null;
-    setPan(null);
+    setRevealed(null);
   };
 
-  // re-mask when switching card/reservation or unmounting (panel close)
-  useEffect(() => hide, [card.id]);
+  // re-mask + drop decrypted values when switching card/reservation or unmounting
+  useEffect(() => {
+    return () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+      setRevealed(null);
+    };
+  }, [card.id]);
 
   const reveal = () =>
     startReveal(async () => {
@@ -198,12 +295,26 @@ export function StoredCardBox({
         toast.error(res.success ? "כרטיס לא נמצא" : res.error);
         return;
       }
-      setPan(res.data.pan);
+      setRevealed(res.data);
       if (hideTimer.current) clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(() => setPan(null), REVEAL_TIMEOUT_MS);
+      hideTimer.current = setTimeout(() => setRevealed(null), REVEAL_TIMEOUT_MS);
+    });
+
+  const charge = () =>
+    startCharge(async () => {
+      const res = await chargeReservationCardAction({ cardId: card.id, amount: chargeAmount });
+      if (!res.success) toast.error(res.error);
+      else toast.success("החיוב בוצע");
     });
 
   const brand = (card.brand ?? "other") as CardBrand;
+  const source = card.source as CardSource;
+  const sourceLabel =
+    source === "channel"
+      ? card.sourceChannel || CARD_SOURCE_LABEL.channel
+      : CARD_SOURCE_LABEL[source] ?? source;
+  const expMasked = `${String(card.expMonth).padStart(2, "0")}/${String(card.expYear % 100).padStart(2, "0")}`;
+
   return (
     <div className="bw-ccbox">
       <div className="bw-cc-top">
@@ -213,28 +324,88 @@ export function StoredCardBox({
           {BRAND_LABEL[brand] ?? card.brand} · עודכן {card.updatedAt.slice(0, 10)}
         </span>
       </div>
+
+      {/* default masked line: brand · masked PAN (last4 visible) · expiry · CVV */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <span className="text-lg font-extrabold tracking-wider text-ink" dir="ltr">
-          {pan ? formatCardNumber(pan) : maskedPan(card.last4)}
+          {revealed ? formatCardNumber(revealed.pan) : maskedPan(card.last4)}
         </span>
         <span className="text-sm font-semibold text-muted" dir="ltr">
-          {String(card.expMonth).padStart(2, "0")}/{String(card.expYear % 100).padStart(2, "0")}
+          {revealed ? `${String(revealed.expMonth).padStart(2, "0")}/${revealed.expYear}` : expMasked}
+        </span>
+        <span className="text-sm font-semibold text-muted" dir="ltr">
+          CVV {revealed ? (revealed.cvv ?? "—") : card.hasCvv ? maskedCvv() : "—"}
         </span>
         <span className="text-sm font-semibold text-muted">{card.holderName}</span>
       </div>
+
+      {/* channel / source / virtual metadata */}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
+        <span className="rounded bg-black/5 px-2 py-0.5">מקור: {sourceLabel}</span>
+        {card.isVirtual && (
+          <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-800">כרטיס וירטואלי</span>
+        )}
+        {card.availableUntil && <span>זמין עד {card.availableUntil.slice(0, 10)}</span>}
+        {card.billingNotes && <span className="truncate">· {card.billingNotes}</span>}
+      </div>
+
+      {/* full revealed details + copy affordances */}
+      {revealed && (
+        <div className="mt-3 grid grid-cols-1 gap-2 rounded-lg bg-black/[0.03] p-3 text-sm sm:grid-cols-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted">מספר כרטיס</span>
+            <span className="flex items-center gap-1">
+              <span dir="ltr" className="font-bold">{formatCardNumber(revealed.pan)}</span>
+              <CopyBtn value={revealed.pan} label="מספר כרטיס" />
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted">תוקף</span>
+            <span className="flex items-center gap-1">
+              <span dir="ltr" className="font-bold">
+                {String(revealed.expMonth).padStart(2, "0")}/{revealed.expYear}
+              </span>
+              <CopyBtn value={`${String(revealed.expMonth).padStart(2, "0")}/${revealed.expYear}`} label="תוקף" />
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted">CVV</span>
+            <span className="flex items-center gap-1">
+              <span dir="ltr" className="font-bold">{revealed.cvv ?? "—"}</span>
+              {revealed.cvv && <CopyBtn value={revealed.cvv} label="CVV" />}
+            </span>
+          </div>
+          {revealed.holderIdNumber && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-muted">ת״ז בעל הכרטיס</span>
+              <span className="flex items-center gap-1">
+                <span dir="ltr" className="font-bold">{revealed.holderIdNumber}</span>
+                <CopyBtn value={revealed.holderIdNumber} label="תעודת זהות" />
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="bw-cc-foot">
         {canReveal &&
-          (pan ? (
+          (revealed ? (
             <button type="button" className="bw-btn bw-btn-o" onClick={hide}>
               <Icon name="circle-slash" size={15} />
-              הסתר
+              הסתרת פרטי אשראי
             </button>
           ) : (
             <button type="button" className="bw-btn bw-btn-o" disabled={revealing} onClick={reveal}>
               <Icon name="search" size={15} />
-              {revealing ? "טוען…" : "הצג מספר מלא"}
+              {revealing ? "טוען…" : "הצגת פרטי אשראי"}
             </button>
           ))}
+        {canCharge && (
+          <button type="button" className="bw-btn bw-btn-o" disabled={charging} onClick={charge}>
+            <Icon name="finance" size={15} />
+            {charging ? "מחייב…" : `סליקה · ₪${Math.round(Math.max(0, chargeAmount)).toLocaleString()}`}
+          </button>
+        )}
         {canManage && onReplace && (
           <button type="button" className="bw-btn bw-btn-ghost" onClick={onReplace}>
             <Icon name="refresh" size={15} />

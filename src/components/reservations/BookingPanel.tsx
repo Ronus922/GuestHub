@@ -253,8 +253,11 @@ export function BookingPanel({
           holderName: cc.holder.trim(),
           holderIdNumber: cc.idNum || undefined,
           pan: normalizePan(cc.number),
+          cvv: cc.cvv || undefined,
           expMonth: exp.month,
           expYear: exp.year,
+          source: cc.source,
+          billingNotes: cc.billingNotes.trim() || undefined,
         });
         if (!saved.success) toast.error(`ההזמנה נוצרה, אך שמירת הכרטיס נכשלה: ${saved.error}`);
       }

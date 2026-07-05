@@ -34,10 +34,39 @@ export function createActivated(dx: number, dy: number, threshold = DRAG_THRESHO
 
 // What a pointer-up means. A plain click (never activated) on the card body
 // OPENS the reservation editor; the resize handle and empty cells never
-// open on click; an activated drag commits. Click-vs-drag rule (§F/§3).
-export function dragEndAction(mode: DragMode, activated: boolean): "open" | "commit" | "none" {
+// open on click; an activated drag/resize does NOT persist and does NOT open
+// the editor — it asks for confirmation ("confirm"); an empty-cell create drag
+// commits straight to the new-booking panel ("commit"). Click-vs-drag (§F/§3/§4).
+export function dragEndAction(
+  mode: DragMode,
+  activated: boolean,
+): "open" | "confirm" | "commit" | "none" {
   if (!activated) return mode === "move" ? "open" : "none";
-  return "commit";
+  // move/resize of an EXISTING reservation → floating confirmation, never persist yet
+  if (mode === "move" || mode === "resize") return "confirm";
+  return "commit"; // empty-cell create → new-reservation panel
+}
+
+// The five operations a move/resize can represent (§2). Pure: derives the
+// operation purely from before/after so the pill, the dialog and the server
+// agree. "none" means nothing actually changed.
+export type RescheduleOp = "room" | "dates" | "extend" | "shorten" | "room_dates" | "none";
+
+export function describeReschedule(
+  before: { roomId: string; checkIn: DateOnly; checkOut: DateOnly },
+  after: { roomId: string; checkIn: DateOnly; checkOut: DateOnly },
+): RescheduleOp {
+  const roomChanged = before.roomId !== after.roomId;
+  const datesChanged = before.checkIn !== after.checkIn || before.checkOut !== after.checkOut;
+  if (!roomChanged && !datesChanged) return "none";
+  if (roomChanged && datesChanged) return "room_dates";
+  if (roomChanged) return "room";
+  // dates only — extend/shorten by night count, else a same-length shift
+  const beforeNights = nightsBetween(before.checkIn, before.checkOut);
+  const afterNights = nightsBetween(after.checkIn, after.checkOut);
+  if (afterNights > beforeNights) return "extend";
+  if (afterNights < beforeNights) return "shorten";
+  return "dates";
 }
 
 // RTL day snapping: dragging LEFT means LATER dates, so the day delta is
