@@ -46,7 +46,7 @@ import type {
   CalendarRoom,
   CalendarStay,
 } from "./types";
-import type { BookingPrefill } from "@/components/reservations/BookingPanel";
+import type { NewReservationPrefill } from "@/components/reservations/NewReservationProvider";
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
@@ -111,7 +111,7 @@ export function CalendarGrid({
   statusLabel: Map<string, string>;
   can: CalendarCan;
   onOpenReservation: (id: string) => void;
-  onNewBooking: (prefill: BookingPrefill) => void;
+  onNewBooking: (prefill: NewReservationPrefill) => void;
   onNewClosure: (prefill: ClosurePrefill) => void;
 }) {
   const router = useRouter();
@@ -746,7 +746,7 @@ export function CalendarGrid({
         toast.error("הטווח המסומן אינו זמין");
         return;
       }
-      onNewBooking({ roomId: room.id, checkIn: t.ci, checkOut: t.co });
+      onNewBooking({ roomId: room.id, checkIn: t.ci, checkOut: t.co, source: "calendar_drag" });
     },
     [endDrag, data.rooms, rangeInvalid, onNewBooking],
   );
@@ -781,7 +781,12 @@ export function CalendarGrid({
 
   const onCellDouble = useCallback(
     (roomId: string, date: DateOnly, minNights: number) => {
-      onNewBooking({ roomId, checkIn: date, checkOut: addDays(date, Math.max(1, minNights)) });
+      onNewBooking({
+        roomId,
+        checkIn: date,
+        checkOut: addDays(date, Math.max(1, minNights)),
+        source: "calendar_double_click",
+      });
     },
     [onNewBooking],
   );
@@ -1022,7 +1027,12 @@ export function CalendarGrid({
               type="button"
               className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-ink hover:bg-hover"
               onClick={() => {
-                onNewBooking({ roomId: menu.roomId, checkIn: menu.date, checkOut: addDays(menu.date, 1) });
+                onNewBooking({
+                  roomId: menu.roomId,
+                  checkIn: menu.date,
+                  checkOut: addDays(menu.date, 1),
+                  source: "calendar_context",
+                });
                 setMenu(null);
               }}
             >

@@ -5,10 +5,12 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { NAV_SECTIONS, type NavItem } from "./nav-items";
 import { useActor, usePermission } from "@/components/providers/TenantProvider";
+import { useNewReservation } from "@/components/reservations/NewReservationProvider";
 import { logoutAction } from "@/lib/auth/actions";
 
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const actor = useActor();
+  const { openNewReservation, canCreate } = useNewReservation();
   const initial = (actor.fullName ?? actor.username).trim().charAt(0) || "G";
 
   return (
@@ -30,16 +32,21 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         )}
       </div>
 
-      {/* CTA */}
-      <div className="px-3 pb-2">
-        <button
-          type="button"
-          className={`btn btn-primary w-full ${collapsed ? "px-0" : ""}`}
-        >
-          <Icon name="plus" size={18} />
-          {!collapsed && "הזמנה חדשה"}
-        </button>
-      </div>
+      {/* CTA — global new-reservation entry point (D48): opens the shared
+          BookingPanel over the current page from any dashboard route */}
+      {canCreate && (
+        <div className="px-3 pb-2">
+          <button
+            type="button"
+            className={`btn btn-primary w-full ${collapsed ? "px-0" : ""}`}
+            title="הזמנה חדשה"
+            onClick={() => openNewReservation({ source: "global_sidebar" })}
+          >
+            <Icon name="plus" size={18} />
+            {!collapsed && "הזמנה חדשה"}
+          </button>
+        </div>
+      )}
 
       {/* ניווט */}
       <nav className="thin-scroll flex-1 overflow-y-auto px-3 py-2">
