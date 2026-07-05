@@ -242,4 +242,85 @@ assert.ok(/writeAudit/.test(settingsActions), "VAT change is audited");
 assert.ok(!/total_price|paid_amount|balance/.test(settingsActions),
   "changing the VAT setting never touches reservation totals");
 
+// ============================================================
+// D46: manual card entry always available; live charge fails closed behind a
+// gateway seam; a SEPARATE audited action records externally-collected payments
+// (never described, or executed, as a GuestHub charge).
+// ============================================================
+const gatewaySrc = src("src/lib/payments/gateway.ts");
+assert.ok(/getPaymentGateway\(\): PaymentGateway \| null/.test(gatewaySrc),
+  "gateway seam exposes getPaymentGateway(): PaymentGateway | null");
+assert.ok(/return null;/.test(gatewaySrc), "no PSP wired yet — getPaymentGateway returns null");
+assert.ok(/NO_GATEWAY_MESSAGE/.test(gatewaySrc), "a no-provider message is defined for the UI/action");
+
+// charge routes through the seam and fails closed — never fabricates a success
+assert.ok(/getPaymentGateway\(\)/.test(cardActions), "charge consults the gateway seam");
+const chargeFn = cardActions.match(/chargeReservationCardAction[\s\S]*?export async function recordExternalPaymentAction/);
+assert.ok(chargeFn && /return fail\(NO_GATEWAY_MESSAGE\)/.test(chargeFn[0]),
+  "charge fails closed with the no-provider message");
+assert.ok(chargeFn && !/success:\s*true/.test(chargeFn[0]),
+  "charge never returns success while no gateway exists");
+
+// external-payment recorder: guarded, confirmation-gated, audited as EXTERNAL
+assert.ok(/export async function recordExternalPaymentAction/.test(cardActions),
+  "a separate external-payment recorder exists");
+const recFn = cardActions.match(/recordExternalPaymentAction[\s\S]*?export async function deleteReservationCardAction/);
+assert.ok(recFn && /requirePermission\(actor, "payments\.card_charge"\)/.test(recFn[0]),
+  "recording an external payment is permission-guarded");
+assert.ok(recFn && /if \(!input\.confirmed\)/.test(recFn[0]),
+  "recording requires explicit staff confirmation that money was collected");
+assert.ok(recFn && /INSERT INTO guesthub\.payments/.test(recFn[0]) && /reference/.test(recFn[0]),
+  "the payment is recorded with amount + method + reference");
+assert.ok(recFn && /UPDATE guesthub\.reservations[\s\S]*?paid_amount/.test(recFn[0]),
+  "paid/balance move forward only inside the guarded, confirmed action");
+assert.ok(recFn && /payment_external_record/.test(recFn[0]) && /recorded_external/.test(recFn[0]),
+  "it is audited as an EXTERNAL record, never as a GuestHub charge");
+
+// BookingPanel: manual card entry is NOT gated on the payment method (D46)
+assert.ok(!/method === "credit_card"/.test(booking),
+  "new-reservation card entry is no longer hidden behind method === credit_card");
+assert.ok(/הוסף כרטיס אשראי/.test(booking), "an always-available add-card affordance is present");
+
+// StoredCardBox: live charge visible-but-disabled + no-provider text; the
+// external-payment recorder is confirmation-gated
+assert.ok(/const NO_GATEWAY_MESSAGE = "לא מוגדר ספק סליקה פעיל"/.test(cardFields),
+  "the no-provider message is shown by the charge control");
+assert.ok(/disabled\s+onClick={charge}/.test(cardFields),
+  "the live-charge button is rendered disabled");
+assert.ok(/recordExternalPaymentAction/.test(cardFields) && /רישום תשלום שבוצע חיצונית/.test(cardFields),
+  "the saved-card box offers the honestly-labelled external-payment recorder");
+assert.ok(/confirmed: true/.test(cardFields) && /payConfirm/.test(cardFields),
+  "recording requires an explicit in-UI confirmation step");
+
+// ============================================================
+// D47: the one-character input bug. The side-panel shell must NOT re-run its
+// key/focus effect on every render — owners pass a fresh onClose closure each
+// render, so listing it in the deps made panelRef.focus() steal focus off the
+// field after a single keystroke. The effect must depend on [open] alone and
+// read the latest onClose from a ref.
+// ============================================================
+const sidePanel = src("src/components/ui/SidePanel.tsx");
+assert.ok(/onCloseRef\.current = onClose/.test(sidePanel),
+  "SidePanel keeps the latest onClose in a ref (stable dep)");
+assert.ok(/\},\s*\[open\]\);/.test(sidePanel),
+  "the SidePanel key/focus effect depends on [open] alone");
+assert.ok(!/\[open,\s*onClose\]/.test(sidePanel),
+  "onClose is NOT an effect dep — it would re-run focus() and steal focus every keystroke");
+assert.ok(/panelRef\.current\?\.focus\(\)/.test(sidePanel),
+  "the panel still receives focus on open (focus trap / a11y preserved)");
+
+// D47: card inputs stay strings with numeric keyboards, patched via a FUNCTIONAL
+// updater so a keystroke can never clobber the previous draft.
+assert.ok(!/type="number"/.test(cardFields),
+  "no card field uses type=number");
+assert.ok(/onChange: \(updater: \(prev: CardDraft\) => CardDraft\) => void/.test(cardFields),
+  "CardFields.onChange is a functional-updater contract");
+assert.ok(/onChange\(\(p\) => \(\{ \.\.\.p,/.test(cardFields),
+  "card fields patch the previous draft, never a captured snapshot");
+assert.ok(/number: formatCardNumber\(e\.target\.value\)/.test(cardFields),
+  "PAN stays a string via formatCardNumber — never Number()/parseInt()");
+for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
+  assert.ok(/onChange={setCc}/.test(s), `${name}: card draft uses the state setter directly (functional-update capable)`);
+}
+
 console.log("check-cards: all card/VAT security and validation rules hold ✔");

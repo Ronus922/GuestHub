@@ -26,6 +26,7 @@ import {
   decryptCvv,
   CARD_KEY_VERSION,
 } from "@/lib/card-vault";
+import { getPaymentGateway, NO_GATEWAY_MESSAGE } from "@/lib/payments/gateway";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
@@ -279,10 +280,12 @@ export async function revealReservationCardAction(
   }
 }
 
-// ---- immediate charge (server-enforced permission, audited) ----
-// Fail-closed placeholder: no payment gateway is integrated. It NEVER blocks
-// card storage, CVV persistence or reveal — it only records the attempt and
-// refuses. When a gateway lands, read the stored card via the vault here.
+// ---- immediate charge via PSP (server-enforced permission, audited) ----
+// Routes through the payment-gateway seam (src/lib/payments/gateway.ts). No PSP
+// is integrated today, so getPaymentGateway() is null and this fails closed —
+// it NEVER blocks card storage, CVV persistence or reveal. When a real gateway
+// lands, the else-branch decrypts the stored card and calls gateway.charge();
+// nothing at the call sites changes.
 export async function chargeReservationCardAction(input: {
   cardId: string;
   amount: number;
@@ -298,19 +301,97 @@ export async function chargeReservationCardAction(input: {
       WHERE id = ${input.cardId} AND tenant_id = ${actor.tenantId}`;
     if (!row) return fail("כרטיס שמור לא נמצא");
 
+    const gateway = getPaymentGateway();
     // audit the attempt WITHOUT any card digits or the CVV
     await writeAudit(actor, {
       entityType: "reservation_card",
       entityId: row.id,
       action: "card_charge_attempt",
-      after: { reservation_id: row.reservation_id, amount, outcome: "no_gateway" },
+      after: { reservation_id: row.reservation_id, amount, outcome: gateway ? "gateway" : "no_gateway" },
       ip: ctx.ip,
       session: ctx.session,
     });
 
-    // ponytail: no payment provider is integrated yet. Fail closed rather than
-    // fabricate a success; wire the real gateway call here when one lands.
-    return fail("לא מחובר ספק סליקה — לא בוצע חיוב");
+    // ponytail: no PSP integrated yet → always fail closed rather than fabricate
+    // a success. A real gateway (getPaymentGateway() non-null) decrypts the
+    // stored card via the vault, calls gateway.charge(), then records the
+    // payment — wire that here; the call sites already handle this null case.
+    return fail(NO_GATEWAY_MESSAGE);
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// ---- record a payment collected OUTSIDE GuestHub (external terminal / PSP) ----
+// This is NOT a GuestHub charge: no card is charged here. It records that staff
+// collected a payment elsewhere (terminal/provider) and moves the reservation's
+// paid/balance forward — ONLY on explicit staff confirmation. Captures amount,
+// method, reference and audits who/when/IP. Used while no gateway is wired.
+export async function recordExternalPaymentAction(input: {
+  reservationId: string;
+  amount: number;
+  method?: string;
+  reference?: string;
+  note?: string;
+  confirmed: boolean;
+}): Promise<
+  ActionResult<{
+    paid: number;
+    balance: number;
+    payment: { id: string; amount: number; method: string | null; paid_at: string };
+  }>
+> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "payments.card_charge");
+    if (!input.confirmed) return fail("נדרש אישור שהתשלום נגבה בפועל");
+
+    const amount = Math.round(Number(input.amount) || 0);
+    if (amount <= 0) return fail("סכום התשלום חייב להיות חיובי");
+    const method = String(input.method ?? "").trim() || "credit_card";
+    const reference = String(input.reference ?? "").trim().slice(0, 120) || null;
+    const note = String(input.note ?? "").trim().slice(0, 500) || null;
+    const ctx = await auditRequestContext();
+
+    const result = await sql.begin(async (tx) => {
+      const [res] = await tx<{ total_price: string; paid_amount: string }[]>`
+        SELECT total_price, paid_amount FROM guesthub.reservations
+        WHERE id = ${input.reservationId} AND tenant_id = ${actor.tenantId}
+        FOR UPDATE`;
+      if (!res) throw new DomainError("הזמנה לא נמצאה");
+
+      const total = Number(res.total_price);
+      const paid = Number(res.paid_amount) + amount;
+      const balance = Math.max(0, total - paid);
+
+      const [payment] = await tx<
+        { id: string; amount: number; method: string | null; paid_at: string }[]
+      >`
+        INSERT INTO guesthub.payments
+          (tenant_id, reservation_id, amount, method, status, paid_at, reference, notes)
+        VALUES (${actor.tenantId}, ${input.reservationId}, ${amount}, ${method},
+                'paid', now(), ${reference}, ${note})
+        RETURNING id, amount::float8 AS amount, method, paid_at::text AS paid_at`;
+
+      await tx`
+        UPDATE guesthub.reservations
+        SET paid_amount = ${paid}, balance = ${balance}, updated_at = now()
+        WHERE id = ${input.reservationId} AND tenant_id = ${actor.tenantId}`;
+
+      // audited as an EXTERNAL record — never as a charge performed by GuestHub
+      await writeAudit(actor, {
+        entityType: "reservation",
+        entityId: input.reservationId,
+        action: "payment_external_record",
+        after: { amount, method, reference, outcome: "recorded_external" },
+        ip: ctx.ip,
+        session: ctx.session,
+      }, tx);
+
+      return { paid, balance, payment };
+    });
+
+    return { success: true, data: result };
   } catch (e) {
     return fail(errorMessage(e));
   }

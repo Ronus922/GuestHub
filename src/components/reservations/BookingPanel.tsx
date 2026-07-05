@@ -105,6 +105,9 @@ export function BookingPanel({
   // card values are sent ONLY to the dedicated guarded save action after
   // the reservation is created, then cleared (see CardFields security note)
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
+  // card section is always available; expanded eagerly when the operator picks
+  // credit-card as the method, or manually via the "הוסף כרטיס אשראי" button
+  const [showCard, setShowCard] = useState(false);
   const paidRef = useRef<HTMLInputElement | null>(null);
   const [saving, startSaving] = useTransition();
   // dirty-state protection: snapshot of the form right after open
@@ -143,6 +146,7 @@ export function BookingPanel({
     setNotes("");
     setAsDraft(false);
     setCc(EMPTY_CARD);
+    setShowCard(false);
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
@@ -204,8 +208,10 @@ export function BookingPanel({
     return true;
   }, [step, guest, staysValid]);
 
-  // a partially-typed invalid card blocks creation; an empty one is skipped
-  const ccState = canSaveCard && method === "credit_card" ? cardDraftState(cc) : "empty";
+  // a partially-typed invalid card blocks creation; an empty one is skipped.
+  // Manual card entry is available on ANY booking, independent of the chosen
+  // payment method or source (D46) — not gated on method === "credit_card".
+  const ccState = canSaveCard ? cardDraftState(cc) : "empty";
 
   const submit = () =>
     startSaving(async () => {
@@ -648,7 +654,14 @@ export function BookingPanel({
                 </div>
                 <div className="bw-grid3 mt-5">
                   <Field label="אמצעי תשלום">
-                    <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+                    <select
+                      className="bw-fld"
+                      value={method}
+                      onChange={(e) => {
+                        setMethod(e.target.value);
+                        if (e.target.value === "credit_card") setShowCard(true);
+                      }}
+                    >
                       <option value="">בחירה…</option>
                       {paymentMethods.map((m) => (
                         <option key={m.id} value={m.key}>
@@ -679,12 +692,20 @@ export function BookingPanel({
                     />
                   </Field>
                 </div>
-                {method === "credit_card" &&
-                  (canSaveCard ? (
+                {/* manual card entry — always available on any booking (D46),
+                    not tied to the chosen payment method or source */}
+                {canSaveCard ? (
+                  showCard ? (
                     <CardFields value={cc} onChange={setCc} chargeAmount={Math.max(0, total - paid)} />
                   ) : (
-                    <p className="bw-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
-                  ))}
+                    <button type="button" className="bw-addroom mt-4" onClick={() => setShowCard(true)}>
+                      <Icon name="credit-card" size={16} />
+                      הוסף כרטיס אשראי
+                    </button>
+                  )
+                ) : (
+                  <p className="bw-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
+                )}
               </section>
             </>
           )}
