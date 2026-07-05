@@ -18,8 +18,9 @@ export type RateInput = {
   room_type_id: string;
   date: string;
   price: number | null;
-  min_nights: number | null;
-  max_nights: number | null;
+  min_nights: number | null; // → min_stay_arrival
+  min_stay_through: number | null; // distinct per-night min stay (§0.3)
+  max_nights: number | null; // → max_stay
   closed: boolean;
   closed_to_arrival: boolean;
   closed_to_departure: boolean;
@@ -40,6 +41,7 @@ export type RateValue = {
   date_to: string;
   rate?: number;
   min_stay_arrival?: number;
+  min_stay_through?: number;
   max_stay?: number;
   stop_sell?: boolean;
   closed_to_arrival?: boolean;
@@ -97,8 +99,8 @@ function groupBy<T>(rows: T[], key: (r: T) => string): Map<string, T[]> {
   return m;
 }
 
-// Room-type availability (derived ONLY from guesthub.room_type_inventory —
-// never computed independently, §Q).
+// Room-type availability (derived ONLY from physical guesthub.sellable_unit_inventory
+// via effective_sell_state — OTA holds are intentionally excluded, 009:150-151).
 export function buildAvailabilityPayloads(
   rows: AvailabilityInput[],
   channexPropertyId: string,
@@ -126,8 +128,9 @@ export function buildAvailabilityPayloads(
 }
 
 // Rates + restrictions from guesthub.rates semantics (D37 mapping):
-// price→rate, min_nights→min_stay_arrival, max_nights→max_stay,
-// closed→stop_sell, closed_to_arrival/departure pass through.
+// price→rate, min_nights→min_stay_arrival, min_stay_through→min_stay_through,
+// max_nights→max_stay, closed→stop_sell, closed_to_arrival/departure pass
+// through. The three stay fields stay distinct per the Channex contract.
 export function buildRatePayloads(
   rows: RateInput[],
   channexPropertyId: string,
@@ -144,6 +147,7 @@ export function buildRatePayloads(
     const same = (a: RateInput, b: RateInput) =>
       a.price === b.price &&
       a.min_nights === b.min_nights &&
+      a.min_stay_through === b.min_stay_through &&
       a.max_nights === b.max_nights &&
       a.closed === b.closed &&
       a.closed_to_arrival === b.closed_to_arrival &&
@@ -157,6 +161,7 @@ export function buildRatePayloads(
         date_to: range.to,
         ...(r.price != null ? { rate: r.price } : {}),
         ...(r.min_nights != null ? { min_stay_arrival: r.min_nights } : {}),
+        ...(r.min_stay_through != null ? { min_stay_through: r.min_stay_through } : {}),
         ...(r.max_nights != null ? { max_stay: r.max_nights } : {}),
         stop_sell: r.closed,
         closed_to_arrival: r.closed_to_arrival,
@@ -176,6 +181,7 @@ export type EssRow = {
   availability: number;
   price: number | null;
   min_stay_arrival: number | null;
+  min_stay_through: number | null;
   max_stay: number | null;
   closed_to_arrival: boolean;
   closed_to_departure: boolean;
@@ -212,6 +218,7 @@ export function essToChannexInputs(rows: EssRow[]): {
       date: day,
       price: lead.price,
       min_nights: lead.min_stay_arrival,
+      min_stay_through: lead.min_stay_through,
       max_nights: lead.max_stay,
       closed: group.every((r) => r.stop_sell),
       closed_to_arrival: lead.closed_to_arrival,

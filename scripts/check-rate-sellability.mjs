@@ -22,7 +22,7 @@ execSync(
   { stdio: "inherit" },
 );
 const require = createRequire(import.meta.url);
-const { classifySellState } = require(join(out, "rules.js"));
+const { classifySellState, collectSellReasons, roomAdminStateOf } = require(join(out, "rules.js"));
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
 const DAY = "2027-03-15";
@@ -241,6 +241,33 @@ try {
     assert.equal(row.closed_to_departure, false, "CTD false persisted (#9)");
   });
   ok("reopen persists explicit false; opening never deletes reservations/blocks or invents inventory; CTA/CTD false not dropped");
+
+  // ============ 5. canonical projection helpers (reason_codes[] + room_admin) ============
+  // reason_codes[] lists EVERY applicable reason, primary (== classifySellState) first.
+  {
+    const physicalMissingPrice = { ...base, availability: 0, sellableRooms: 0, inactiveRooms: 1, effectivePrice: 0 };
+    const codes = collectSellReasons(physicalMissingPrice);
+    assert.equal(codes[0], "ROOM_INACTIVE", "primary reason = classifySellState");
+    assert.equal(codes[0], classifySellState(physicalMissingPrice), "primary matches the single classifier");
+    assert.ok(codes.includes("MISSING_EFFECTIVE_PRICE"), "a blocked cell that also lacks a price lists BOTH reasons");
+    // an open, available, priced cell → exactly SELLABLE
+    assert.deepEqual(collectSellReasons(base), ["SELLABLE"]);
+    // stop_sell + missing price (available) → both, commercial first
+    const c2 = collectSellReasons({ ...base, stopSell: true, effectivePrice: 0 });
+    assert.equal(c2[0], "COMMERCIAL_STOP_SELL");
+    assert.ok(c2.includes("MISSING_EFFECTIVE_PRICE"));
+    ok("collectSellReasons: primary == classifier, and every applicable reason is listed");
+  }
+  // room_admin_state is the physical axis, kept separate from commercial.
+  {
+    assert.equal(roomAdminStateOf(1, 0, 0), "available");
+    assert.equal(roomAdminStateOf(1, 1, 0), "inactive");
+    assert.equal(roomAdminStateOf(1, 0, 1), "out_of_order");
+    assert.equal(roomAdminStateOf(3, 1, 0), "mixed", "pooled SU: 1 of 3 inactive → mixed");
+    assert.equal(roomAdminStateOf(2, 1, 1), "mixed");
+    assert.equal(roomAdminStateOf(0, 0, 0), "no_member");
+    ok("roomAdminStateOf: available / inactive / out_of_order / mixed / no_member");
+  }
 
   console.log(`\n✔ rate sellability: ${n} checks passed`);
 } finally {

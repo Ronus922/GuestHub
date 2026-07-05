@@ -386,7 +386,7 @@ async function main() {
     )} RETURNING id, name, base_price, max_occupancy, max_adults, max_children`;
   const basePriceByType = Object.fromEntries(roomTypes.map((r) => [r.id, Number(r.base_price)]));
 
-  // --- rooms (14, incl. one maintenance + one inactive) ---
+  // --- rooms (14, all available + active) ---
   const roomRows = [];
   let n = 0;
   for (let floor = 1; floor <= 3; floor++) {
@@ -413,12 +413,12 @@ async function main() {
       max_infants: 1, single_beds: 0, double_beds: 0, queen_beds: 1, sofa_beds: 0, cribs: 0,
     });
   }
-  // one out-of-order, one inactive (not sellable). Since Phase 4A, rooms.status
-  // is only available|inactive|out_of_order (§0.5) — dated maintenance/owner
-  // stays are room_closures, not a permanent status.
-  roomRows[roomRows.length - 1].status = "out_of_order";
-  roomRows[roomRows.length - 2].status = "inactive";
-  roomRows[roomRows.length - 2].is_active = false;
+  // Every seeded room stays available + active. Non-sellable states — inactive,
+  // out_of_order, room_closures, stop_sell — must come from REAL operational facts
+  // entered by staff, never from the seed. Fixture state masquerading as a business
+  // rule is exactly how a not-sellable "G4" reached production; the seed must not
+  // encode it. rooms.status may be available|inactive|out_of_order (§0.5), but the
+  // seed only ever assigns `available`.
 
   const rooms = await sql`
     INSERT INTO guesthub.rooms ${sql(roomRows,

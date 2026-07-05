@@ -1,7 +1,8 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { eachDay, type DateOnly } from "@/lib/dates";
-import { classifySellState } from "@/lib/rates/rules";
+import { collectSellReasons, roomAdminStateOf } from "@/lib/rates/rules";
+import type { SyncState } from "@/app/(dashboard)/rates/types";
 import type {
   RateCellState,
   RateGridUnit,
@@ -141,6 +142,47 @@ export async function getRateGridState(
     : [];
   const pprByKey = new Map(ppr.map((r) => [key(r.pricing_plan_id, r.date), r]));
 
+  // 4b. Channel mapping + connection state → mapping_valid + sync_state (axis C
+  // of the projection). With NO active connection (the current phase) everything
+  // is "not_connected" and unmapped — the honest state; GuestHub never shows
+  // "synced" without a remote ack. The connected branch derives pending-vs-clean
+  // from overlapping dirty ranges (Phase 4B activates a real connection/worker).
+  const [conn] = await db<{ id: string }[]>`
+    SELECT id FROM guesthub.channel_connections
+    WHERE tenant_id = ${tenantId} AND state = 'active' LIMIT 1`;
+  const hasActiveConnection = !!conn;
+  const mappedRoomTypes = new Set<string>(
+    hasActiveConnection
+      ? (
+          await db<{ room_type_id: string }[]>`
+            SELECT DISTINCT room_type_id FROM guesthub.channel_room_type_mappings
+            WHERE tenant_id = ${tenantId} AND status = 'mapped' AND is_active`
+        ).map((m) => m.room_type_id)
+      : [],
+  );
+  // pending (SU-room-type, day) set from overlapping non-synced dirty ranges.
+  const pendingRt = new Set<string>();
+  if (hasActiveConnection) {
+    const dirty = await db<{ room_type_id: string; date_from: string; date_to: string }[]>`
+      SELECT room_type_id, date_from::text AS date_from, date_to::text AS date_to
+      FROM guesthub.channel_dirty_ranges
+      WHERE tenant_id = ${tenantId} AND status <> 'synced'
+        AND date_from < ${toExclusive} AND date_to > ${from}`;
+    for (const dr of dirty) for (const day of eachDay(dr.date_from, dr.date_to)) pendingRt.add(key(dr.room_type_id, day));
+  }
+
+  // Outbound room-type availability (what WOULD be sent to Channex): the SUM of
+  // physical availability across a room-type's SUs per day — availability comes
+  // ONLY from physical inventory, never from stop_sell (the Channex contract).
+  const unitById = new Map(units.map((u) => [u.id, u]));
+  const rtAvail = new Map<string, number>();
+  for (const r of inv) {
+    const rt = unitById.get(r.sellable_unit_id)?.room_type_id;
+    if (!rt) continue;
+    const k = key(rt, r.day);
+    rtAvail.set(k, (rtAvail.get(k) ?? 0) + r.availability);
+  }
+
   const gridUnits: RateGridUnit[] = units.map((u) => {
     const cells: RateCellState[] = dates.map((d) => {
       const e = essByKey.get(key(u.id, d));
@@ -153,26 +195,40 @@ export async function getRateGridState(
       const availability = iv?.availability ?? e?.availability ?? 0;
       const stopSell = row?.stop_sell ?? false;
       const totalRooms = iv?.total_rooms ?? u.room_count;
-      const sellReason = classifySellState({
+      const inactiveRooms = st?.inactive ?? 0;
+      const outOfOrderRooms = st?.out_of_order ?? 0;
+      const classifyInput = {
         hasBasePlan: !!u.plan_id,
         totalRooms,
         sellableRooms: iv?.sellable_rooms ?? 0,
         occupiedRooms: iv?.occupied_rooms ?? 0,
         closedRooms: iv?.closed_rooms ?? 0,
-        inactiveRooms: st?.inactive ?? 0,
-        outOfOrderRooms: st?.out_of_order ?? 0,
+        inactiveRooms,
+        outOfOrderRooms,
         availability,
         effectivePrice,
         stopSell,
-      });
+      };
+      const reasonCodes = collectSellReasons(classifyInput);
+      const sellReason = reasonCodes[0];
+      const minStayThrough = row?.min_stay_through ?? null;
+      const minStayArrival = row?.min_stay_arrival ?? null;
+      const maxStay = row?.max_stay ?? null;
+      const closedToArrival = row?.closed_to_arrival ?? false;
+      const closedToDeparture = row?.closed_to_departure ?? false;
+      const syncState: SyncState = !hasActiveConnection
+        ? "not_connected"
+        : u.room_type_id && pendingRt.has(key(u.room_type_id, d))
+          ? "pending"
+          : "clean";
       return {
         date: d,
         price: explicitPrice,
-        minStayThrough: row?.min_stay_through ?? null,
-        minStayArrival: row?.min_stay_arrival ?? null,
-        maxStay: row?.max_stay ?? null,
-        closedToArrival: row?.closed_to_arrival ?? false,
-        closedToDeparture: row?.closed_to_departure ?? false,
+        minStayThrough,
+        minStayArrival,
+        maxStay,
+        closedToArrival,
+        closedToDeparture,
         stopSell,
         hasRow: !!row,
         effectivePrice,
@@ -186,6 +242,25 @@ export async function getRateGridState(
         // price) — the DB `sellable` only covers availability ∧ ¬stop_sell.
         sellable: sellReason === "SELLABLE",
         sellReason,
+        // ---- canonical projection (three axes, never collapsed) ----
+        physicalHeld: 0, // OTA holds are room-type-scoped, excluded from SU inventory (4B)
+        roomAdminState: roomAdminStateOf(totalRooms, inactiveRooms, outOfOrderRooms),
+        commercialOpen: !stopSell,
+        inheritedRate: u.base_price,
+        activeRatePlan: !!u.plan_id,
+        reasonCodes,
+        mappingValid: u.room_type_id ? mappedRoomTypes.has(u.room_type_id) : false,
+        syncState,
+        outboundAvailability: (u.room_type_id ? rtAvail.get(key(u.room_type_id, d)) : undefined) ?? availability,
+        outboundRestrictions: {
+          rate: effectivePrice,
+          stopSell,
+          closedToArrival,
+          closedToDeparture,
+          minStayArrival,
+          minStayThrough,
+          maxStay,
+        },
       };
     });
     return {

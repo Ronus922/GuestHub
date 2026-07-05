@@ -288,3 +288,74 @@ export async function setRoomStatusAction(raw: RoomStatusInput): Promise<ActionR
     return fail(errorMessage(e));
   }
 }
+
+// ---------------------------------------------------------------
+// Cell detail (§8) — read-only. Returns the PHYSICAL entities behind a cell's
+// availability (member rooms + admin status, the reservations and closures that
+// consume it on that date) so the cell action popover can LINK to the proper
+// operational screens. The commercial projection already lives on the grid cell;
+// this adds only the "why physically" entity references. No writes here — the
+// grid never performs physical actions (§5).
+// ---------------------------------------------------------------
+export type CellDetailData = {
+  rooms: { id: string; roomNumber: string; status: string; isActive: boolean }[];
+  reservations: { id: string; reservationNumber: string; roomId: string; checkIn: string; checkOut: string; status: string }[];
+  closures: { id: string; roomId: string; reason: string | null; startDate: string; endDate: string }[];
+};
+
+export async function getCellDetailAction(
+  sellableUnitId: string,
+  date: DateOnly,
+): Promise<ActionResult<CellDetailData>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "rates.view");
+
+    const rooms = await sql<{ id: string; room_number: string; status: string; is_active: boolean }[]>`
+      SELECT r.id, r.room_number, r.status, r.is_active
+      FROM guesthub.sellable_unit_rooms sur
+      JOIN guesthub.rooms r ON r.id = sur.room_id
+      WHERE sur.tenant_id = ${actor.tenantId} AND sur.sellable_unit_id = ${sellableUnitId}
+      ORDER BY r.room_number`;
+    const roomIds = rooms.map((r) => r.id);
+    if (roomIds.length === 0) {
+      return { success: true, data: { rooms: [], reservations: [], closures: [] } };
+    }
+
+    const reservations = await sql<
+      { id: string; reservation_number: string; room_id: string; check_in: string; check_out: string; status: string }[]
+    >`
+      SELECT res.id, res.reservation_number, rr.room_id,
+             rr.check_in::text AS check_in, rr.check_out::text AS check_out, res.status
+      FROM guesthub.reservation_rooms rr
+      JOIN guesthub.reservations res ON res.id = rr.reservation_id
+      WHERE rr.tenant_id = ${actor.tenantId} AND rr.room_id = ANY(${roomIds}::uuid[])
+        AND rr.check_in <= ${date} AND rr.check_out > ${date}
+        AND res.status = ANY (guesthub.inventory_blocking_statuses())
+      ORDER BY res.reservation_number`;
+
+    const closures = await sql<
+      { id: string; room_id: string; reason: string | null; start_date: string; end_date: string }[]
+    >`
+      SELECT id, room_id, reason, start_date::text AS start_date, end_date::text AS end_date
+      FROM guesthub.room_closures
+      WHERE tenant_id = ${actor.tenantId} AND room_id = ANY(${roomIds}::uuid[])
+        AND start_date <= ${date} AND end_date > ${date}`;
+
+    return {
+      success: true,
+      data: {
+        rooms: rooms.map((r) => ({ id: r.id, roomNumber: r.room_number, status: r.status, isActive: r.is_active })),
+        reservations: reservations.map((r) => ({
+          id: r.id, reservationNumber: r.reservation_number, roomId: r.room_id,
+          checkIn: r.check_in, checkOut: r.check_out, status: r.status,
+        })),
+        closures: closures.map((c) => ({
+          id: c.id, roomId: c.room_id, reason: c.reason, startDate: c.start_date, endDate: c.end_date,
+        })),
+      },
+    };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}

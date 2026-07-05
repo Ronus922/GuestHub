@@ -139,6 +139,49 @@ export function classifySellState(s: SellStateInput): SellReason {
   return "SELLABLE";
 }
 
+// The PRIMARY reason is classifySellState (one dominant cause). collectSellReasons
+// returns EVERY applicable reason (primary first) so the canonical projection can
+// expose `reason_codes[]` — a physically-blocked cell that is ALSO missing a price
+// lists both. Order matches classifySellState precedence, so out[0] === primary.
+export function collectSellReasons(s: SellStateInput): SellReason[] {
+  const out: SellReason[] = [];
+  if (s.totalRooms <= 0) out.push("MAPPING_ERROR");
+  if (s.totalRooms > 0 && !s.hasBasePlan) out.push("NO_ACTIVE_RATE_PLAN");
+  if (s.totalRooms > 0 && s.availability <= 0) {
+    if (s.sellableRooms <= 0) {
+      if (s.outOfOrderRooms > 0) out.push("ROOM_OUT_OF_ORDER");
+      if (s.inactiveRooms > 0) out.push("ROOM_INACTIVE");
+      if (s.outOfOrderRooms <= 0 && s.inactiveRooms <= 0) out.push("PHYSICAL_INVENTORY_ZERO");
+    } else {
+      // eligible rooms exist but all consumed — list EVERY applicable cause
+      // (a pooled SU can be consumed by both a reservation AND a closure).
+      if (s.occupiedRooms > 0) out.push("RESERVED");
+      if (s.closedRooms > 0) out.push("PHYSICAL_BLOCK");
+      if (s.occupiedRooms <= 0 && s.closedRooms <= 0) out.push("PHYSICAL_INVENTORY_ZERO");
+    }
+  }
+  if (s.totalRooms > 0 && s.hasBasePlan && s.stopSell) out.push("COMMERCIAL_STOP_SELL");
+  if (s.totalRooms > 0 && s.hasBasePlan) {
+    if (s.effectivePrice == null || Number.isNaN(s.effectivePrice) || s.effectivePrice === 0) out.push("MISSING_EFFECTIVE_PRICE");
+    else if (s.effectivePrice < 0) out.push("INVALID_EFFECTIVE_PRICE");
+  }
+  return out.length ? out : ["SELLABLE"];
+}
+
+// The administrative state of a Sellable Unit's member rooms (physical axis A),
+// kept SEPARATE from any commercial state. Pooled SUs with a mix report "mixed".
+export type RoomAdminState = "available" | "inactive" | "out_of_order" | "mixed" | "no_member";
+export function roomAdminStateOf(
+  totalRooms: number, inactiveRooms: number, outOfOrderRooms: number,
+): RoomAdminState {
+  if (totalRooms <= 0) return "no_member";
+  const blocked = inactiveRooms + outOfOrderRooms;
+  if (blocked === 0) return "available";
+  if (outOfOrderRooms > 0 && inactiveRooms === 0) return outOfOrderRooms >= totalRooms ? "out_of_order" : "mixed";
+  if (inactiveRooms > 0 && outOfOrderRooms === 0) return inactiveRooms >= totalRooms ? "inactive" : "mixed";
+  return "mixed";
+}
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // Resolve the committed price for ONE stay (§6). Precedence:

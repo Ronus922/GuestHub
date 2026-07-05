@@ -7,6 +7,7 @@ import { addYears, clampRatesFrom, RATES_HORIZON_YEARS, type DateOnly } from "@/
 import { RateToolbar } from "./RateToolbar";
 import { RateGrid } from "./RateGrid";
 import { GroupUpdatePanel } from "./GroupUpdatePanel";
+import { CellDetailPanel } from "./CellDetailPanel";
 import type { RateCan, RateGridState, RateView } from "./types";
 
 // Page shell: owns view state (type filter, collapsed bands, Group Update panel)
@@ -55,6 +56,20 @@ export function RateGridScreen({
   const toggleCollapse = (tk: string) =>
     setCollapsed((s) => { const n = new Set(s); if (n.has(tk)) n.delete(tk); else n.add(tk); return n; });
 
+  // Cell action popover (§8): store only the (unit, date) key so that after a
+  // router.refresh() the panel re-reads the FRESH cell from the new server state
+  // (never a stale snapshot). Derived each render.
+  const [detailKey, setDetailKey] = useState<{ unitId: string; date: DateOnly } | null>(null);
+  const detail = useMemo(() => {
+    if (!detailKey) return null;
+    for (const t of state.types) {
+      const u = t.units.find((x) => x.sellableUnitId === detailKey.unitId);
+      const c = u?.cells.find((x) => x.date === detailKey.date);
+      if (u && c) return { unit: u, cell: c };
+    }
+    return null;
+  }, [detailKey, state.types]);
+
   return (
     <div className="rg-wrap">
       <RateToolbar
@@ -72,6 +87,7 @@ export function RateGridScreen({
         <RateGrid
           types={visibleTypes} dates={state.dates} today={today} can={can}
           collapsed={collapsed} onToggleCollapse={toggleCollapse} onGroupUpdateForType={openGroupUpdate}
+          onOpenDetail={(u, c) => setDetailKey({ unitId: u.sellableUnitId, date: c.date })}
         />
       )}
 
@@ -93,6 +109,15 @@ export function RateGridScreen({
         types={state.types} from={state.from} toInclusive={state.toInclusive}
         minDate={today} maxDate={horizonLatest}
         presetUnitIds={preset} onClose={closeGroupUpdate}
+      />
+
+      <CellDetailPanel
+        open={!!detailKey}
+        onClose={() => setDetailKey(null)}
+        unit={detail?.unit ?? null}
+        cell={detail?.cell ?? null}
+        today={today}
+        editable={can.edit}
       />
     </div>
   );

@@ -31,7 +31,7 @@ type CellPatch = {
 const cellKey = (u: string, d: string, f: string) => `${u}|${d}|${f}`;
 
 export function RateGrid({
-  types, dates, today, can, collapsed, onToggleCollapse, onGroupUpdateForType,
+  types, dates, today, can, collapsed, onToggleCollapse, onGroupUpdateForType, onOpenDetail,
 }: {
   types: RateGridType[];
   dates: DateOnly[];
@@ -40,6 +40,7 @@ export function RateGrid({
   collapsed: Set<string>;
   onToggleCollapse: (typeKey: string) => void;
   onGroupUpdateForType: (unitIds: string[]) => void;
+  onOpenDetail: (unit: RateGridUnit, cell: RateCellState) => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<{ unitId: string; field: string; date: DateOnly } | null>(null);
@@ -85,6 +86,7 @@ export function RateGrid({
     },
     toggleBool: (unit, field, date, current) => void submit(unit, date, { [field]: !current } as CellPatch),
     setBool: (unit, field, date, value) => void submit(unit, date, { [field]: value } as CellPatch),
+    openDetail: (unit, cell) => { setTip(null); onOpenDetail(unit, cell); },
     hover: (e, unit, cell) => setTip({ x: e.clientX, y: e.clientY, unit, cell }),
     leave: () => setTip(null),
   };

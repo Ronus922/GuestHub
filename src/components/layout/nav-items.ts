@@ -59,7 +59,11 @@ export const NAV_SECTIONS: NavSection[] = [
     title: "מערכת",
     items: [
       { label: "אוטומציות", icon: "automations", permission: "settings.edit", hidden: true },
-      { label: "ערוצים", icon: "channels", permission: "settings.edit", hidden: true },
+      // ערוצים (Channel Manager diagnostics) — DISPLAY-only, super_admin only. The
+      // nav gate here is coarse (usePermission grants admin a bypass); the real
+      // super_admin-only boundary is enforced server-side on /channels (redirect via
+      // canManageChannels) and in every channel Server Action — UI hiding is not security.
+      { label: "ערוצים", icon: "channels", href: "/channels", permission: "settings.edit" },
       { label: "הגדרות", icon: "settings", href: "/settings", permission: "settings.edit" },
       // "עובדים" moved here from תפעול (hidden section) and renamed — the users
       // screen pairs with הרשאות under מערכת while תפעול stays hidden.

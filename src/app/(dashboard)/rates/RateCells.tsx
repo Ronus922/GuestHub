@@ -25,6 +25,8 @@ export type CellCtx = {
   // Writes an EXPLICIT boolean (open→false, close→true) — never a toggle — so a
   // commercial re-open always persists stop_sell=false (Step 3, never one-way).
   setBool: (unit: RateGridUnit, field: BoolField, date: DateOnly, value: boolean) => void;
+  // Opens the cell action popover (§8) — full projection + commercial actions + physical links.
+  openDetail: (unit: RateGridUnit, cell: RateCellState) => void;
   hover: (e: ReactMouseEvent, unit: RateGridUnit, cell: RateCellState) => void;
   leave: () => void;
 };
@@ -39,38 +41,25 @@ const cls = (col: ColGeom, extra: string[]) =>
 // red price (still editable/re-openable); sellable → normal (muted if inherited).
 export function PriceCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cell: RateCellState; col: ColGeom; ctx: CellCtx }) {
   const k = ctx.key(unit.sellableUnitId, cell.date, "price");
-  const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === "price" && ctx.editing.date === cell.date;
   const kind = SELL_REASON_KIND[cell.sellReason];
   const physical = kind === "physical";
   const errored = kind === "error";
   const noPrice = kind === "price";
   const commercial = kind === "commercial";
+  // The price cell always opens the cell action popover (§8) — even for a viewer,
+  // to read the full projection. Commercial edits inside the panel are gated by
+  // permission + the writable-date policy.
   const className = cls(col, [
-    ctx.editable ? "editable" : "",
+    "editable",
     physical ? "blocked" : "", errored ? "errored" : "", noPrice ? "noprice" : "",
     ctx.saving.has(k) ? "saving" : "",
   ]);
-
-  if (isEditing) {
-    return (
-      <div className={className}>
-        <input
-          className="rg-input" type="number" inputMode="numeric" defaultValue={cell.price ?? ""} autoFocus
-          onKeyDown={(e) => {
-            if (e.key === "Enter") ctx.commitNumber(unit, "price", cell.date, (e.target as HTMLInputElement).value);
-            else if (e.key === "Escape") ctx.cancel();
-          }}
-          onBlur={(e) => ctx.commitNumber(unit, "price", cell.date, e.target.value)}
-        />
-      </div>
-    );
-  }
   const priceCls = ["rg-price", cell.priceSource === "inherited" ? "inherited" : "", commercial ? "notsell" : ""].filter(Boolean).join(" ");
   return (
     <div
       className={className}
       data-su={unit.sellableUnitId} data-date={cell.date} data-field="price" data-reason={cell.sellReason}
-      onClick={ctx.editable ? () => ctx.startEdit(unit.sellableUnitId, "price", cell.date) : undefined}
+      onClick={() => ctx.openDetail(unit, cell)}
       onMouseEnter={(e) => ctx.hover(e, unit, cell)}
       onMouseMove={(e) => ctx.hover(e, unit, cell)}
       onMouseLeave={ctx.leave}
