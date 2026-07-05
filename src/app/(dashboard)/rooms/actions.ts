@@ -18,6 +18,7 @@ import {
   areaStatusSchema,
 } from "@/lib/validation/rooms";
 import { LANGS } from "@/lib/rooms/service";
+import { roomUploadsDir, roomUploadPath, IMAGE_NAME_RE } from "@/lib/rooms/uploads";
 import { z } from "zod";
 
 // Room occupancy + extra-guest override save (§7/§8). Gated by rooms.edit
@@ -117,8 +118,6 @@ export async function saveRoomOccupancyAction(raw: unknown): Promise<ActionResul
 // audited. Slug/room-number uniqueness is enforced by DB unique indexes and
 // surfaced as friendly errors (duplicate-slug protection).
 // ============================================================
-
-const UPLOADS_ROOT = path.join(process.cwd(), "public", "uploads", "rooms");
 
 function pgUniqueMessage(e: unknown): string | null {
   const err = e as { code?: string; constraint_name?: string; constraint?: string };
@@ -328,22 +327,19 @@ export async function duplicateRoomAction(roomId: string): Promise<ActionResult 
         SELECT tenant_id, ${newId}, amenity_id
         FROM guesthub.room_amenities WHERE room_id = ${roomId}`;
 
-      // image rows point at the source files; files are shared until one side
-      // deletes, so duplicated rows get their own copies on disk
+      // duplicated rows get their own copies in the durable uploads store
       const images = await tx<{ id: string; url: string; alt_text: string | null; is_main: boolean; sort_order: number }[]>`
         SELECT id, url, alt_text, is_main, sort_order
         FROM guesthub.room_images WHERE room_id = ${roomId}`;
       const { copyFile, mkdir } = await import("node:fs/promises");
       for (const img of images) {
-        const ext = path.extname(img.url);
-        const newName = `${crypto.randomUUID()}${ext}`;
+        const srcName = path.basename(img.url);
+        if (!IMAGE_NAME_RE.test(srcName)) continue;
+        const newName = `${crypto.randomUUID()}${path.extname(srcName)}`;
         const newUrl = `/uploads/rooms/${newId}/${newName}`;
         try {
-          await mkdir(path.join(UPLOADS_ROOT, newId), { recursive: true });
-          await copyFile(
-            path.join(process.cwd(), "public", img.url.replace(/^\//, "")),
-            path.join(UPLOADS_ROOT, newId, newName),
-          );
+          await mkdir(roomUploadsDir(newId), { recursive: true });
+          await copyFile(roomUploadPath(roomId, srcName), roomUploadPath(newId, newName));
         } catch {
           continue; // missing source file — skip rather than fail the duplicate
         }
@@ -371,23 +367,44 @@ export async function duplicateRoomAction(roomId: string): Promise<ActionResult 
   }
 }
 
-// Dependency-aware delete: blocked while future/active confirmed stays reference
-// the room. Past reservation history survives (reservation_rooms.room_id SET
-// NULL); translations/images/amenities/rates/closures cascade in the DB.
+// History-integrity delete rule (D49 closure): a room may be HARD-deleted only
+// if it has never been used — zero rows in every dependency table. Any history
+// (reservations incl. past, housekeeping, closures, rates, sellable-unit links,
+// bulk-update history) blocks deletion with a category breakdown; such rooms are
+// archived instead (חדר פעיל → כבוי). The room's own content (translations,
+// images, amenities) is not usage history and cascades on a legitimate delete.
+// reservation_rooms.room_id is additionally ON DELETE RESTRICT (migration 015),
+// so reservation history can never lose its room even if this guard is bypassed.
 export async function deleteRoomAction(roomId: string): Promise<ActionResult> {
   try {
     const actor = await getActor();
     requirePermission(actor, "rooms.delete");
     if (!z.uuid().safeParse(roomId).success) return { success: false, error: "קלט לא תקין" };
 
-    const [{ n }] = await sql<{ n: number }[]>`
-      SELECT COUNT(*)::int AS n
-      FROM guesthub.reservation_rooms rr
-      JOIN guesthub.reservations res ON res.id = rr.reservation_id
-      WHERE rr.room_id = ${roomId} AND rr.tenant_id = ${actor.tenantId}
-        AND res.status IN ('draft', 'confirmed') AND rr.check_out >= CURRENT_DATE`;
-    if (n > 0) {
-      return { success: false, error: `לא ניתן למחוק — יש ${n} הזמנות פעילות או עתידיות בחדר זה` };
+    const [deps] = await sql<
+      { reservations: number; housekeeping: number; closures: number; rates: number; sellable: number; bulk: number }[]
+    >`
+      SELECT
+        (SELECT COUNT(*)::int FROM guesthub.reservation_rooms WHERE room_id = ${roomId}) AS reservations,
+        (SELECT COUNT(*)::int FROM guesthub.housekeeping_tasks WHERE room_id = ${roomId}) AS housekeeping,
+        (SELECT COUNT(*)::int FROM guesthub.room_closures WHERE room_id = ${roomId}) AS closures,
+        (SELECT COUNT(*)::int FROM guesthub.rates WHERE room_id = ${roomId}) AS rates,
+        (SELECT COUNT(*)::int FROM guesthub.sellable_unit_rooms WHERE room_id = ${roomId}) AS sellable,
+        (SELECT COUNT(*)::int FROM guesthub.bulk_rate_update_items WHERE room_id = ${roomId}) AS bulk`;
+    const blockers = [
+      [deps.reservations, "הזמנות (כולל היסטוריה)"],
+      [deps.housekeeping, "היסטוריית ניקיון"],
+      [deps.closures, "חסימות זמינות"],
+      [deps.rates, "היסטוריית תעריפים"],
+      [deps.sellable, "שיוך ליחידת מכירה"],
+      [deps.bulk, "היסטוריית עדכונים קבוצתיים"],
+    ].filter(([n]) => Number(n) > 0);
+    if (blockers.length > 0) {
+      const detail = blockers.map(([n, label]) => `${label} (${n})`).join(", ");
+      return {
+        success: false,
+        error: `לא ניתן למחוק חדר עם היסטוריה — ${detail}. במקום מחיקה, השביתו את החדר (חדר פעיל → כבוי): ההיסטוריה וההזמנות נשמרות והחדר יוצא מהמלאי.`,
+      };
     }
 
     await sql.begin(async (tx) => {
@@ -404,7 +421,7 @@ export async function deleteRoomAction(roomId: string): Promise<ActionResult> {
         after: null,
       }, tx);
     });
-    await rm(path.join(UPLOADS_ROOT, roomId), { recursive: true, force: true });
+    await rm(roomUploadsDir(roomId), { recursive: true, force: true });
 
     revalidatePath("/rooms");
     return { success: true };
@@ -548,13 +565,14 @@ export async function deleteRoomImageAction(imageId: string): Promise<ActionResu
     const actor = await getActor();
     requirePermission(actor, "rooms.edit");
     if (!z.uuid().safeParse(imageId).success) return { success: false, error: "קלט לא תקין" };
-    const [img] = await sql<{ url: string }[]>`
+    const [img] = await sql<{ url: string; room_id: string }[]>`
       DELETE FROM guesthub.room_images
       WHERE id = ${imageId} AND tenant_id = ${actor.tenantId}
-      RETURNING url`;
+      RETURNING url, room_id`;
     if (!img) return { success: false, error: "התמונה לא נמצאה" };
-    if (img.url.startsWith("/uploads/rooms/")) {
-      await rm(path.join(process.cwd(), "public", img.url.replace(/^\//, "")), { force: true });
+    const name = path.basename(img.url);
+    if (img.url.startsWith("/uploads/rooms/") && IMAGE_NAME_RE.test(name)) {
+      await rm(roomUploadPath(img.room_id, name), { force: true });
     }
     revalidatePath("/rooms");
     return { success: true };

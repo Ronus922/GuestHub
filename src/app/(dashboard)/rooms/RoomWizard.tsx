@@ -334,7 +334,12 @@ export function RoomWizard({
   const doDelete = () =>
     startSaving(async () => {
       if (!roomId) return;
-      if (!window.confirm("למחוק את החדר? היסטוריית הזמנות עבר נשמרת, אך התוכן והתמונות יימחקו.")) return;
+      if (
+        !window.confirm(
+          "מחיקה אפשרית רק לחדר שמעולם לא היה בשימוש (ללא הזמנות, ניקיון, חסימות או תמחור). לחדר עם היסטוריה — השביתו אותו במקום (חדר פעיל → כבוי). למחוק את החדר?",
+        )
+      )
+        return;
       const res = await deleteRoomAction(roomId);
       if (!res.success) return void toast.error(res.error);
       toast.success("החדר נמחק");

@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { mkdir, writeFile, rm } from "node:fs/promises";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
+import { roomUploadsDir, roomUploadPath } from "@/lib/rooms/uploads";
 
 // Room image upload (wizard step 2). Session-authenticated + rooms.edit,
-// tenant-scoped room ownership check, strict type/size validation. Files land in
-// public/uploads/rooms/<roomId>/ (gitignored) and rows in guesthub.room_images.
+// tenant-scoped room ownership check, strict type/size + magic-byte validation.
+// Files land in the durable uploads store (lib/rooms/uploads.ts — outside the
+// app tree) and rows in guesthub.room_images.
 // ponytail: local-disk storage; move to Supabase storage if multi-node serving
 // ever matters.
 
@@ -18,6 +19,21 @@ const TYPES: Record<string, string> = {
   "image/png": ".png",
   "image/webp": ".webp",
 };
+
+// magic-byte check — the client-declared MIME is not trusted on its own
+function isRealImage(buf: Buffer, mime: string): boolean {
+  if (buf.length < 12) return false;
+  switch (mime) {
+    case "image/jpeg":
+      return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    case "image/png":
+      return buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    case "image/webp":
+      return buf.subarray(0, 4).toString("latin1") === "RIFF" && buf.subarray(8, 12).toString("latin1") === "WEBP";
+    default:
+      return false;
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -42,17 +58,27 @@ export async function POST(request: Request) {
       SELECT COUNT(*)::int AS n FROM guesthub.room_images WHERE room_id = ${roomId}`;
     if (n >= 20) return NextResponse.json({ error: "עד 20 תמונות לחדר" }, { status: 400 });
 
+    const buf = Buffer.from(await file.arrayBuffer());
+    if (!isRealImage(buf, file.type)) {
+      return NextResponse.json({ error: "הקובץ אינו תמונה תקינה" }, { status: 400 });
+    }
+
     const name = `${crypto.randomUUID()}${ext}`;
-    const dir = path.join(process.cwd(), "public", "uploads", "rooms", roomId);
-    await mkdir(dir, { recursive: true });
-    await writeFile(path.join(dir, name), Buffer.from(await file.arrayBuffer()));
+    const filePath = roomUploadPath(roomId, name);
+    await mkdir(roomUploadsDir(roomId), { recursive: true });
+    await writeFile(filePath, buf);
 
     const url = `/uploads/rooms/${roomId}/${name}`;
-    const [img] = await sql<{ id: string; url: string; alt_text: string | null; is_main: boolean; sort_order: number }[]>`
-      INSERT INTO guesthub.room_images (tenant_id, room_id, url, is_main, sort_order)
-      VALUES (${actor.tenantId}, ${roomId}, ${url}, ${n === 0}, ${n})
-      RETURNING id, url, alt_text, is_main, sort_order`;
-    return NextResponse.json({ image: img });
+    try {
+      const [img] = await sql<{ id: string; url: string; alt_text: string | null; is_main: boolean; sort_order: number }[]>`
+        INSERT INTO guesthub.room_images (tenant_id, room_id, url, is_main, sort_order)
+        VALUES (${actor.tenantId}, ${roomId}, ${url}, ${n === 0}, ${n})
+        RETURNING id, url, alt_text, is_main, sort_order`;
+      return NextResponse.json({ image: img });
+    } catch (e) {
+      await rm(filePath, { force: true }); // no orphan file when the row fails
+      throw e;
+    }
   } catch (e) {
     if (e instanceof AuthorizationError) {
       return NextResponse.json({ error: e.message }, { status: 403 });
