@@ -1,7 +1,26 @@
 import type { DateOnly } from "@/lib/dates";
-import type { SellReason } from "@/lib/rates/rules";
+import type { SellReason, RoomAdminState } from "@/lib/rates/rules";
 
-export type { SellReason } from "@/lib/rates/rules";
+export type { SellReason, RoomAdminState } from "@/lib/rates/rules";
+
+// The local synchronization state of a (SU, date) toward the channel manager.
+// "not_connected" is the ONLY value until Phase 4B activates a real connection —
+// GuestHub never shows "synced" without a remote acknowledgement.
+export type SyncState = "not_connected" | "clean" | "pending" | "processing" | "failed";
+
+// The CALCULATED outbound restriction payload for a cell's mapped rate plan — the
+// exact commercial values that WOULD be sent to Channex (nothing is sent in this
+// phase). Availability is projected separately (outboundAvailability), at the
+// room-type level, from PHYSICAL inventory only.
+export type OutboundRestrictions = {
+  rate: number;
+  stopSell: boolean;
+  closedToArrival: boolean;
+  closedToDeparture: boolean;
+  minStayArrival: number | null;
+  minStayThrough: number | null;
+  maxStay: number | null;
+};
 
 // Shared, client-safe types for the Rate Grid / Group Update UI. The server read
 // model (src/lib/rates/grid-state.ts) produces these; client components consume
@@ -26,8 +45,41 @@ export type RateCellState = {
   closedRooms: number;
   availability: number;
   sellable: boolean;
-  // The single explicit reason this cell is / isn't sellable (Step 2).
+  // The single dominant reason this cell is / isn't sellable (primary).
   sellReason: SellReason;
+  // ---- canonical daily projection — the three axes exposed SEPARATELY ----
+  // Axis A (physical), never collapsed with commercial:
+  physicalHeld: number; // OTA holds (0 until Phase 4B inbound); kept distinct
+  roomAdminState: RoomAdminState; // available | inactive | out_of_order | mixed | no_member
+  // Axis B (commercial):
+  commercialOpen: boolean; // = NOT stopSell — the commercial switch, on its own
+  inheritedRate: number; // the base-price fallback value (what "inherited" resolves to)
+  activeRatePlan: boolean; // a base plan exists & is active (= hasBasePlan for the SU)
+  // Every applicable reason (primary first), not just the dominant one:
+  reasonCodes: SellReason[];
+  // Channel projection (calculated; nothing is sent this phase):
+  mappingValid: boolean; // the SU's room-type has a valid Channex mapping
+  syncState: SyncState; // "not_connected" until 4B
+  outboundAvailability: number; // room-type-level availability that WOULD be sent (physical)
+  outboundRestrictions: OutboundRestrictions; // rate-plan-level restrictions that WOULD be sent (commercial)
+};
+
+// Hebrew labels for the physical room-admin axis (shown in the cell detail panel).
+export const ROOM_ADMIN_TEXT: Record<RoomAdminState, string> = {
+  available: "פעיל",
+  inactive: "מושבת (לא פעיל)",
+  out_of_order: "מושבת פיזית (תקלה)",
+  mixed: "מעורב",
+  no_member: "אין חדר משויך",
+};
+
+// Hebrew labels for the sync axis.
+export const SYNC_STATE_TEXT: Record<SyncState, string> = {
+  not_connected: "לא מחובר",
+  clean: "מסונכרן",
+  pending: "ממתין לסנכרון",
+  processing: "בעיבוד",
+  failed: "נכשל",
 };
 
 // Hebrew hover/detail text per reason — the exact cause shown in the tooltip.

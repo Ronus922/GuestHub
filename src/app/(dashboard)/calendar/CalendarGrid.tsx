@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import {
@@ -47,6 +48,7 @@ import type { BookingPrefill } from "@/components/reservations/BookingPanel";
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
+import { RateCellTooltip, type CellTipTarget } from "./RateCellTooltip";
 
 // ---- geometry (reference: 176px room column, 56px rows, 38px pills) ----
 const ROOM_COL = 176;
@@ -110,6 +112,8 @@ export function CalendarGrid({
   onNewBooking: (prefill: BookingPrefill) => void;
   onNewClosure: (prefill: ClosurePrefill) => void;
 }) {
+  const router = useRouter();
+
   const dates = useMemo(
     () => eachDay(data.from, addDays(data.from, data.days)),
     [data.from, data.days],
@@ -121,6 +125,9 @@ export function CalendarGrid({
   // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
   // delay, kept alive while the pointer is inside the card or the tooltip
   const [tip, setTip] = useState<TooltipTarget | null>(null);
+  // empty-cell commercial (rate) hover tooltip (§2) — independent of the
+  // reservation tooltip; informational only, no write path.
+  const [cellTip, setCellTip] = useState<CellTipTarget | null>(null);
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
   const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
@@ -131,6 +138,8 @@ export function CalendarGrid({
   const gnRef = useRef<HTMLSpanElement | null>(null);
   const tipOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cellTipOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cellTipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancelTipTimers = useCallback(() => {
     if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
@@ -139,6 +148,19 @@ export function CalendarGrid({
     tipCloseTimer.current = null;
   }, []);
   useEffect(() => cancelTipTimers, [cancelTipTimers]);
+
+  const cancelCellTipTimers = useCallback(() => {
+    if (cellTipOpenTimer.current) clearTimeout(cellTipOpenTimer.current);
+    if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
+    cellTipOpenTimer.current = null;
+    cellTipCloseTimer.current = null;
+  }, []);
+  useEffect(() => cancelCellTipTimers, [cancelCellTipTimers]);
+
+  const closeCellTip = useCallback(() => {
+    cancelCellTipTimers();
+    setCellTip(null);
+  }, [cancelCellTipTimers]);
 
   const staysByRoom = useMemo(() => {
     const m = new Map<string, CalendarStay[]>();
@@ -342,11 +364,12 @@ export function CalendarGrid({
       if (!can.viewReservation) return;
       cancelTipTimers();
       setTip(null);
+      closeCellTip();
       setMenu(null);
       setClosurePop(null);
       onOpenReservation(stay.reservation_id);
     },
-    [can.viewReservation, cancelTipTimers, onOpenReservation],
+    [can.viewReservation, cancelTipTimers, closeCellTip, onOpenReservation],
   );
 
   // ---- hover tooltip wiring (§2): open after a deliberate delay, close
@@ -388,6 +411,47 @@ export function CalendarGrid({
   const cancelTipOpen = useCallback(() => {
     if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
     tipOpenTimer.current = null;
+  }, []);
+
+  // ---- empty-cell commercial tooltip wiring (§2): mirrors the reservation
+  // tooltip's deliberate open delay + close grace, on its own timers so the
+  // two never fight. Never opens during a drag/selection. ----
+  const onCellHoverStart = useCallback(
+    (e: React.PointerEvent, room: CalendarRoom, date: DateOnly, rate: RateRow | undefined) => {
+      if (e.pointerType !== "mouse") return;
+      if (sessionRef.current) return; // never during a drag/resize/selection
+      const el = e.currentTarget as HTMLElement;
+      if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
+      cellTipCloseTimer.current = null;
+      if (cellTipOpenTimer.current) clearTimeout(cellTipOpenTimer.current);
+      cellTipOpenTimer.current = setTimeout(() => {
+        cellTipOpenTimer.current = null;
+        if (sessionRef.current || !el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        setCellTip({
+          room,
+          date,
+          rate,
+          anchor: { x: r.left + r.width / 2, top: r.top, bottom: r.bottom },
+        });
+      }, TOOLTIP_OPEN_MS);
+    },
+    [],
+  );
+
+  const scheduleCellTipClose = useCallback(() => {
+    if (cellTipOpenTimer.current) clearTimeout(cellTipOpenTimer.current);
+    cellTipOpenTimer.current = null;
+    if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
+    cellTipCloseTimer.current = setTimeout(() => {
+      cellTipCloseTimer.current = null;
+      setCellTip(null);
+    }, TOOLTIP_CLOSE_MS);
+  }, []);
+
+  const keepCellTipAlive = useCallback(() => {
+    if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
+    cellTipCloseTimer.current = null;
   }, []);
 
   // ---- pointer wiring (handlers live ON the card via pointer capture —
@@ -481,6 +545,7 @@ export function CalendarGrid({
       if (!body) return;
       cancelTipTimers();
       setTip(null);
+      closeCellTip();
       setMenu(null);
       setClosurePop(null);
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
@@ -503,7 +568,7 @@ export function CalendarGrid({
         raf: 0,
       };
     },
-    [can.create, data.days, cancelTipTimers],
+    [can.create, data.days, cancelTipTimers, closeCellTip],
   );
 
   const onCellPointerMove = useCallback(
@@ -578,9 +643,10 @@ export function CalendarGrid({
       e.stopPropagation();
       setClosurePop(null);
       setTip(null);
+      closeCellTip();
       setMenu({ x: e.clientX, y: e.clientY, roomId, date });
     },
-    [],
+    [closeCellTip],
   );
 
   const onCellDouble = useCallback(
@@ -770,6 +836,8 @@ export function CalendarGrid({
                   onCellPointerCancel={onBarPointerCancel}
                   onCellContext={onCellContext}
                   onCellDouble={onCellDouble}
+                  onCellHoverStart={onCellHoverStart}
+                  onCellHoverEnd={scheduleCellTipClose}
                   onClosureClick={onClosureClick}
                 />
               ))}
@@ -842,6 +910,19 @@ export function CalendarGrid({
               סגור חדר
             </button>
           )}
+          {/* deep-link to the commercial editor for this exact date (§3) —
+              navigation only; the /rates page enforces its own permission */}
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 border-t border-line px-4 py-2.5 text-sm font-medium text-ink hover:bg-hover"
+            onClick={() => {
+              router.push(`/rates?from=${menu.date}`);
+              setMenu(null);
+            }}
+          >
+            <Icon name="credit-card" size={16} className="text-primary" />
+            פתיחת רשת התעריפים לתאריך זה
+          </button>
         </div>
       )}
 
@@ -893,6 +974,13 @@ export function CalendarGrid({
         onKeepAlive={keepTipAlive}
         onRelease={scheduleTipClose}
       />
+
+      {/* ===== empty-cell commercial (rate) hover tooltip (§2) ===== */}
+      <RateCellTooltip
+        target={cellTip}
+        onKeepAlive={keepCellTipAlive}
+        onRelease={scheduleCellTipClose}
+      />
     </div>
   );
 }
@@ -930,6 +1018,8 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel,
   onCellContext,
   onCellDouble,
+  onCellHoverStart,
+  onCellHoverEnd,
   onClosureClick,
 }: {
   room: CalendarRoom;
@@ -960,6 +1050,8 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (roomId: string, date: DateOnly, minNights: number) => void;
+  onCellHoverStart: (e: React.PointerEvent, room: CalendarRoom, date: DateOnly, rate: RateRow | undefined) => void;
+  onCellHoverEnd: () => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
   const sellable = room.status === "available" && room.is_active;
@@ -1003,6 +1095,7 @@ const RoomRow = memo(function RoomRow({
           const rate = cellRate(room, d);
           const price = rate?.price != null ? Number(rate.price) : room.base_price;
           const minN = rate?.min_nights ?? null;
+          const closed = rate?.closed ?? false;
           const creatable = can.create && sellable;
           return (
             <div
@@ -1018,17 +1111,29 @@ const RoomRow = memo(function RoomRow({
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
+              onPointerEnter={sellable ? (e) => onCellHoverStart(e, room, d, rate) : undefined}
+              onPointerLeave={sellable ? onCellHoverEnd : undefined}
             >
               {sellable && (
                 <>
-                  <span className="cb-pr" dir="ltr">
+                  <span className={`cb-pr ${closed ? "cx" : ""}`} dir="ltr">
                     ₪{Math.round(price)}
                   </span>
-                  {minN != null && minN >= 2 && (
-                    <span className="cb-mn">
-                      <Icon name="moon" size={11} />
-                      {minN}
+                  {closed ? (
+                    // commercial stop-sell — a hatch-free red chip, distinct
+                    // from the gray dashed physical .cb-blockbar and from pills
+                    <span className="cb-cx">
+                      <Icon name="circle-slash" size={10} />
+                      סגור
                     </span>
+                  ) : (
+                    minN != null &&
+                    minN >= 2 && (
+                      <span className="cb-mn">
+                        <Icon name="moon" size={11} />
+                        {minN}
+                      </span>
+                    )
                   )}
                 </>
               )}

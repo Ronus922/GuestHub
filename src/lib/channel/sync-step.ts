@@ -54,7 +54,7 @@ export async function processDirtyRange(
   // recompute from Effective Sell State (NEVER from UI input)
   const ess = await db<EssRow[]>`
     SELECT sellable_unit_id, room_type_id, day::text AS day, availability,
-           price::float8 AS price, min_stay_arrival, max_stay,
+           price::float8 AS price, min_stay_arrival, min_stay_through, max_stay,
            closed_to_arrival, closed_to_departure, stop_sell
     FROM guesthub.effective_sell_state(${args.tenantId}, ${args.dateFrom}, ${args.dateTo})
     WHERE room_type_id = ${args.roomTypeId}`;

@@ -8,7 +8,7 @@ import { addDays, dayOfWeek, eachDay, HEBREW_DAY_LETTERS, type DateOnly } from "
 import { bulkUpdateRatesAction } from "./actions";
 import { applyPriceMode } from "@/lib/rates/rules";
 import type { BulkUpdateRatesInput } from "@/lib/validation/rates";
-import type { RateGridType } from "./types";
+import type { RateGridType, RateCellState } from "./types";
 
 type PriceMode = "replace" | "add" | "subtract" | "percent_add" | "percent_subtract";
 const PRICE_MODES: { value: PriceMode; label: string; unit: string }[] = [
@@ -130,6 +130,27 @@ export function GroupUpdatePanel({
   }, [dateFrom, dateTo, weekdays]);
 
   const cellCount = selected.size * effectiveDates.length;
+
+  // Honest preview breakdown (§9) over the actual selected cells' canonical state
+  // — so the user is never told stop_sell=false creates physical availability.
+  const cellIndex = useMemo(() => {
+    const m = new Map<string, RateCellState>();
+    for (const t of types) for (const u of t.units) for (const c of u.cells) m.set(`${u.sellableUnitId}|${c.date}`, c);
+    return m;
+  }, [types]);
+  const preview = useMemo(() => {
+    let noInventory = 0, missingPrice = 0, currentlyClosed = 0, currentlyOpen = 0;
+    for (const su of selected) {
+      for (const d of effectiveDates) {
+        const c = cellIndex.get(`${su}|${d}`);
+        if (!c) continue;
+        if (c.availability === 0) noInventory++;
+        if (c.effectivePrice <= 0) missingPrice++;
+        if (c.stopSell) currentlyClosed++; else currentlyOpen++;
+      }
+    }
+    return { noInventory, missingPrice, willOpen: currentlyClosed, willClose: currentlyOpen };
+  }, [selected, effectiveDates, cellIndex]);
 
   const anyFieldSelected =
     priceOn || stopSell !== "nochange" || minThroughOn || maxStayOn || minArrivalOn || cta !== "nochange" || ctd !== "nochange";
@@ -334,6 +355,18 @@ export function GroupUpdatePanel({
               <p className="mt-3 text-[13px] font-bold text-[var(--color-muted)]">
                 דוגמה — {sample.typeName}: ₪{Math.round(sample.before)} <span className="text-[var(--color-faint)]">←</span> <b className="text-[var(--color-ink)]">₪{Math.round(sample.after)}</b>
               </p>
+            )}
+            {cellCount > 0 && (stopSell !== "nochange" || preview.noInventory > 0 || preview.missingPrice > 0) && (
+              <div className="mt-3 text-[12.5px] font-bold text-[var(--color-muted)] flex flex-col gap-1">
+                {stopSell === "no" && (
+                  <p><b className="text-[var(--color-status-success)]">{preview.willOpen}</b> תאים ייפתחו למכירה מסחרית{preview.noInventory > 0 && <> · <b className="text-[#a23b52]">{preview.noInventory}</b> מתוכם יישארו ללא מלאי פיזי (הפתיחה המסחרית אינה יוצרת זמינות)</>}</p>
+                )}
+                {stopSell === "yes" && (
+                  <p><b className="text-[#a23b52]">{preview.willClose}</b> תאים ייסגרו למכירה מסחרית · המלאי הפיזי אינו משתנה</p>
+                )}
+                {preview.noInventory > 0 && stopSell !== "no" && <p><b className="text-[#a23b52]">{preview.noInventory}</b> מהתאים ללא מלאי פיזי</p>}
+                {preview.missingPrice > 0 && <p><b className="text-[#b4670a]">{preview.missingPrice}</b> מהתאים ללא מחיר אפקטיבי</p>}
+              </div>
             )}
           </Section>
 

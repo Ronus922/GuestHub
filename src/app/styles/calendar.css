@@ -528,6 +528,28 @@
   color: #a6adc0;
   font-variant-numeric: tabular-nums;
 }
+/* commercial stop-sell indicator (§1): a compact hatch-free red chip on an
+   empty sellable cell. Deliberately unlike the gray dashed physical
+   .cb-blockbar and the rounded reservation pills — a per-day commercial flag,
+   not a multi-day bar. Its price mate (.cb-pr.cx) reads dimmed + struck. */
+.cb-rcell .cb-pr.cx {
+  color: #b9c0d6;
+  text-decoration: line-through;
+  text-decoration-color: #d98a9a;
+}
+.cb-rcell .cb-cx {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #b4231f;
+  background: #fdecec;
+  border-radius: 5px;
+  padding: 1px 5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
 
 /* ---------- reservation pill ---------- */
 .cb-resbar {
@@ -926,6 +948,91 @@
 }
 .cb-pbtn.g:hover {
   background: #f5f7fb;
+}
+
+/* ---------- empty-cell commercial (rate) hover tooltip (§2) ----------
+   Lightweight informational card — reads the already-fetched rate row for a
+   room/date. Distinct, smaller footprint than the reservation .cb-pop. */
+.cb-rtip {
+  position: fixed;
+  width: 236px;
+  background: #fff;
+  border: 1px solid #e4e8f0;
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(16, 24, 40, 0.2);
+  z-index: 60;
+  direction: rtl;
+  overflow: hidden;
+  animation: cb-pop-in 0.14s ease-out;
+}
+.cb-rtip-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  background: #fbfcfe;
+  border-bottom: 1px solid #eef0f5;
+}
+.cb-rtip-t {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+.cb-rtip-dt {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+.cb-rtip-b {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.cb-rtip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.cb-rtip-k {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+.cb-rtip-v {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #2c3446;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cb-rtip-v.yes {
+  color: #1f7a3d;
+}
+.cb-rtip-v.no {
+  color: #b4231f;
+}
+.cb-rtip-f {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  border-top: 1px solid #eef0f5;
+}
+.cb-rtip-f.op {
+  color: #1f7a3d;
+  background: #f2fbf5;
+}
+.cb-rtip-f.cl {
+  color: #b4231f;
+  background: #fdf0f0;
 }
 
 /* ---------- hint ---------- */
