@@ -16,8 +16,8 @@ import type { PaymentState } from "@/lib/inventory-rules";
 import type { CalendarData, CalendarView } from "./types";
 import { VIEW_DAYS } from "./types";
 import { CalendarGrid } from "./CalendarGrid";
-import { BookingPanel, type BookingPrefill } from "@/components/reservations/BookingPanel";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
+import { useNewReservation } from "@/components/reservations/NewReservationProvider";
 import { ClosurePanel, type ClosurePrefill } from "./ClosurePanel";
 
 export type LookupItem = { id: string; key: string; label: string; color: string | null };
@@ -33,10 +33,10 @@ export type CalendarCan = {
   chargeCard: boolean;
 };
 
-// ONE open panel at a time — the single source of truth for the booking /
-// edit / closure side panels over the calendar (D41)
+// ONE open panel at a time — the single source of truth for the edit /
+// closure side panels over the calendar (D41). New bookings go through the
+// global shared BookingPanel (D48, useNewReservation), not a local instance.
 type PanelState =
-  | { kind: "booking"; prefill: BookingPrefill }
   | { kind: "edit"; id: string }
   | { kind: "closure"; prefill: ClosurePrefill }
   | null;
@@ -73,6 +73,7 @@ export function CalendarScreen({
   vatRate: number;
 }) {
   const router = useRouter();
+  const { openNewReservation } = useNewReservation();
   const [paymentFilter, setPaymentFilter] = useState<PaymentState | "all">("all");
   const [panel, setPanel] = useState<PanelState>(null);
   const closePanel = useCallback(() => setPanel(null), []);
@@ -202,7 +203,7 @@ export function CalendarScreen({
           statusLabel={statusLabel}
           can={can}
           onOpenReservation={(id) => can.viewReservation && setPanel({ kind: "edit", id })}
-          onNewBooking={(prefill) => can.create && setPanel({ kind: "booking", prefill })}
+          onNewBooking={openNewReservation}
           onNewClosure={(prefill) => can.close && setPanel({ kind: "closure", prefill })}
         />
       </div>
@@ -213,16 +214,8 @@ export function CalendarScreen({
         חדשה · לחיצה על סטטוס תשלום מסננת
       </p>
 
-      {/* ---- side panels (one open at a time; calendar stays mounted) ---- */}
-      <BookingPanel
-        open={panel?.kind === "booking"}
-        onClose={closePanel}
-        prefill={panel?.kind === "booking" ? panel.prefill : {}}
-        bookingSources={bookingSources}
-        paymentMethods={paymentMethods}
-        vatRate={vatRate}
-        canSaveCard={can.saveCard}
-      />
+      {/* ---- side panels (one open at a time; calendar stays mounted).
+           New bookings use the global shared panel (D48). ---- */}
       <EditReservationPanel
         reservationId={panel?.kind === "edit" ? panel.id : null}
         onClose={closePanel}
