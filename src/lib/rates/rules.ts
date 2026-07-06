@@ -37,43 +37,79 @@ export function planNightlyPrice(
   return p == null ? basePrice : Number(p);
 }
 
+// Structured stay-restriction verdict — the machine-readable twin of the Hebrew
+// message. The pricing engine consumes the code; the grid/booking UI consume the
+// message via stayRestrictionViolation below. ONE evaluation order, two faces.
+export type StayRuleViolation =
+  | { code: "CLOSED_ON_ARRIVAL"; date: string }
+  | { code: "MIN_STAY_NOT_MET"; date: string; required: number; scope: "arrival" | "through" }
+  | { code: "MAX_STAY_EXCEEDED"; date: string; limit: number }
+  | { code: "CLOSED_ON_DEPARTURE"; date: string }
+  | { code: "STOP_SELL"; date: string };
+
 // THE shared stay-restriction validator (§0.3). Rejects on the FIRST failing
 // rule. `nights` = the occupied nights [checkIn, checkOut). Considers:
 //   - min_stay_arrival on the arrival date
 //   - the MAXIMUM applicable min_stay_through across all stay dates
 //   - max_stay, closed_to_arrival (arrival), closed_to_departure (departure)
 //   - stop_sell across all required sell dates
-export function stayRestrictionViolation(
+export function stayRestrictionViolationStructured(
   byDate: Map<string, PlanRateRow>,
   stay: { checkIn: string; checkOut: string; nights: string[] },
-): string | null {
+): StayRuleViolation | null {
   const nightsCount = stay.nights.length;
 
   const arrival = byDate.get(stay.checkIn);
   if (arrival) {
-    if (arrival.closed_to_arrival) return "התאריך סגור לצ׳ק-אין (CTA)";
+    if (arrival.closed_to_arrival) return { code: "CLOSED_ON_ARRIVAL", date: stay.checkIn };
     if (arrival.min_stay_arrival != null && nightsCount < arrival.min_stay_arrival)
-      return `מינימום ${arrival.min_stay_arrival} לילות בהגעה בתאריך זה`;
+      return { code: "MIN_STAY_NOT_MET", date: stay.checkIn, required: arrival.min_stay_arrival, scope: "arrival" };
     if (arrival.max_stay != null && nightsCount > arrival.max_stay)
-      return `מקסימום ${arrival.max_stay} לילות בתאריך זה`;
+      return { code: "MAX_STAY_EXCEEDED", date: stay.checkIn, limit: arrival.max_stay };
   }
 
   const departure = byDate.get(stay.checkOut);
-  if (departure?.closed_to_departure) return "התאריך סגור לצ׳ק-אאוט (CTD)";
+  if (departure?.closed_to_departure) return { code: "CLOSED_ON_DEPARTURE", date: stay.checkOut };
 
   // stop_sell on any occupied night blocks the sale; min_stay_through is the
   // MAX through-min across the occupied nights (the strictest applicable).
   let maxThrough = 0;
+  let maxThroughDate = stay.checkIn;
   for (const d of stay.nights) {
     const row = byDate.get(d);
-    if (row?.stop_sell) return `התאריך ${d} סגור למכירה`;
-    if (row?.min_stay_through != null && row.min_stay_through > maxThrough)
+    if (row?.stop_sell) return { code: "STOP_SELL", date: d };
+    if (row?.min_stay_through != null && row.min_stay_through > maxThrough) {
       maxThrough = row.min_stay_through;
+      maxThroughDate = d;
+    }
   }
   if (maxThrough > 0 && nightsCount < maxThrough)
-    return `מינימום ${maxThrough} לילות בטווח זה`;
+    return { code: "MIN_STAY_NOT_MET", date: maxThroughDate, required: maxThrough, scope: "through" };
 
   return null;
+}
+
+// Hebrew message for a structured violation — the exact historical grid wording.
+export function stayViolationMessage(v: StayRuleViolation): string {
+  switch (v.code) {
+    case "CLOSED_ON_ARRIVAL": return "התאריך סגור לצ׳ק-אין (CTA)";
+    case "MIN_STAY_NOT_MET":
+      return v.scope === "arrival"
+        ? `מינימום ${v.required} לילות בהגעה בתאריך זה`
+        : `מינימום ${v.required} לילות בטווח זה`;
+    case "MAX_STAY_EXCEEDED": return `מקסימום ${v.limit} לילות בתאריך זה`;
+    case "CLOSED_ON_DEPARTURE": return "התאריך סגור לצ׳ק-אאוט (CTD)";
+    case "STOP_SELL": return `התאריך ${v.date} סגור למכירה`;
+  }
+}
+
+// Message-shaped wrapper — the historical API every existing caller keeps using.
+export function stayRestrictionViolation(
+  byDate: Map<string, PlanRateRow>,
+  stay: { checkIn: string; checkOut: string; nights: string[] },
+): string | null {
+  const v = stayRestrictionViolationStructured(byDate, stay);
+  return v ? stayViolationMessage(v) : null;
 }
 
 // ============================================================

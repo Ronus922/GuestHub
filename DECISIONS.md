@@ -518,3 +518,44 @@ IVs, tamper rejection, fail-closed, Luhn/brand/expiry/mask, VAT rules, source-le
 sensitive-data assertions) + check-calendar-ui extended (tooltip has no write path, panels
 use SidePanel, FullWindow gone, single panel state, z-order). Pointer architecture untouched
 (capture + refs + rAF ghosts); panel open/close never remounts the grid.
+
+## D42 — Rate Plans module + ONE central pricing engine (Phase 5)
+Tenant-level Rate Plans extend guesthub.pricing_plans DUAL-SCOPE (migration 016): the
+Phase-4A SU-scoped base plans stay the Rates-grid base ARI layer untouched (same
+UNIQUE(pricing_plan_id, date), same writeRateCells ON CONFLICT — check-rate-grid G intact);
+tenant-level plans have sellable_unit_id NULL, a tenant-scoped live-unique code, plan_kind
+base | derived_percentage | derived_fixed | independent, parent_plan_id + adjustment_value
+(a fixed ADJUSTMENT, never a fixed final price), refundability, policy links (012),
+stay-date validity, booking window, arrival-DOW, plan-default restrictions, visibility and
+archive state. Parent chains are guarded twice: pricing_plan_parent_guard trigger
+(same-tenant, tenant-level parent, cycle rejection, depth ≤ 5) AND the engine re-guard.
+Assignment = NEW pricing_plan_units (plan ↔ sellable unit; unique pair, active flag,
+per-unit adjustment override, validity) — an assignment NEVER creates inventory; physical
+availability stays derived (reservations/closures/status), so one reservation blocks the
+room under EVERY plan. Exact-date data = NEW pricing_plan_unit_rates (plan, unit, date —
+sparse; independent-plan prices AND per-date overrides + restrictions + note). A separate
+overlay table (not a widened ppr key) was chosen deliberately: dev+prod share the DB, and
+widening ppr's unique key would break the RUNNING prod grid writer between migration and
+deploy. THE ENGINE (src/lib/pricing/: types, resolve [pure], messages [Hebrew layer],
+engine.ts): calculateQuote(db, req) — batched loads only; price precedence
+override → assignment-adjustment → plan-adjustment → parent-resolved → base (ppr →
+room_type.base_price), every amount carries its source label; restrictions merge
+base-layer + plan overlay through the SAME stayRestrictionViolation (now
+stayRestrictionViolationStructured + Hebrew wrapper, messages byte-identical); extra
+guests via the EXISTING canonical resolver + calculateChargeableGuests (included_occupancy
+is the threshold, never default_occupancy; fails closed on unconfigured pricing); VAT
+extracted from gross per lib/vat.ts (inclusive, whole-currency, tenant settings); cents
+summing (no fp drift); deterministic sha256 quoteFingerprint over resolved commercial
+values (no timestamps) + engineVersion 1.0.0. Structured PricingError codes (29) — no
+message parsing, no silent fallbacks. UI: /rate-plans (rate_plans.* + pricing.simulate
+permission keys, manager granted, admin bypass) — list with formula labels (planFormulaLabel,
+never raw enums), 3-step wizard (live preview calls applyPlanAdjustment — the SAME central
+util), overlay editor, and the simulator panel that calls the REAL engine
+(simulateQuoteAction → calculateQuote, source pricing_simulator). Reservations/booking
+UI/Channex NOT touched: manual reservations keep resolveStayPrice snapshots; future
+consumers call the engine and store immutable quote snapshots (contract in §25 of the
+phase brief). Checks: scripts/check-rate-plans.mjs (20 model/constraint checks, :5433) +
+scripts/check-pricing-engine.mjs (35 checks: pure resolution rules compiled from the real
+modules + end-to-end quotes on :5433, rolled back). NO real Rate Plans were fabricated —
+the tenant starts with zero tenant-level plans and the screen shows the setup-required
+state.
