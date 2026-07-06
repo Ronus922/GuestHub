@@ -1,17 +1,18 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { extractChannelCard, redactPayload } from "./payloads";
-import { encryptPan, encryptCvv, CARD_KEY_VERSION, cardVaultConfigured } from "../card-vault";
-import { cvvValid, detectBrand, normalizePan, panValid } from "../card-rules";
+import { encryptPan, CARD_KEY_VERSION, cardVaultConfigured } from "../card-vault";
+import { detectBrand, normalizePan, panValid } from "../card-rules";
 
 // ============================================================
 // Inbound booking-revision foundation (§X) + operational channel-card capture
-// (§Z reconciliation, D43). persistBookingRevision is the concrete seam where a
-// full inbound booking payload is handled: it EXTRACTS + ENCRYPTS the card from
-// the RAW payload BEFORE the payload is redacted, staging the ciphertext on the
-// revision row. The stored `payload` column stays redacted — raw card data
-// never lands in it or in any log. markRevisionImported then MOVES the staged
-// encrypted card into reservation_cards once a local reservation exists.
+// (§Z reconciliation, D43/D52). persistBookingRevision is the concrete seam
+// where a full inbound booking payload is handled: it EXTRACTS + ENCRYPTS the
+// PAN from the RAW payload BEFORE the payload is redacted, staging the ciphertext
+// on the revision row. The CVV is NEVER staged or stored (D52 §2) — any CVV in
+// the payload is discarded. The stored `payload` column stays redacted — raw
+// card data never lands in it or in any log. markRevisionImported then MOVES the
+// staged encrypted PAN into reservation_cards once a local reservation exists.
 //
 // NOTE: no live poller calls these yet (no revision→reservation importer runs
 // in the app today). Card extraction/encryption is wired at this real seam and
@@ -33,8 +34,8 @@ export type RevisionInput = {
   payload: unknown;
 };
 
-// Non-sensitive metadata staged alongside the encrypted PAN/CVV. NEVER holds a
-// plaintext PAN or CVV.
+// Non-sensitive metadata staged alongside the encrypted PAN. NEVER holds a
+// plaintext PAN, and never a CVV in any form (D52 §2).
 type StagedCardMeta = {
   holder_name: string | null;
   brand: string | null;
@@ -49,23 +50,22 @@ type StagedCardMeta = {
   key_version: number;
 };
 
-// Extract + encrypt the card from a raw payload. Returns the encrypted columns
-// and the non-sensitive meta, or nulls when there is no usable card.
+// Extract + encrypt ONLY the PAN from a raw payload (the CVV, if any, is
+// discarded — D52 §2). Returns the encrypted PAN and the non-sensitive meta, or
+// nulls when there is no usable card.
 function stageCard(rev: RevisionInput): {
   panEnc: string | null;
-  cvvEnc: string | null;
   meta: StagedCardMeta | null;
 } {
-  if (!cardVaultConfigured()) return { panEnc: null, cvvEnc: null, meta: null };
+  if (!cardVaultConfigured()) return { panEnc: null, meta: null };
   const card = extractChannelCard(rev.payload);
-  if (!card) return { panEnc: null, cvvEnc: null, meta: null };
+  if (!card) return { panEnc: null, meta: null };
   const pan = normalizePan(card.pan ?? "");
   if (!panValid(pan) || card.expMonth === null || card.expYear === null) {
-    return { panEnc: null, cvvEnc: null, meta: null };
+    return { panEnc: null, meta: null };
   }
   return {
     panEnc: encryptPan(pan),
-    cvvEnc: card.cvv && cvvValid(card.cvv) ? encryptCvv(card.cvv) : null,
     meta: {
       holder_name: card.holderName,
       brand: card.brand ?? detectBrand(pan),
@@ -90,20 +90,20 @@ export async function persistBookingRevision(
   db: Sql | TransactionSql,
   rev: RevisionInput,
 ): Promise<{ id: string; duplicate: false } | { duplicate: true }> {
-  const { panEnc, cvvEnc, meta } = stageCard(rev);
+  const { panEnc, meta } = stageCard(rev);
   const rows = await db<{ id: string }[]>`
     INSERT INTO guesthub.channel_booking_revisions
       (tenant_id, connection_id, provider_booking_id, provider_revision_id,
        unique_id, system_id, ota_reservation_code, ota_name,
        revision_kind, raw_status, payload,
-       card_pan_encrypted, card_cvv_encrypted, card_meta)
+       card_pan_encrypted, card_meta)
     VALUES
       (${rev.tenantId}, ${rev.connectionId}, ${rev.providerBookingId},
        ${rev.providerRevisionId}, ${rev.uniqueId ?? null}, ${rev.systemId ?? null},
        ${rev.otaReservationCode ?? null}, ${rev.otaName ?? null},
        ${rev.revisionKind}, ${rev.rawStatus ?? null},
        ${db.json(redactPayload(rev.payload) as never)},
-       ${panEnc}, ${cvvEnc}, ${meta ? db.json(meta as never) : null})
+       ${panEnc}, ${meta ? db.json(meta as never) : null})
     ON CONFLICT (connection_id, provider_revision_id) DO NOTHING
     RETURNING id`;
   return rows[0] ? { id: rows[0].id, duplicate: false } : { duplicate: true };
@@ -132,23 +132,21 @@ async function attachStagedCard(
   tenantId: string,
   reservationId: string,
   panEnc: string,
-  cvvEnc: string | null,
   meta: StagedCardMeta,
 ): Promise<void> {
   const [row] = await tx<{ id: string }[]>`
     INSERT INTO guesthub.reservation_cards
-      (tenant_id, reservation_id, holder_name, pan_encrypted, cvv_encrypted, key_version,
+      (tenant_id, reservation_id, holder_name, pan_encrypted, key_version,
        brand, last4, exp_month, exp_year, source, source_channel,
        provider_reservation_ref, is_virtual, available_from, available_until, received_at)
     VALUES
-      (${tenantId}, ${reservationId}, ${meta.holder_name || "כרטיס ערוץ"}, ${panEnc}, ${cvvEnc},
+      (${tenantId}, ${reservationId}, ${meta.holder_name || "כרטיס ערוץ"}, ${panEnc},
        ${meta.key_version}, ${meta.brand}, ${meta.last4}, ${meta.exp_month}, ${meta.exp_year},
        'channel', ${meta.source_channel}, ${meta.provider_reservation_ref}, ${meta.is_virtual},
        ${meta.available_from}, ${meta.available_until}, now())
     ON CONFLICT (reservation_id) DO UPDATE SET
       holder_name = COALESCE(NULLIF(EXCLUDED.holder_name, ''), guesthub.reservation_cards.holder_name),
       pan_encrypted = EXCLUDED.pan_encrypted,
-      cvv_encrypted = COALESCE(EXCLUDED.cvv_encrypted, guesthub.reservation_cards.cvv_encrypted),
       key_version = EXCLUDED.key_version,
       brand = COALESCE(EXCLUDED.brand, guesthub.reservation_cards.brand),
       last4 = EXCLUDED.last4,
@@ -172,7 +170,6 @@ async function attachStagedCard(
               source_channel: meta.source_channel,
               is_virtual: meta.is_virtual,
               last4: meta.last4,
-              cvv_stored: cvvEnc !== null,
             } as never)},
             ${`channel:${meta.source_channel ?? "unknown"}`})`;
 }
@@ -189,7 +186,6 @@ export async function markRevisionImported(
   const [rev] = await tx<
     {
       card_pan_encrypted: string | null;
-      card_cvv_encrypted: string | null;
       card_meta: StagedCardMeta | null;
     }[]
   >`
@@ -197,14 +193,13 @@ export async function markRevisionImported(
       import_status = 'imported', local_reservation_id = ${localReservationId},
       mapping_error = NULL
     WHERE id = ${revisionId}
-    RETURNING card_pan_encrypted, card_cvv_encrypted, card_meta`;
+    RETURNING card_pan_encrypted, card_meta`;
   if (localReservationId && rev?.card_pan_encrypted && rev.card_meta) {
     await attachStagedCard(
       tx,
       tenantId,
       localReservationId,
       rev.card_pan_encrypted,
-      rev.card_cvv_encrypted,
       rev.card_meta,
     );
   }

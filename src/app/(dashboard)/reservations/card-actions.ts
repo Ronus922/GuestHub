@@ -10,7 +10,6 @@ import {
 } from "@/lib/auth/actor";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import {
-  cvvValid,
   detectBrand,
   expiryInPast,
   MANUAL_CARD_SOURCES,
@@ -22,8 +21,6 @@ import {
   cardVaultConfigured,
   encryptPan,
   decryptPan,
-  encryptCvv,
-  decryptCvv,
   CARD_KEY_VERSION,
 } from "@/lib/card-vault";
 import { getPaymentGateway, NO_GATEWAY_MESSAGE } from "@/lib/payments/gateway";
@@ -31,14 +28,18 @@ import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
-// Protected reservation-card actions (D41/D42). The PAN travels ONLY through
+// Protected reservation-card actions (D41/D42/D52). The PAN travels ONLY through
 // saveReservationCardAction (encrypted before persistence) and back ONLY
 // through revealReservationCardAction (explicit, permission-guarded, audited).
 // Nothing here ever logs a request body, puts digits in an error/audit payload
-// beyond last4, or returns the PAN from save/list. CVV is NEVER stored: it is
-// accepted ONLY by chargeReservationCardAction, used transiently, and discarded
-// — no column, no encryption, no logging, no audit payload. Every reveal and
-// charge — success OR rejected — is recorded with IP + session.
+// beyond last4, or returns the PAN from save/list.
+//
+// CVV/CVC is NEVER accepted, stored, encrypted, revealed, logged or audited
+// (D52 §2). The save action does not take a CVV; the reveal never returns one;
+// no cvv_encrypted column exists (dropped in migration 018). A CVV may exist
+// only transiently inside a single PSP authorization request via the gateway
+// seam, and is discarded immediately after. Every reveal and charge — success
+// OR rejected — is recorded with IP + session.
 // ============================================================
 
 class DomainError extends Error {}
@@ -65,14 +66,13 @@ export type StoredCardMeta = {
   isVirtual: boolean;
   availableUntil: string | null;
   billingNotes: string | null;
-  hasCvv: boolean;
   updatedAt: string;
 };
 
 // The full plaintext bundle returned ONLY by the audited reveal action.
+// NOTE (D52): no CVV — it is never stored, so it can never be revealed.
 export type RevealedCard = {
   pan: string;
-  cvv: string | null;
   holderName: string;
   holderIdNumber: string | null;
   expMonth: number;
@@ -90,7 +90,6 @@ const META_COLS = sql`
   holder_name AS "holderName", holder_id_number AS "holderIdNumber",
   source, source_channel AS "sourceChannel", is_virtual AS "isVirtual",
   available_until::text AS "availableUntil", billing_notes AS "billingNotes",
-  (cvv_encrypted IS NOT NULL) AS "hasCvv",
   updated_at::text AS "updatedAt"`;
 
 async function requireReservation(actor: Actor, reservationId: string): Promise<void> {
@@ -106,7 +105,6 @@ export async function saveReservationCardAction(raw: {
   holderName: string;
   holderIdNumber?: string;
   pan: string;
-  cvv?: string;
   expMonth: number;
   expYear: number;
   source?: CardSource;
@@ -134,12 +132,7 @@ export async function saveReservationCardAction(raw: {
     const pan = normalizePan(String(raw.pan ?? ""));
     if (!panValid(pan)) return fail("מספר כרטיס אינו תקין");
 
-    // CVV is optional; when present it is validated (shape) and encrypted at
-    // rest with the same vault as the PAN. When absent, an existing stored CVV
-    // is preserved (empty must never overwrite — COALESCE below).
-    const cvvRaw = String(raw.cvv ?? "").trim();
-    if (cvvRaw && !cvvValid(cvvRaw)) return fail("קוד CVV אינו תקין");
-    const cvvEncrypted = cvvRaw ? encryptCvv(cvvRaw) : null;
+    // CVV is intentionally NOT accepted or stored (D52 §2).
 
     const expMonth = Number(raw.expMonth);
     const expYear = Number(raw.expYear);
@@ -162,17 +155,15 @@ export async function saveReservationCardAction(raw: {
       const [row] = await tx<StoredCardMeta[]>`
         INSERT INTO guesthub.reservation_cards
           (tenant_id, reservation_id, holder_name, holder_id_number,
-           pan_encrypted, cvv_encrypted, key_version, brand, last4, exp_month, exp_year,
+           pan_encrypted, key_version, brand, last4, exp_month, exp_year,
            source, billing_notes, received_at, created_by, updated_by)
         VALUES (${actor.tenantId}, ${raw.reservationId}, ${holderName}, ${holderId || null},
-                ${encrypted}, ${cvvEncrypted}, ${CARD_KEY_VERSION}, ${brand}, ${last4}, ${expMonth}, ${expYear},
+                ${encrypted}, ${CARD_KEY_VERSION}, ${brand}, ${last4}, ${expMonth}, ${expYear},
                 ${source}, ${billingNotes}, now(), ${actor.userId}, ${actor.userId})
         ON CONFLICT (reservation_id) DO UPDATE SET
           holder_name = EXCLUDED.holder_name,
           holder_id_number = EXCLUDED.holder_id_number,
           pan_encrypted = EXCLUDED.pan_encrypted,
-          -- empty incoming CVV must NOT wipe a stored one (§8)
-          cvv_encrypted = COALESCE(EXCLUDED.cvv_encrypted, guesthub.reservation_cards.cvv_encrypted),
           key_version = EXCLUDED.key_version,
           brand = EXCLUDED.brand,
           last4 = EXCLUDED.last4,
@@ -192,8 +183,8 @@ export async function saveReservationCardAction(raw: {
         entityId: row.id,
         action: existing ? "card_replace" : "card_save",
         before: existing ? { last4: existing.last4 } : undefined,
-        // masked metadata only — never digits/cvv; cvv_stored is a boolean flag
-        after: { brand, last4, source, cvv_stored: cvvEncrypted !== null, reservation_id: raw.reservationId },
+        // masked metadata only — never digits, never a CVV (none is stored)
+        after: { brand, last4, source, reservation_id: raw.reservationId },
         ip: ctx.ip,
         session: ctx.session,
       }, tx);
@@ -208,10 +199,11 @@ export async function saveReservationCardAction(raw: {
 }
 
 // ---- explicit full-card reveal (server-enforced permission, audited) ----
-// Returns the full PAN, CVV and other stored card fields, decrypted server-side
-// for THIS authenticated request only. Repeatable — the encrypted values are
-// never deleted or replaced by a reveal. Records success AND rejected attempts,
-// which fields were revealed, IP + session. The audit NEVER carries the digits.
+// Returns the full PAN and other stored card fields (NEVER a CVV — none is
+// stored), decrypted server-side for THIS authenticated request only. Repeatable
+// — the encrypted PAN is never deleted or replaced by a reveal. Records success
+// AND rejected attempts, which fields were revealed, IP + session. The audit
+// NEVER carries the digits.
 export async function revealReservationCardAction(
   cardId: string,
 ): Promise<ActionResult<RevealedCard>> {
@@ -236,13 +228,13 @@ export async function revealReservationCardAction(
 
     const [row] = await sql<
       {
-        id: string; reservation_id: string; pan_encrypted: string; cvv_encrypted: string | null;
+        id: string; reservation_id: string; pan_encrypted: string;
         holder_name: string; holder_id_number: string | null; exp_month: number; exp_year: number;
         brand: string | null; source: CardSource; source_channel: string | null;
         is_virtual: boolean; available_until: string | null;
       }[]
     >`
-      SELECT id, reservation_id, pan_encrypted, cvv_encrypted,
+      SELECT id, reservation_id, pan_encrypted,
              holder_name, holder_id_number, exp_month, exp_year, brand,
              source, source_channel, is_virtual, available_until::text AS available_until
       FROM guesthub.reservation_cards
@@ -250,8 +242,7 @@ export async function revealReservationCardAction(
     if (!row) return fail("כרטיס שמור לא נמצא");
 
     const pan = decryptPan(row.pan_encrypted);
-    const cvv = row.cvv_encrypted ? decryptCvv(row.cvv_encrypted) : null;
-    const fields = ["pan", "expiry", "holder", ...(row.holder_id_number ? ["holder_id"] : []), ...(cvv ? ["cvv"] : [])];
+    const fields = ["pan", "expiry", "holder", ...(row.holder_id_number ? ["holder_id"] : [])];
     await writeAudit(actor, {
       entityType: "reservation_card",
       entityId: row.id,
@@ -264,7 +255,6 @@ export async function revealReservationCardAction(
       success: true,
       data: {
         pan,
-        cvv,
         holderName: row.holder_name,
         holderIdNumber: row.holder_id_number,
         expMonth: row.exp_month,
@@ -283,10 +273,10 @@ export async function revealReservationCardAction(
 
 // ---- immediate charge via PSP (server-enforced permission, audited) ----
 // Routes through the payment-gateway seam (src/lib/payments/gateway.ts). No PSP
-// is integrated today, so getPaymentGateway() is null and this fails closed —
-// it NEVER blocks card storage, CVV persistence or reveal. When a real gateway
-// lands, the else-branch decrypts the stored card and calls gateway.charge();
-// nothing at the call sites changes.
+// is integrated today, so getPaymentGateway() is null and this fails closed. When
+// a real gateway lands, the else-branch decrypts the stored PAN and calls
+// gateway.charge() (a CVV, if the flow needs one, is collected transiently at
+// that moment and discarded — never stored); nothing at the call sites changes.
 export async function chargeReservationCardAction(input: {
   cardId: string;
   amount: number;

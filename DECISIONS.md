@@ -559,3 +559,55 @@ scripts/check-pricing-engine.mjs (35 checks: pure resolution rules compiled from
 modules + end-to-end quotes on :5433, rolled back). NO real Rate Plans were fabricated —
 the tenant starts with zero tenant-level plans and the screen shows the setup-required
 state.
+
+## D52 — Manual reservations & payments production closure: CVV retention removed, ledger reconciled, credit-aware balance
+
+The manual reservation + payment flow is closed on the D51 canonical architecture
+(calculateReservationPrice, immutable pricing snapshots, one payments ledger) — nothing in
+the pricing/VAT/availability/snapshot path was rewritten. Three concrete gaps were fixed.
+
+**(1) CVV/CVC retention removed entirely (§2).** Reverses D43's "CVV stored ENCRYPTED". The
+system no longer collects, stores, encrypts, reveals, logs or audits a CVV — not even
+encrypted. Removed: card-rules cvvValid/formatCvv/maskedCvv; card-vault
+encryptCvv/decryptCvv; the cvv param + cvv_encrypted column write + reveal + hasCvv flag in
+card-actions; the CVV input field and the masked/revealed CVV display in CardFields; the cvv
+payload from BookingPanel/EditReservationPanel saves; has_cvv from getReservationAction; and
+the channel ingest CVV paths (card-ingest, revisions, payloads — the PAN is still
+encrypt-staged, any CVV is discarded; redactPayload still scrubs cvv/cvc from stored
+payloads). Migration 018 records COUNT-ONLY remediation and permanently DROPs
+guesthub.reservation_cards.cvv_encrypted (2 rows destroyed on prod) +
+guesthub.channel_booking_revisions.card_cvv_encrypted (0). The gateway seam keeps a
+transient cvv? field (a single live PSP authorization only, discarded immediately — hosted
+fields preferred). No future write path remains.
+
+**(2) Payment-ledger reconciliation (§6).** Root-caused a live balance bug: legacy seed rows
+misused the RESERVATION state 'partial' as a PAYMENT-ROW status for real captured partial
+payments, so the ledger (SUM FILTER status='paid') excluded them — stored paid_amount already
+diverged from the ledger for 8 reservations, and the next payment/edit would have silently
+wiped the collected amount. Canonical model: a payment ROW is
+'paid'|'pending'|'failed'|'voided'|'refunded' (only 'paid' counts); partial/overpaid are
+DERIVED reservation states. Migration 019 relabels 'partial'→'paid' (no money changes), adds a
+CHECK constraint on the canonical set, and rebuilds paid_amount/balance from the ledger for
+all reservations (0 divergent after). seed.mjs now writes 'paid'; ledger.ts exports
+COLLECTED_PAYMENT_STATUS.
+
+**(3) Credit-aware balance everywhere (§7/§9).** The calendar tooltip floored a negative
+balance to ₪0. New ONE shared formatter in inventory-rules: balanceOf (NOT floored) +
+formatBalance ({due|settled|credit}) + paymentState extended with 'overpaid'. The tooltip, the
+reservation panel balance tile, the PaymentBadge, the calendar PAY_STYLE palette and the
+payment legend all now show an overpayment as "זיכוי ללקוח -₪X" (customer credit), not a zero
+balance. The DB ledger balance was already un-floored (D51) — this removes the display-only
+divergence; the UI formats money but never computes commercial totals.
+
+Extra-guest setting UNCHANGED and confirmed: tenants.settings.extra_guest =
+{extra_adult/child/infant: 200, per_night, inclusive}, inherited by all 14 rooms (0
+overrides). Not retroactively repriced.
+
+Verification: build + tsc clean; check-pricing-equality 22/22 (manual create, all rate plans,
+multi-room, extra guests, VAT, partial/full/overpayment credit, availability, snapshot
+immutability, repricing-on-edit, override permission, ledger authority) on the isolated :5433
+DB with the full 000→019 chain; check-cards, check-payments, check-channel-card-ingest,
+check-calendar updated to assert CVV is GONE + credit semantics. Browser (headless, new build
+on :3099, throwaway ZZQA data removed): no CVV field, ₪200 extra-guest line,
+partial→full→overpayment showing "זיכוי ללקוח -₪200" in panel + tooltip + DB, 390px layout OK.
+Public booking engine and Channex NOT started.

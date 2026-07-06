@@ -64,10 +64,22 @@ assert.deepEqual([...rules.INVENTORY_BLOCKING_STATUSES], ["confirmed", "checked_
 assert.ok(!rules.INVENTORY_BLOCKING_STATUSES.includes("cancelled"), "cancelled never consumes inventory");
 assert.ok(!rules.CALENDAR_VISIBLE_STATUSES.includes("cancelled"), "cancelled never renders");
 
-// ---- payment state (§F) ----
+// ---- payment state (§F) + canonical balance (D52 §6/§7) ----
 assert.equal(rules.paymentState(1000, 0), "unpaid");
 assert.equal(rules.paymentState(1000, 500), "partial");
 assert.equal(rules.paymentState(1000, 1000), "paid");
+assert.equal(rules.paymentState(1000, 1200), "overpaid", "paid over total → overpaid, not silently 'paid'");
+assert.equal(rules.paymentState(0, 0), "unpaid", "a zero-total unpaid stay is unpaid");
+
+// balanceOf is NOT floored — a credit is negative, shown as a credit (never a
+// zero balance). ONE definition shared by tooltip / panel / payment section.
+assert.equal(rules.balanceOf(1000, 400), 600, "positive balance = amount still due");
+assert.equal(rules.balanceOf(1000, 1000), 0, "settled");
+assert.equal(rules.balanceOf(1000, 1200), -200, "overpayment is a NEGATIVE balance (credit), not floored to 0");
+assert.deepEqual(rules.formatBalance(1000, 400), { kind: "due", amount: 600, label: "יתרה לתשלום" });
+assert.deepEqual(rules.formatBalance(1000, 1000), { kind: "settled", amount: 0, label: "שולם במלואו" });
+assert.deepEqual(rules.formatBalance(1000, 1200), { kind: "credit", amount: 200, label: "זיכוי ללקוח" },
+  "an overpayment is a ₪200 customer credit — absolute amount + credit label");
 
 // ---- canonical pricing + restriction rules moved to check-effective-state.mjs ----
 // Phase 4A: the room/type resolveRate is retired; the single validator/pricer is

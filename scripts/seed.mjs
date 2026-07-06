@@ -565,7 +565,10 @@ async function main() {
       payRows.push({
         tenant_id: tenantId, reservation_id: resId, amount: r._paid,
         method: pick(["cash", "credit_card", "bank_transfer", "bit"]),
-        status: r._paid >= r.row.total_price ? "paid" : "partial",
+        // D52: a captured payment ROW is always 'paid'. Whether the reservation
+        // is fully/partly paid is DERIVED from the ledger, not stored per row —
+        // 'partial' is a reservation state, never a payment-row status.
+        status: "paid",
         paid_at: new Date(r.row.check_in + "T10:00:00Z"),
         reference: `RCPT-${r.row.reservation_number}`,
       });

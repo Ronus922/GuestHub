@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
-import { paymentState } from "@/lib/inventory-rules";
+import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import {
@@ -272,7 +272,6 @@ export function BookingPanel({
           holderName: cc.holder.trim(),
           holderIdNumber: cc.idNum || undefined,
           pan: normalizePan(cc.number),
-          cvv: cc.cvv || undefined,
           expMonth: exp.month,
           expYear: exp.year,
           source: cc.source,
@@ -944,12 +943,13 @@ function PayChip({
 }
 
 // Payment badge — reference edit-modal chip palette (unpaid red / partial
-// orange / paid green).
-export function PaymentBadge({ state }: { state: "unpaid" | "partial" | "paid" }) {
+// orange / paid green / overpaid teal = fully paid + customer credit, D52 §7).
+export function PaymentBadge({ state }: { state: PaymentState }) {
   const map = {
     unpaid: { label: "לא שולם", bg: "#FDECEC", bd: "#F4B9B9", tx: "#B4231F", dot: "#DC2626" },
     partial: { label: "שולם חלקית", bg: "#FDF2E1", bd: "#EBC078", tx: "#B4670A", dot: "#EA9314" },
     paid: { label: "שולם מלא", bg: "#E7F6EC", bd: "#AADDB7", tx: "#15803D", dot: "#16A34A" },
+    overpaid: { label: "שולם ביתר", bg: "#DCF1F4", bd: "#8FD3DC", tx: "#0B6E7A", dot: "#0E8A99" },
   }[state];
   return (
     <span className="bw-badge" style={{ background: map.bg, borderColor: map.bd, color: map.tx }}>

@@ -40,13 +40,8 @@ export function decryptPan(ciphertext: string): string {
   return Buffer.concat([decipher.update(Buffer.from(data, "base64")), decipher.final()]).toString("utf8");
 }
 
-// CVV uses the SAME authenticated envelope + key as the PAN (a short secret
-// string). Kept as named wrappers so call sites read clearly and a future
-// CVV-specific policy (e.g. a separate key) has one place to change.
-export function encryptCvv(cvv: string): string {
-  return encryptPan(cvv);
-}
-
-export function decryptCvv(ciphertext: string): string {
-  return decryptPan(ciphertext);
-}
+// NOTE (D52): CVV/CVC is NEVER stored — not even encrypted. The former
+// encryptCvv/decryptCvv wrappers were removed with migration 018. A CVV may be
+// held only transiently in a single authorization request to a PSP (via the
+// gateway seam, src/lib/payments/gateway.ts) and is discarded immediately after
+// — it never touches this vault, the database, logs, audits or snapshots.

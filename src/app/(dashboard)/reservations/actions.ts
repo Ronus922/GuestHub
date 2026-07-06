@@ -1033,7 +1033,6 @@ export type ReservationDetail = {
     isVirtual: boolean;
     availableUntil: string | null;
     billingNotes: string | null;
-    hasCvv: boolean;
     updatedAt: string;
   } | null;
 };
@@ -1110,12 +1109,11 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
     const [card] = await sql<
       { id: string; brand: string | null; last4: string; exp_month: number; exp_year: number;
         holder_name: string; source: string; source_channel: string | null; is_virtual: boolean;
-        available_until: string | null; billing_notes: string | null; has_cvv: boolean; updated_at: string }[]
+        available_until: string | null; billing_notes: string | null; updated_at: string }[]
     >`
       SELECT id, brand, last4, exp_month, exp_year, holder_name,
              source, source_channel, is_virtual,
              available_until::text AS available_until, billing_notes,
-             (cvv_encrypted IS NOT NULL) AS has_cvv,
              updated_at::text AS updated_at
       FROM guesthub.reservation_cards
       WHERE reservation_id = ${id} AND tenant_id = ${actor.tenantId}`;
@@ -1192,7 +1190,6 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
               isVirtual: card.is_virtual,
               availableUntil: card.available_until,
               billingNotes: card.billing_notes,
-              hasCvv: card.has_cvv,
               updatedAt: card.updated_at,
             }
           : null,

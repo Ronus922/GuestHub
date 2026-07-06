@@ -1,7 +1,10 @@
 // Pure card-input rules shared by the card form, the guarded server actions
 // and scripts/check-cards.mjs. NO storage, NO crypto here — encryption lives
-// server-only in src/lib/card-vault.ts. CVV is deliberately absent from every
-// type in this module: it is never persisted anywhere (D41).
+// server-only in src/lib/card-vault.ts. CVV/CVC is deliberately absent from
+// every type, validator and formatter in this module: as of D52 it is never
+// collected for storage, never persisted and never revealed anywhere. A CVV may
+// exist only transiently inside a single PSP authorization request (the gateway
+// seam) and is discarded immediately — it never flows through these rules.
 
 export type CardBrand = "visa" | "mastercard" | "amex" | "diners" | "other";
 
@@ -31,16 +34,6 @@ export const CARD_SOURCE_LABEL: Record<CardSource, string> = {
   back_office: "משרד (Back-office)",
   channel: "ערוץ חיצוני",
 };
-
-// CVV is collected transiently for an immediate charge ONLY — never stored,
-// never encrypted at rest, never logged. Shape check only (3–4 digits).
-export function cvvValid(v: string): boolean {
-  return /^\d{3,4}$/.test(v);
-}
-
-export function formatCvv(v: string): string {
-  return (v.match(/\d/g) ?? []).slice(0, 4).join("");
-}
 
 // digits only, grouped in 4s, max 19 digits (PAN upper bound)
 export function formatCardNumber(v: string): string {
@@ -95,12 +88,6 @@ export const BRAND_LABEL: Record<CardBrand, string> = {
 // masked display — the ONLY card-number form the normal UI ever renders
 export function maskedPan(last4: string): string {
   return `•••• •••• •••• ${last4}`;
-}
-
-// masked CVV placeholder — the plaintext CVV is shown only after an explicit,
-// permission-guarded, audited reveal
-export function maskedCvv(): string {
-  return "•••";
 }
 
 // expiry must parse as a real month and not be in the past relative to `now`

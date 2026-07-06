@@ -1,16 +1,17 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
-import { encryptPan, encryptCvv, CARD_KEY_VERSION, cardVaultConfigured } from "../card-vault";
-import { cvvValid, detectBrand, normalizePan, panValid } from "../card-rules";
+import { encryptPan, CARD_KEY_VERSION, cardVaultConfigured } from "../card-vault";
+import { detectBrand, normalizePan, panValid } from "../card-rules";
 import type { ChannelCardData } from "./payloads";
 
 // ============================================================
-// Channel card ingestion (§Z reconciliation, D42/D43). Given an extracted card
-// from a raw inbound booking, encrypts the PAN (+CVV when the channel sends one,
-// e.g. virtual cards) and upserts it into reservation_cards. Encrypted
-// immediately, never logged, never returned. Relative imports + an inline
-// system-audit INSERT keep this module free of Next-only deps so it can run in
-// the channel-ingest integration test against a real DB.
+// Channel card ingestion (§Z reconciliation, D42/D43/D52). Given an extracted
+// card from a raw inbound booking, encrypts the PAN and upserts it into
+// reservation_cards. The CVV is NEVER persisted — even for virtual cards — per
+// D52 §2: any CVV present in the inbound payload is discarded, never encrypted,
+// never stored, never logged. Encrypted immediately, never logged, never
+// returned. Relative imports + an inline system-audit INSERT keep this module
+// free of Next-only deps so it can run in the channel-ingest integration test.
 //
 // "Do not overwrite channel card information with empty values": the upsert
 // COALESCEs incoming nulls to the existing value. Virtual vs regular cards are
@@ -40,25 +41,23 @@ export async function ingestChannelCard(
   if (card.expMonth === null || card.expYear === null) return { stored: false, reason: "no_expiry" };
 
   const panEncrypted = encryptPan(pan);
-  const cvvEncrypted = card.cvv && cvvValid(card.cvv) ? encryptCvv(card.cvv) : null;
   const last4 = pan.slice(-4);
   const brand = card.brand ?? detectBrand(pan);
   const holderName = card.holderName ?? "כרטיס ערוץ";
 
   const [row] = await db<{ id: string }[]>`
     INSERT INTO guesthub.reservation_cards
-      (tenant_id, reservation_id, holder_name, pan_encrypted, cvv_encrypted, key_version,
+      (tenant_id, reservation_id, holder_name, pan_encrypted, key_version,
        brand, last4, exp_month, exp_year, source, source_channel,
        provider_reservation_ref, is_virtual, available_from, available_until, received_at)
     VALUES
-      (${args.tenantId}, ${args.reservationId}, ${holderName}, ${panEncrypted}, ${cvvEncrypted}, ${CARD_KEY_VERSION},
+      (${args.tenantId}, ${args.reservationId}, ${holderName}, ${panEncrypted}, ${CARD_KEY_VERSION},
        ${brand}, ${last4}, ${card.expMonth}, ${card.expYear}, 'channel', ${args.otaName ?? null},
        ${args.otaReservationCode ?? null}, ${card.isVirtual}, ${card.availableFrom},
        ${card.availableUntil}, now())
     ON CONFLICT (reservation_id) DO UPDATE SET
       holder_name = COALESCE(NULLIF(EXCLUDED.holder_name, ''), guesthub.reservation_cards.holder_name),
       pan_encrypted = EXCLUDED.pan_encrypted,
-      cvv_encrypted = COALESCE(EXCLUDED.cvv_encrypted, guesthub.reservation_cards.cvv_encrypted),
       key_version = EXCLUDED.key_version,
       brand = COALESCE(EXCLUDED.brand, guesthub.reservation_cards.brand),
       last4 = EXCLUDED.last4,
@@ -84,7 +83,6 @@ export async function ingestChannelCard(
               source_channel: args.otaName ?? null,
               is_virtual: card.isVirtual,
               last4,
-              cvv_stored: cvvEncrypted !== null,
             } as never)},
             ${`channel:${args.otaName ?? "unknown"}`})`;
 

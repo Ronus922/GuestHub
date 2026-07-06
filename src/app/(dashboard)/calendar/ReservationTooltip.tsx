@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
+import { formatBalance } from "@/lib/inventory-rules";
 import { stayPalette } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
@@ -75,16 +76,19 @@ export function ReservationTooltip({
     .join("");
   // draft (pending-approval) shows its status badge, like Tooltip.png;
   // otherwise the payment state (rooms-calendar popover)
+  const PAY_LABEL: Record<CalendarStay["payment"], string> = {
+    paid: "שולם מלא",
+    overpaid: "שולם ביתר",
+    partial: "שולם חלקית",
+    unpaid: "לא שולם",
+  };
   const badge =
     stay.status === "draft"
       ? { label: statusLabel.get("draft") ?? "ממתין לאישור", bg: "#FDF2E1", tx: "#B4670A" }
-      : {
-          label:
-            stay.payment === "paid" ? "שולם מלא" : stay.payment === "partial" ? "שולם חלקית" : "לא שולם",
-          bg: pal.bg,
-          tx: pal.tx,
-        };
-  const balance = Math.max(0, stay.total_price - stay.paid_amount);
+      : { label: PAY_LABEL[stay.payment] ?? "לא שולם", bg: pal.bg, tx: pal.tx };
+  // canonical balance (D52 §7): NOT floored — a credit is shown as a credit,
+  // never as a zero balance. Shared formatter, one semantics everywhere.
+  const bal = formatBalance(stay.total_price, stay.paid_amount);
   const sub = [
     `חדר ${room.room_number}`,
     room.room_type_name,
@@ -141,13 +145,13 @@ export function ReservationTooltip({
           <Icon name="finance" size={17} className="cb-pli" />
           <span>
             סה״כ <b>₪{stay.total_price.toLocaleString()}</b>
-            {balance > 0 ? (
+            {bal.kind === "settled" ? (
+              " · שולם במלואו"
+            ) : (
               <>
                 {" "}
-                · יתרה <b>₪{balance.toLocaleString()}</b>
+                · {bal.label} <b>₪{bal.amount.toLocaleString()}</b>
               </>
-            ) : (
-              " · שולם במלואו"
             )}
           </span>
         </p>

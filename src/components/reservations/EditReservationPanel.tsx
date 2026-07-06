@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
-import { paymentState } from "@/lib/inventory-rules";
+import { paymentState, formatBalance } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import {
@@ -264,7 +264,6 @@ export function EditReservationPanel({
         holderName: cc.holder.trim(),
         holderIdNumber: cc.idNum || undefined,
         pan: normalizePan(cc.number),
-        cvv: cc.cvv || undefined,
         expMonth: exp.month,
         expYear: exp.year,
         source: cc.source,
@@ -297,6 +296,10 @@ export function EditReservationPanel({
   const statusMeta = detail ? statusItems.find((s) => s.key === detail.status) : null;
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "—";
   const payState = paymentState(total, paidAfter);
+  // canonical balance (D52 §7/§9): NOT floored — a negative balance is shown as a
+  // customer credit, never as a zero balance. Formatted here, computed centrally.
+  const bal = formatBalance(total, paidAfter);
+  const BAL_COLOR = { due: "#B4231F", settled: "#15803D", credit: "#0B6E7A" } as const;
 
   return (
     <SidePanel
@@ -580,9 +583,9 @@ export function EditReservationPanel({
                   <p className="bw-tv" style={{ color: "#15803D" }} dir="ltr">₪{Math.round(paidAfter).toLocaleString()}</p>
                 </div>
                 <div className="bw-tile">
-                  <p className="bw-tl">יתרה לתשלום</p>
-                  <p className="bw-tv" style={{ color: "#B4231F" }} dir="ltr">
-                    ₪{Math.round(Math.max(0, total - paidAfter)).toLocaleString()}
+                  <p className="bw-tl">{bal.kind === "credit" ? "זיכוי ללקוח" : "יתרה לתשלום"}</p>
+                  <p className="bw-tv" style={{ color: BAL_COLOR[bal.kind] }} dir="ltr">
+                    {bal.kind === "credit" ? "-" : ""}₪{Math.round(bal.amount).toLocaleString()}
                   </p>
                 </div>
               </div>

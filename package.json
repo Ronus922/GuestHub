@@ -27,6 +27,9 @@
     "check:sellability": "node --env-file=.env.local scripts/check-rate-sellability.mjs",
     "check:reservation-snapshot": "node scripts/check-reservation-snapshot.mjs",
     "check:calendar": "node scripts/check-calendar.mjs",
+    "check:cards": "node scripts/check-cards.mjs",
+    "check:payments": "node scripts/check-payments.mjs",
+    "check:channel-card-ingest": "node --env-file=.env.local scripts/check-channel-card-ingest.mjs",
     "check-e2e-safety": "node scripts/check-e2e-safety.mjs",
     "guard:deploy": "node scripts/production-deploy-guard.mjs"
   },
