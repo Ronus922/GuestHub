@@ -95,6 +95,22 @@ export async function listRatePlans(
   });
 }
 
+// Lightweight list for the booking/edit panels' plan selector: active,
+// non-archived tenant-level plans only (id + display name + code).
+export type BookableRatePlan = { id: string; name: string; code: string };
+
+export async function listBookableRatePlans(
+  tenantId: string,
+  db: Sql | TransactionSql = sql,
+): Promise<BookableRatePlan[]> {
+  return db<BookableRatePlan[]>`
+    SELECT id, COALESCE(public_name, name) AS name, code
+    FROM guesthub.pricing_plans
+    WHERE tenant_id = ${tenantId} AND sellable_unit_id IS NULL
+      AND is_active AND NOT is_archived
+    ORDER BY sort_order, name`;
+}
+
 export type PlanAssignmentRow = {
   sellable_unit_id: string;
   is_active: boolean;

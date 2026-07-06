@@ -34,7 +34,7 @@ const NO_GATEWAY_MESSAGE = "לא מוגדר ספק סליקה פעיל";
 export type RecordedPayment = {
   paid: number;
   balance: number;
-  payment: { id: string; amount: number; method: string | null; paid_at: string };
+  payment: { id: string; amount: number; method: string | null; paid_at: string; reference: string | null };
 };
 
 // פרטי כרטיס אשראי (reference .ccbox) — the ENTRY form + the saved-card box.

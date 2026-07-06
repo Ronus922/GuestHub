@@ -28,13 +28,26 @@ export type PricingQuoteRequest = {
   checkOut: DateOnly;
   rooms: Array<{
     roomId: string;
-    ratePlanId: string;
+    // null = the base-ARI layer (the unit's base plan / room-type base price)
+    // with no tenant-level Rate Plan applied — the pre-Rate-Plans pricing every
+    // reservation used, kept as an explicit engine mode so tenants without
+    // tenant-level plans still price through THE one engine.
+    ratePlanId: string | null;
     adults: number;
     children: number;
     infants: number;
+    // authorized manual override (§13): the FINAL nightly room price agreed
+    // with the guest. Bypasses price resolution AND extra-guest charging
+    // (legacy manual-rate semantics: priceTotal = rate × nights); every
+    // physical/restriction/occupancy rule still runs. The CALLER enforces the
+    // permission — the engine only prices what it is told is authorized.
+    manualRatePerNight?: number | null;
   }>;
   source: QuoteSource;
   requestedCurrency?: string;
+  // reservation edit/move: the stay's own reservation_rooms ids, excluded from
+  // the availability conflict check exactly like the legacy path.
+  excludeReservationRoomIds?: string[];
 };
 
 // ---- stable machine-readable error codes (§15) ----
@@ -90,7 +103,8 @@ export type PriceSource =
   | "independent_plan_price"  // exact (plan, unit, date) row — THE price of an independent plan
   | "derived_from_parent_plan"
   | "base_plan_rate"          // pricing_plan_rates row on the unit's base plan
-  | "room_type_base_price";   // room_types.base_price terminal fallback
+  | "room_type_base_price"    // room_types.base_price terminal fallback
+  | "manual_override";        // authorized manual rate (§13) — final nightly price
 
 export type AdjustmentSource = "assignment_adjustment" | "plan_adjustment";
 
@@ -113,7 +127,7 @@ export type RoomQuote = {
   roomId: string;
   roomNumber: string;
   roomName: string | null;
-  ratePlanId: string;
+  ratePlanId: string | null; // null = base-ARI layer (no tenant-level plan)
   ratePlanName: string;
   ratePlanCode: string;
   adults: number;

@@ -5,7 +5,7 @@ import { sql } from "@/lib/db";
 import { AuthorizationError, getActor, requirePermission } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
 import { isRateDateWritable, todayInTz } from "@/lib/dates";
-import { calculateQuote } from "@/lib/pricing/engine";
+import { calculateReservationPrice } from "@/lib/pricing/engine";
 import type { PricingQuoteResult } from "@/lib/pricing/types";
 import { getRatePlanDetail, listPlanOverrides, type PlanOverrideRow, type RatePlanDetail } from "@/lib/rate-plans/service";
 import {
@@ -480,7 +480,7 @@ export async function simulateQuoteAction(
       return { success: false, error: parsed.error.issues[0]?.message ?? "קלט לא תקין" };
     const s = parsed.data;
 
-    const quote = await calculateQuote(sql, {
+    const quote = await calculateReservationPrice(sql, {
       tenantId: actor!.tenantId, // trusted server context — never from the client
       checkIn: s.checkIn,
       checkOut: s.checkOut,

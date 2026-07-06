@@ -79,16 +79,20 @@ export function BookingPanel({
   prefill,
   bookingSources,
   paymentMethods,
+  ratePlans,
   vatRate,
   canSaveCard,
+  canPriceOverride,
 }: {
   open: boolean;
   onClose: () => void;
   prefill: BookingPrefill;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  ratePlans: { id: string; name: string; code: string }[];
   vatRate: number;
   canSaveCard: boolean;
+  canPriceOverride: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [guest, setGuest] = useState<GuestForm>(EMPTY_GUEST);
@@ -178,18 +182,23 @@ export function BookingPanel({
     }, 250);
   }, [query]);
 
-  // live quotes for the sidebar + pricing/summary steps
+  // live quotes for the sidebar + pricing/summary steps — the SAME central
+  // engine the save path commits (occupancy + Rate Plan included)
   useEffect(() => {
     for (const s of stays) {
       if (!s.roomId || !s.checkIn || !s.checkOut || s.checkOut <= s.checkIn) continue;
-      getStayQuoteAction({ roomId: s.roomId, checkIn: s.checkIn, checkOut: s.checkOut }).then((res) => {
+      getStayQuoteAction({
+        roomId: s.roomId, checkIn: s.checkIn, checkOut: s.checkOut,
+        adults: s.adults, children: s.children, infants: s.infants,
+        ratePlanId: s.ratePlanId ?? null,
+      }).then((res) => {
         if (res.success && res.data) {
           setQuotes((q) => ({ ...q, [s.key]: { total: res.data!.total, restriction: res.data!.restriction } }));
         }
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, stays.map((s) => `${s.key}|${s.roomId}|${s.checkIn}|${s.checkOut}`).join(",")]);
+  }, [step, stays.map((s) => `${s.key}|${s.roomId}|${s.checkIn}|${s.checkOut}|${s.adults}|${s.children}|${s.infants}|${s.ratePlanId ?? ""}`).join(",")]);
 
   const staysValid =
     stays.length > 0 &&
@@ -197,7 +206,7 @@ export function BookingPanel({
   const roomsTotal = stays.reduce((sum, s) => {
     const q = quotes[s.key];
     const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
-    return sum + (s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0));
+    return sum + (s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0));
   }, 0);
   const total = Math.max(0, roomsTotal - discount);
   const payState = paymentState(total, paid);
@@ -235,7 +244,11 @@ export function BookingPanel({
           adults: s.adults,
           children: s.children,
           infants: s.infants,
-          ratePerNight: s.ratePerNight,
+          // an explicit operator-set nightly price is an authorized override
+          // (§13); otherwise the server prices through the central engine
+          ratePerNight: s.isManualRate ? s.ratePerNight : undefined,
+          isManualRate: s.isManualRate || undefined,
+          ratePlanId: s.ratePlanId ?? null,
           guestFirstName: s.guestFirstName || undefined,
           guestLastName: s.guestLastName || undefined,
           guestPhone: s.guestPhone || undefined,
@@ -561,27 +574,72 @@ export function BookingPanel({
                 {stays.map((s, i) => {
                   const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
                   const q = quotes[s.key];
-                  const lineTotal = s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
+                  const autoRate = nights ? Math.round((q?.total ?? 0) / nights) : 0;
+                  const lineTotal =
+                    s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
                   return (
                     <div key={s.key} className="bw-price-line">
                       <div>
                         <b>חדר {i + 1}</b>
                         <div className="bw-plr">
+                          {ratePlans.length > 0 && (
+                            <select
+                              className="ml-2 rounded-lg border border-line px-2 py-1 text-xs font-semibold"
+                              aria-label="תוכנית תעריף"
+                              value={s.ratePlanId ?? ""}
+                              onChange={(e) =>
+                                setStays((all) =>
+                                  all.map((x) =>
+                                    x.key === s.key
+                                      ? { ...x, ratePlanId: e.target.value || null, isManualRate: false, ratePerNight: undefined }
+                                      : x,
+                                  ),
+                                )
+                              }
+                            >
+                              <option value="">מחיר בסיס</option>
+                              {ratePlans.map((p) => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                              ))}
+                            </select>
+                          )}
                           {nights} לילות × ₪
-                          <input
-                            type="number"
-                            min={0}
-                            className="mx-1 w-24 rounded-lg border border-line px-2 py-1 text-center text-xs font-semibold"
-                            value={s.ratePerNight ?? (nights ? Math.round((q?.total ?? 0) / nights) : 0)}
-                            onChange={(e) =>
-                              setStays((all) =>
-                                all.map((x) =>
-                                  x.key === s.key ? { ...x, ratePerNight: Number(e.target.value) || 0 } : x,
-                                ),
-                              )
-                            }
-                          />
+                          {canPriceOverride ? (
+                            /* explicit operator edit = authorized manual override (§13) */
+                            <input
+                              type="number"
+                              min={0}
+                              className="mx-1 w-24 rounded-lg border border-line px-2 py-1 text-center text-xs font-semibold"
+                              value={s.isManualRate ? (s.ratePerNight ?? 0) : autoRate}
+                              onChange={(e) =>
+                                setStays((all) =>
+                                  all.map((x) =>
+                                    x.key === s.key
+                                      ? { ...x, ratePerNight: Number(e.target.value) || 0, isManualRate: true }
+                                      : x,
+                                  ),
+                                )
+                              }
+                            />
+                          ) : (
+                            <b className="mx-1">{(s.isManualRate ? (s.ratePerNight ?? 0) : autoRate).toLocaleString()}</b>
+                          )}
                           / לילה
+                          {s.isManualRate && (
+                            <button
+                              type="button"
+                              className="mr-2 text-xs font-semibold text-brand underline"
+                              onClick={() =>
+                                setStays((all) =>
+                                  all.map((x) =>
+                                    x.key === s.key ? { ...x, isManualRate: false, ratePerNight: undefined } : x,
+                                  ),
+                                )
+                              }
+                            >
+                              חזרה למחיר אוטומטי
+                            </button>
+                          )}
                         </div>
                       </div>
                       <b dir="ltr">₪{lineTotal.toLocaleString()}</b>
@@ -726,7 +784,7 @@ export function BookingPanel({
                 {stays.map((s, i) => {
                   const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
                   const q = quotes[s.key];
-                  const lineTotal = s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
+                  const lineTotal = s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
                   return (
                     <div key={s.key} className="bw-price-line" style={{ borderBottom: "none", padding: "11px 13px", background: "#F8F9FC", borderRadius: 11 }}>
                       <div>
@@ -784,7 +842,7 @@ export function BookingPanel({
                     .map((s, i) => {
                       const nights = nightsBetween(s.checkIn, s.checkOut);
                       const q = quotes[s.key];
-                      const lineTotal = s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? null);
+                      const lineTotal = s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? null);
                       return (
                         <div key={s.key} className="bw-sum-room">
                           <div className="bw-sum-rt">

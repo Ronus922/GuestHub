@@ -36,6 +36,7 @@ const PRICE_SOURCE_HE: Record<PriceSource, string> = {
   derived_from_parent_plan: "נגזר מתוכנית האב",
   plan_unit_date_override: "חריגת תאריך",
   independent_plan_price: "מחיר עצמאי",
+  manual_override: "מחיר ידני מאושר",
 };
 
 const ADJUSTMENT_SOURCE_HE: Record<AdjustmentSource, string> = {

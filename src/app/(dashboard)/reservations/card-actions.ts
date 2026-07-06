@@ -27,6 +27,7 @@ import {
   CARD_KEY_VERSION,
 } from "@/lib/card-vault";
 import { getPaymentGateway, NO_GATEWAY_MESSAGE } from "@/lib/payments/gateway";
+import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
@@ -338,7 +339,7 @@ export async function recordExternalPaymentAction(input: {
   ActionResult<{
     paid: number;
     balance: number;
-    payment: { id: string; amount: number; method: string | null; paid_at: string };
+    payment: { id: string; amount: number; method: string | null; paid_at: string; reference: string | null };
   }>
 > {
   try {
@@ -354,29 +355,26 @@ export async function recordExternalPaymentAction(input: {
     const ctx = await auditRequestContext();
 
     const result = await sql.begin(async (tx) => {
-      const [res] = await tx<{ total_price: string; paid_amount: string }[]>`
-        SELECT total_price, paid_amount FROM guesthub.reservations
+      const [res] = await tx<{ total_price: string }[]>`
+        SELECT total_price FROM guesthub.reservations
         WHERE id = ${input.reservationId} AND tenant_id = ${actor.tenantId}
         FOR UPDATE`;
       if (!res) throw new DomainError("הזמנה לא נמצאה");
 
-      const total = Number(res.total_price);
-      const paid = Number(res.paid_amount) + amount;
-      const balance = Math.max(0, total - paid);
-
       const [payment] = await tx<
-        { id: string; amount: number; method: string | null; paid_at: string }[]
+        { id: string; amount: number; method: string | null; paid_at: string; reference: string | null }[]
       >`
         INSERT INTO guesthub.payments
           (tenant_id, reservation_id, amount, method, status, paid_at, reference, notes)
         VALUES (${actor.tenantId}, ${input.reservationId}, ${amount}, ${method},
                 'paid', now(), ${reference}, ${note})
-        RETURNING id, amount::float8 AS amount, method, paid_at::text AS paid_at`;
+        RETURNING id, amount::float8 AS amount, method, paid_at::text AS paid_at, reference`;
 
-      await tx`
-        UPDATE guesthub.reservations
-        SET paid_amount = ${paid}, balance = ${balance}, updated_at = now()
-        WHERE id = ${input.reservationId} AND tenant_id = ${actor.tenantId}`;
+      // paid_amount/balance derive from the payments LEDGER (D51) — one
+      // formula everywhere, never an incremental add that can drift.
+      const { paid, balance } = await recomputePaymentAggregates(
+        tx, actor.tenantId, input.reservationId,
+      );
 
       // audited as an EXTERNAL record — never as a charge performed by GuestHub
       await writeAudit(actor, {
