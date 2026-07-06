@@ -90,6 +90,9 @@ import {
   List,
   ListOrdered,
   Image,
+  Tags,
+  Percent,
+  Calculator,
   type LucideIcon,
 } from "lucide-react";
 
@@ -189,6 +192,10 @@ const ICONS = {
   list: List,
   "list-ordered": ListOrdered,
   image: Image,
+  // rate-plans module
+  tags: Tags,
+  percent: Percent,
+  calculator: Calculator,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

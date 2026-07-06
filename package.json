@@ -18,6 +18,8 @@
     "check:room-pricing": "node scripts/check-room-pricing.mjs",
     "check:room-db": "node scripts/check-room-db.mjs",
     "check:settings-regression": "node scripts/check-settings-regression.mjs",
+    "check:rate-plans": "node scripts/check-rate-plans.mjs",
+    "check:pricing-engine": "node scripts/check-pricing-engine.mjs",
     "guard:deploy": "node scripts/production-deploy-guard.mjs"
   },
   "dependencies": {
