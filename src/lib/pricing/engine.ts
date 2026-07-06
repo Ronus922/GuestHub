@@ -116,6 +116,18 @@ function fingerprintOf(payload: unknown): string {
     .digest("hex");
 }
 
+// THE single public pricing entry point (D51). Every price-determining surface
+// — the Rate Plan simulator, manual reservation create/edit/move, quote
+// previews, the future direct booking engine and Channex processing — calls
+// THIS function. `calculateQuote` below is the same function under its
+// original name (kept for the existing check suites).
+export async function calculateReservationPrice(
+  db: Sql | TransactionSql,
+  req: PricingQuoteRequest,
+): Promise<PricingQuoteResult> {
+  return calculateQuote(db, req);
+}
+
 export async function calculateQuote(
   db: Sql | TransactionSql,
   req: PricingQuoteRequest,
@@ -180,8 +192,10 @@ export async function calculateQuote(
   const baseRates = await getRoomPlanRates(db, req.tenantId, roomIds, req.checkIn, req.checkOut);
 
   // Parent chains → the full plan-id set the overlay/assignment loads need.
+  // Entries with ratePlanId null price the base-ARI layer and need no plan rows.
   const chainIdSet = new Set<string>();
   for (const entry of req.rooms) {
+    if (entry.ratePlanId == null) continue;
     const { chain } = resolveParentChain(plansById, entry.ratePlanId);
     for (const p of chain) chainIdSet.add(p.id);
     chainIdSet.add(entry.ratePlanId);
@@ -224,8 +238,10 @@ export async function calculateQuote(
   const EMPTY_OVERLAY = new Map<string, PlanRateRow>();
 
   // Physical availability for all rooms at once (same seam as reservations).
+  // An edit/move excludes the stay's own rows exactly like the legacy path.
   const conflicts = await checkRoomAvailability(db, {
     tenantId: req.tenantId, roomIds, checkIn: req.checkIn, checkOut: req.checkOut,
+    excludeReservationRoomIds: req.excludeReservationRoomIds,
   });
   const conflictsByRoom = new Map<string, typeof conflicts>();
   for (const c of conflicts) {
@@ -242,7 +258,7 @@ export async function calculateQuote(
     const roomErrors: PricingError[] = [];
     const roomWarnings: PricingWarning[] = [];
     const restrictionsEvaluated: string[] = [];
-    const ctx = { roomId: entry.roomId, ratePlanId: entry.ratePlanId };
+    const ctx = { roomId: entry.roomId, ratePlanId: entry.ratePlanId ?? undefined };
 
     if (seenRoomIds.has(entry.roomId)) roomErrors.push(err("ROOM_DUPLICATED", ctx));
     seenRoomIds.add(entry.roomId);
@@ -266,42 +282,53 @@ export async function calculateQuote(
     }
     if (room.unit_active === false) { roomErrors.push(err("ROOM_UNAVAILABLE", { ...ctx, message: "יחידת המכירה של החדר אינה פעילה" })); available = false; }
 
-    // rate plan + chain
-    const plan = plansById.get(entry.ratePlanId);
-    if (!plan) {
+    // rate plan + chain — ratePlanId null is the explicit base-ARI mode: no
+    // tenant-level plan is applied, so no plan lookups/rules/assignment run.
+    const plan = entry.ratePlanId != null ? plansById.get(entry.ratePlanId) : null;
+    if (entry.ratePlanId != null && !plan) {
       roomQuotes.push(emptyRoomQuote(entry, [...roomErrors, err("RATE_PLAN_NOT_FOUND", ctx)], room, available));
       continue;
     }
-    if (plan.isArchived || !plan.isActive) roomErrors.push(err("RATE_PLAN_INACTIVE", ctx));
-    const { chain, error: chainError } = resolveParentChain(plansById, plan.id);
-    if (chainError) roomErrors.push(err(chainError, ctx));
-    for (const p of chain.slice(1)) {
-      if (p.isArchived || !p.isActive) { roomErrors.push(err("RATE_PLAN_PARENT_INACTIVE", ctx)); break; }
+    let chain: ReturnType<typeof resolveParentChain>["chain"] = [];
+    if (plan) {
+      if (plan.isArchived || !plan.isActive) roomErrors.push(err("RATE_PLAN_INACTIVE", ctx));
+      const resolvedChain = resolveParentChain(plansById, plan.id);
+      chain = resolvedChain.chain;
+      if (resolvedChain.error) roomErrors.push(err(resolvedChain.error, ctx));
+      for (const p of chain.slice(1)) {
+        if (p.isArchived || !p.isActive) { roomErrors.push(err("RATE_PLAN_PARENT_INACTIVE", ctx)); break; }
+      }
     }
 
     // assignment (the REQUESTED plan must be actively assigned to the unit;
-    // parents only provide the pricing basis and need no assignment)
+    // parents only provide the pricing basis and need no assignment; the
+    // base-ARI mode needs only a sellable unit)
     restrictionsEvaluated.push("assignment");
     const su = room.sellable_unit_id;
     if (!su) roomErrors.push(err("RATE_PLAN_NOT_ASSIGNED", { ...ctx, message: "לחדר אין יחידת מכירה מוגדרת" }));
-    else {
+    else if (plan) {
       const assignment = assignmentByKey.get(`${plan.id}|${su}`);
       const v = assignmentViolation(assignment, stay);
       if (v) roomErrors.push(err(v, ctx));
     }
 
     // plan-level stay rules (validity, booking window, DOW, plan min/max stay)
-    restrictionsEvaluated.push("plan_rules");
-    const planRule = planStayRuleViolation(plan, stay, today);
-    if (planRule) roomErrors.push(err(planRule.code, { ...ctx, message: planRule.detail }));
+    if (plan) {
+      restrictionsEvaluated.push("plan_rules");
+      const planRule = planStayRuleViolation(plan, stay, today);
+      if (planRule) roomErrors.push(err(planRule.code, { ...ctx, message: planRule.detail }));
+    }
 
     // date-level restrictions: base room-night state + plan overlay, merged,
     // through the SAME shared validator the grid and reservations use.
     restrictionsEvaluated.push("date_restrictions");
     const base = baseRates.get(entry.roomId);
     const baseByDate = indexByDate(base?.rows ?? []);
-    const overlay = su ? (overlayByPlanUnit.get(`${plan.id}|${su}`) ?? EMPTY_OVERLAY) : EMPTY_OVERLAY;
-    const merged = mergeRestrictionRows([...nights, req.checkOut], baseByDate, overlay, plan);
+    const overlay = plan && su ? (overlayByPlanUnit.get(`${plan.id}|${su}`) ?? EMPTY_OVERLAY) : EMPTY_OVERLAY;
+    const merged = mergeRestrictionRows(
+      [...nights, req.checkOut], baseByDate, overlay,
+      plan ?? { defaultClosedToArrival: false, defaultClosedToDeparture: false },
+    );
     const violation = stayRestrictionViolationStructured(merged, stay);
     if (violation) {
       const code: PricingErrorCode = violation.code === "STOP_SELL" ? "ROOM_CLOSED" : violation.code;
@@ -332,10 +359,16 @@ export async function calculateQuote(
       },
       egDefaults,
     );
+    // authorized manual override (§13): the final nightly price — extra-guest
+    // charging is bypassed exactly like the legacy manual-rate semantics
+    // (priceTotal = rate × nights). Rules/occupancy above still ran.
+    const manualRate = entry.manualRatePerNight ?? null;
     let extraAdults = 0, extraChildren = 0, extraInfants = 0;
     let extraPerNight = 0, extraPerStay = 0;
     const frequency = effective.charge_frequency.value;
-    if (room.included_occupancy == null) {
+    if (manualRate != null) {
+      // no extra-guest computation — the override IS the whole nightly price
+    } else if (room.included_occupancy == null) {
       roomErrors.push(err("EXTRA_GUEST_PRICING_INCOMPLETE", { ...ctx, message: "אורחים הכלולים במחיר הבסיס טרם הוגדרו לחדר" }));
     } else {
       const chargeable = calculateChargeableGuests({
@@ -387,24 +420,55 @@ export async function calculateQuote(
       const basePriceSource: NightQuote["basePriceSource"] =
         baseRow?.price != null ? "base_plan_rate" : basePriceRaw != null ? "room_type_base_price" : null;
 
+      // authorized manual override: the final nightly price, never re-resolved
+      if (manualRate != null) {
+        const resolved = round2(manualRate);
+        sourcesUsed.add("manual_override");
+        subtotalCents += cents(resolved);
+        nightQuotes.push({
+          date,
+          basePrice: basePriceRaw != null ? round2(basePriceRaw) : null,
+          basePriceSource,
+          parentPlanId: null,
+          parentResolvedPrice: null,
+          adjustmentValue: null,
+          adjustmentSource: null,
+          overridePrice: null,
+          resolvedPlanPrice: resolved,
+          priceSource: "manual_override",
+          extraGuestAmount: 0,
+          nightTotal: resolved,
+        });
+        continue;
+      }
+
       let parentResolved: number | null = null;
       let directParentPrice: number | null = null;
       let resolution = null as ReturnType<typeof resolveNightPrice> | null;
-      for (let i = chain.length - 1; i >= 0; i--) {
-        const level = chain[i];
-        if (i === 0) directParentPrice = parentResolved; // chain[1]'s resolved value
-        const levelOverlay = su ? overlayByPlanUnit.get(`${level.id}|${su}`) : undefined;
-        const levelAssignment = su ? assignmentByKey.get(`${level.id}|${su}`) : undefined;
+      if (!plan) {
+        // base-ARI mode: the base layer IS the price — same resolver, kind 'base'
         resolution = resolveNightPrice({
-          kind: level.planKind,
-          overridePrice: levelOverlay?.get(date)?.price ?? null,
-          parentResolved,
-          planAdjustment: level.adjustmentValue,
-          assignmentAdjustment: levelAssignment?.adjustmentValue ?? null,
-          basePrice: basePriceRaw,
-          basePriceSource,
+          kind: "base", overridePrice: null, parentResolved: null,
+          planAdjustment: null, assignmentAdjustment: null,
+          basePrice: basePriceRaw, basePriceSource,
         });
-        parentResolved = resolution.price;
+      } else {
+        for (let i = chain.length - 1; i >= 0; i--) {
+          const level = chain[i];
+          if (i === 0) directParentPrice = parentResolved; // chain[1]'s resolved value
+          const levelOverlay = su ? overlayByPlanUnit.get(`${level.id}|${su}`) : undefined;
+          const levelAssignment = su ? assignmentByKey.get(`${level.id}|${su}`) : undefined;
+          resolution = resolveNightPrice({
+            kind: level.planKind,
+            overridePrice: levelOverlay?.get(date)?.price ?? null,
+            parentResolved,
+            planAdjustment: level.adjustmentValue,
+            assignmentAdjustment: levelAssignment?.adjustmentValue ?? null,
+            basePrice: basePriceRaw,
+            basePriceSource,
+          });
+          parentResolved = resolution.price;
+        }
       }
       const resolved = resolution?.price ?? null;
       const parent = chain.length > 1 ? chain[1] : null;
@@ -424,7 +488,7 @@ export async function calculateQuote(
         parentResolvedPrice: directParentPrice,
         adjustmentValue: resolution?.adjustmentValue ?? null,
         adjustmentSource: resolution?.adjustmentSource ?? null,
-        overridePrice: su ? (overlayByPlanUnit.get(`${plan.id}|${su}`)?.get(date)?.price ?? null) : null,
+        overridePrice: plan && su ? (overlayByPlanUnit.get(`${plan.id}|${su}`)?.get(date)?.price ?? null) : null,
         resolvedPlanPrice: resolved != null ? round2(resolved) : null,
         priceSource: resolution?.source ?? null,
         extraGuestAmount: extraPerNight,
@@ -440,9 +504,9 @@ export async function calculateQuote(
       roomId: entry.roomId,
       roomNumber: room.room_number,
       roomName: room.name,
-      ratePlanId: plan.id,
-      ratePlanName: plan.publicName ?? plan.name,
-      ratePlanCode: plan.code,
+      ratePlanId: plan?.id ?? null,
+      ratePlanName: plan ? (plan.publicName ?? plan.name) : "מחיר בסיס",
+      ratePlanCode: plan?.code ?? "",
       adults: entry.adults, children: entry.children, infants: entry.infants,
       includedOccupancy: room.included_occupancy,
       extraAdults, extraChildren, extraInfants,

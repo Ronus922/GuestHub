@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getActor, hasPermission, toActorContext } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
 import { getTenantVatRate } from "@/lib/settings";
+import { listBookableRatePlans } from "@/lib/rate-plans/service";
 import { Shell } from "@/components/layout/Shell";
 
 export default async function DashboardLayout({
@@ -17,7 +18,7 @@ export default async function DashboardLayout({
   // Data the global new-reservation panel (D48 — sidebar button, available on
   // every dashboard page) needs. Fetched once here so the shared BookingPanel
   // mounted in the Shell works regardless of the current route.
-  const [vatRate, lookups] = await Promise.all([
+  const [vatRate, lookups, ratePlans] = await Promise.all([
     getTenantVatRate(actor.tenantId),
     sql<{ category: string; key: string; label: string; color: string | null; id: string }[]>`
       SELECT id, category, key, label, color FROM guesthub.lookup_items
@@ -25,6 +26,7 @@ export default async function DashboardLayout({
         AND category IN ('payment_methods', 'booking_sources')
         AND is_active
       ORDER BY category, sort_order`,
+    listBookableRatePlans(actor.tenantId),
   ]);
 
   return (
@@ -33,8 +35,10 @@ export default async function DashboardLayout({
       newReservation={{
         bookingSources: lookups.filter((l) => l.category === "booking_sources"),
         paymentMethods: lookups.filter((l) => l.category === "payment_methods"),
+        ratePlans,
         vatRate,
         canSaveCard: hasPermission(actor, "payments.card_manage"),
+        canPriceOverride: hasPermission(actor, "reservations.price_override"),
         canCreate: hasPermission(actor, "reservations.create"),
       }}
     >

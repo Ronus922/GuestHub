@@ -23,6 +23,11 @@ export type StayDraft = {
   children: number;
   infants: number;
   ratePerNight?: number;
+  // authorized manual override (§13) — set ONLY when the operator explicitly
+  // edits the nightly price; a displayed auto price never becomes manual.
+  isManualRate?: boolean;
+  // tenant-level Rate Plan; null/undefined = base pricing (מחיר בסיס)
+  ratePlanId?: string | null;
   guestFirstName?: string;
   guestLastName?: string;
   guestPhone?: string;
@@ -95,7 +100,15 @@ export function StayEditor({
       return;
     }
     let alive = true;
-    getStayQuoteAction({ roomId: value.roomId, checkIn: value.checkIn, checkOut: value.checkOut }).then(
+    getStayQuoteAction({
+      roomId: value.roomId,
+      checkIn: value.checkIn,
+      checkOut: value.checkOut,
+      adults: value.adults,
+      children: value.children,
+      infants: value.infants,
+      ratePlanId: value.ratePlanId ?? null,
+    }).then(
       (res) => {
         if (alive && res.success && res.data) {
           setQuote({ total: res.data.total, restriction: res.data.restriction });
@@ -105,7 +118,7 @@ export function StayEditor({
     return () => {
       alive = false;
     };
-  }, [value.roomId, value.checkIn, value.checkOut, validRange]);
+  }, [value.roomId, value.checkIn, value.checkOut, value.adults, value.children, value.infants, value.ratePlanId, validRange]);
 
   const selected = rooms.find((r) => r.id === value.roomId);
   const overCapacity =

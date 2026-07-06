@@ -40,15 +40,19 @@ export function NewReservationProvider({
   children,
   bookingSources,
   paymentMethods,
+  ratePlans,
   vatRate,
   canSaveCard,
+  canPriceOverride,
   canCreate,
 }: {
   children: React.ReactNode;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  ratePlans: { id: string; name: string; code: string }[];
   vatRate: number;
   canSaveCard: boolean;
+  canPriceOverride: boolean;
   canCreate: boolean;
 }) {
   const [prefill, setPrefill] = useState<NewReservationPrefill | null>(null);
@@ -70,8 +74,10 @@ export function NewReservationProvider({
         prefill={prefill ?? {}}
         bookingSources={bookingSources}
         paymentMethods={paymentMethods}
+        ratePlans={ratePlans}
         vatRate={vatRate}
         canSaveCard={canSaveCard}
+        canPriceOverride={canPriceOverride}
       />
     </NewReservationContext.Provider>
   );

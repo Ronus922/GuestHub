@@ -42,6 +42,7 @@ export function EditReservationPanel({
   onClose,
   bookingSources,
   paymentMethods,
+  ratePlans,
   statusItems,
   canEdit,
   canCancel,
@@ -54,6 +55,7 @@ export function EditReservationPanel({
   onClose: () => void;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  ratePlans: { id: string; name: string; code: string }[];
   statusItems: LookupItem[];
   canEdit: boolean;
   canCancel: boolean;
@@ -121,6 +123,8 @@ export function EditReservationPanel({
           children: r.children,
           infants: r.infants,
           ratePerNight: r.ratePerNight,
+          isManualRate: r.isManualRate,
+          ratePlanId: r.ratePlanId,
           guestFirstName: r.guestFirstName ?? undefined,
           guestLastName: r.guestLastName ?? undefined,
           guestPhone: r.guestPhone ?? undefined,
@@ -215,7 +219,10 @@ export function EditReservationPanel({
           adults: s.adults,
           children: s.children,
           infants: s.infants,
-          ratePerNight: s.ratePerNight,
+          // a stored manual rate rides along; auto-priced stays never resend a
+          // price (the server prices through the central engine)
+          ratePerNight: s.isManualRate ? s.ratePerNight : undefined,
+          ratePlanId: s.ratePlanId ?? null,
           guestFirstName: s.guestFirstName || undefined,
           guestLastName: s.guestLastName || undefined,
           guestPhone: s.guestPhone || undefined,
@@ -505,7 +512,28 @@ export function EditReservationPanel({
                     <div>
                       <b>חדר {i + 1}</b>
                       <div className="bw-plr">
+                        {ratePlans.length > 0 && canEdit && (
+                          /* changing the plan re-prices server-side on save */
+                          <select
+                            className="ml-2 rounded-lg border border-line px-2 py-1 text-xs font-semibold"
+                            aria-label="תוכנית תעריף"
+                            value={s.ratePlanId ?? ""}
+                            onChange={(e) =>
+                              setStays((all) =>
+                                all.map((x) =>
+                                  x.key === s.key ? { ...x, ratePlanId: e.target.value || null } : x,
+                                ),
+                              )
+                            }
+                          >
+                            <option value="">מחיר בסיס</option>
+                            {ratePlans.map((p) => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                          </select>
+                        )}
                         {nights} לילות × ₪{Math.round(s.ratePerNight ?? 0).toLocaleString()}
+                        {s.isManualRate && <span className="mr-2 text-xs font-semibold text-brand">· מחיר ידני</span>}
                       </div>
                     </div>
                     <b dir="ltr">₪{Math.round(line).toLocaleString()}</b>

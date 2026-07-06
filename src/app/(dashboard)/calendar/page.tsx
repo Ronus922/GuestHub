@@ -4,6 +4,7 @@ import { sql } from "@/lib/db";
 import { isDateOnly, todayInTz } from "@/lib/dates";
 import { getCalendarData } from "./data";
 import { getTenantVatRate } from "@/lib/settings";
+import { listBookableRatePlans } from "@/lib/rate-plans/service";
 import { CalendarScreen } from "./CalendarScreen";
 import { VIEW_DAYS, type CalendarView } from "./types";
 
@@ -32,6 +33,8 @@ export default async function CalendarPage({
   const data = await getCalendarData(actor, from, VIEW_DAYS[view]);
   // tenant VAT rate (Settings) — display-only in the booking/edit panels
   const vatRate = await getTenantVatRate(actor.tenantId);
+  // active tenant-level Rate Plans for the panels' plan selector
+  const ratePlans = await listBookableRatePlans(actor.tenantId);
 
   // lookups the calendar + panels need (colors/labels come from the DB, §4.5)
   const lookups = await sql<
@@ -50,6 +53,7 @@ export default async function CalendarPage({
       statusItems={lookups.filter((l) => l.category === "reservation_statuses")}
       paymentMethods={lookups.filter((l) => l.category === "payment_methods")}
       bookingSources={lookups.filter((l) => l.category === "booking_sources")}
+      ratePlans={ratePlans}
       can={{
         create: hasPermission(actor, "reservations.create"),
         edit: hasPermission(actor, "reservations.edit"),

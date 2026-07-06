@@ -20,6 +20,14 @@
     "check:settings-regression": "node scripts/check-settings-regression.mjs",
     "check:rate-plans": "node scripts/check-rate-plans.mjs",
     "check:pricing-engine": "node scripts/check-pricing-engine.mjs",
+    "check:pricing-equality": "node scripts/check-pricing-equality.mjs",
+    "check:rate-grid": "node --env-file=.env.local scripts/check-rate-grid.mjs",
+    "check:effective-state": "node --env-file=.env.local scripts/check-effective-state.mjs",
+    "check:inventory": "node --env-file=.env.local scripts/check-inventory.mjs",
+    "check:sellability": "node --env-file=.env.local scripts/check-rate-sellability.mjs",
+    "check:reservation-snapshot": "node scripts/check-reservation-snapshot.mjs",
+    "check:calendar": "node scripts/check-calendar.mjs",
+    "check-e2e-safety": "node scripts/check-e2e-safety.mjs",
     "guard:deploy": "node scripts/production-deploy-guard.mjs"
   },
   "dependencies": {

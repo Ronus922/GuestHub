@@ -20,6 +20,9 @@ const stayCore = {
   // authorized manual override (§13) — explicit, never inferred from a price
   // being present (the edit panel resubmits the stored rate on every save).
   isManualRate: z.boolean().optional(),
+  // tenant-level Rate Plan for the stay; null/omitted = base-ARI pricing.
+  // undefined on edit = keep the stay's stored plan (preserved server-side).
+  ratePlanId: z.uuid().nullable().optional(),
   guestFirstName: z.string().trim().max(80).optional(),
   guestLastName: z.string().trim().max(80).optional(),
   guestPhone: z.string().trim().max(30).optional(),

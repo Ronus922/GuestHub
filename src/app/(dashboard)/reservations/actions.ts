@@ -10,13 +10,22 @@ import type { CardSource } from "@/lib/card-rules";
 import {
   checkRoomAvailability,
   lockRooms,
-  getRoomCapacities,
-  CONFLICT_LABEL,
   INVENTORY_BLOCKING_STATUSES,
 } from "@/lib/inventory";
-import { capacityViolation } from "@/lib/inventory-rules";
-import { getRoomPlanRates, getRoomStayRates } from "@/lib/rates/effective-state";
-import { indexByDate, planNightlyPrice, resolveStayPrice, stayRestrictionViolation } from "@/lib/rates/rules";
+// getRoomPlanRates/planNightlyPrice remain ONLY for the room-picker's
+// display-only avg_price hint — never an authoritative price (that is the
+// engine's, via the seam below).
+import { getRoomPlanRates } from "@/lib/rates/effective-state";
+import { indexByDate, planNightlyPrice } from "@/lib/rates/rules";
+import {
+  priceReservationStays,
+  reservationTotal,
+  StayPricingError,
+  type PricedReservationStay,
+  type StayPricingSnapshot,
+} from "@/lib/pricing/reservation-pricing";
+import { calculateReservationPrice } from "@/lib/pricing/engine";
+import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { markAriDirty } from "@/lib/channel/outbox";
 import {
   createReservationSchema,
@@ -79,20 +88,16 @@ function assertNoInternalOverlap(stays: StayInput[]): void {
   }
 }
 
-type PricedStay = StayInput & {
-  ratePerNight: number;
-  priceTotal: number;
-  nights: number;
-  isManualRate: boolean;
-};
+type PricedStay = PricedReservationStay<StayInput>;
 
-// Full server-side gate for a set of stays: availability (incl. closures +
-// room status), capacity, stay restrictions, effective pricing — all from the
-// canonical Effective Sell State (§0.4/§0.9): a room resolves to its Sellable
-// Unit → base plan → guesthub.pricing_plan_rates. Runs inside the caller's
+// Full server-side gate for a set of stays — since D51 a thin wrapper over THE
+// central pricing engine (src/lib/pricing): availability (incl. closures +
+// room status), occupancy/capacity, stay restrictions, Rate-Plan rules and the
+// canonical price all come from ONE calculation. Runs inside the caller's
 // transaction AFTER lockRooms. `skip` lets a status-only edit bypass
 // re-validating untouched stays (§F). A passed-in ratePerNight is an authorized
-// manual override (§13) — flagged so it survives later recomputes.
+// manual override (§13) — the ACTION gates the permission; the committed-price
+// snapshot rule (§6) is preserved by the seam.
 async function validateAndPriceStays(
   tx: TransactionSql,
   tenantId: string,
@@ -102,93 +107,32 @@ async function validateAndPriceStays(
     enforceAvailability: boolean;
     enforceRestrictions: boolean;
     skipChecksForRr?: Set<string>;
-    // §6 committed-price snapshot: rrId → its stored rate. A non-manual stay
-    // listed here keeps this committed price instead of being re-priced from the
-    // CURRENT rate table, so a confirmed guest-agreed total never drifts when
-    // rates change later. priceTotal (when given) preserves the exact stored
-    // total incl. per-night variation; omit it to re-derive from the nightly.
     snapshotByRr?: Map<string, { ratePerNight: number; priceTotal?: number }>;
+    actorUserId?: string;
   },
 ): Promise<PricedStay[]> {
   assertNoInternalOverlap(stays);
-  const roomIds = [...new Set(stays.map((s) => s.roomId))];
-  const caps = await getRoomCapacities(tx, tenantId, roomIds);
-
-  // One batch load of canonical commercial rows for the whole span. toInclusive
-  // is the max check-OUT (departure) date so closed_to_departure is available.
-  const spanFrom = stays.reduce((m, s) => (s.checkIn < m ? s.checkIn : m), stays[0].checkIn);
-  const spanTo = stays.reduce((m, s) => (s.checkOut > m ? s.checkOut : m), stays[0].checkOut);
-  const planRates = await getRoomPlanRates(tx, tenantId, roomIds, spanFrom, spanTo);
-  if (planRates.size !== roomIds.length) throw new DomainError("חדר לא נמצא");
-
-  const priced: PricedStay[] = [];
-  for (const stay of stays) {
-    const skip = stay.rrId != null && opts.skipChecksForRr?.has(stay.rrId);
-    const rp = planRates.get(stay.roomId)!;
-
-    if (!skip && opts.enforceAvailability) {
-      const conflicts = await checkRoomAvailability(tx, {
-        tenantId,
-        roomIds: [stay.roomId],
-        checkIn: stay.checkIn,
-        checkOut: stay.checkOut,
-        excludeReservationRoomIds: opts.excludeRrIds,
-      });
-      if (conflicts.length > 0) throw new DomainError(CONFLICT_LABEL[conflicts[0].conflict_kind]);
-    }
-
-    if (!skip) {
-      const cap = caps.get(stay.roomId);
-      if (!cap) throw new DomainError("חדר לא נמצא");
-      const capErr = capacityViolation(cap, stay);
-      if (capErr) throw new DomainError(capErr);
-    }
-
-    const byDate = indexByDate(rp.rows);
-    if (!skip && opts.enforceRestrictions) {
-      const restrictionErr = stayRestrictionViolation(byDate, {
-        checkIn: stay.checkIn,
-        checkOut: stay.checkOut,
-        nights: eachDay(stay.checkIn, stay.checkOut),
-      });
-      if (restrictionErr) throw new DomainError(restrictionErr);
-    }
-
-    const nights = nightsBetween(stay.checkIn, stay.checkOut);
-    // is_manual_rate is an EXPLICIT flag (§13), never inferred from a price
-    // being present — the edit panel resubmits the stored rate on every save,
-    // which must NOT silently flag every edited stay as a manual override.
-    const isManualRate = stay.isManualRate ?? false;
-    // A stay whose price basis (room + dates) is unchanged keeps its committed
-    // snapshot rather than being re-priced from CURRENT rates (§6).
-    const snapshot = stay.rrId != null ? opts.snapshotByRr?.get(stay.rrId) : undefined;
-    const autoTotal = eachDay(stay.checkIn, stay.checkOut).reduce(
-      (sum, d) => sum + planNightlyPrice(byDate, d, rp.basePrice),
-      0,
-    );
-    const { ratePerNight, priceTotal } = resolveStayPrice({
-      nights,
-      isManualRate,
-      manualRatePerNight: stay.ratePerNight,
-      snapshot,
-      autoTotal,
+  try {
+    return await priceReservationStays(tx, tenantId, stays, {
+      source: "manual_reservation",
+      ...opts,
     });
-    priced.push({ ...stay, ratePerNight, priceTotal, nights, isManualRate });
+  } catch (e) {
+    if (e instanceof StayPricingError) throw new DomainError(e.message);
+    throw e;
   }
-  return priced;
 }
 
-function aggregates(stays: PricedStay[], discount: number) {
+function aggregates(stays: PricedStay[]) {
   const checkIn = stays.reduce((m, s) => (s.checkIn < m ? s.checkIn : m), stays[0].checkIn);
   const checkOut = stays.reduce((m, s) => (s.checkOut > m ? s.checkOut : m), stays[0].checkOut);
-  const roomsTotal = stays.reduce((sum, s) => sum + s.priceTotal, 0);
   return {
     checkIn,
     checkOut,
     adults: stays.reduce((n, s) => n + s.adults, 0),
     children: stays.reduce((n, s) => n + s.children, 0),
     infants: stays.reduce((n, s) => n + s.infants, 0),
-    total: Math.max(0, roomsTotal - discount),
+    roomsTotal: stays.reduce((sum, s) => sum + s.priceTotal, 0),
   };
 }
 
@@ -252,18 +196,23 @@ export async function createReservationAction(
     const parsed = createReservationSchema.safeParse(raw);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
     const input = parsed.data;
+    // an explicit manual nightly price is an authorized override (§13)
+    if (input.rooms.some((s) => s.isManualRate === true))
+      requirePermission(actor, "reservations.price_override");
 
     const result = await sql.begin(async (tx) => {
       await lockRooms(tx, actor.tenantId, input.rooms.map((r) => r.roomId));
       const priced = await validateAndPriceStays(tx, actor.tenantId, input.rooms, {
         enforceAvailability: true,
         enforceRestrictions: true,
+        actorUserId: actor.userId,
       });
 
       const guestId = await upsertGuest(tx, actor.tenantId, input.guest);
       const number = await allocateReservationNumber(tx, actor.tenantId);
       const discount = input.discountAmount ?? 0;
-      const agg = aggregates(priced, discount);
+      const agg = aggregates(priced);
+      const total = reservationTotal(agg.roomsTotal, discount, 0);
       const paid = input.paidAmount ?? 0;
 
       const [res] = await tx<{ id: string }[]>`
@@ -275,26 +224,24 @@ export async function createReservationAction(
         VALUES (${actor.tenantId}, ${number}, ${guestId}, ${input.sourceId ?? null},
                 ${input.status}, ${agg.checkIn}, ${agg.checkOut},
                 ${agg.adults}, ${agg.children}, ${agg.infants},
-                ${discount}, ${agg.total}, ${paid}, ${agg.total - paid}, 'ILS',
+                ${discount}, ${total}, 0, ${total}, 'ILS',
                 ${input.notes || null}, ${actor.userId})
         RETURNING id`;
 
       for (const s of priced) {
+        const g = stayGuestCols(s);
         await tx`
-          INSERT INTO guesthub.reservation_rooms ${tx({
-            tenant_id: actor.tenantId,
-            reservation_id: res.id,
-            room_id: s.roomId,
-            check_in: s.checkIn,
-            check_out: s.checkOut,
-            adults: s.adults,
-            children: s.children,
-            infants: s.infants,
-            rate_per_night: s.ratePerNight,
-            price_total: s.priceTotal,
-            is_manual_rate: s.isManualRate,
-            ...stayGuestCols(s),
-          })}`;
+          INSERT INTO guesthub.reservation_rooms
+            (tenant_id, reservation_id, room_id, check_in, check_out,
+             adults, children, infants, rate_per_night, price_total,
+             is_manual_rate, rate_plan_id, pricing_snapshot,
+             guest_first_name, guest_last_name, guest_phone, guest_email, guest_id_number)
+          VALUES (${actor.tenantId}, ${res.id}, ${s.roomId}, ${s.checkIn}, ${s.checkOut},
+                  ${s.adults}, ${s.children}, ${s.infants}, ${s.ratePerNight}, ${s.priceTotal},
+                  ${s.isManualRate}, ${s.ratePlanId},
+                  ${s.pricingSnapshot === null ? null : tx.json(s.pricingSnapshot as never)},
+                  ${g.guest_first_name}, ${g.guest_last_name}, ${g.guest_phone},
+                  ${g.guest_email}, ${g.guest_id_number})`;
       }
 
       if (paid > 0) {
@@ -304,12 +251,14 @@ export async function createReservationAction(
           VALUES (${actor.tenantId}, ${res.id}, ${paid},
                   ${input.paymentMethod ?? null}, 'paid', now())`;
       }
+      // paid_amount/balance derive from the payments LEDGER (D51)
+      await recomputePaymentAggregates(tx, actor.tenantId, res.id);
 
       await writeAudit(actor, {
         entityType: "reservation",
         entityId: res.id,
         action: "create",
-        after: { number, status: input.status, rooms: priced.length, total: agg.total },
+        after: { number, status: input.status, rooms: priced.length, total },
       }, tx);
 
       if (isBlocking(input.status)) {
@@ -360,31 +309,45 @@ export async function updateReservationAction(
       const oldRows = await tx<
         { id: string; room_id: string | null; check_in: string; check_out: string;
           adults: number; children: number; infants: number; room_type_id: string | null;
-          is_manual_rate: boolean; rate_per_night: number; price_total: number }[]
+          is_manual_rate: boolean; rate_per_night: number; price_total: number;
+          rate_plan_id: string | null }[]
       >`
         SELECT rr.id, rr.room_id, rr.check_in::text, rr.check_out::text,
                rr.adults, rr.children, rr.infants, r.room_type_id,
                rr.is_manual_rate, rr.rate_per_night::float8 AS rate_per_night,
-               rr.price_total::float8 AS price_total
+               rr.price_total::float8 AS price_total, rr.rate_plan_id
         FROM guesthub.reservation_rooms rr
         LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
         WHERE rr.reservation_id = ${input.id} AND rr.tenant_id = ${actor.tenantId}`;
       const oldById = new Map(oldRows.map((r) => [r.id, r]));
+
+      // Turning ON a manual override, or changing an override's rate, requires
+      // the authorization (§13). Preserved stored overrides don't re-require it
+      // — an unauthorized editor can keep an approved price, never set one.
+      const setsNewOverride = input.rooms.some((s) => {
+        if (s.isManualRate !== true) return false;
+        const old = s.rrId ? oldById.get(s.rrId) : undefined;
+        if (!old) return true;
+        return !old.is_manual_rate || (s.ratePerNight != null && s.ratePerNight !== old.rate_per_night);
+      });
+      if (setsNewOverride) requirePermission(actor, "reservations.price_override");
 
       // Preserve the authorized-override flag AND its committed rate across a
       // recompute-triggering edit (§13): an existing stay keeps its stored
       // is_manual_rate unless the caller explicitly changes it, and a manual
       // stay keeps its committed rate when no new price is resubmitted — so the
       // recompute can never silently overwrite the override or corrupt the flag.
+      // The stay's Rate Plan is preserved the same way.
       for (const s of input.rooms) {
         if (!s.rrId) continue;
         const old = oldById.get(s.rrId);
         if (!old) continue;
         if (s.isManualRate === undefined) s.isManualRate = old.is_manual_rate;
         if (old.is_manual_rate && s.ratePerNight == null) s.ratePerNight = old.rate_per_night;
+        if (s.ratePlanId === undefined) s.ratePlanId = old.rate_plan_id;
       }
 
-      // stays whose room/dates/occupancy are untouched skip re-validation —
+      // stays whose room/dates/occupancy/plan are untouched skip re-validation —
       // a status-only edit can never fail on capacity it already holds (§F)
       const skipChecksForRr = new Set<string>();
       for (const s of input.rooms) {
@@ -394,7 +357,8 @@ export async function updateReservationAction(
         if (
           old.room_id === s.roomId &&
           old.check_in === s.checkIn && old.check_out === s.checkOut &&
-          old.adults === s.adults && old.children === s.children && old.infants === s.infants
+          old.adults === s.adults && old.children === s.children && old.infants === s.infants &&
+          old.rate_plan_id === (s.ratePlanId ?? null)
         ) {
           skipChecksForRr.add(s.rrId);
         }
@@ -406,16 +370,21 @@ export async function updateReservationAction(
       // availability for ALL stays, even untouched ones
       if (!wasBlocking && nowBlocking) skipChecksForRr.clear();
 
-      // §6 committed-price snapshot: a non-manual stay whose room + dates are
-      // unchanged keeps its stored price (never re-priced from current rates);
-      // only genuinely re-dated / re-roomed stays are re-priced. Confirming a
+      // §6 committed-price snapshot: a non-manual stay whose price BASIS
+      // (room + dates + occupancy + Rate Plan) is unchanged keeps its stored
+      // price (never re-priced from current rates); a genuinely re-dated /
+      // re-roomed / re-planned / re-occupied stay is re-priced. Confirming a
       // draft does NOT re-price an otherwise-unchanged stay.
       const snapshotByRr = new Map<string, { ratePerNight: number; priceTotal: number }>();
       for (const s of input.rooms) {
         if (!s.rrId) continue;
         const old = oldById.get(s.rrId);
         if (!old || s.isManualRate) continue;
-        if (old.room_id === s.roomId && old.check_in === s.checkIn && old.check_out === s.checkOut) {
+        if (
+          old.room_id === s.roomId && old.check_in === s.checkIn && old.check_out === s.checkOut &&
+          old.adults === s.adults && old.children === s.children && old.infants === s.infants &&
+          old.rate_plan_id === (s.ratePlanId ?? null)
+        ) {
           snapshotByRr.set(s.rrId, { ratePerNight: old.rate_per_night, priceTotal: old.price_total });
         }
       }
@@ -460,28 +429,44 @@ export async function updateReservationAction(
           rate_per_night: s.ratePerNight,
           price_total: s.priceTotal,
           is_manual_rate: s.isManualRate,
+          rate_plan_id: s.ratePlanId,
           ...stayGuestCols(s),
         };
+        // pricingSnapshot null = the stay kept its committed price — the STORED
+        // snapshot is preserved untouched (immutability §8); a re-priced stay
+        // gets the fresh engine snapshot.
         if (s.rrId) {
           await tx`
             UPDATE guesthub.reservation_rooms SET ${tx(cols)}
             WHERE id = ${s.rrId} AND tenant_id = ${actor.tenantId}`;
+          if (s.pricingSnapshot !== null) {
+            await tx`
+              UPDATE guesthub.reservation_rooms
+              SET pricing_snapshot = ${tx.json(s.pricingSnapshot as never)}
+              WHERE id = ${s.rrId} AND tenant_id = ${actor.tenantId}`;
+          }
         } else {
+          const g = stayGuestCols(s);
           await tx`
-            INSERT INTO guesthub.reservation_rooms ${tx({
-              tenant_id: actor.tenantId,
-              reservation_id: input.id,
-              ...cols,
-            })}`;
+            INSERT INTO guesthub.reservation_rooms
+              (tenant_id, reservation_id, room_id, check_in, check_out,
+               adults, children, infants, rate_per_night, price_total,
+               is_manual_rate, rate_plan_id, pricing_snapshot,
+               guest_first_name, guest_last_name, guest_phone, guest_email, guest_id_number)
+            VALUES (${actor.tenantId}, ${input.id}, ${s.roomId}, ${s.checkIn}, ${s.checkOut},
+                    ${s.adults}, ${s.children}, ${s.infants}, ${s.ratePerNight}, ${s.priceTotal},
+                    ${s.isManualRate}, ${s.ratePlanId},
+                    ${s.pricingSnapshot === null ? null : tx.json(s.pricingSnapshot as never)},
+                    ${g.guest_first_name}, ${g.guest_last_name}, ${g.guest_phone},
+                    ${g.guest_email}, ${g.guest_id_number})`;
         }
       }
 
       const discount = input.discountAmount ?? Number(existing.discount_amount);
-      const agg = aggregates(priced, discount);
+      const agg = aggregates(priced);
       const extra = Number(existing.extra_charges);
-      const total = Math.max(0, agg.total + extra);
+      const total = reservationTotal(agg.roomsTotal, discount, extra);
       const addPay = input.additionalPayment ?? 0;
-      const paid = Number(existing.paid_amount) + addPay;
 
       await tx`
         UPDATE guesthub.reservations SET
@@ -491,7 +476,7 @@ export async function updateReservationAction(
           check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
           adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
           discount_amount = ${discount},
-          total_price = ${total}, paid_amount = ${paid}, balance = ${total - paid},
+          total_price = ${total},
           notes = ${input.notes || null}
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
 
@@ -502,6 +487,8 @@ export async function updateReservationAction(
           VALUES (${actor.tenantId}, ${input.id}, ${addPay},
                   ${input.paymentMethod ?? null}, 'paid', now())`;
       }
+      // paid_amount/balance derive from the payments LEDGER (D51)
+      await recomputePaymentAggregates(tx, actor.tenantId, input.id);
 
       await writeAudit(actor, {
         entityType: "reservation",
@@ -607,13 +594,13 @@ export async function rescheduleReservationRoomAction(raw: {
           check_in: string; check_out: string;
           adults: number; children: number; infants: number;
           rate_per_night: string; is_manual_rate: boolean; status: string;
-          old_room_type: string | null;
+          rate_plan_id: string | null; old_room_type: string | null;
         }[]
       >`
         SELECT rr.id, rr.reservation_id, rr.room_id,
                rr.check_in::text, rr.check_out::text,
                rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
-               res.status, r.room_type_id AS old_room_type
+               rr.rate_plan_id, res.status, r.room_type_id AS old_room_type
         FROM guesthub.reservation_rooms rr
         JOIN guesthub.reservations res ON res.id = rr.reservation_id
         LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
@@ -629,6 +616,7 @@ export async function rescheduleReservationRoomAction(raw: {
       // Manual overrides survive a move — room change included — exactly like the
       // edit path (§13). For an auto-priced stay: a same-room date change keeps the
       // committed nightly (§6); a room change re-prices from the target's rates.
+      // The stay's Rate Plan rides along unchanged.
       const isManual = rr.is_manual_rate;
       const sameRoom = rr.room_id === input.targetRoomId;
       const priced = await validateAndPriceStays(
@@ -642,6 +630,7 @@ export async function rescheduleReservationRoomAction(raw: {
           adults: rr.adults,
           children: rr.children,
           infants: rr.infants,
+          ratePlanId: rr.rate_plan_id,
           ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
         }],
         {
@@ -651,6 +640,7 @@ export async function rescheduleReservationRoomAction(raw: {
           snapshotByRr: !isManual && sameRoom
             ? new Map([[rr.id, { ratePerNight: Number(rr.rate_per_night) }]])
             : undefined,
+          actorUserId: actor.userId,
         },
       );
       const s = priced[0];
@@ -660,6 +650,15 @@ export async function rescheduleReservationRoomAction(raw: {
           room_id = ${s.roomId}, check_in = ${s.checkIn}, check_out = ${s.checkOut},
           rate_per_night = ${s.ratePerNight}, price_total = ${s.priceTotal}
         WHERE id = ${rr.id} AND tenant_id = ${actor.tenantId}`;
+      // a re-priced move stores its fresh engine snapshot; a kept committed
+      // price preserves the ORIGINAL stored snapshot (immutability §8 — the
+      // audit entry below records the date/room change)
+      if (s.pricingSnapshot !== null) {
+        await tx`
+          UPDATE guesthub.reservation_rooms
+          SET pricing_snapshot = ${tx.json(s.pricingSnapshot as never)}
+          WHERE id = ${rr.id} AND tenant_id = ${actor.tenantId}`;
+      }
 
       // recompute parent aggregates from ALL rooms
       await tx`
@@ -729,12 +728,12 @@ export async function previewRescheduleAction(raw: {
             id: string; reservation_id: string; room_id: string | null;
             adults: number; children: number; infants: number;
             rate_per_night: string; is_manual_rate: boolean; status: string;
-            price_total: string;
+            rate_plan_id: string | null; price_total: string;
           }[]
         >`
           SELECT rr.id, rr.reservation_id, rr.room_id,
                  rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
-                 res.status, rr.price_total
+                 rr.rate_plan_id, res.status, rr.price_total
           FROM guesthub.reservation_rooms rr
           JOIN guesthub.reservations res ON res.id = rr.reservation_id
           WHERE rr.id = ${input.rrId} AND rr.tenant_id = ${actor.tenantId}`;
@@ -754,6 +753,7 @@ export async function previewRescheduleAction(raw: {
             adults: rr.adults,
             children: rr.children,
             infants: rr.infants,
+            ratePlanId: rr.rate_plan_id,
             ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
           }],
           {
@@ -778,7 +778,7 @@ export async function previewRescheduleAction(raw: {
           GROUP BY res.discount_amount, res.extra_charges, res.total_price`;
 
         const proposedRooms = (agg?.others ?? 0) + priced[0].priceTotal;
-        const proposedTotal = Math.max(0, proposedRooms - (agg?.discount ?? 0) + (agg?.extra ?? 0));
+        const proposedTotal = reservationTotal(proposedRooms, agg?.discount ?? 0, agg?.extra ?? 0);
         result = { currentTotal: agg?.current_total ?? 0, proposedTotal };
         throw ROLLBACK; // never persist a preview
       });
@@ -902,38 +902,68 @@ export async function getAvailableRoomsAction(args: {
   }
 }
 
-// Price + restrictions quote for one room stay (booking panel step 2, and the
-// dblclick default-checkout rule: arrival-date min_nights wins over 1 night).
+// Live quote for one room stay (booking panel step 2, edit panel, and the
+// dblclick default-checkout rule) — THE central engine, read-only. The same
+// calculation the save path commits, so the preview can never disagree with
+// the stored price.
 export async function getStayQuoteAction(args: {
   roomId: string;
   checkIn: DateOnly;
   checkOut: DateOnly;
-}): Promise<ActionResult<{ nights: number; total: number; ratePerNight: number; restriction: string | null }>> {
+  adults?: number;
+  children?: number;
+  infants?: number;
+  ratePlanId?: string | null;
+}): Promise<ActionResult<{
+  nights: number;
+  total: number;
+  ratePerNight: number;
+  restriction: string | null;
+  vatRate: number;
+  vatAmount: number;
+  extraGuestTotal: number;
+  nightly: { date: string; price: number | null }[];
+}>> {
   try {
     const actor = await getActor();
     requirePermission(actor, "reservations.create");
     if (!(args.checkIn < args.checkOut)) return fail("טווח תאריכים לא תקין");
-    const [room] = await sql<{ id: string }[]>`
-      SELECT id FROM guesthub.rooms
-      WHERE id = ${args.roomId} AND tenant_id = ${actor.tenantId}`;
-    if (!room) return fail("חדר לא נמצא");
-    // Canonical Effective Sell State for this room's Sellable Unit base plan.
-    const rp = await getRoomStayRates(sql, actor.tenantId, room.id, args.checkIn, args.checkOut);
-    const byDate = indexByDate(rp.rows);
-    const nights = eachDay(args.checkIn, args.checkOut);
-    const total = nights.reduce((sum, d) => sum + planNightlyPrice(byDate, d, rp.basePrice), 0);
-    const restriction = stayRestrictionViolation(byDate, {
+
+    const quote = await calculateReservationPrice(sql, {
+      tenantId: actor.tenantId,
       checkIn: args.checkIn,
       checkOut: args.checkOut,
-      nights,
+      rooms: [{
+        roomId: args.roomId,
+        ratePlanId: args.ratePlanId ?? null,
+        // StayDraft defaults — explicit occupancy overrides for extra-guest math
+        adults: args.adults ?? 2,
+        children: args.children ?? 0,
+        infants: args.infants ?? 0,
+        manualRatePerNight: null,
+      }],
+      source: "manual_reservation",
     });
+    const rq = quote.rooms[0];
+    if (!rq) return fail(quote.errors[0]?.message ?? "חישוב המחיר נכשל");
+
+    // the panel warns on anything the confirmed save would block on;
+    // availability is surfaced separately by the room picker
+    const restriction =
+      rq.errors.find((e) => !["ROOM_UNAVAILABLE", "ROOM_DUPLICATED"].includes(e.code))?.message ?? null;
+    const nights = quote.numberOfNights;
+    const total = rq.roomSubtotal;
     return {
       success: true,
       data: {
-        nights: nights.length,
+        nights,
         total,
-        ratePerNight: nights.length ? Math.round((total / nights.length) * 100) / 100 : 0,
+        ratePerNight: nights ? Math.round((total / nights) * 100) / 100 : 0,
         restriction,
+        vatRate: quote.vatRate,
+        vatAmount: quote.vatAmount,
+        extraGuestTotal: rq.extraGuestTotal,
+        nightly: rq.nights.map((n) => ({ date: n.date, price: n.nightTotal })),
       },
     };
   } catch (e) {
@@ -977,13 +1007,17 @@ export type ReservationDetail = {
     infants: number;
     ratePerNight: number;
     priceTotal: number;
+    isManualRate: boolean;
+    ratePlanId: string | null;
+    ratePlanName: string | null;
+    pricingSnapshot: StayPricingSnapshot | null;
     guestFirstName: string | null;
     guestLastName: string | null;
     guestPhone: string | null;
     guestEmail: string | null;
     guestIdNumber: string | null;
   }[];
-  payments: { id: string; amount: number; method: string | null; paid_at: string | null }[];
+  payments: { id: string; amount: number; method: string | null; paid_at: string | null; reference: string | null }[];
   activity: { action: string; created_at: string; user_name: string | null }[];
   // masked stored-card metadata ONLY — the PAN never rides this payload
   // (explicit reveal via revealReservationCardAction, D41)
@@ -1040,7 +1074,9 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
       {
         rr_id: string; room_id: string; room_label: string; room_type_name: string | null;
         check_in: string; check_out: string; adults: number; children: number; infants: number;
-        rate_per_night: number; price_total: number;
+        rate_per_night: number; price_total: number; is_manual_rate: boolean;
+        rate_plan_id: string | null; rate_plan_name: string | null;
+        pricing_snapshot: unknown;
         guest_first_name: string | null; guest_last_name: string | null;
         guest_phone: string | null; guest_email: string | null; guest_id_number: string | null;
       }[]
@@ -1052,16 +1088,20 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
              rr.adults, rr.children, rr.infants,
              rr.rate_per_night::float8 AS rate_per_night,
              rr.price_total::float8 AS price_total,
+             rr.is_manual_rate, rr.rate_plan_id,
+             COALESCE(pp.public_name, pp.name) AS rate_plan_name,
+             rr.pricing_snapshot,
              rr.guest_first_name, rr.guest_last_name, rr.guest_phone,
              rr.guest_email, rr.guest_id_number
       FROM guesthub.reservation_rooms rr
+      LEFT JOIN guesthub.pricing_plans pp ON pp.id = rr.rate_plan_id
       LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
       LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
       WHERE rr.reservation_id = ${id} AND rr.tenant_id = ${actor.tenantId}
       ORDER BY rr.check_in, r.room_number`;
 
-    const payments = await sql<{ id: string; amount: number; method: string | null; paid_at: string | null }[]>`
-      SELECT id, amount::float8 AS amount, method, paid_at::text AS paid_at
+    const payments = await sql<{ id: string; amount: number; method: string | null; paid_at: string | null; reference: string | null }[]>`
+      SELECT id, amount::float8 AS amount, method, paid_at::text AS paid_at, reference
       FROM guesthub.payments
       WHERE reservation_id = ${id} AND tenant_id = ${actor.tenantId}
       ORDER BY created_at DESC LIMIT 20`;
@@ -1127,6 +1167,10 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
           infants: r.infants,
           ratePerNight: r.rate_per_night,
           priceTotal: r.price_total,
+          isManualRate: r.is_manual_rate,
+          ratePlanId: r.rate_plan_id,
+          ratePlanName: r.rate_plan_name,
+          pricingSnapshot: (r.pricing_snapshot ?? null) as StayPricingSnapshot | null,
           guestFirstName: r.guest_first_name,
           guestLastName: r.guest_last_name,
           guestPhone: r.guest_phone,

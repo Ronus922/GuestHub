@@ -13,8 +13,10 @@ import { TopBar } from "./TopBar";
 export type NewReservationConfig = {
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  ratePlans: { id: string; name: string; code: string }[];
   vatRate: number;
   canSaveCard: boolean;
+  canPriceOverride: boolean;
   canCreate: boolean;
 };
 

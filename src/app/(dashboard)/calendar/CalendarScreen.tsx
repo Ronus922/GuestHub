@@ -61,6 +61,7 @@ export function CalendarScreen({
   statusItems,
   paymentMethods,
   bookingSources,
+  ratePlans,
   can,
   vatRate,
 }: {
@@ -69,6 +70,7 @@ export function CalendarScreen({
   statusItems: LookupItem[];
   paymentMethods: LookupItem[];
   bookingSources: LookupItem[];
+  ratePlans: { id: string; name: string; code: string }[];
   can: CalendarCan;
   vatRate: number;
 }) {
@@ -221,6 +223,7 @@ export function CalendarScreen({
         onClose={closePanel}
         bookingSources={bookingSources}
         paymentMethods={paymentMethods}
+        ratePlans={ratePlans}
         statusItems={statusItems}
         canEdit={can.edit}
         canCancel={can.cancel}
