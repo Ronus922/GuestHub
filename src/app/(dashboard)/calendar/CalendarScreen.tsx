@@ -53,6 +53,7 @@ const LEGEND: { key: PaymentState | "all"; label: string; dot: string }[] = [
   { key: "unpaid", label: "לא שולם", dot: "#E5484D" },
   { key: "partial", label: "שולם חלקית", dot: "#48B865" },
   { key: "paid", label: "שולם מלא", dot: "#16A34A" },
+  { key: "overpaid", label: "שולם ביתר", dot: "#0B6E7A" },
 ];
 
 export function CalendarScreen({

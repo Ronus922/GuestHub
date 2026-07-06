@@ -1,7 +1,9 @@
-// Runnable checks for the protected card storage + tenant VAT setting (D41/D42).
-// D42 adds: CVV collected only for charge and NEVER stored/encrypted/logged;
-// channel card data encrypted on ingest yet still redacted from logs; a separate
-// charge permission; reveal audits success AND rejection with IP + session.
+// Runnable checks for the protected card storage + tenant VAT setting (D41/D52).
+// D52: CVV/CVC is NEVER collected, stored, encrypted, revealed, logged or
+// audited — anywhere. This suite asserts the CVV helpers are GONE from the pure
+// rules and the vault, that no source path persists or reveals a CVV, and that
+// the redaction guard still scrubs a CVV from a stored channel payload. The PAN
+// contract (encrypted at rest, masked reads, audited reveal) is unchanged.
 // Same pattern as check-guards.mjs: compiles the pure/server modules with
 // tsc, imports them, and asserts the security + validation rules. Uses ONLY
 // clearly fictional test-card numbers (industry test PANs). Also runs
@@ -60,17 +62,13 @@ assert.equal(rules.expiryInPast(6, 2026, NOW), true, "last month is expired");
 assert.equal(rules.expiryInPast(7, 2026, NOW), false, "current month still valid");
 assert.equal(rules.expiryInPast(1, 2027, NOW), false);
 
-// ---- CVV rules (shape only; the value is stored ENCRYPTED, never plaintext) ----
-assert.equal(rules.cvvValid("123"), true);
-assert.equal(rules.cvvValid("1234"), true, "4-digit amex CVV allowed");
-assert.equal(rules.cvvValid("12"), false, "2 digits rejected");
-assert.equal(rules.cvvValid("12a"), false, "non-digits rejected");
-assert.equal(rules.formatCvv("1a2b3c4d5"), "1234", "formatCvv keeps ≤4 digits");
-assert.equal(rules.maskedCvv(), "•••", "default CVV display is masked");
+// ---- CVV helpers are GONE from the pure rules (D52 §2) ----
+assert.equal(rules.cvvValid, undefined, "cvvValid removed — CVV is never validated for storage");
+assert.equal(rules.formatCvv, undefined, "formatCvv removed — no CVV input");
+assert.equal(rules.maskedCvv, undefined, "maskedCvv removed — no CVV is ever displayed");
 assert.ok(!rules.MANUAL_CARD_SOURCES.includes("channel"), "manual entry can never set source=channel");
 
-// ---- channel card extraction (pure; runs on RAW payload; carries CVV for the
-// ingest to ENCRYPT — never persisted plaintext) ----
+// ---- channel card extraction: PAN only, CVV never carried (D52 §2) ----
 const vc = payloads.extractChannelCard({
   credit_card: {
     cardholder_name: "TEST GUEST",
@@ -86,12 +84,17 @@ assert.equal(vc.isVirtual, true, "virtual card flagged");
 assert.equal(vc.expMonth, 8);
 assert.equal(vc.expYear, 2029);
 assert.equal(rules.normalizePan(vc.pan), "4111111111111111");
-assert.equal(vc.cvv, "123", "channel CVV is extracted so the ingest can encrypt it");
+assert.equal(vc.cvv, undefined, "channel extraction NEVER carries a CVV");
 assert.equal(payloads.extractChannelCard({ guest: { name: "x" } }), null, "no card data → null (not an empty stub)");
-// even after extraction, the STORED/LOGGED revision payload stays redacted
+// the STORED/LOGGED revision payload stays redacted — a CVV in the raw payload
+// is scrubbed by the redaction guard (the last line of defence)
 const red = payloads.redactPayload({ credit_card: { card_number: "4111111111111111", cvv: "123" }, guest_name: "ok" });
 assert.equal(red.credit_card, "[redacted]", "card object still redacted from logs/persistence");
 assert.equal(red.guest_name, "ok", "non-card fields survive redaction");
+const redFlat = payloads.redactPayload({ cvv: "123", cvc: "999", security_code: "111", guest_name: "ok" });
+assert.equal(redFlat.cvv, "[redacted]", "a top-level cvv key is redacted");
+assert.equal(redFlat.cvc, "[redacted]", "a top-level cvc key is redacted");
+assert.equal(redFlat.security_code, "[redacted]", "a security_code key is redacted");
 
 // ---- vault: fail closed with no key (never plaintext fallback) ----
 delete process.env.CARD_VAULT_KEY;
@@ -120,12 +123,9 @@ assert.throws(
 );
 assert.throws(() => vault.decryptPan("v9." + parts.slice(1).join(".")), /version/, "unknown version rejected");
 
-// ---- vault: CVV round-trips through the SAME authenticated envelope ----
-const cvvCipher = vault.encryptCvv("123");
-assert.notEqual(cvvCipher, "123", "CVV is never stored plaintext");
-assert.ok(cvvCipher.startsWith("v1."), "CVV ciphertext carries the version");
-assert.ok(!cvvCipher.includes("123"), "CVV ciphertext never contains the plaintext");
-assert.equal(vault.decryptCvv(cvvCipher), "123", "CVV round-trip via the reveal path");
+// ---- vault: the CVV crypto wrappers are GONE (D52 §2) ----
+assert.equal(vault.encryptCvv, undefined, "encryptCvv removed — a CVV is never encrypted at rest");
+assert.equal(vault.decryptCvv, undefined, "decryptCvv removed — there is no CVV to decrypt");
 delete process.env.CARD_VAULT_KEY;
 
 // ---- VAT setting rules ----
@@ -166,32 +166,27 @@ assert.ok(/card_reveal/.test(cardActions) && /writeAudit/.test(cardActions), "re
 assert.ok(/card_reveal_denied/.test(cardActions), "rejected reveals are also audited (success or rejected)");
 assert.ok(/auditRequestContext/.test(cardActions), "reveal/charge/edit capture IP + session for the audit");
 assert.ok(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data");
-// CVV IS persisted now — but ONLY encrypted at rest (D43). Assert it is
-// encrypted in the INSERT, decrypted only by the reveal, and that an empty
-// incoming CVV never overwrites a stored one.
-const cardInsert = cardActions.match(/INSERT INTO guesthub\.reservation_cards[\s\S]*?RETURNING/);
-assert.ok(cardInsert && /cvv_encrypted/.test(cardInsert[0]), "CVV is stored in the encrypted column");
-assert.ok(/encryptCvv\(/.test(cardActions), "CVV is encrypted before persistence");
-assert.ok(/decryptCvv\(/.test(cardActions), "the reveal action decrypts the CVV for the authorized request");
-assert.ok(/COALESCE\(EXCLUDED\.cvv_encrypted/.test(cardActions), "an empty incoming CVV never overwrites a stored one");
-// the audit payload never carries the plaintext PAN/CVV — only masked metadata
-assert.ok(!/after:\s*\{[^}]*\bcvv:\s*cvv\b/.test(cardActions), "the reveal/save audit never puts the CVV value in the payload");
+// CVV is NEVER persisted (D52 §2): no cvv_encrypted column touched, no crypto,
+// no reveal, and the save action does not accept a cvv field.
+assert.ok(!/cvv_encrypted/.test(cardActions), "card actions never touch a cvv_encrypted column");
+assert.ok(!/encryptCvv|decryptCvv/.test(cardActions), "card actions never encrypt or decrypt a CVV");
+// comment-stripped source must contain NO 'cvv' token at all (no param, no field)
+assert.ok(!/cvv/i.test(cardActions), "no CVV token survives anywhere in the card actions (D52 §2)");
 
 const resActions = src("src/app/(dashboard)/reservations/actions.ts");
 assert.ok(!/pan_encrypted/.test(resActions),
   "the normal reservation payload never selects the encrypted PAN");
 assert.ok(!/decryptPan|decryptCvv/.test(resActions),
   "the normal read never decrypts PAN or CVV");
-assert.ok(/cvv_encrypted IS NOT NULL/.test(resActions),
-  "the normal read exposes only a has-CVV boolean, never the value");
+assert.ok(!/cvv_encrypted|has_cvv|hasCvv/.test(resActions),
+  "the normal read exposes no CVV column, flag or value");
 assert.ok(/last4/.test(resActions), "the normal payload carries masked metadata only");
 
 const cardFields = src("src/components/reservations/CardFields.tsx");
 assert.ok(!/saveReservationCardAction/.test(cardFields),
   "the card form never calls save directly (panels do)");
-assert.ok(/formatCvv/.test(cardFields), "the entry form collects a CVV");
-assert.ok(/maskedPan/.test(cardFields) && /maskedCvv/.test(cardFields),
-  "the saved card renders masked PAN and masked CVV by default");
+assert.ok(!/formatCvv|maskedCvv|\.cvv\b/.test(cardFields), "the entry form no longer collects or renders a CVV");
+assert.ok(/maskedPan/.test(cardFields), "the saved card renders a masked PAN by default");
 assert.ok(/revealReservationCardAction/.test(cardFields), "full details require the explicit reveal action");
 assert.ok(/הצגת פרטי אשראי/.test(cardFields) && /הסתרת פרטי אשראי/.test(cardFields),
   "explicit show/hide of the full card details");
@@ -203,26 +198,26 @@ const editPanel = src("src/components/reservations/EditReservationPanel.tsx");
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
   assert.ok(!/17\s*%|VAT_RATE|0\.17/.test(s), `${name}: no hardcoded VAT percentage`);
   assert.ok(/formatVatRate\(vatRate\)/.test(s), `${name}: VAT line reads the tenant setting`);
-  assert.ok(/cvv: cc\.cvv/.test(s), `${name}: CVV reaches the guarded encrypted save`);
+  assert.ok(!/cvv/i.test(s.replace(/\bCVV\b/g, "")), `${name}: the save payload no longer sends a CVV`);
 }
 assert.ok(/saveReservationCardAction/.test(booking) && /setCc\(EMPTY_CARD\)/.test(booking),
   "booking saves the card via the guarded action and clears client state");
 
-// ---- channel card ingest: encrypt PAN+CVV on ingest, never log ----
+// ---- channel card ingest: encrypt PAN on ingest, NEVER a CVV, never log ----
 const cardIngest = src("src/lib/channel/card-ingest.ts");
 assert.ok(/encryptPan\(/.test(cardIngest), "channel PAN is encrypted immediately on ingest");
-assert.ok(/encryptCvv\(/.test(cardIngest), "channel CVV is encrypted immediately on ingest");
+assert.ok(!/encryptCvv|cvv_encrypted/.test(cardIngest), "channel ingest NEVER stores a CVV (D52 §2)");
 assert.ok(!/console\.(log|info|debug)/.test(cardIngest), "channel ingest never logs card data");
 assert.ok(/source_channel/.test(cardIngest) && /provider_reservation_ref/.test(cardIngest),
   "channel + original OTA reservation reference are retained");
 assert.ok(/is_virtual/.test(cardIngest), "virtual cards are stored distinctly from regular cards");
 
-// ---- channel revision seam: card encrypted-staged BEFORE the payload is
-// redacted; the stored payload stays redacted (no raw card in logs) ----
+// ---- channel revision seam: PAN encrypted-staged BEFORE the payload is
+// redacted; the stored payload stays redacted; NO CVV is ever staged ----
 const revisions = src("src/lib/channel/revisions.ts");
 assert.ok(/extractChannelCard\(/.test(revisions), "persist extracts the card from the raw payload");
-assert.ok(/encryptPan\(/.test(revisions) && /encryptCvv\(/.test(revisions),
-  "the card is encrypted before it is staged on the revision");
+assert.ok(/encryptPan\(/.test(revisions), "the PAN is encrypted before it is staged on the revision");
+assert.ok(!/encryptCvv|card_cvv_encrypted/.test(revisions), "no CVV is ever staged on the revision (D52 §2)");
 assert.ok(/redactPayload\(rev\.payload\)/.test(revisions),
   "the stored/logged revision payload is always redacted");
 assert.ok(/card_pan_encrypted/.test(revisions) && /attachStagedCard/.test(revisions),
@@ -271,8 +266,10 @@ assert.ok(recFn && /if \(!input\.confirmed\)/.test(recFn[0]),
   "recording requires explicit staff confirmation that money was collected");
 assert.ok(recFn && /INSERT INTO guesthub\.payments/.test(recFn[0]) && /reference/.test(recFn[0]),
   "the payment is recorded with amount + method + reference");
-assert.ok(recFn && /UPDATE guesthub\.reservations[\s\S]*?paid_amount/.test(recFn[0]),
-  "paid/balance move forward only inside the guarded, confirmed action");
+// D51/D52: paid/balance are reconciled from the LEDGER (recomputePaymentAggregates),
+// never an incremental in-place add that could drift.
+assert.ok(recFn && /recomputePaymentAggregates\(/.test(recFn[0]),
+  "paid/balance are reconciled from the ledger inside the guarded, confirmed action");
 assert.ok(recFn && /payment_external_record/.test(recFn[0]) && /recorded_external/.test(recFn[0]),
   "it is audited as an EXTERNAL record, never as a GuestHub charge");
 

@@ -41,14 +41,38 @@ export function capacityViolation(
   return null;
 }
 
-// Payment state derived from real money columns — never a free-standing flag,
-// so a "payment status change" can never lose a reservation (§F).
-export type PaymentState = "unpaid" | "partial" | "paid";
+// Canonical reservation payment state derived from the real money columns —
+// never a free-standing flag, so a "payment status change" can never lose a
+// reservation (§F). paid_amount/total_price come from the payments LEDGER
+// (recomputePaymentAggregates, D51). "overpaid" (paid > total) is surfaced as a
+// customer credit rather than silently collapsed into "paid" (D52 §6/§7).
+export type PaymentState = "unpaid" | "partial" | "paid" | "overpaid";
 
 export function paymentState(totalPrice: number, paidAmount: number): PaymentState {
   if (paidAmount <= 0) return "unpaid";
   if (paidAmount < totalPrice) return "partial";
+  if (paidAmount > totalPrice) return "overpaid";
   return "paid";
+}
+
+// THE canonical balance (D52 §6). total − paid, NOT floored: a positive balance
+// is due, a negative balance is a customer credit (overpayment). ONE definition
+// shared by every surface (calendar tooltip, reservation panel, payment section)
+// so a credit is never mis-displayed as a zero balance (§7). Rounded to agorot.
+export function balanceOf(totalPrice: number, paidAmount: number): number {
+  return Math.round((totalPrice - paidAmount) * 100) / 100;
+}
+
+export type BalanceView = { kind: "due" | "settled" | "credit"; amount: number; label: string };
+
+// Display view for a balance: sign-classified kind, ABSOLUTE amount and Hebrew
+// label. The UI formats money from this; it never recomputes the commercial
+// balance itself (§9 — "the UI may format money but must not calculate totals").
+export function formatBalance(totalPrice: number, paidAmount: number): BalanceView {
+  const b = balanceOf(totalPrice, paidAmount);
+  if (b > 0) return { kind: "due", amount: b, label: "יתרה לתשלום" };
+  if (b < 0) return { kind: "credit", amount: -b, label: "זיכוי ללקוח" };
+  return { kind: "settled", amount: 0, label: "שולם במלואו" };
 }
 
 // Calendar empty-cell price/min-nights strip display shape. Since Phase 4A the

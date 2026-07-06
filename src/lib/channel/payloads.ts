@@ -264,13 +264,11 @@ export function redactPayload(value: unknown): unknown {
 // crypto, NO storage — encryption + persistence live server-only in
 // src/lib/channel/card-ingest.ts. This runs on the RAW payload BEFORE
 // redactPayload() strips card fields from the stored/logged revision, so the
-// digits are lifted into the encrypted vault and never survive in a log.
-// The CVV (when a channel sends one, e.g. virtual cards) is carried here only
-// to be encrypted at rest by the ingest — it is never persisted plaintext (D43).
+// PAN is lifted into the encrypted vault and never survives in a log. The CVV is
+// deliberately NOT extracted (D52 §2): it is never carried, encrypted or stored.
 export type ChannelCardData = {
   holderName: string | null;
   pan: string | null;
-  cvv: string | null;
   expMonth: number | null;
   expYear: number | null;
   brand: string | null;
@@ -321,7 +319,8 @@ export function extractChannelCard(payload: unknown): ChannelCardData | null {
   const obj = card as Record<string, unknown>;
 
   const pan = firstString(obj, ["card_number", "number", "pan", "cardNumber"]);
-  const cvv = firstString(obj, ["cvv", "cvc", "security_code", "card_cvv", "cvv2"]);
+  // CVV is intentionally NOT read from the payload (D52 §2) — redactPayload()
+  // still scrubs it from the stored revision via SENSITIVE_KEY_RE.
   const holderName = firstString(obj, ["cardholder_name", "holder_name", "name", "cardHolder"]);
   const brand = firstString(obj, ["card_type", "brand", "type", "scheme"]);
   const { month, year } = parseChannelExpiry(obj);
@@ -340,7 +339,6 @@ export function extractChannelCard(payload: unknown): ChannelCardData | null {
   return {
     holderName,
     pan,
-    cvv,
     expMonth: month,
     expYear: year,
     brand,

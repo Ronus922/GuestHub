@@ -14,6 +14,10 @@ export interface CardChargeRequest {
   pan: string;
   expMonth: number;
   expYear: number;
+  // TRANSIENT ONLY (D52 §2): a CVV may ride a single live authorization request
+  // to the PSP and MUST be discarded immediately after — never persisted, logged,
+  // audited or returned. Prefer provider hosted-fields/tokenization so the CVV
+  // never reaches this server at all.
   cvv?: string | null;
   holderName: string;
   holderIdNumber?: string | null;

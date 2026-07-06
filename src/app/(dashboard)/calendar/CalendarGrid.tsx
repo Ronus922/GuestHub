@@ -63,6 +63,9 @@ export const PAY_STYLE: Record<PaymentState, { bg: string; bd: string; tx: strin
   unpaid: { bg: "#FDEBEC", bd: "#EFA3A9", tx: "#B4232D" },
   partial: { bg: "#EAF7EE", bd: "#93D3A5", tx: "#1F7A3D" },
   paid: { bg: "#DFF2E7", bd: "#4FB47E", tx: "#0F6B3C" },
+  // overpaid = fully paid + a customer credit; a distinct teal so a credit reads
+  // apart from an exactly-settled stay (D52 §7).
+  overpaid: { bg: "#DCF1F4", bd: "#5FC2CE", tx: "#0B6E7A" },
 };
 // Departed stays use the reference's neutral gray family (רון פרידמן card).
 const PAST_STYLE = { bg: "#EAEEF4", bd: "#AEBACB", tx: "#3C4A5E" };

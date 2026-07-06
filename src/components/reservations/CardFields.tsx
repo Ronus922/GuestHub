@@ -7,12 +7,9 @@ import {
   BRAND_LABEL,
   CARD_SOURCE_LABEL,
   MANUAL_CARD_SOURCES,
-  cvvValid,
   expiryInPast,
   formatCardNumber,
-  formatCvv,
   formatExpiry,
-  maskedCvv,
   maskedPan,
   normalizePan,
   panValid,
@@ -39,18 +36,18 @@ export type RecordedPayment = {
 
 // פרטי כרטיס אשראי (reference .ccbox) — the ENTRY form + the saved-card box.
 //
-// SECURITY (D41/D42/D43): PAN and CVV are sent ONLY through the dedicated
-// guarded save action (encrypted server-side, AES-256-GCM), and read back ONLY
-// via the explicit, permission-guarded, audited reveal. The saved card is
-// masked by default (PAN → •••• last4, CVV → •••); the full values appear only
-// after an explicit "הצגת פרטי אשראי" and are dropped from client state on hide,
-// card change, unmount and after a short inactivity window. Saving never charges.
+// SECURITY (D41/D42/D52): the PAN is sent ONLY through the dedicated guarded
+// save action (encrypted server-side, AES-256-GCM) and read back ONLY via the
+// explicit, permission-guarded, audited reveal. The CVV is NEVER collected,
+// stored or revealed (D52 §2) — there is no CVV field. The saved card is masked
+// by default (PAN → •••• last4); the full PAN appears only after an explicit
+// "הצגת פרטי אשראי" and is dropped from client state on hide, card change,
+// unmount and after a short inactivity window. Saving never charges.
 
 export type CardDraft = {
   holder: string;
   number: string;
   exp: string;
-  cvv: string;
   idNum: string;
   source: CardSource;
   billingNotes: string;
@@ -60,7 +57,6 @@ export const EMPTY_CARD: CardDraft = {
   holder: "",
   number: "",
   exp: "",
-  cvv: "",
   idNum: "",
   source: "back_office",
   billingNotes: "",
@@ -69,7 +65,7 @@ export const EMPTY_CARD: CardDraft = {
 // "empty" → nothing entered; "valid" → save-ready; "invalid" → block submit.
 // source/billingNotes never make a card "non-empty" on their own.
 export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
-  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.cvv.trim() && !c.idNum.trim())
+  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.idNum.trim())
     return "empty";
   const pan = normalizePan(c.number);
   const exp = parseExpiry(c.exp);
@@ -78,7 +74,6 @@ export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
     panValid(pan) &&
     exp !== null &&
     !expiryInPast(exp.month, exp.year, new Date()) &&
-    (!c.cvv || cvvValid(c.cvv)) &&
     (!c.idNum || /^\d{5,9}$/.test(c.idNum));
   return ok ? "valid" : "invalid";
 }
@@ -99,7 +94,6 @@ export function CardFields({
   const exp = parseExpiry(value.exp);
   const expiryBad =
     value.exp.length > 0 && (exp === null || expiryInPast(exp.month, exp.year, new Date()));
-  const cvvBad = value.cvv.length > 0 && !cvvValid(value.cvv);
   const idBad = value.idNum.length > 0 && !/^\d{5,9}$/.test(value.idNum);
 
   return (
@@ -156,23 +150,6 @@ export function CardFields({
         </label>
         <label className="bw-fg">
           <span className="bw-lbl">
-            CVV <span className="bw-opt">(3–4 ספרות)</span>
-          </span>
-          <input
-            className={`bw-fld ${cvvBad ? "bad" : ""}`}
-            dir="ltr"
-            inputMode="numeric"
-            placeholder="•••"
-            autoComplete="off"
-            maxLength={4}
-            value={value.cvv}
-            onChange={(e) => onChange((p) => ({ ...p, cvv: formatCvv(e.target.value) }))}
-          />
-        </label>
-      </div>
-      <div className="bw-grid2 mt-4">
-        <label className="bw-fg">
-          <span className="bw-lbl">
             תעודת זהות <span className="bw-opt">(לא חובה)</span>
           </span>
           <input
@@ -186,21 +163,21 @@ export function CardFields({
             onChange={(e) => onChange((p) => ({ ...p, idNum: e.target.value.replace(/\D/g, "") }))}
           />
         </label>
-        <label className="bw-fg">
-          <span className="bw-lbl">מקור פרטי הכרטיס</span>
-          <select
-            className="bw-fld"
-            value={value.source}
-            onChange={(e) => onChange((p) => ({ ...p, source: e.target.value as CardSource }))}
-          >
-            {MANUAL_CARD_SOURCES.map((s) => (
-              <option key={s} value={s}>
-                {CARD_SOURCE_LABEL[s]}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
+      <label className="bw-fg mt-4 block">
+        <span className="bw-lbl">מקור פרטי הכרטיס</span>
+        <select
+          className="bw-fld"
+          value={value.source}
+          onChange={(e) => onChange((p) => ({ ...p, source: e.target.value as CardSource }))}
+        >
+          {MANUAL_CARD_SOURCES.map((s) => (
+            <option key={s} value={s}>
+              {CARD_SOURCE_LABEL[s]}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="bw-fg mt-4 block">
         <span className="bw-lbl">
           הערות חיוב <span className="bw-opt">(לא חובה)</span>
@@ -256,11 +233,12 @@ function CopyBtn({ value, label }: { value: string; label: string }) {
   );
 }
 
-// Saved-card box: masked by default (PAN + CVV); the full details appear ONLY
-// after an explicit, permission-guarded, audited reveal ("הצגת פרטי אשראי"),
-// are re-masked on hide/close/card-change/inactivity, and are never logged or
-// toasted. The encrypted values on the server are untouched by a reveal, so it
-// is repeatable. Charging (fail-closed placeholder) is separate.
+// Saved-card box: masked by default (PAN → •••• last4); the full PAN appears
+// ONLY after an explicit, permission-guarded, audited reveal ("הצגת פרטי אשראי"),
+// is re-masked on hide/close/card-change/inactivity, and is never logged or
+// toasted. No CVV is ever shown — none is stored (D52 §2). The encrypted PAN on
+// the server is untouched by a reveal, so it is repeatable. Charging (fail-closed
+// placeholder) is separate.
 export function StoredCardBox({
   card,
   canReveal,
@@ -376,16 +354,13 @@ export function StoredCardBox({
         </span>
       </div>
 
-      {/* default masked line: brand · masked PAN (last4 visible) · expiry · CVV */}
+      {/* default masked line: brand · masked PAN (last4 visible) · expiry (no CVV) */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <span className="text-lg font-extrabold tracking-wider text-ink" dir="ltr">
           {revealed ? formatCardNumber(revealed.pan) : maskedPan(card.last4)}
         </span>
         <span className="text-sm font-semibold text-muted" dir="ltr">
           {revealed ? `${String(revealed.expMonth).padStart(2, "0")}/${revealed.expYear}` : expMasked}
-        </span>
-        <span className="text-sm font-semibold text-muted" dir="ltr">
-          CVV {revealed ? (revealed.cvv ?? "—") : card.hasCvv ? maskedCvv() : "—"}
         </span>
         <span className="text-sm font-semibold text-muted">{card.holderName}</span>
       </div>
@@ -417,13 +392,6 @@ export function StoredCardBox({
                 {String(revealed.expMonth).padStart(2, "0")}/{revealed.expYear}
               </span>
               <CopyBtn value={`${String(revealed.expMonth).padStart(2, "0")}/${revealed.expYear}`} label="תוקף" />
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted">CVV</span>
-            <span className="flex items-center gap-1">
-              <span dir="ltr" className="font-bold">{revealed.cvv ?? "—"}</span>
-              {revealed.cvv && <CopyBtn value={revealed.cvv} label="CVV" />}
             </span>
           </div>
           {revealed.holderIdNumber && (

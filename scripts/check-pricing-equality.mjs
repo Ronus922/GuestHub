@@ -369,8 +369,8 @@ try {
       await pay(100); // overpayment
       agg = await ledger.recomputePaymentAggregates(sp, f.T, r.id);
       assert.equal(agg.balance, -100); // honest credit, not clamped away
-      assert.equal(paymentState(agg.total, agg.paid), "paid");
-      ok("full payment + overpayment: state 'paid'; overpay shows as negative balance (credit)");
+      assert.equal(paymentState(agg.total, agg.paid), "overpaid"); // D52: distinct state
+      ok("full payment + overpayment: state 'overpaid'; overpay shows as negative balance (credit)");
     });
 
     // ---- 21-22: authorized manual override ----
