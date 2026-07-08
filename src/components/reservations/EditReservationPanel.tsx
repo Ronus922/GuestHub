@@ -161,6 +161,11 @@ export function EditReservationPanel({
           children: r.children,
           infants: r.infants,
           ratePerNight: r.ratePerNight,
+          // must mirror the live `stays` mapping above exactly (same fields, same
+          // order) or the dirty fingerprint never matches → every booking opens
+          // falsely "dirty", which the toolbar's save-first guard then blocks.
+          isManualRate: r.isManualRate,
+          ratePlanId: r.ratePlanId,
           guestFirstName: r.guestFirstName ?? undefined,
           guestLastName: r.guestLastName ?? undefined,
           guestPhone: r.guestPhone ?? undefined,
