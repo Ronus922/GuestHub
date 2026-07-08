@@ -93,6 +93,10 @@ import {
   Tags,
   Percent,
   Calculator,
+  Printer,
+  Download,
+  MessageCircle,
+  Send,
   type LucideIcon,
 } from "lucide-react";
 
@@ -196,6 +200,11 @@ const ICONS = {
   tags: Tags,
   percent: Percent,
   calculator: Calculator,
+  // messaging / booking toolbar (D53)
+  printer: Printer,
+  download: Download,
+  whatsapp: MessageCircle,
+  send: Send,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

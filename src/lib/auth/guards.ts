@@ -130,6 +130,15 @@ export function canManageChannels(actor: GuardActor): GuardResult {
   return no("ניהול חיבורי ערוצים זמין למנהל-על בלבד");
 }
 
+// ---- messaging providers (Gmail / GREEN-API / Twilio) — D53 ----
+// Same posture as channel connections: provider CREDENTIALS are integration
+// secrets and outrank ordinary full access, so ONLY super_admin may view or
+// modify them (admin does NOT qualify).
+export function canManageMessaging(actor: GuardActor): GuardResult {
+  if (actor.roleKey === "super_admin") return ok;
+  return no("ניהול ספקי תקשורת זמין למנהל-על בלבד");
+}
+
 export function canTogglePermission(
   actor: GuardActor,
   targetRoleKey: string,
