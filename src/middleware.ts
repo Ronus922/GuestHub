@@ -38,6 +38,10 @@ export async function middleware(request: NextRequest) {
   // The OAuth callback arrives unauthenticated by definition (the session is only
   // created inside the route by exchangeCodeForSession) — it must stay reachable.
   const isOauthCallback = path === "/auth/callback";
+  // Provider status webhooks (Twilio / GREEN-API) are server-to-server POSTs with
+  // NO user session. They authenticate via their opaque path token (+ the Twilio
+  // signature), so they must bypass the login redirect to reach their handler.
+  const isMessagingWebhook = path.startsWith("/api/messaging/webhook/");
 
   // Redirect while carrying over any refreshed auth cookies staged on `response`
   // (a fresh NextResponse.redirect would otherwise drop a rotated refresh token).
@@ -50,7 +54,7 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  if (!user && !isLogin && !isOauthCallback) return redirectTo("/login");
+  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook) return redirectTo("/login");
   if (user && isLogin) return redirectTo("/");
 
   return response;

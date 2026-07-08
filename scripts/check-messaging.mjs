@@ -99,6 +99,10 @@ assert.ok(!/webhook\/twilio\/\$\{[^}]*(secretHints|accountSid)/.test(section), "
 assert.ok(!/webhook\/green-api\/\$\{[^}]*(instanceId|webhookSecret)/.test(section), "green-api webhook URL is not built from a predictable instance id");
 assert.ok(/webhook\/twilio\/\$\{[^}]*webhookToken/.test(section) && /webhook\/green-api\/\$\{[^}]*webhookToken/.test(section), "settings builds both webhook URLs from the opaque webhookToken");
 
+// ---- middleware must let the (session-less) provider webhooks reach their handler ----
+const mw = src("src/middleware.ts");
+assert.ok(/\/api\/messaging\/webhook\//.test(mw) && /isMessagingWebhook/.test(mw), "middleware exempts the messaging webhook path from the login redirect");
+
 // ---- PDF/print: masked card only, no CVV, canonical data ----
 const pdfData = src("src/lib/pdf/booking-doc-data.ts");
 assert.ok(/getReservationAction/.test(pdfData), "PDF/print load the canonical booking (no second query)");
