@@ -372,8 +372,8 @@ async function main() {
   // --- areas ---
   const areas = await sql`
     INSERT INTO guesthub.areas ${sql([
-      { tenant_id: tenantId, name: "בניין ראשי", description: "הבניין המרכזי מול הים", sort_order: 0 },
-      { tenant_id: tenantId, name: "אגף הבריכה", description: "יחידות גן סביב הבריכה", sort_order: 1 },
+      { tenant_id: tenantId, name: "צפוני", description: "הבניין המרכזי מול הים", sort_order: 0 },
+      { tenant_id: tenantId, name: "דרומי", description: "יחידות גן סביב הבריכה", sort_order: 1 },
     ], "tenant_id", "name", "description", "sort_order")} RETURNING id, name`;
   const areaMain = areas[0].id;
   const areaPool = areas[1].id;
@@ -381,8 +381,8 @@ async function main() {
   // --- room_types ---
   const roomTypeDefs = [
     { name: "סטודיו", base_price: 450, max_occupancy: 2, max_adults: 2, max_children: 1, queen_beds: 1, sofa_beds: 0 },
-    { name: "דירת חדר שינה", base_price: 680, max_occupancy: 4, max_adults: 2, max_children: 2, queen_beds: 1, sofa_beds: 1 },
-    { name: "סוויטה משפחתית", base_price: 980, max_occupancy: 6, max_adults: 4, max_children: 2, queen_beds: 2, sofa_beds: 1, cribs: 1 },
+    { name: "חדר שינה וסלון", base_price: 680, max_occupancy: 4, max_adults: 2, max_children: 2, queen_beds: 1, sofa_beds: 1 },
+    { name: "סוויטה", base_price: 980, max_occupancy: 6, max_adults: 4, max_children: 2, queen_beds: 2, sofa_beds: 1, cribs: 1 },
   ];
   const roomTypes = await sql`
     INSERT INTO guesthub.room_types ${sql(
