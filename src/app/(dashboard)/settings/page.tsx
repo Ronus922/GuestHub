@@ -8,6 +8,8 @@ import {
   getPaymentMethods,
 } from "@/lib/commercial/service";
 import { SettingsShell } from "./SettingsShell";
+import { getMessagingSettingsAction } from "./messaging-actions";
+import type { MessagingSettingsView } from "./types";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,14 @@ export default async function SettingsPage() {
       getPaymentMethods(actor.tenantId),
     ]);
 
+  // Messaging providers are super_admin-only integration secrets (§ guards).
+  const canManageMessaging = actor.roleKey === "super_admin";
+  let messaging: MessagingSettingsView | null = null;
+  if (canManageMessaging) {
+    const res = await getMessagingSettingsAction();
+    if (res.success && res.data) messaging = res.data;
+  }
+
   return (
     <SettingsShell
       tenantName={actor.tenantName}
@@ -38,6 +48,8 @@ export default async function SettingsPage() {
       cancellationPolicies={cancellationPolicies}
       paymentPolicies={paymentPolicies}
       paymentMethods={paymentMethods}
+      canManageMessaging={canManageMessaging}
+      messaging={messaging}
     />
   );
 }

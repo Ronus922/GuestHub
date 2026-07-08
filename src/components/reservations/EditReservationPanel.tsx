@@ -28,6 +28,7 @@ import {
   type CardDraft,
 } from "./CardFields";
 import { PaymentBadge, CardTitle, Field } from "./BookingPanel";
+import { BookingToolbar, MessageComposer } from "./BookingActions";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
 // עריכת הזמנה — the single reservation detail/edit flow the calendar opens
@@ -85,6 +86,9 @@ export function EditReservationPanel({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const snapshotRef = useRef("");
   const staysRef = useRef<HTMLElement | null>(null);
+  // in-panel message composer (email | whatsapp) — a full-panel overlay; the
+  // booking stays mounted underneath (no navigation, scroll preserved)
+  const [composer, setComposer] = useState<null | "email" | "whatsapp">(null);
 
   const open = reservationId !== null;
 
@@ -252,6 +256,28 @@ export function EditReservationPanel({
       }
     });
 
+  // Header toolbar actions operate on the SAVED booking only — unsaved edits
+  // must not leak into a sent message, PDF or print (D53). Block with a Hebrew
+  // save prompt while the form is dirty.
+  const guardedToolbarAction = (fn: () => void) => {
+    if (dirty) {
+      toast.error("יש שינויים שלא נשמרו — שמור אותם לפני שליחה, הדפסה או הפקת PDF");
+      return;
+    }
+    fn();
+  };
+  // Refresh only the read-only feeds (activity + payments) after a message send,
+  // without touching the editable form fields.
+  const refreshActivity = () => {
+    if (!reservationId) return;
+    getReservationAction(reservationId).then((res) => {
+      if (res.success && res.data) {
+        const fresh = res.data;
+        setDetail((d) => (d ? { ...d, activity: fresh.activity, payments: fresh.payments } : d));
+      }
+    });
+  };
+
   // ---- stored card (dedicated guarded actions, never the main save) ----
   const ccStateForSave = cardDraftState(cc);
 
@@ -314,6 +340,30 @@ export function EditReservationPanel({
               detail.source_label ? ` · מקור: ${detail.source_label}` : ""
             } · עודכנה לאחרונה ${fmtDateTime(detail.updated_at)}`
           : "טוען…"
+      }
+      headerActions={
+        detail ? (
+          <BookingToolbar
+            onEmail={() => guardedToolbarAction(() => setComposer("email"))}
+            onWhatsApp={() => guardedToolbarAction(() => setComposer("whatsapp"))}
+            onPdf={() =>
+              guardedToolbarAction(() => window.open(`/api/reservations/${detail.id}/pdf`, "_blank", "noopener"))
+            }
+            onPrint={() =>
+              guardedToolbarAction(() => window.open(`/reservations/${detail.id}/print`, "_blank", "noopener"))
+            }
+          />
+        ) : undefined
+      }
+      overlay={
+        detail && composer ? (
+          <MessageComposer
+            channel={composer}
+            reservationId={detail.id}
+            onClose={() => setComposer(null)}
+            onSent={refreshActivity}
+          />
+        ) : null
       }
       headerChips={
         detail ? (
@@ -835,6 +885,12 @@ const ACTIVITY_LABEL: Record<string, string> = {
   card_import_channel: "כרטיס יובא מערוץ",
   card_delete: "כרטיס אשראי הוסר",
   payment_external_record: "נרשם תשלום שבוצע חיצונית",
+  email_sent: "נשלח מייל לאורח",
+  email_failed: "שליחת מייל נכשלה",
+  whatsapp_sent: "נשלחה הודעת WhatsApp",
+  whatsapp_failed: "שליחת WhatsApp נכשלה",
+  pdf_generated: "הופק PDF להזמנה",
+  print: "ההזמנה נשלחה להדפסה",
 };
 
 // dirty-state fingerprint of everything the user can edit (stay "key"

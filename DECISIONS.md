@@ -611,3 +611,21 @@ check-calendar updated to assert CVV is GONE + credit semantics. Browser (headle
 on :3099, throwaway ZZQA data removed): no CVV field, ₪200 extra-guest line,
 partial→full→overpayment showing "זיכוי ללקוח -₪200" in panel + tooltip + DB, 390px layout OK.
 Public booking engine and Channex NOT started.
+
+## D53 — Guest messaging platform (Gmail + WhatsApp) + booking action toolbar
+
+The booking editor header action toolbar (email/WhatsApp/PDF/print/close) — documented-and-omitted in D40 "no messaging infra" — is now built on the ONE canonical messaging platform this repo lacked. No parallel systems; the editor depends on shared interfaces, never on a provider SDK.
+
+REAL providers (per product decision): **Email = Gmail** (OAuth 2.0 API preferred, `users.messages.send`, no SDK — plain fetch; SMTP App-Password fallback via nodemailer). **WhatsApp = GREEN-API OR Twilio**, selectable per property in Settings, behind one `WhatsAppProvider` interface with separate adapters; the active provider is a NON-secret pointer in `tenants.settings.messaging`. Interfaces: `EmailProvider`/`WhatsAppProvider` (`src/lib/messaging/types.ts`).
+
+SECRETS: `messaging_provider_connections.secret_ciphertext` — AES-256-GCM (`src/lib/messaging/secrets.ts`, key `MESSAGING_SECRETS_ENCRYPTION_KEY`, fail-closed, same construction as the card vault). Never returned to a client (actions expose `••••••••XXXX` hints only), never in logs/audit/errors. Provider config is super_admin-only (`canManageMessaging`, mirrors channels). Sends require `reservations.edit`.
+
+HONEST STATUS lifecycle (`outbound_messages.status` CHECK): draft · validation_failed · provider_not_configured · queued · submitting · submitted · sent · delivered · read · failed · undelivered. "sent" ≠ mere acceptance: GREEN-API accept → `submitted` (delivery confirmed later by webhook); Gmail `messages.send` → `sent`; Twilio via `mapTwilioStatus`. Webhooks (`/api/messaging/webhook/{green-api,twilio}/[token]`) resolve tenant THROUGH the stored message (never the payload), verify authenticity (green-api token=webhookSecret/instanceId; twilio X-Twilio-Signature HMAC + accountSid path token), and are idempotent via `message_events (provider, dedup_key) UNIQUE` → monotonic `advanceMessageStatus`.
+
+TEMPLATES: `message_templates` (channel-tagged email/whatsapp, editable, seeded Hebrew booking defaults). ONE canonical variable set resolved from the SAVED reservation (`src/lib/messaging/templates.ts`, `resolveBookingVariables`) — the composer reloads canonical data server-side on send, so unsaved edits never leak; a dirty booking is blocked with a Hebrew save prompt before send/PDF/print.
+
+COMPOSER: full-panel OVERLAY inside the existing SidePanel (new optional `headerActions` + `overlay` props) — booking stays mounted, scroll preserved, no navigation. Custom + template modes, live preview, variable chips, provider-not-configured + missing-contact honest Hebrew errors, loading/success/failure states.
+
+PDF: `@react-pdf/renderer` + bundled Rubik (Hebrew static Regular/Bold, `public/fonts/`) → true one-click `/api/reservations/[id]/pdf` download (`booking-<num>-<slug>.pdf`), full RTL, canonical data, masked card (last4 only — D52 removed CVV/PAN entirely), audited `pdf_generated`. PRINT: separate RTL A4 HTML route `/reservations/[id]/print` (outside the dashboard shell → no nav/sidebar), `window.print()`, audited `print`.
+
+MIGRATION 020 (4 tables + seed) is NOT applied to the shared prod DB by this change — apply via the documented flow. Verified idempotent + constraints on the isolated :5433 test DB. Live sending stays "not configured" until per-property creds are entered in Settings (Communications). Runnable check: `scripts/check-messaging.mjs`.

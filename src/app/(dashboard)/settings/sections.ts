@@ -5,7 +5,7 @@ import type { IconName } from "@/components/shared/Icon";
 // design's lookup screens (sources/statuses/currencies/languages/…) are out of
 // scope here and are not stubbed (§I: do not redesign unrelated Settings sections).
 
-export type SettingsSectionKey = "vat" | "extra-guest" | "cancellation" | "payment";
+export type SettingsSectionKey = "vat" | "extra-guest" | "cancellation" | "payment" | "messaging";
 
 export type SettingsSectionDef = {
   key: SettingsSectionKey;
@@ -34,6 +34,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     title: "תשלומים",
     items: [
       { key: "payment", label: "מדיניות תשלום", icon: "credit-card", desc: "תבניות מדיניות תשלום" },
+    ],
+  },
+  {
+    // super_admin only — filtered in SettingsShell via canManageMessaging.
+    title: "תקשורת",
+    items: [
+      { key: "messaging", label: "תקשורת והודעות", icon: "send", desc: "Gmail ו-WhatsApp" },
     ],
   },
 ];

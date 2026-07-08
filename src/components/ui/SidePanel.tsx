@@ -22,6 +22,8 @@ export function SidePanel({
   avatar,
   badge,
   headerChips,
+  headerActions,
+  overlay,
   band,
   bodyClassName,
   widthClassName,
@@ -39,6 +41,13 @@ export function SidePanel({
   badge?: React.ReactNode;
   // raw chips (e.g. reservation # + status, .bw-hd-chip) rendered after the title
   headerChips?: React.ReactNode;
+  // compact icon-buttons in the LEFT header cluster, before the built-in close X
+  // (e.g. the booking action toolbar: email / whatsapp / pdf / print). RTL DOM
+  // order lays them right→left, with X furthest left.
+  headerActions?: React.ReactNode;
+  // full-panel overlay layer (absolute, above the body) — e.g. an in-panel
+  // message composer that must not navigate away or unmount the booking.
+  overlay?: React.ReactNode;
   // full-width strip between the header and the scrolling body (e.g. wizard stepper)
   band?: React.ReactNode;
   // body padding/background override (default p-6 glass)
@@ -142,14 +151,19 @@ export function SidePanel({
                   </span>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="סגירה"
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white/90 transition-colors hover:bg-white/15"
-              >
-                <Icon name="close" size={20} />
-              </button>
+              {/* left header cluster: action toolbar (RTL: right→left) + close X */}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {headerActions}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="סגירה"
+                  title="סגירה"
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white/90 transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                >
+                  <Icon name="close" size={20} />
+                </button>
+              </div>
             </header>
 
             {band}
@@ -163,6 +177,10 @@ export function SidePanel({
                 {footer}
               </footer>
             ) : null}
+
+            {/* full-panel overlay (e.g. in-panel message composer) — booking stays
+                mounted underneath so closing restores its exact scroll state */}
+            {overlay}
           </motion.aside>
         </div>
       )}

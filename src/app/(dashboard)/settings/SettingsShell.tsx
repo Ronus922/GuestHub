@@ -7,7 +7,14 @@ import { VatSection } from "./VatSection";
 import { ExtraGuestSection } from "./ExtraGuestSection";
 import { CancellationSection } from "./CancellationSection";
 import { PaymentSection } from "./PaymentSection";
-import type { ExtraGuestView, CancellationPolicyView, PaymentPolicyView, PaymentMethodRef } from "./types";
+import { MessagingSection } from "./MessagingSection";
+import type {
+  ExtraGuestView,
+  CancellationPolicyView,
+  PaymentPolicyView,
+  PaymentMethodRef,
+  MessagingSettingsView,
+} from "./types";
 
 // Two-pane settings shell (approved design): right-hand grouped nav + content
 // pane. The active section lives in ?section= so it is linkable and survives a
@@ -20,6 +27,8 @@ export function SettingsShell({
   cancellationPolicies,
   paymentPolicies,
   paymentMethods,
+  canManageMessaging,
+  messaging,
 }: {
   tenantName: string;
   currency: string;
@@ -28,11 +37,19 @@ export function SettingsShell({
   cancellationPolicies: CancellationPolicyView[];
   paymentPolicies: PaymentPolicyView[];
   paymentMethods: PaymentMethodRef[];
+  canManageMessaging: boolean;
+  messaging: MessagingSettingsView | null;
 }) {
   const [section, setSection] = useQueryState(
     "section",
     parseAsStringLiteral(SETTINGS_SECTION_KEYS).withDefault("vat"),
   );
+
+  // Messaging is super_admin-only: hide its group from the nav when not allowed.
+  const groups = SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => canManageMessaging || item.key !== "messaging"),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
@@ -46,7 +63,7 @@ export function SettingsShell({
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
         {/* right-hand settings navigation — first child = right side in RTL (like Shell's Sidebar) */}
         <nav className="shrink-0 rounded-2xl border border-line bg-surface p-3 lg:w-[280px]" aria-label="ניווט הגדרות">
-          {SETTINGS_GROUPS.map((group) => (
+          {groups.map((group) => (
             <div key={group.title} className="mb-3 last:mb-0">
               <p className="px-3 pb-1 text-[11px] font-bold tracking-wide text-faint">{group.title}</p>
               <ul className="flex flex-col gap-0.5">
@@ -75,6 +92,8 @@ export function SettingsShell({
             cancellationPolicies={cancellationPolicies}
             paymentPolicies={paymentPolicies}
             paymentMethods={paymentMethods}
+            canManageMessaging={canManageMessaging}
+            messaging={messaging}
           />
         </div>
       </div>
@@ -117,6 +136,8 @@ function SectionBody({
   cancellationPolicies,
   paymentPolicies,
   paymentMethods,
+  canManageMessaging,
+  messaging,
 }: {
   section: SettingsSectionKey;
   currency: string;
@@ -125,6 +146,8 @@ function SectionBody({
   cancellationPolicies: CancellationPolicyView[];
   paymentPolicies: PaymentPolicyView[];
   paymentMethods: PaymentMethodRef[];
+  canManageMessaging: boolean;
+  messaging: MessagingSettingsView | null;
 }) {
   switch (section) {
     case "vat":
@@ -135,5 +158,7 @@ function SectionBody({
       return <CancellationSection policies={cancellationPolicies} />;
     case "payment":
       return <PaymentSection policies={paymentPolicies} methods={paymentMethods} />;
+    case "messaging":
+      return canManageMessaging && messaging ? <MessagingSection data={messaging} /> : null;
   }
 }
