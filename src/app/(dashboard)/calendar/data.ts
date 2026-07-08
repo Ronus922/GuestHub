@@ -39,7 +39,10 @@ export async function getCalendarData(
     LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
     LEFT JOIN guesthub.areas a ON a.id = r.area_id
     WHERE r.tenant_id = ${tenantId}
-    ORDER BY a.sort_order NULLS LAST, r.room_number`;
+    -- Occupancy board: rooms in ascending NUMERIC room-number order (926 < 1006),
+    -- not lexicographic text order. Non-numeric numbers sort last, then by text.
+    ORDER BY NULLIF(regexp_replace(r.room_number, '[^0-9]', '', 'g'), '')::bigint NULLS LAST,
+             r.room_number`;
 
   // Every visible (non-cancelled) reservation-room intersecting the window.
   const stays = await sql<(Omit<CalendarStay, "payment"> & { total_price: number; paid_amount: number })[]>`
