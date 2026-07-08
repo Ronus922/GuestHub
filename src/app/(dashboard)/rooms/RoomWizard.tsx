@@ -59,7 +59,11 @@ const SUMMARY_MAX = 140;
 const SEO_TITLE_MAX = 60;
 const SEO_DESC_MAX = 160;
 
-const FLOOR_OPTIONS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
+// Canonical floor options for the room create/edit wizard (one shared source —
+// RoomWizard is the single form used for both create and edit). Offers 5–16 only.
+// Legacy rooms whose floor falls outside this range still DISPLAY via the select's
+// fallback <option> below, but out-of-range floors are never offered as new choices.
+const FLOOR_OPTIONS = ["5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"];
 const floorLabel = (f: string) => (f === "0" ? "קרקע" : `קומה ${f}`);
 
 type TrDraft = {
