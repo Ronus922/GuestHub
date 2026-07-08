@@ -62,6 +62,12 @@ assert.ok(/כתיבת הודעה חדשה/.test(composer) && /בחירה מתב�
 
 // ---- unsaved-changes guard before send/print/pdf ----
 assert.ok(/יש שינויים שלא נשמרו/.test(editor) && /guardedToolbarAction/.test(editor), "dirty guard blocks send/print/pdf until saved");
+// the dirty fingerprint's baseline MUST mirror the live `stays` mapping (incl. the
+// pricing fields isManualRate/ratePlanId) — otherwise every booking opens falsely
+// "dirty" and the save-first guard blocks the toolbar on UNEDITED bookings.
+// Regression guard for the D53 production smoke-test finding.
+assert.ok((editor.match(/isManualRate/g) || []).length >= 2, "edit panel: baseline snapshot mirrors live stays for isManualRate (no false-dirty)");
+assert.ok((editor.match(/ratePlanId/g) || []).length >= 2, "edit panel: baseline snapshot mirrors live stays for ratePlanId (no false-dirty)");
 
 // ---- migration: 4 tables, status CHECK, idempotent webhook dedup ----
 const mig = readFileSync(join(ROOT, "db/migrations/020_messaging_providers.sql"), "utf8");
