@@ -184,6 +184,15 @@ export function RoomWizard({
   const [customAmenities, setCustomAmenities] = useState<AmenityOption[]>([]);
   const [images, setImages] = useState<RoomImage[]>(room?.images ?? []);
   const imagesDirty = useRef(false);
+  // in-flight image uploads block save/close so a batch is never half-persisted
+  const [uploading, setUploading] = useState(false);
+
+  // Save/close must wait for in-flight uploads — closing mid-batch would abandon
+  // images the user selected. Guarded so the X/backdrop/cancel can't skip it.
+  const closeGuarded = () => {
+    if (uploading) return void toast.error("המתן לסיום העלאת התמונות");
+    onClose();
+  };
 
   const setB = <K extends keyof BaseDraft>(k: K, v: BaseDraft[K]) => setBase((s) => ({ ...s, [k]: v }));
   const setT = <K extends keyof TrDraft>(k: K, v: TrDraft[K]) => {
@@ -356,7 +365,7 @@ export function RoomWizard({
   return (
     <SidePanel
       open
-      onClose={onClose}
+      onClose={closeGuarded}
       title={roomId ? `עריכת חדר ${base.room_number}` : "הקמת חדר"}
       subtitle="הגדרת פרטי חדר, איבזור ותוכן"
       icon="rooms"
@@ -376,16 +385,16 @@ export function RoomWizard({
               <Icon name="chevron-right" size={17} />
             </button>
           )}
-          <button type="button" className="rm-btng" onClick={onClose}>ביטול</button>
+          <button type="button" className="rm-btng" onClick={closeGuarded}>ביטול</button>
           {step < 3 ? (
-            <button type="button" className="rm-btn" disabled={saving} onClick={goNext}>
+            <button type="button" className="rm-btn" disabled={saving || uploading} onClick={goNext}>
               הבא
               <Icon name="chevron-left" size={17} />
             </button>
           ) : (
-            <button type="button" className={`rm-btn${blocked ? " dis" : ""}`} disabled={saving || blocked} onClick={() => save({ close: true })}>
+            <button type="button" className={`rm-btn${blocked ? " dis" : ""}`} disabled={saving || blocked || uploading} onClick={() => save({ close: true })}>
               <Icon name="check" size={17} />
-              {saving ? "שומר…" : "שמור"}
+              {saving ? "שומר…" : uploading ? "מעלה תמונות…" : "שמור"}
             </button>
           )}
         </div>
@@ -632,12 +641,24 @@ export function RoomWizard({
             <ImagesSection
               roomId={roomId}
               images={images}
+              onUploadingChange={setUploading}
               onChange={(next) => {
                 imagesDirty.current = true;
                 setImages(next);
               }}
               onUploaded={(img) => setImages((s) => [...s, img])}
-              onDeleted={(id) => setImages((s) => s.filter((i) => i.id !== id))}
+              onDeleted={(id, promotedId) =>
+                setImages((s) => {
+                  const next = s.filter((i) => i.id !== id);
+                  // Mirror the EXACT row the server promoted (returned as
+                  // promotedId) so a later metadata save can't overwrite the
+                  // promoted main. No client-side guessing — server is the source
+                  // of truth for the tiebreak. promotedId is null for a non-main
+                  // or last-image delete, leaving the existing main untouched.
+                  if (!promotedId) return next;
+                  return next.map((i) => ({ ...i, is_main: i.id === promotedId }));
+                })
+              }
             />
           </>
         )}
@@ -821,22 +842,30 @@ function AmenitiesSection({
 function ImagesSection({
   roomId,
   images,
+  onUploadingChange,
   onChange,
   onUploaded,
   onDeleted,
 }: {
   roomId: string | null;
   images: RoomImage[];
+  onUploadingChange: (v: boolean) => void;
   onChange: (next: RoomImage[]) => void;
   onUploaded: (img: RoomImage) => void;
-  onDeleted: (id: string) => void;
+  onDeleted: (id: string, promotedId: string | null) => void;
 }) {
   const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Every selected file is uploaded sequentially and awaited, so the room is
+  // never saved with a half-uploaded batch. Each success persists a row + file
+  // server-side immediately; a failure is surfaced and the rest continue.
   const upload = async (files: FileList | null) => {
     if (!files?.length || !roomId) return;
     setUploading(true);
+    onUploadingChange(true);
+    let failed = 0;
     try {
       for (const file of Array.from(files)) {
         const form = new FormData();
@@ -845,15 +874,30 @@ function ImagesSection({
         const res = await fetch("/api/rooms/images", { method: "POST", body: form });
         const data = (await res.json()) as { image?: RoomImage; error?: string };
         if (!res.ok || !data.image) {
+          failed++;
           toast.error(data.error ?? "העלאה נכשלה");
           continue;
         }
         onUploaded(data.image);
       }
+      if (failed > 0) toast.error(`${failed} תמונות לא הועלו — נסו שוב`);
     } finally {
       setUploading(false);
+      onUploadingChange(false);
       if (fileRef.current) fileRef.current.value = "";
     }
+  };
+
+  // Drag-and-drop routes through the same awaited upload path as the picker.
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (!roomId || uploading) return;
+    void upload(e.dataTransfer.files);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (roomId && !uploading) setDragOver(true);
   };
 
   const move = (idx: number, dir: -1 | 1) => {
@@ -868,7 +912,12 @@ function ImagesSection({
 
   return (
     <Sec icon="image" title="תמונות" note="JPG, PNG, WEBP · עד 20 תמונות · עד 15MB לתמונה · מומלץ 1600×900">
-      <div className="rm-imgrow">
+      <div
+        className={`rm-imgrow rounded-xl${dragOver ? " ring-2 ring-primary ring-offset-2" : ""}`}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onDragLeave={() => setDragOver(false)}
+      >
         <button
           type="button"
           disabled={!roomId || uploading}
@@ -932,15 +981,18 @@ function ImagesSection({
                   {img.is_main ? "תמונה ראשית" : "קבע כראשית"}
                 </button>
                 <div className="flex gap-1">
-                  <IconBtn label="הזז ימינה" icon="chevron-right" onClick={() => move(i, -1)} />
-                  <IconBtn label="הזז שמאלה" icon="chevron-left" onClick={() => move(i, 1)} />
+                  <IconBtn label="הזז ימינה" icon="chevron-right" disabled={uploading} onClick={() => move(i, -1)} />
+                  <IconBtn label="הזז שמאלה" icon="chevron-left" disabled={uploading} onClick={() => move(i, 1)} />
                   <IconBtn
                     label="מחיקת תמונה"
                     icon="trash"
+                    disabled={uploading}
                     onClick={async () => {
                       const res = await deleteRoomImageAction(img.id);
                       if (!res.success) return void toast.error(res.error);
-                      onDeleted(img.id);
+                      onDeleted(img.id, res.data?.promotedId ?? null);
+                      if (res.data?.orphanFile)
+                        toast.warning("התמונה הוסרה מהחדר, אך מחיקת הקובץ מהאחסון נכשלה — ייתכן קובץ יתום");
                     }}
                   />
                 </div>
@@ -1055,13 +1107,14 @@ function CopyFromMenu({ current, onCopy }: { current: Lang; onCopy: (src: Lang) 
   );
 }
 
-function IconBtn({ label, icon, onClick }: { label: string; icon: "chevron-right" | "chevron-left" | "trash"; onClick: () => void }) {
+function IconBtn({ label, icon, onClick, disabled }: { label: string; icon: "chevron-right" | "chevron-left" | "trash"; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
-      className="grid h-8 w-8 place-items-center rounded-lg text-text2 hover:bg-hover"
+      disabled={disabled}
+      className="grid h-8 w-8 place-items-center rounded-lg text-text2 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
       onClick={onClick}
     >
       <Icon name={icon} size={14} />
