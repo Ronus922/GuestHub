@@ -560,22 +560,75 @@ export async function updateRoomImagesAction(roomId: string, raw: unknown): Prom
   }
 }
 
-export async function deleteRoomImageAction(imageId: string): Promise<ActionResult> {
+export async function deleteRoomImageAction(
+  imageId: string,
+): Promise<ActionResult<{ orphanFile: boolean; promotedId: string | null }>> {
   try {
     const actor = await getActor();
     requirePermission(actor, "rooms.edit");
     if (!z.uuid().safeParse(imageId).success) return { success: false, error: "קלט לא תקין" };
-    const [img] = await sql<{ url: string; room_id: string }[]>`
-      DELETE FROM guesthub.room_images
-      WHERE id = ${imageId} AND tenant_id = ${actor.tenantId}
-      RETURNING url, room_id`;
-    if (!img) return { success: false, error: "התמונה לא נמצאה" };
-    const name = path.basename(img.url);
-    if (img.url.startsWith("/uploads/rooms/") && IMAGE_NAME_RE.test(name)) {
-      await rm(roomUploadPath(img.room_id, name), { force: true });
+
+    // One transaction: delete the row and — ONLY if it was the main image and
+    // other images remain — promote exactly one replacement (deterministic:
+    // lowest sort_order, then created_at, then id). A non-main deletion never
+    // promotes and never reorders. Tenant + room scoped throughout.
+    //
+    // A room-row FOR UPDATE lock (same pattern as deleteAreaAction/saveRoomAction)
+    // serializes concurrent delete+promote for the same room. Without it, under
+    // READ COMMITTED a concurrent delete of the promotion candidate could leave
+    // the outer UPDATE matching zero rows (the LIMIT-1 subquery is an InitPlan
+    // that is NOT re-evaluated on EvalPlanQual), leaving the room with zero mains
+    // while an image remains. The lock closes that race; the deleted main is also
+    // gone before the promotion UPDATE, so the partial unique index
+    // room_images_main_uniq (room_id) WHERE is_main never holds two mains.
+    const removed = await sql.begin(async (tx) => {
+      const [found] = await tx<{ room_id: string }[]>`
+        SELECT room_id FROM guesthub.room_images
+        WHERE id = ${imageId} AND tenant_id = ${actor.tenantId}`;
+      if (!found) return null;
+      await tx`
+        SELECT 1 FROM guesthub.rooms
+        WHERE id = ${found.room_id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+      const [img] = await tx<{ url: string; room_id: string; is_main: boolean }[]>`
+        DELETE FROM guesthub.room_images
+        WHERE id = ${imageId} AND tenant_id = ${actor.tenantId}
+        RETURNING url, room_id, is_main`;
+      if (!img) return null; // deleted by a concurrent request between read and lock
+      let promotedId: string | null = null;
+      if (img.is_main) {
+        const [p] = await tx<{ id: string }[]>`
+          UPDATE guesthub.room_images
+          SET is_main = true
+          WHERE id = (
+            SELECT id FROM guesthub.room_images
+            WHERE room_id = ${img.room_id} AND tenant_id = ${actor.tenantId}
+            ORDER BY sort_order ASC, created_at ASC, id ASC
+            LIMIT 1
+          )
+          RETURNING id`;
+        promotedId = p?.id ?? null;
+      }
+      return { url: img.url, room_id: img.room_id, promotedId };
+    });
+    if (!removed) return { success: false, error: "התמונה לא נמצאה" };
+
+    // Safe cleanup order: the DB row is already gone (no row references a deleted
+    // file), THEN remove the physical file. If cleanup fails we keep the valid DB
+    // state — never roll back into a two-main / zero-main state — and report the
+    // orphan honestly instead of a silent full success. rm(force) ignores a
+    // missing file, so this only trips on a real IO/permission failure.
+    const name = path.basename(removed.url);
+    if (removed.url.startsWith("/uploads/rooms/") && IMAGE_NAME_RE.test(name)) {
+      try {
+        await rm(roomUploadPath(removed.room_id, name), { force: true });
+      } catch (fileErr) {
+        console.error("[rooms:image-delete] orphan file — DB row removed but file cleanup failed:", removed.url, fileErr);
+        revalidatePath("/rooms");
+        return { success: true, data: { orphanFile: true, promotedId: removed.promotedId } };
+      }
     }
     revalidatePath("/rooms");
-    return { success: true };
+    return { success: true, data: { orphanFile: false, promotedId: removed.promotedId } };
   } catch (e) {
     if (e instanceof AuthorizationError) return { success: false, error: e.message };
     console.error("[rooms:image-delete]", e);

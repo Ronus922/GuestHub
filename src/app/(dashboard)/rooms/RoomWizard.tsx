@@ -647,7 +647,18 @@ export function RoomWizard({
                 setImages(next);
               }}
               onUploaded={(img) => setImages((s) => [...s, img])}
-              onDeleted={(id) => setImages((s) => s.filter((i) => i.id !== id))}
+              onDeleted={(id, promotedId) =>
+                setImages((s) => {
+                  const next = s.filter((i) => i.id !== id);
+                  // Mirror the EXACT row the server promoted (returned as
+                  // promotedId) so a later metadata save can't overwrite the
+                  // promoted main. No client-side guessing — server is the source
+                  // of truth for the tiebreak. promotedId is null for a non-main
+                  // or last-image delete, leaving the existing main untouched.
+                  if (!promotedId) return next;
+                  return next.map((i) => ({ ...i, is_main: i.id === promotedId }));
+                })
+              }
             />
           </>
         )}
@@ -841,7 +852,7 @@ function ImagesSection({
   onUploadingChange: (v: boolean) => void;
   onChange: (next: RoomImage[]) => void;
   onUploaded: (img: RoomImage) => void;
-  onDeleted: (id: string) => void;
+  onDeleted: (id: string, promotedId: string | null) => void;
 }) {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -970,15 +981,18 @@ function ImagesSection({
                   {img.is_main ? "תמונה ראשית" : "קבע כראשית"}
                 </button>
                 <div className="flex gap-1">
-                  <IconBtn label="הזז ימינה" icon="chevron-right" onClick={() => move(i, -1)} />
-                  <IconBtn label="הזז שמאלה" icon="chevron-left" onClick={() => move(i, 1)} />
+                  <IconBtn label="הזז ימינה" icon="chevron-right" disabled={uploading} onClick={() => move(i, -1)} />
+                  <IconBtn label="הזז שמאלה" icon="chevron-left" disabled={uploading} onClick={() => move(i, 1)} />
                   <IconBtn
                     label="מחיקת תמונה"
                     icon="trash"
+                    disabled={uploading}
                     onClick={async () => {
                       const res = await deleteRoomImageAction(img.id);
                       if (!res.success) return void toast.error(res.error);
-                      onDeleted(img.id);
+                      onDeleted(img.id, res.data?.promotedId ?? null);
+                      if (res.data?.orphanFile)
+                        toast.warning("התמונה הוסרה מהחדר, אך מחיקת הקובץ מהאחסון נכשלה — ייתכן קובץ יתום");
                     }}
                   />
                 </div>
@@ -1093,13 +1107,14 @@ function CopyFromMenu({ current, onCopy }: { current: Lang; onCopy: (src: Lang) 
   );
 }
 
-function IconBtn({ label, icon, onClick }: { label: string; icon: "chevron-right" | "chevron-left" | "trash"; onClick: () => void }) {
+function IconBtn({ label, icon, onClick, disabled }: { label: string; icon: "chevron-right" | "chevron-left" | "trash"; onClick: () => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
-      className="grid h-8 w-8 place-items-center rounded-lg text-text2 hover:bg-hover"
+      disabled={disabled}
+      className="grid h-8 w-8 place-items-center rounded-lg text-text2 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
       onClick={onClick}
     >
       <Icon name={icon} size={14} />
