@@ -8,6 +8,25 @@ import { enqueueChannelJob } from "./queue";
 import { CHANNEX_BASE_URLS } from "./config";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest, type ChannexErrorCategory } from "./connection-test";
+import {
+  listChannexProperties,
+  getChannexProperty,
+  createChannexProperty as apiCreateChannexProperty,
+  type ChannexApiFailure,
+  type ChannexPropertyDetail,
+  type ChannexPropertySummary,
+} from "./channex-properties";
+import {
+  resolveChannexProfile,
+  computeReadiness,
+  buildCreatePropertyPayload,
+  sortRoomsForPreview,
+  type ChannexProfile,
+  type ChannexProfileOverrides,
+  type Readiness,
+  type PreviewRoomInput,
+  type TenantIdentity,
+} from "./property-profile";
 
 // ============================================================
 // Channel-management server actions (§O) — super_admin ONLY, enforced
@@ -386,6 +405,482 @@ export async function testChannexConnectionAction(): Promise<
       session: ctx.session,
     });
     return { success: true, data: { ok: false, category: result.category, message: result.message } };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ============================================================
+// Channex STAGING property mapping (D60) — map the EXISTING GuestHub tenant to
+// exactly ONE Channex Staging property. super_admin ONLY. The local property is
+// the tenant (guesthub.tenants); NO new local property/room/room-type is
+// created. The mapping lives on the existing channel_connections row (1:1 per
+// tenant+provider+environment). The ACTUAL external property is created/adopted
+// by the operator from the UI — never automatically. NO Channex room-type/
+// rate-plan/channel/webhook/ARI/booking is created here.
+// ============================================================
+
+const apiFail = (f: ChannexApiFailure): { success: false; error: string } => ({
+  success: false,
+  error: f.message,
+});
+
+function toPropertySnapshot(p: ChannexPropertyDetail): Record<string, unknown> {
+  return {
+    title: p.title,
+    currency: p.currency,
+    country: p.country,
+    city: p.city,
+    timezone: p.timezone,
+    property_type: p.propertyType,
+    is_active: p.isActive,
+    room_type_count: p.roomTypeCount,
+  };
+}
+
+// Masked, secret-free property-mapping context for the UI (no api-key, no
+// ciphertext, no raw upstream body). Built entirely from the DB — page load
+// performs NO Channex network call.
+export type ChannexPropertyMappingView = {
+  propertyId: string;
+  title: string | null;
+  method: "created" | "adopted" | null;
+  snapshot: Record<string, unknown> | null;
+  verifiedAt: string | null;
+  reconcileState: "ok" | "inaccessible" | null;
+} | null;
+
+export type ChannexPropertyContextView = {
+  secretsKeyConfigured: boolean;
+  apiKeyConfigured: boolean;
+  tenant: { tenantId: string; name: string; currency: string; timezone: string };
+  profile: ChannexProfile;
+  overrides: ChannexProfileOverrides; // to prefill the profile editor — no secrets
+  readiness: Readiness;
+  rooms: PreviewRoomInput[]; // read-only, numeric-sorted
+  roomCount: number;
+  activeRoomCount: number;
+  roomTypeCount: number;
+  mapping: ChannexPropertyMappingView;
+};
+
+type TenantContextRow = {
+  name: string;
+  currency: string;
+  timezone: string;
+  channex_profile: ChannexProfileOverrides | null;
+};
+
+type PropertyMappingRow = {
+  channex_property_id: string | null;
+  channex_property_title: string | null;
+  channex_property_method: "created" | "adopted" | null;
+  channex_property_snapshot: Record<string, unknown> | null;
+  channex_property_verified_at: Date | null;
+  channex_reconcile_state: "ok" | "inaccessible" | null;
+};
+
+async function loadTenantContext(tenantId: string): Promise<{
+  identity: TenantIdentity;
+  overrides: ChannexProfileOverrides;
+} | null> {
+  const [t] = await sql<TenantContextRow[]>`
+    SELECT name, currency, timezone, settings->'channex_profile' AS channex_profile
+    FROM guesthub.tenants WHERE id = ${tenantId}`;
+  if (!t) return null;
+  return {
+    identity: { tenantId, name: t.name, currency: t.currency, timezone: t.timezone },
+    overrides: t.channex_profile ?? {},
+  };
+}
+
+async function loadPropertyMappingRow(tenantId: string): Promise<PropertyMappingRow | null> {
+  const [row] = await sql<PropertyMappingRow[]>`
+    SELECT channex_property_id, channex_property_title, channex_property_method,
+           channex_property_snapshot, channex_property_verified_at, channex_reconcile_state
+    FROM guesthub.channel_connections
+    WHERE tenant_id = ${tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+  return row ?? null;
+}
+
+function mappingView(row: PropertyMappingRow | null): ChannexPropertyMappingView {
+  if (!row?.channex_property_id) return null;
+  return {
+    propertyId: row.channex_property_id,
+    title: row.channex_property_title,
+    method: row.channex_property_method,
+    snapshot: row.channex_property_snapshot,
+    verifiedAt: iso(row.channex_property_verified_at),
+    reconcileState: row.channex_reconcile_state,
+  };
+}
+
+// Decrypt the stored staging api-key for a server-side Channex call. The key is
+// never returned to the browser and never logged. Missing/undecryptable → safe
+// error, credential preserved.
+async function withChannexKey(
+  tenantId: string,
+): Promise<{ ok: true; apiKey: string } | { ok: false; error: string }> {
+  const row = await loadChannexRow(tenantId);
+  if (!row?.api_key_ciphertext)
+    return { ok: false, error: "מפתח API לא הוגדר — שמור מפתח Channex תחילה" };
+  try {
+    return { ok: true, apiKey: decryptSecret(row.api_key_ciphertext) };
+  } catch {
+    return { ok: false, error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה" };
+  }
+}
+
+// 1) Read-only mapping context: tenant identity, resolved profile + readiness,
+// existing rooms preview (numeric-sorted), room counts and the current mapping.
+// NO Channex network call — safe on every page load.
+export async function getChannexPropertyContextAction(): Promise<Result<ChannexPropertyContextView>> {
+  try {
+    const actor = await requireChannelAdmin();
+    const ctx = await loadTenantContext(actor.tenantId);
+    if (!ctx) return { success: false, error: "לא נמצא ארגון (tenant) פעיל" };
+
+    const [rooms, [counts], mappingRow, keyRow] = await Promise.all([
+      sql<PreviewRoomInput[]>`
+        SELECT r.id, r.room_number, a.name AS area_name, r.floor,
+               rt.name AS room_type_name, r.is_active, r.status,
+               r.min_occupancy, r.max_occupancy, r.max_adults, r.max_children, r.max_infants
+        FROM guesthub.rooms r
+        LEFT JOIN guesthub.areas a       ON a.id  = r.area_id
+        LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
+        WHERE r.tenant_id = ${actor.tenantId}`,
+      sql<{ room_count: number; active_room_count: number; room_type_count: number }[]>`
+        SELECT
+          (SELECT COUNT(*)::int FROM guesthub.rooms
+             WHERE tenant_id = ${actor.tenantId}) AS room_count,
+          (SELECT COUNT(*)::int FROM guesthub.rooms
+             WHERE tenant_id = ${actor.tenantId} AND is_active) AS active_room_count,
+          (SELECT COUNT(*)::int FROM guesthub.room_types
+             WHERE tenant_id = ${actor.tenantId} AND is_active) AS room_type_count`,
+      loadPropertyMappingRow(actor.tenantId),
+      loadChannexRow(actor.tenantId),
+    ]);
+
+    const profile = resolveChannexProfile(ctx.identity, ctx.overrides);
+    return {
+      success: true,
+      data: {
+        secretsKeyConfigured: channelSecretsConfigured(),
+        apiKeyConfigured: !!keyRow?.api_key_ciphertext,
+        tenant: ctx.identity,
+        profile,
+        overrides: ctx.overrides,
+        readiness: computeReadiness(profile),
+        rooms: sortRoomsForPreview(rooms),
+        roomCount: counts?.room_count ?? 0,
+        activeRoomCount: counts?.active_room_count ?? 0,
+        roomTypeCount: counts?.room_type_count ?? 0,
+        mapping: mappingView(mappingRow),
+      },
+    };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 2) Save the integration-only profile overrides into tenants.settings
+// ->'channex_profile'. Canonical GuestHub values (name/currency/timezone) are
+// NEVER touched. The audit records only the changed FIELD NAMES, never values.
+export async function saveChannexPropertyProfileAction(
+  input: ChannexProfileOverrides,
+): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+
+    // Clean + validate. Absent/blank → the key is omitted (not fabricated).
+    const patch: Record<string, unknown> = {};
+    const s = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim().slice(0, 500) : undefined);
+    const put = (k: string, v: unknown) => {
+      if (v !== undefined) patch[k] = v;
+    };
+    put("title", s(input.title));
+    const country = s(input.country);
+    if (country !== undefined) {
+      if (!/^[A-Za-z]{2}$/.test(country)) return { success: false, error: "קוד מדינה חייב להיות שתי אותיות (ISO-2)" };
+      patch.country = country.toUpperCase();
+    }
+    put("city", s(input.city));
+    put("address", s(input.address));
+    put("zipCode", s(input.zipCode));
+    const email = s(input.email);
+    if (email !== undefined) {
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { success: false, error: "כתובת אימייל אינה תקינה" };
+      patch.email = email;
+    }
+    put("phone", s(input.phone));
+    put("website", s(input.website));
+    put("propertyType", s(input.propertyType));
+    if (input.latitude !== null && input.latitude !== undefined) {
+      const lat = Number(input.latitude);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) return { success: false, error: "קו רוחב חייב להיות בין -90 ל-90" };
+      patch.latitude = lat;
+    }
+    if (input.longitude !== null && input.longitude !== undefined) {
+      const lng = Number(input.longitude);
+      if (!Number.isFinite(lng) || lng < -180 || lng > 180) return { success: false, error: "קו אורך חייב להיות בין -180 ל-180" };
+      patch.longitude = lng;
+    }
+
+    await sql`
+      UPDATE guesthub.tenants
+      SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{channex_profile}', ${sql.json(patch as never)}, true)
+      WHERE id = ${actor.tenantId}`;
+
+    const ctx = await auditRequestContext();
+    await writeAudit(actor, {
+      entityType: "tenant",
+      entityId: actor.tenantId,
+      action: "channex_property_profile_updated",
+      after: { environment: CHANNEX_ENV, fields: Object.keys(patch) }, // NAMES only
+      ip: ctx.ip,
+      session: ctx.session,
+    });
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 3) List the Channex properties accessible to the stored key — for explicit
+// adoption. Operator-triggered (never on page load). Returns id/title/currency
+// only. No property is created.
+export async function listChannexPropertiesAction(): Promise<
+  Result<{ properties: ChannexPropertySummary[] }>
+> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+    const key = await withChannexKey(actor.tenantId);
+    if (!key.ok) return { success: false, error: key.error };
+
+    const res = await listChannexProperties({ apiKey: key.apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+    if (!res.ok) return apiFail(res);
+
+    if (res.properties.length > 0 && !(await loadPropertyMappingRow(actor.tenantId))?.channex_property_id) {
+      const ctx = await auditRequestContext();
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: null,
+        action: "channex_external_properties_detected",
+        after: { environment: CHANNEX_ENV, count: res.properties.length },
+        ip: ctx.ip,
+        session: ctx.session,
+      });
+    }
+    return { success: true, data: { properties: res.properties } };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 4) Create ONE Channex Staging property representing the existing tenant.
+// Guarded by a per-tenant+env advisory lock re-checking the mapping inside the
+// lock, so a double-click / concurrent request can never create two external
+// properties. On an ambiguous network failure NO local mapping is written and
+// the write is never blindly retried — any property Channex did create surfaces
+// in the adoption list for explicit reconciliation.
+export async function createChannexPropertyAction(): Promise<Result<{ propertyId: string; title: string | null }>> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+
+    const tctx = await loadTenantContext(actor.tenantId);
+    if (!tctx) return { success: false, error: "לא נמצא ארגון (tenant) פעיל" };
+    if ((await loadPropertyMappingRow(actor.tenantId))?.channex_property_id)
+      return { success: false, error: "כבר קיים מיפוי נכס Channex לעסק זה" };
+
+    const profile = resolveChannexProfile(tctx.identity, tctx.overrides);
+    if (!computeReadiness(profile).canCreate)
+      return { success: false, error: "חסרים שדות חובה ליצירת נכס (שם ומטבע)" };
+
+    const key = await withChannexKey(actor.tenantId);
+    if (!key.ok) return { success: false, error: key.error };
+    const payload = buildCreatePropertyPayload(profile);
+    const auditCtx = await auditRequestContext();
+
+    // ponytail: per-tenant+env advisory xact lock held across ONE create call —
+    // a rare operator action, not a hot path; prevents duplicate provisioning.
+    const outcome = await sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`channex:property:${actor.tenantId}:${CHANNEX_ENV}`}))`;
+      const [locked] = await tx<{ channex_property_id: string | null }[]>`
+        SELECT channex_property_id FROM guesthub.channel_connections
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}
+        FOR UPDATE`;
+      if (locked?.channex_property_id) return { kind: "dup" as const };
+
+      const created = await apiCreateChannexProperty({
+        apiKey: key.apiKey,
+        baseUrl: CHANNEX_BASE_URLS.staging,
+        payload,
+      });
+      if (!created.ok) return { kind: "fail" as const, fail: created };
+
+      await tx`
+        UPDATE guesthub.channel_connections
+        SET channex_property_id = ${created.property.id},
+            channex_property_title = ${created.property.title},
+            channex_property_method = 'created',
+            channex_property_snapshot = ${sql.json(toPropertySnapshot(created.property) as never)},
+            channex_property_verified_at = now(),
+            channex_reconcile_state = 'ok',
+            updated_by = ${actor.userId}, updated_at = now()
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+      return { kind: "ok" as const, property: created.property };
+    });
+
+    if (outcome.kind === "dup") return { success: false, error: "כבר קיים מיפוי נכס Channex לעסק זה" };
+    if (outcome.kind === "fail") {
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: null,
+        action: "channex_property_create_failed",
+        after: { environment: CHANNEX_ENV, category: outcome.fail.category },
+        ip: auditCtx.ip,
+        session: auditCtx.session,
+      });
+      return apiFail(outcome.fail);
+    }
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: null,
+      action: "channex_property_created",
+      after: { environment: CHANNEX_ENV, propertyId: outcome.property.id, title: outcome.property.title },
+      ip: auditCtx.ip,
+      session: auditCtx.session,
+    });
+    return { success: true, data: { propertyId: outcome.property.id, title: outcome.property.title } };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 5) Adopt an EXISTING accessible Channex property (explicit operator choice —
+// never automatic / title-based). Verifies GET /properties/:id first, then
+// stores the mapping under the same lock as create.
+export async function adoptChannexPropertyAction(input: {
+  propertyId: string;
+}): Promise<Result<{ propertyId: string; title: string | null }>> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+    const propertyId = (input.propertyId ?? "").trim();
+    if (!propertyId) return { success: false, error: "יש לבחור נכס לאימוץ" };
+    if ((await loadPropertyMappingRow(actor.tenantId))?.channex_property_id)
+      return { success: false, error: "כבר קיים מיפוי נכס Channex לעסק זה" };
+
+    const key = await withChannexKey(actor.tenantId);
+    if (!key.ok) return { success: false, error: key.error };
+
+    // Verify accessibility BEFORE adopting.
+    const got = await getChannexProperty({ apiKey: key.apiKey, baseUrl: CHANNEX_BASE_URLS.staging, id: propertyId });
+    if (!got.ok) return apiFail(got);
+    const auditCtx = await auditRequestContext();
+
+    const outcome = await sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`channex:property:${actor.tenantId}:${CHANNEX_ENV}`}))`;
+      const [locked] = await tx<{ channex_property_id: string | null }[]>`
+        SELECT channex_property_id FROM guesthub.channel_connections
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}
+        FOR UPDATE`;
+      if (locked?.channex_property_id) return { kind: "dup" as const };
+      await tx`
+        UPDATE guesthub.channel_connections
+        SET channex_property_id = ${got.property.id},
+            channex_property_title = ${got.property.title},
+            channex_property_method = 'adopted',
+            channex_property_snapshot = ${sql.json(toPropertySnapshot(got.property) as never)},
+            channex_property_verified_at = now(),
+            channex_reconcile_state = 'ok',
+            updated_by = ${actor.userId}, updated_at = now()
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+      return { kind: "ok" as const };
+    });
+    if (outcome.kind === "dup") return { success: false, error: "כבר קיים מיפוי נכס Channex לעסק זה" };
+
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: null,
+      action: "channex_property_adopted",
+      after: { environment: CHANNEX_ENV, propertyId: got.property.id, title: got.property.title },
+      ip: auditCtx.ip,
+      session: auditCtx.session,
+    });
+    return { success: true, data: { propertyId: got.property.id, title: got.property.title } };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 6) Refresh the mapped property: GET /properties/:id, update the safe snapshot
+// and verified-at. If the property is no longer accessible, flag reconciliation
+// ('inaccessible') but NEVER delete the mapping automatically.
+export async function refreshChannexPropertyAction(): Promise<
+  Result<{ verified: boolean; reconcileState: "ok" | "inaccessible" | null }>
+> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+    const mapping = await loadPropertyMappingRow(actor.tenantId);
+    if (!mapping?.channex_property_id) return { success: false, error: "אין מיפוי נכס לרענון" };
+
+    const key = await withChannexKey(actor.tenantId);
+    if (!key.ok) return { success: false, error: key.error };
+
+    const got = await getChannexProperty({
+      apiKey: key.apiKey,
+      baseUrl: CHANNEX_BASE_URLS.staging,
+      id: mapping.channex_property_id,
+    });
+    const auditCtx = await auditRequestContext();
+
+    if (got.ok) {
+      await sql`
+        UPDATE guesthub.channel_connections
+        SET channex_property_title = ${got.property.title},
+            channex_property_snapshot = ${sql.json(toPropertySnapshot(got.property) as never)},
+            channex_property_verified_at = now(),
+            channex_reconcile_state = 'ok', updated_at = now()
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: null,
+        action: "channex_property_verification_succeeded",
+        after: { environment: CHANNEX_ENV, propertyId: got.property.id },
+        ip: auditCtx.ip,
+        session: auditCtx.session,
+      });
+      return { success: true, data: { verified: true, reconcileState: "ok" } };
+    }
+
+    // Only a definitive "gone / not yours" flips reconciliation to inaccessible;
+    // transient failures (timeout/network/server/rate) leave the state untouched.
+    const inaccessible =
+      got.category === "not_found" || got.category === "forbidden" || got.category === "unauthorized";
+    if (inaccessible) {
+      await sql`
+        UPDATE guesthub.channel_connections
+        SET channex_reconcile_state = 'inaccessible', updated_at = now()
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+    }
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: null,
+      action: "channex_property_verification_failed",
+      after: { environment: CHANNEX_ENV, category: got.category, reconcile: inaccessible ? "inaccessible" : null },
+      ip: auditCtx.ip,
+      session: auditCtx.session,
+    });
+    if (inaccessible) return { success: true, data: { verified: false, reconcileState: "inaccessible" } };
+    return apiFail(got);
   } catch (e) {
     return failFrom(e);
   }

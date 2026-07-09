@@ -2,9 +2,14 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getActor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
-import { getChannelStatusAction, getChannexConnectionAction } from "@/lib/channel/admin";
+import {
+  getChannelStatusAction,
+  getChannexConnectionAction,
+  getChannexPropertyContextAction,
+} from "@/lib/channel/admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
+import { ChannexPropertySection } from "./ChannexPropertySection";
 
 export const dynamic = "force-dynamic";
 
@@ -103,9 +108,10 @@ export default async function ChannelsPage() {
   // admin does NOT qualify). UI hiding is not security: this is the real boundary.
   if (!canManageChannels({ userId: actor.userId, roleKey: actor.roleKey }).ok) redirect("/dashboard");
 
-  const [res, channex] = await Promise.all([
+  const [res, channex, channexProperty] = await Promise.all([
     getChannelStatusAction(),
     getChannexConnectionAction(),
+    getChannexPropertyContextAction(),
   ]);
 
   return (
@@ -135,6 +141,9 @@ export default async function ChannelsPage() {
 
       {/* Channex Staging connection — secure credential + real test (D59) */}
       {channex.success && <ChannexStagingSection initial={channex.data!} />}
+
+      {/* Channex Staging property mapping — existing tenant → one Channex property (D60) */}
+      {channexProperty.success && <ChannexPropertySection initial={channexProperty.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
