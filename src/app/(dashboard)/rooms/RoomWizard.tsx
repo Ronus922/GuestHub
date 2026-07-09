@@ -872,6 +872,11 @@ function ImagesSection({
     let failed = 0;
     try {
       for (const file of Array.from(files)) {
+        if (file.size > 15 * 1024 * 1024) {
+          failed++;
+          toast.error(`הקובץ "${file.name}" גדול מדי — עד 15MB לתמונה`);
+          continue;
+        }
         const form = new FormData();
         form.set("roomId", roomId);
         form.set("file", file);
