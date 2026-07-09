@@ -311,6 +311,19 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
         WHERE connection_id = ${conn.id} AND idempotency_key = ${parentKey}
           AND status IN ('queued','processing','retry_wait')
           AND COALESCE(locked_at, created_at) < now() - make_interval(mins => ${STALE_RUN_MINUTES})`;
+      // Reap stale ITEM jobs connection-wide too. The per-combo reaper below is
+      // only reached when a run passes blockReason — an orphaned external plan
+      // blocks every run BEFORE the loop, which would otherwise leave a crashed
+      // item job 'processing' forever (stuck in the idempotency partial index
+      // AND starving claimChannelJobs, which skips a connection while any job
+      // processes). We hold the run mutex, so no live run owns these.
+      await tx`
+        UPDATE guesthub.channel_sync_jobs
+        SET status = 'failed', finished_at = now(), locked_at = NULL, locked_by = NULL,
+            last_error_code = 'abandoned', last_error_message = 'ריצת יצירה קודמת נקטעה'
+        WHERE connection_id = ${conn.id} AND job_type = 'create_rate_plan'
+          AND status IN ('queued','processing','retry_wait')
+          AND COALESCE(locked_at, created_at) < now() - make_interval(mins => ${STALE_RUN_MINUTES})`;
       const enq = await enqueueChannelJob(tx, {
         tenantId: actor.tenantId,
         connectionId: conn.id,
@@ -405,6 +418,9 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
         run.stopped = "budget";
         break;
       }
+      // heartbeat: keep the parent provably alive so the 10-minute stale reaper
+      // can never retire a run that is actively working
+      await sql`UPDATE guesthub.channel_sync_jobs SET locked_at = now() WHERE id = ${parentJobId}`;
       const room = roomById.get(row.roomId);
       const title = buildRatePlanTitle(row.roomNumber, row.localRatePlanName);
       const occ =
@@ -497,9 +513,14 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
         // failing local mapping write can never lose the created entity.
         await sql`
           UPDATE guesthub.channel_sync_jobs SET provider_task_id = ${created.ratePlan.id} WHERE id = ${jobId}`;
+        let ownedRow = true;
         try {
           await sql.begin(async (tx) => {
-            await tx`
+            // `status = 'creating'` is the OWNERSHIP guard: only the row this
+            // run reserved is written. If a stale-reaped zombie run wakes after
+            // another run re-owned the combo, its late UPDATE matches 0 rows
+            // instead of silently clobbering the newer mapping.
+            const updated = await tx`
               UPDATE guesthub.channel_room_rate_mappings
               SET channex_rate_plan_id = ${created.ratePlan.id},
                   channex_title = ${created.ratePlan.title ?? title.title},
@@ -508,7 +529,12 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
                   last_verified_at = now(), last_error = NULL, last_error_code = NULL,
                   updated_by = ${actor.userId}
               WHERE connection_id = ${conn.id} AND room_id = ${row.roomId}
-                AND local_rate_plan_id = ${row.localRatePlanId}`;
+                AND local_rate_plan_id = ${row.localRatePlanId}
+                AND status = 'creating'`;
+            if (updated.count === 0) {
+              ownedRow = false;
+              return; // do not mark the job succeeded — handled below
+            }
             await tx`
               UPDATE guesthub.channel_sync_jobs
               SET status = 'succeeded', finished_at = now(), locked_at = NULL, locked_by = NULL
@@ -535,6 +561,24 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
           run.failed++;
           run.stopped = "ambiguous";
           break;
+        }
+        if (!ownedRow) {
+          // A newer run re-owned this combination while ours was stalled past
+          // the stale window. Never clobber its mapping: our created plan's
+          // UUID is preserved on the durable job (provider_task_id) and will
+          // surface as external-unmapped, blocking the next run for explicit
+          // cleanup instead of silently duplicating.
+          await settleJobFailed(jobId, "lost_race", "ריצה חדשה יותר השתלטה על השילוב — התוכנית שנוצרה דורשת טיפול ידני");
+          await logChannelError(sql, {
+            tenantId: actor.tenantId,
+            connectionId: conn.id,
+            jobId,
+            code: "lost_race",
+            message: "A newer run re-owned this combination; the created rate plan is preserved on the job row",
+            context: { roomId: row.roomId, localRatePlanId: row.localRatePlanId, channexRatePlanId: created.ratePlan.id },
+          });
+          run.failed++;
+          continue;
         }
         // committed: genuinely mapped. Audit is best-effort only — it must never
         // reclassify a committed success.
@@ -619,12 +663,17 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
       }
     }
 
-    // (d) close the parent job + report honestly
+    // (d) close the parent job + report honestly. `remaining` counts only work
+    // a resume could still do — permanently invalid (validation_required)
+    // combos are surfaced as problems in the context, not as phantom "partial"
+    // progress that keeps inviting a pointless retry.
     const after = await loadRateMappings(conn.id);
     const mappedNow = new Set(
       after.filter((m) => m.status === "mapped").map((m) => `${m.room_id}:${m.local_rate_plan_id}`),
     );
-    run.remaining = plan.rows.filter((r) => !mappedNow.has(`${r.roomId}:${r.localRatePlanId}`)).length;
+    run.remaining = plan.rows.filter(
+      (r) => !mappedNow.has(`${r.roomId}:${r.localRatePlanId}`) && r.validationError === null,
+    ).length;
     run.partial = run.remaining > 0;
 
     await sql`
@@ -635,22 +684,28 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
           last_error_message = ${run.partial ? "סנכרון חלקי — ניתן להמשיך" : null}
       WHERE id = ${parentJobId}`;
 
-    await writeAudit(actor, {
-      entityType: "channel_connection",
-      entityId: conn.id,
-      action: run.partial ? "rate_plan_sync_partially_completed" : "rate_plan_sync_completed",
-      after: {
-        environment: CHANNEX_ENV,
-        propertyId,
-        created: run.created,
-        failed: run.failed,
-        skipped: run.skipped,
-        remaining: run.remaining,
-        stopped: run.stopped,
-      },
-      ip: auditCtx.ip,
-      session: auditCtx.session,
-    });
+    // best-effort: the run has already settled honestly; a failing audit must
+    // not re-enter the outer catch and reclassify a succeeded parent job.
+    try {
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: conn.id,
+        action: run.partial ? "rate_plan_sync_partially_completed" : "rate_plan_sync_completed",
+        after: {
+          environment: CHANNEX_ENV,
+          propertyId,
+          created: run.created,
+          failed: run.failed,
+          skipped: run.skipped,
+          remaining: run.remaining,
+          stopped: run.stopped,
+        },
+        ip: auditCtx.ip,
+        session: auditCtx.session,
+      });
+    } catch (auditErr) {
+      console.error("[channex-rate-plans] run-summary audit failed (run already settled)", auditErr);
+    }
 
     return { success: true, data: run };
   } catch (e) {

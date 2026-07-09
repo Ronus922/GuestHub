@@ -502,6 +502,26 @@ assert.ok(
   startBody.indexOf("enqueueChannelJob") < startBody.indexOf("status = 'failed', last_error_code = 'not_created'"),
   "ambiguity clearing runs under the claimed run, never on a losing concurrent click",
 );
+// a zombie run that outlived the stale window must never clobber the mapping a
+// newer run re-owned — the success UPDATE is ownership-guarded
+assert.ok(
+  /AND local_rate_plan_id = \$\{row\.localRatePlanId\}\s*\n\s*AND status = 'creating'`/.test(adminSrc),
+  "success UPDATE writes only the row this run reserved (status='creating' ownership guard)",
+);
+assert.ok(/lost_race/.test(adminSrc), "a lost ownership race is settled honestly, never silently");
+// stranded item jobs are reaped connection-wide at claim time — an orphan that
+// blocks every run before the loop can no longer freeze a 'processing' job
+// forever (which would also starve claimChannelJobs for the connection)
+assert.ok(
+  /job_type = 'create_rate_plan'\s*\n\s*AND status IN \('queued','processing','retry_wait'\)/.test(adminSrc),
+  "claim txn reaps stale create_rate_plan item jobs connection-wide",
+);
+// the parent job proves liveness while working, so the stale reaper is sound
+assert.ok(/SET locked_at = now\(\) WHERE id = \$\{parentJobId\}/.test(adminSrc), "per-combo heartbeat on the parent job");
+// the run-summary audit can never reclassify an already-settled run
+assert.ok((adminSrc.match(/catch \(auditErr\)/g) ?? []).length >= 2, "run-summary audit is best-effort too");
+// remaining counts only resumable work — permanently invalid combos never fake 'partial'
+assert.ok(/&& r\.validationError === null,?\s*\n\s*\)\.length/.test(adminSrc), "remaining excludes validation_required combos");
 ok("durability guards: item-job reaper, UUID-before-commit, audit-outside-try, parent settled, safe clearing");
 
 // UI: one compact card — no simulator, no table, no per-room buttons
