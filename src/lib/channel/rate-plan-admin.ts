@@ -50,6 +50,11 @@ const PROVIDER = "channex" as const;
 const RUN_BUDGET_MS = 25_000;
 const CREATE_TIMEOUT_MS = 15_000;
 const STALE_RUN_MINUTES = 10;
+// A POST that timed out CLIENT-side may still be applied upstream moments later
+// (a "zombie write"). A complete external listing is proof of non-creation only
+// once that window has passed — so an ambiguous combo becomes retryable only
+// after this grace period. Until then the run reports it honestly and refuses.
+const AMBIGUITY_GRACE_MINUTES = 2;
 
 type Result<T = undefined> = { success: true; data?: T } | { success: false; error: string };
 
@@ -336,7 +341,10 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
     // ambiguous by a timeout whose external id is unknown and which no external
     // plan accounts for were NOT created — flip them back to retryable so the
     // single button self-heals. Rows that carry an external id are never
-    // cleared this way.
+    // cleared this way, and a row is only cleared once the zombie-write grace
+    // window has passed: a POST that timed out client-side may still land
+    // upstream seconds later, and a listing taken before that would "prove"
+    // non-creation of a plan that is about to exist.
     const mappedExternalIds = await sql<{ channex_rate_plan_id: string }[]>`
       SELECT channex_rate_plan_id FROM guesthub.channel_room_rate_mappings
       WHERE connection_id = ${conn.id} AND channex_rate_plan_id IS NOT NULL`;
@@ -349,7 +357,8 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
             last_error = 'לא נוצר ב-Channex — ניתן לנסות שוב', updated_by = ${actor.userId}
         WHERE connection_id = ${conn.id}
           AND channex_rate_plan_id IS NULL
-          AND status IN ('creating','reconciliation_required')`;
+          AND status IN ('creating','reconciliation_required')
+          AND updated_at < now() - make_interval(mins => ${AMBIGUITY_GRACE_MINUTES})`;
     }
 
     const [plans, rooms, rateMappings, currency] = await Promise.all([

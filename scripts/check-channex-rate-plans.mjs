@@ -483,6 +483,13 @@ assert.ok(
   /if \(!listed\.truncated && externalUnmapped\.length === 0\) \{[\s\S]{0,400}channex_rate_plan_id IS NULL[\s\S]{0,200}status IN \('creating','reconciliation_required'\)/.test(adminSrc),
   "ambiguous combos are cleared ONLY by a complete external listing with no unmapped plans, and never rows holding an external id",
 );
+// zombie-write guard: a client-side timeout may still be applied upstream
+// moments later — an ambiguous combo becomes retryable only after the grace
+// window, so the "complete listing" proof postdates any late apply
+assert.ok(
+  /status IN \('creating','reconciliation_required'\)\s*\n\s*AND updated_at < now\(\) - make_interval\(mins => \$\{AMBIGUITY_GRACE_MINUTES\}\)/.test(adminSrc),
+  "clearing respects the zombie-write grace window",
+);
 assert.ok(/blocked = blockReason\(plan, listed\.truncated, externalUnmapped\)/.test(adminSrc), "truncation / external-unmapped / pending-reconciliation block the run BEFORE any POST");
 // the run mutex is claimed BEFORE the external listing and the ambiguity
 // clearing — a second click can never race an active run's in-flight state
