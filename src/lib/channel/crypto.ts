@@ -15,6 +15,12 @@ function key(): Buffer {
   return createHash("sha256").update(raw).digest();
 }
 
+// True when the server has an encryption key configured — checked before any
+// save/test so a missing key fails with a clear message, never a stack trace.
+export function channelSecretsConfigured(): boolean {
+  return !!process.env.CHANNEL_SECRETS_KEY;
+}
+
 export function encryptSecret(plaintext: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key(), iv);

@@ -2,8 +2,9 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getActor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
-import { getChannelStatusAction } from "@/lib/channel/admin";
+import { getChannelStatusAction, getChannexConnectionAction } from "@/lib/channel/admin";
 import { Icon } from "@/components/shared/Icon";
+import { ChannexStagingSection } from "./ChannexStagingSection";
 
 export const dynamic = "force-dynamic";
 
@@ -102,7 +103,10 @@ export default async function ChannelsPage() {
   // admin does NOT qualify). UI hiding is not security: this is the real boundary.
   if (!canManageChannels({ userId: actor.userId, roleKey: actor.roleKey }).ok) redirect("/dashboard");
 
-  const res = await getChannelStatusAction();
+  const [res, channex] = await Promise.all([
+    getChannelStatusAction(),
+    getChannexConnectionAction(),
+  ]);
 
   return (
     <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
@@ -124,10 +128,13 @@ export default async function ChannelsPage() {
           <Link href="/rates" className="font-bold text-primary hover:underline">
             /rates
           </Link>
-          . בשלב זה <strong>אין ערוץ פעיל</strong> — פעולות מיפוי, בדיקת חיבור, סנכרון והתאמה
+          . חיבור Channex (Staging) ובדיקתו זמינים בכרטיס למטה; פעולות מיפוי, סנכרון והתאמה
           יופעלו בשלב הבא (Phase 4B).
         </div>
       </div>
+
+      {/* Channex Staging connection — secure credential + real test (D59) */}
+      {channex.success && <ChannexStagingSection initial={channex.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
@@ -275,7 +282,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-bold text-ink">פעולות ניהול</h2>
         <div className="flex flex-wrap gap-2">
-          {["מיפוי סוגי חדרים", "בדיקת חיבור", "סנכרון מלא", "התאמה מחדש (reconcile)"].map((label) => (
+          {["מיפוי סוגי חדרים", "סנכרון מלא", "התאמה מחדש (reconcile)"].map((label) => (
             <button
               key={label}
               type="button"
