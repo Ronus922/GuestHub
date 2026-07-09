@@ -76,6 +76,37 @@ assert.equal(okv.patch.email, "a@b.co");
 assert.equal(p.validateBusinessProfileInput({ businessName: "" }).patch.businessName, null, "blank clears to null");
 assert.ok(!("propertyName" in p.validateBusinessProfileInput({ businessName: "x" }).patch), "absent key untouched");
 
+// ---- postal code: canonical, editable, trimmed text (NOT numeric-only) ----
+const pc = (v) => p.validateBusinessProfileInput({ postalCode: v });
+assert.equal(pc(" 3508107 ").patch.postalCode, "3508107", "postal code trimmed");
+assert.equal(pc("SW1A 1AA").patch.postalCode, "SW1A 1AA", "letters allowed (UK) — never numeric-only");
+assert.equal(pc("K1A 0B1").patch.postalCode, "K1A 0B1", "letters allowed (Canada)");
+assert.equal(pc("1012 AB").patch.postalCode, "1012 AB", "letters allowed (Netherlands)");
+assert.equal(pc("").patch.postalCode, null, "blank clears the postal code to null");
+assert.equal(pc("x".repeat(80)).patch.postalCode.length, 40, "postal code capped at 40 chars");
+assert.equal(pc("6688101").ok, true, "a valid postal code saves without error");
+assert.ok(!("postalCode" in p.validateBusinessProfileInput({ businessName: "x" }).patch), "absent postal code is untouched");
+// the profile save action is the ONE write path the postal field uses
+const bizActions = readFileSync("src/app/(dashboard)/settings/business-actions.ts", "utf8");
+assert.ok(bizActions.includes("validateBusinessProfileInput"), "postal code goes through the canonical validator");
+const picker = readFileSync("src/app/(dashboard)/settings/LocationPicker.tsx", "utf8");
+assert.ok(picker.includes("saveBusinessProfileAction({ postalCode:"), "postal code saves to the Business Profile immediately");
+assert.ok(/streetNumber[\s\S]{0,400}PostalCodeField[\s\S]{0,400}label="עיר"/.test(picker), "postal field sits after street/number and before city/country");
+assert.ok(!/type="number"|inputMode="numeric"/.test(picker.slice(picker.indexOf("function PostalCodeField"))), "postal input is text, not numeric-only");
+
+// Channex consumes zip_code from the canonical profile ONLY
+assert.equal(p.buildChannexUpdatePayload({ ...full, postalCode: null }).property.zip_code, undefined, "absent postal code is never fabricated");
+assert.equal(p.buildChannexUpdatePayload({ ...full, postalCode: "SW1A 1AA" }).property.zip_code, "SW1A 1AA", "Channex zip_code comes from the Business Profile");
+assert.deepEqual(
+  p.diffChannexUpdate({ zip_code: "1111111" }, { zip_code: "3508107" }),
+  [{ key: "zip_code", from: "1111111", to: "3508107" }],
+  "the Channex update preview surfaces a postal-code change before PUT",
+);
+assert.deepEqual(p.diffChannexUpdate({ zip_code: "3508107" }, { zip_code: "3508107" }), [], "an unchanged postal code is not reported as a change");
+const chanSection = readFileSync("src/app/(dashboard)/channels/ChannexPropertySection.tsx", "utf8");
+assert.ok(chanSection.includes("preview.proposedZipCode"), "the PUT confirmation modal shows the proposed postal code");
+assert.ok(!/postal|zip/i.test(chanSection.replace(/preview\.(current|proposed)ZipCode/g, "").replace(/מיקוד (נוכחי|חדש)/g, "")), "no Channex-only postal-code input exists on /channels");
+
 // location validation
 assert.equal(p.validateLocationInput({ source: "google_place", latitude: null, longitude: null }).ok, false, "no coords → error");
 assert.equal(p.validateLocationInput({ source: "google_place", latitude: 91, longitude: 0 }).ok, false, "lat out of range");

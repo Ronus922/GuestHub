@@ -77,10 +77,18 @@ export async function getChannelStatusAction(): Promise<Result<unknown>> {
           WHERE tenant_id = ${actor.tenantId} AND status = 'dead_letter') AS dead_letter_jobs,
         (SELECT COUNT(*)::int FROM guesthub.channel_dirty_ranges
           WHERE tenant_id = ${actor.tenantId} AND status = 'pending') AS dirty_ranges,
+        -- descriptive GuestHub categories. NOT the Channex inventory unit (D64):
+        -- the inventory unit is the physical room, so these are never presented
+        -- as "room type mapping progress".
         (SELECT COUNT(*)::int FROM guesthub.room_types
-          WHERE tenant_id = ${actor.tenantId} AND is_active) AS room_types,
-        (SELECT COUNT(*)::int FROM guesthub.channel_room_type_mappings
-          WHERE tenant_id = ${actor.tenantId} AND status = 'mapped' AND is_active) AS mapped_room_types,
+          WHERE tenant_id = ${actor.tenantId} AND is_active) AS room_categories,
+        (SELECT COUNT(*)::int FROM guesthub.rooms
+          WHERE tenant_id = ${actor.tenantId} AND is_active) AS active_rooms,
+        (SELECT COUNT(*)::int FROM guesthub.channel_room_mappings
+          WHERE tenant_id = ${actor.tenantId} AND status = 'mapped') AS mapped_rooms,
+        (SELECT COUNT(*)::int FROM guesthub.channel_room_mappings
+          WHERE tenant_id = ${actor.tenantId} AND status = 'mapped'
+            AND channex_room_type_id IS NOT NULL) AS channex_room_types,
         (SELECT COUNT(*)::int FROM guesthub.channel_booking_revisions
           WHERE tenant_id = ${actor.tenantId} AND import_status = 'quarantined') AS quarantined_revisions`;
     const errors = await sql`
@@ -926,6 +934,10 @@ export type ChannexUpdatePreview = {
   proposedCity: string | null;
   currentAddress: string | null;
   proposedAddress: string | null;
+  // postal code comes ONLY from the canonical Business Profile (there is no
+  // Channex-only postal field) — shown explicitly so the operator sees it change.
+  currentZipCode: string | null;
+  proposedZipCode: string | null;
   changes: ChannexFieldChange[];
 };
 
@@ -970,6 +982,8 @@ export async function previewChannexUpdateAction(): Promise<Result<ChannexUpdate
         proposedCity: str(attrs.city),
         currentAddress: str(current.address),
         proposedAddress: str(attrs.address),
+        currentZipCode: str(current.zip_code),
+        proposedZipCode: str(attrs.zip_code),
         changes: diffChannexUpdate(current, attrs),
       },
     };

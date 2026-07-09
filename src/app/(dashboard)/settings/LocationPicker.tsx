@@ -22,7 +22,7 @@ import {
   type GeocodingLibrary,
 } from "@/lib/business/maps-picker";
 import type { BusinessProfile, LocationSource } from "@/lib/business/profile";
-import { saveBusinessLocationAction } from "./business-actions";
+import { saveBusinessLocationAction, saveBusinessProfileAction } from "./business-actions";
 
 // Google Maps is the PRIMARY location workflow (Place Autocomplete New).
 // Coordinates always come from a selected Google place, a CONFIRMED marker move,
@@ -231,12 +231,18 @@ export function LocationPicker({
   return (
     <div className="flex flex-col gap-4">
       {/* Saved canonical location — rendered from the profile alone, so a Maps
-          failure or an unconfirmed edit can never blank or replace it. */}
+          failure or an unconfirmed edit can never blank or replace it. The postal
+          code sits with the address fields (after street/number, before
+          city/country) and is the ONE canonical source Channex reads zip_code from. */}
       <div className="grid gap-x-4 gap-y-1.5 rounded-xl border border-line bg-hover/30 p-4 text-sm sm:grid-cols-2">
         <Row label="כתובת מלאה" value={profile.formattedAddress} span />
+        <Row label="רחוב" value={profile.street} />
+        <Row label="מספר בית" value={profile.streetNumber} />
+        <div className="sm:col-span-2">
+          <PostalCodeField postalCode={profile.postalCode} onSaved={onSaved} />
+        </div>
         <Row label="עיר" value={profile.city} />
         <Row label="מדינה" value={profile.country ?? profile.countryCode} />
-        <Row label="מיקוד" value={profile.postalCode} />
         <Row label="אזור זמן (קנוני)" value={profile.timezone} />
         <Row label="קו רוחב" value={profile.latitude !== null ? String(profile.latitude) : null} />
         <Row label="קו אורך" value={profile.longitude !== null ? String(profile.longitude) : null} />
@@ -299,6 +305,10 @@ export function LocationPicker({
             <Dd className="col-span-2">{pending.place.formattedAddress ?? "—"}</Dd>
             <Dt>עיר</Dt>
             <Dd className="col-span-2">{pending.place.city ?? "—"}</Dd>
+            <Dt>מיקוד</Dt>
+            <Dd className="col-span-2">
+              {pending.place.postalCode ?? "לא הוחזר מ-Google — ניתן להזין ידנית לאחר השמירה"}
+            </Dd>
             <Dt>קואורדינטות</Dt>
             <Dd className="col-span-2 font-mono text-xs" dir="ltr">
               {pendingCenter.lat}, {pendingCenter.lng}
@@ -389,6 +399,61 @@ export function LocationPicker({
         </div>
       )}
     </div>
+  );
+}
+
+// The canonical postal code, always visible and always editable. Google fills it
+// automatically when a selected place carries a postal_code component; when it
+// does not (or returns a partial one) the operator types it here. Saving writes
+// the Business Profile immediately — /channels never asks for it again.
+function PostalCodeField({
+  postalCode,
+  onSaved,
+}: {
+  postalCode: string | null;
+  onSaved: () => Promise<void> | void;
+}) {
+  const [value, setValue] = useState(postalCode ?? "");
+  const [saving, startSave] = useTransition();
+  // Re-sync when a Google place selection changes the saved value underneath us.
+  const [lastSaved, setLastSaved] = useState(postalCode ?? "");
+  if ((postalCode ?? "") !== lastSaved) {
+    setLastSaved(postalCode ?? "");
+    setValue(postalCode ?? "");
+  }
+  const dirty = value.trim() !== (postalCode ?? "");
+
+  function save() {
+    startSave(async () => {
+      const res = await saveBusinessProfileAction({ postalCode: value.trim() });
+      if (!res.success) {
+        toast.error(res.error ?? "אירעה שגיאה");
+        return;
+      }
+      toast.success("המיקוד נשמר");
+      await onSaved();
+    });
+  }
+
+  return (
+    <Field label="מיקוד">
+      <div className="flex items-center gap-2">
+        <input
+          className="bw-fld"
+          value={value}
+          maxLength={40}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="לדוגמה 6688101"
+        />
+        <button className="bw-btn shrink-0" disabled={saving || !dirty} onClick={save}>
+          <Icon name="check" size={15} />
+          {saving ? "שומר…" : "שמירה"}
+        </button>
+      </div>
+      <p className="bw-hint">
+        מתמלא אוטומטית מ-Google כשקיים. ניתן לערוך ידנית — מיקוד עשוי לכלול אותיות במדינות מסוימות.
+      </p>
+    </Field>
   );
 }
 

@@ -419,6 +419,11 @@ function UpdateDialog({
         <Dt>מדינה/עיר חדש</Dt><Dd className="col-span-2">{preview.proposedCountry ?? "—"} / {preview.proposedCity ?? "—"}</Dd>
         <Dt>כתובת נוכחי</Dt><Dd className="col-span-2">{preview.currentAddress ?? "—"}</Dd>
         <Dt>כתובת חדש</Dt><Dd className="col-span-2">{preview.proposedAddress ?? "—"}</Dd>
+        <Dt>מיקוד נוכחי</Dt><Dd className="col-span-2">{preview.currentZipCode ?? "—"}</Dd>
+        <Dt>מיקוד חדש</Dt>
+        <Dd className="col-span-2">
+          {preview.proposedZipCode ?? "לא הוגדר בפרופיל העסק — לא יישלח"}
+        </Dd>
       </dl>
       <div className="rounded-lg border border-line p-3">
         <p className="mb-1 text-xs font-bold text-ink">שדות שישתנו ({preview.changes.length})</p>
