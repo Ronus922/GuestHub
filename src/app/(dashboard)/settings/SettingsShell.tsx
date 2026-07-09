@@ -8,6 +8,8 @@ import { ExtraGuestSection } from "./ExtraGuestSection";
 import { CancellationSection } from "./CancellationSection";
 import { PaymentSection } from "./PaymentSection";
 import { MessagingSection } from "./MessagingSection";
+import { BusinessProfileSection } from "./BusinessProfileSection";
+import type { BusinessProfileContext } from "./business-actions";
 import type {
   ExtraGuestView,
   CancellationPolicyView,
@@ -21,6 +23,7 @@ import type {
 // refresh. Data is loaded server-side (page.tsx) and passed down.
 export function SettingsShell({
   tenantName,
+  businessProfile,
   currency,
   vatRate,
   extraGuest,
@@ -31,6 +34,7 @@ export function SettingsShell({
   messaging,
 }: {
   tenantName: string;
+  businessProfile: BusinessProfileContext | null;
   currency: string;
   vatRate: number;
   extraGuest: ExtraGuestView;
@@ -86,6 +90,7 @@ export function SettingsShell({
         <div className="min-w-0 flex-1">
           <SectionBody
             section={section}
+            businessProfile={businessProfile}
             currency={currency}
             vatRate={vatRate}
             extraGuest={extraGuest}
@@ -130,6 +135,7 @@ function SettingsNavRow({
 
 function SectionBody({
   section,
+  businessProfile,
   currency,
   vatRate,
   extraGuest,
@@ -140,6 +146,7 @@ function SectionBody({
   messaging,
 }: {
   section: SettingsSectionKey;
+  businessProfile: BusinessProfileContext | null;
   currency: string;
   vatRate: number;
   extraGuest: ExtraGuestView;
@@ -150,6 +157,8 @@ function SectionBody({
   messaging: MessagingSettingsView | null;
 }) {
   switch (section) {
+    case "business":
+      return businessProfile ? <BusinessProfileSection initial={businessProfile} /> : null;
     case "vat":
       return <VatSection vatRate={vatRate} />;
     case "extra-guest":

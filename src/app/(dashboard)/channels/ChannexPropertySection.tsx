@@ -1,22 +1,25 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Icon } from "@/components/shared/Icon";
 import {
   getChannexPropertyContextAction,
-  saveChannexPropertyProfileAction,
   listChannexPropertiesAction,
   createChannexPropertyAction,
   adoptChannexPropertyAction,
   refreshChannexPropertyAction,
+  previewChannexUpdateAction,
+  updateChannexPropertyFromBusinessProfileAction,
   type ChannexPropertyContextView,
+  type ChannexUpdatePreview,
 } from "@/lib/channel/admin";
-import type { ChannexProfileOverrides } from "@/lib/channel/property-profile";
 
-// Channex Staging PROPERTY mapping (D60) — super_admin only (page-gated). Maps
-// the EXISTING GuestHub tenant to ONE Channex Staging property. Read-only room
-// preview; the external property is created/adopted by the operator here. No
-// local property/room is ever created from this screen.
+// Channex Staging PROPERTY mapping. Maps the EXISTING GuestHub tenant to ONE
+// Channex Staging property. Business/property IDENTITY is read-only here and
+// edited in /settings → פרופיל העסק (the source of truth). The mapped property
+// is CORRECTED via PUT from the canonical Business Profile — never recreated.
+// super_admin only (page-gated). No local property/room is created here.
 
 const dtFmt = new Intl.DateTimeFormat("he-IL", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Jerusalem" });
 const fmtDt = (v: string | null) => (v ? dtFmt.format(new Date(v)) : "—");
@@ -31,15 +34,16 @@ const STATUS_LABEL: Record<string, string> = {
   maintenance: "אחזקה",
 };
 
+const BUSINESS_PROFILE_HREF = "/settings?section=business";
+
 export function ChannexPropertySection({ initial }: { initial: ChannexPropertyContextView }) {
   const [view, setView] = useState(initial);
   const [msg, setMsg] = useState<Msg>(null);
   const [pending, startTransition] = useTransition();
-  const [editingProfile, setEditingProfile] = useState(false);
   const [confirmCreate, setConfirmCreate] = useState(false);
   const [adoptList, setAdoptList] = useState<AdoptItem[] | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<AdoptItem | null>(null);
-  const [form, setForm] = useState<ChannexProfileOverrides>(initial.overrides ?? {});
+  const [updatePreview, setUpdatePreview] = useState<ChannexUpdatePreview | null>(null);
 
   const canAct = view.secretsKeyConfigured && view.apiKeyConfigured;
 
@@ -57,10 +61,6 @@ export function ChannexPropertySection({ initial }: { initial: ChannexPropertyCo
       after?.();
       setMsg({ tone: "ok", text: okText });
     });
-  }
-
-  function onSaveProfile() {
-    run(() => saveChannexPropertyProfileAction(form), "פרטי הפרופיל נשמרו", () => setEditingProfile(false));
   }
 
   function onCreate() {
@@ -89,6 +89,20 @@ export function ChannexPropertySection({ initial }: { initial: ChannexPropertyCo
     run(() => refreshChannexPropertyAction(), "סטטוס הנכס עודכן");
   }
 
+  function onOpenUpdate() {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await previewChannexUpdateAction();
+      if (!res.success) return setMsg({ tone: "err", text: res.error ?? "אירעה שגיאה" });
+      setUpdatePreview(res.data!);
+    });
+  }
+
+  function onConfirmUpdate() {
+    setUpdatePreview(null);
+    run(() => updateChannexPropertyFromBusinessProfileAction(), "פרטי הנכס עודכנו ב-Channex");
+  }
+
   return (
     <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -111,7 +125,7 @@ export function ChannexPropertySection({ initial }: { initial: ChannexPropertyCo
         <Icon name="info" size={18} className="mt-0.5 shrink-0 text-primary" />
         <p className="text-xs font-semibold leading-relaxed text-text2">
           נכס ה-Channex הוא הייצוג החיצוני של העסק הקיים ב-GuestHub — <strong>לא</strong> נוצר נכס, בניין
-          או חדר מקומי חדש. החדרים הקיימים ימופו לסוגי חדרים ב-Channex בשלב הבא ואינם מוקלדים מחדש.
+          או חדר מקומי חדש. זהות העסק והנכס נערכת ב<Link href={BUSINESS_PROFILE_HREF} className="underline">פרופיל העסק</Link> ומוזנת לכאן.
         </p>
       </div>
 
@@ -122,69 +136,46 @@ export function ChannexPropertySection({ initial }: { initial: ChannexPropertyCo
       )}
       {view.secretsKeyConfigured && !view.apiKeyConfigured && (
         <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
-          יש לשמור מפתח API של Channex בכרטיס החיבור למעלה לפני יצירה או אימוץ של נכס.
+          יש לשמור מפתח API של Channex בכרטיס החיבור למעלה לפני יצירה, אימוץ או עדכון של נכס.
         </p>
       )}
 
-      {/* Existing GuestHub property summary */}
+      {/* Canonical business/property identity (read-only; edited in settings) */}
+      <div className="flex flex-col gap-2 rounded-xl border border-line p-4">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-4">
+          <Dt>עסק</Dt><Dd>{view.business.businessName ?? "לא הוגדר"}</Dd>
+          <Dt>נכס</Dt><Dd>{view.business.propertyName ?? "לא הוגדר"}</Dd>
+        </dl>
+        {!view.business.hasPropertyName && (
+          <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
+            פרופיל העסק אינו מלא. יש להשלים את פרטי העסק לפני חיבור Booking.com או Expedia.
+          </p>
+        )}
+        <Link href={BUSINESS_PROFILE_HREF} className="flex w-fit items-center gap-1.5 text-xs font-bold text-primary underline">
+          <Icon name="edit" size={13} />
+          מעבר לפרופיל העסק
+        </Link>
+      </div>
+
+      {/* Read-only summary stats */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="עסק (GuestHub)" value={view.tenant.name} />
         <Stat label="מטבע קנוני" value={view.tenant.currency} />
         <Stat label="חדרים" value={String(view.roomCount)} />
         <Stat label="חדרים פעילים" value={String(view.activeRoomCount)} />
+        <Stat label="סוגי חדרים" value={String(view.roomTypeCount)} />
       </div>
 
       {view.mapping ? (
-        <MappedCard view={view} onRefresh={onRefresh} pending={pending} />
+        <MappedCard
+          view={view}
+          onRefresh={onRefresh}
+          onUpdate={onOpenUpdate}
+          canAct={canAct}
+          pending={pending}
+        />
       ) : (
         <Readiness view={view} />
       )}
-
-      {/* Profile editor */}
-      <div className="rounded-xl border border-line">
-        <button
-          type="button"
-          onClick={() => setEditingProfile((v) => !v)}
-          className="flex w-full items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-ink"
-        >
-          <span className="flex items-center gap-2">
-            <Icon name="edit" size={16} className="text-muted" />
-            פרטי פרופיל האינטגרציה
-          </span>
-          <Icon name={editingProfile ? "arrow-up" : "arrow-down"} size={16} className="text-faint" />
-        </button>
-        {editingProfile && (
-          <div className="flex flex-col gap-3 border-t border-line p-4">
-            <p className="text-xs font-semibold text-muted">
-              ערכים קנוניים (מטבע: {view.tenant.currency} · אזור זמן: {view.profile.timezone}) נקראים מ-GuestHub
-              ואינם ניתנים לעריכה כאן. השדות הבאים משלימים פרטים הנדרשים לפני חיבור ערוצים חיים.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="שם חיצוני (Title)" v={form.title} onChange={(x) => setForm({ ...form, title: x })} ph={view.profile.title} />
-              <Field label="סוג נכס" v={form.propertyType} onChange={(x) => setForm({ ...form, propertyType: x })} ph="apartment" />
-              <Field label="מדינה (ISO-2)" v={form.country} onChange={(x) => setForm({ ...form, country: x })} ph="IL" ltr />
-              <Field label="עיר" v={form.city} onChange={(x) => setForm({ ...form, city: x })} />
-              <Field label="כתובת" v={form.address} onChange={(x) => setForm({ ...form, address: x })} />
-              <Field label="מיקוד" v={form.zipCode} onChange={(x) => setForm({ ...form, zipCode: x })} ltr />
-              <Field label="אימייל" v={form.email} onChange={(x) => setForm({ ...form, email: x })} ltr />
-              <Field label="טלפון" v={form.phone} onChange={(x) => setForm({ ...form, phone: x })} ltr />
-              <Field label="אתר" v={form.website} onChange={(x) => setForm({ ...form, website: x })} ltr />
-              <Field label="קו רוחב" v={numStr(form.latitude)} onChange={(x) => setForm({ ...form, latitude: toNum(x) })} ltr />
-              <Field label="קו אורך" v={numStr(form.longitude)} onChange={(x) => setForm({ ...form, longitude: toNum(x) })} ltr />
-            </div>
-            <div>
-              <button
-                type="button"
-                onClick={onSaveProfile}
-                disabled={pending || !view.secretsKeyConfigured}
-                className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-              >
-                שמור פרטי פרופיל
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Rooms preview (read-only) */}
       <RoomsPreview view={view} />
@@ -246,16 +237,14 @@ export function ChannexPropertySection({ initial }: { initial: ChannexPropertyCo
       {confirmCreate && (
         <ConfirmDialog title="יצירת נכס Channex Staging" onClose={() => setConfirmCreate(false)}>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-            <Dt>עסק GuestHub</Dt><Dd>{view.tenant.name}</Dd>
-            <Dt>שם חיצוני</Dt><Dd>{view.profile.title}</Dd>
+            <Dt>נכס</Dt><Dd>{view.business.propertyName ?? "לא הוגדר"}</Dd>
             <Dt>סביבה</Dt><Dd>Staging</Dd>
-            <Dt>מטבע</Dt><Dd>{view.profile.currency}</Dd>
-            <Dt>מדינה / עיר</Dt><Dd>{view.profile.country ?? "—"} / {view.profile.city ?? "—"}</Dd>
+            <Dt>מטבע</Dt><Dd>{view.tenant.currency}</Dd>
             <Dt>חדרים קיימים</Dt><Dd>{view.roomCount}</Dd>
           </dl>
           <ul className="flex flex-col gap-1.5 text-xs font-semibold text-status-warning">
             <li>• החדרים אינם נוצרים מחדש — רק סוגי חדרים ימופו בשלב הבא.</li>
-            <li>• סוגי חדרים ותוכניות תעריף ייווצרו בשלב עתידי (Phase 4C).</li>
+            <li>• סוגי חדרים ותוכניות תעריף ייווצרו בשלב עתידי.</li>
             <li>• לא נוצר חיבור חי ל-Booking.com או ל-Expedia.</li>
           </ul>
           <div className="flex justify-end gap-2">
@@ -288,6 +277,17 @@ export function ChannexPropertySection({ initial }: { initial: ChannexPropertyCo
             </button>
           </div>
         </ConfirmDialog>
+      )}
+
+      {/* Channex update (PUT) confirmation modal */}
+      {updatePreview && (
+        <UpdateDialog
+          preview={updatePreview}
+          roomCount={view.roomCount}
+          pending={pending}
+          onClose={() => setUpdatePreview(null)}
+          onConfirm={onConfirmUpdate}
+        />
       )}
     </section>
   );
@@ -331,7 +331,19 @@ function ChecklistCard({ title, items, tone }: { title: string; items: { key: st
   );
 }
 
-function MappedCard({ view, onRefresh, pending }: { view: ChannexPropertyContextView; onRefresh: () => void; pending: boolean }) {
+function MappedCard({
+  view,
+  onRefresh,
+  onUpdate,
+  canAct,
+  pending,
+}: {
+  view: ChannexPropertyContextView;
+  onRefresh: () => void;
+  onUpdate: () => void;
+  canAct: boolean;
+  pending: boolean;
+}) {
   const m = view.mapping!;
   const snap = (m.snapshot ?? {}) as Record<string, unknown>;
   const str = (k: string) => (typeof snap[k] === "string" ? (snap[k] as string) : "—");
@@ -343,21 +355,32 @@ function MappedCard({ view, onRefresh, pending }: { view: ChannexPropertyContext
         </p>
       )}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm lg:grid-cols-3">
-        <Dt>עסק GuestHub</Dt><Dd>{view.tenant.name}</Dd>
-        <Dt>שם הנכס</Dt><Dd>{m.title ?? "—"}</Dd>
+        <Dt>עסק</Dt><Dd>{view.business.businessName ?? "לא הוגדר"}</Dd>
+        <Dt>נכס</Dt><Dd>{view.business.propertyName ?? "לא הוגדר"}</Dd>
+        <Dt>שם Channex</Dt><Dd>{m.title ?? "—"}</Dd>
         <Dt>מזהה Channex</Dt><Dd className="font-mono text-xs">{m.propertyId}</Dd>
         <Dt>אופן</Dt><Dd>{m.method === "created" ? "נוצר" : m.method === "adopted" ? "אומץ" : "—"}</Dd>
         <Dt>סביבה</Dt><Dd>Staging</Dd>
         <Dt>מטבע</Dt><Dd>{str("currency")}</Dd>
         <Dt>מדינה / עיר</Dt><Dd>{str("country")} / {str("city")}</Dd>
+        <Dt>כתובת</Dt><Dd>{str("address")}</Dd>
         <Dt>אזור זמן</Dt><Dd>{str("timezone")}</Dd>
         <Dt>סוג נכס</Dt><Dd>{str("property_type")}</Dd>
         <Dt>חדרים ב-GuestHub</Dt><Dd>{view.roomCount}</Dd>
         <Dt>סוגי חדרים ב-Channex</Dt><Dd>{typeof snap.room_type_count === "number" ? String(snap.room_type_count) : "0"}</Dd>
         <Dt>אומת לאחרונה</Dt><Dd>{fmtDt(m.verifiedAt)}</Dd>
       </dl>
-      <p className="text-xs font-semibold text-muted">השלב הבא: סנכרון סוגי החדרים הקיימים של GuestHub אל Channex.</p>
-      <div>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={onUpdate}
+          disabled={pending || !canAct || !view.business.hasPropertyName}
+          title={!view.business.hasPropertyName ? "יש להזין שם נכס בפרופיל העסק" : undefined}
+          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+        >
+          <Icon name="refresh" size={16} />
+          עדכון פרטי הנכס ב־Channex
+        </button>
         <button
           type="button"
           onClick={onRefresh}
@@ -369,6 +392,65 @@ function MappedCard({ view, onRefresh, pending }: { view: ChannexPropertyContext
         </button>
       </div>
     </div>
+  );
+}
+
+function UpdateDialog({
+  preview,
+  roomCount,
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  preview: ChannexUpdatePreview;
+  roomCount: number;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <ConfirmDialog title="עדכון פרטי הנכס ב־Channex" onClose={onClose}>
+      <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
+        <Dt>מזהה Channex</Dt><Dd className="col-span-2 font-mono text-xs">{preview.propertyId}</Dd>
+        <Dt>סביבה</Dt><Dd className="col-span-2">Staging</Dd>
+        <Dt>שם נוכחי</Dt><Dd className="col-span-2">{preview.currentTitle ?? "—"}</Dd>
+        <Dt>שם חדש</Dt><Dd className="col-span-2 font-bold text-ink">{preview.proposedTitle ?? "—"}</Dd>
+        <Dt>מדינה/עיר נוכחי</Dt><Dd className="col-span-2">{preview.currentCountry ?? "—"} / {preview.currentCity ?? "—"}</Dd>
+        <Dt>מדינה/עיר חדש</Dt><Dd className="col-span-2">{preview.proposedCountry ?? "—"} / {preview.proposedCity ?? "—"}</Dd>
+        <Dt>כתובת נוכחי</Dt><Dd className="col-span-2">{preview.currentAddress ?? "—"}</Dd>
+        <Dt>כתובת חדש</Dt><Dd className="col-span-2">{preview.proposedAddress ?? "—"}</Dd>
+      </dl>
+      <div className="rounded-lg border border-line p-3">
+        <p className="mb-1 text-xs font-bold text-ink">שדות שישתנו ({preview.changes.length})</p>
+        {preview.changes.length === 0 ? (
+          <p className="text-xs font-semibold text-muted">אין שינויים — הנתונים כבר תואמים.</p>
+        ) : (
+          <ul className="flex flex-col gap-0.5 text-xs font-semibold text-text2">
+            {preview.changes.map((c) => (
+              <li key={c.key} className="font-mono">{c.key}: {String(c.from ?? "∅")} → {String(c.to ?? "∅")}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <ul className="flex flex-col gap-1 text-xs font-semibold text-status-warning">
+        <li>• לא נוצר נכס חדש — מעודכן הנכס הקיים בלבד (אותו מזהה).</li>
+        <li>• חדרים, תעריפים והזמנות אינם משתנים ({roomCount} חדרים ללא שינוי).</li>
+      </ul>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onClose} className="rounded-xl border border-line px-4 py-2 text-sm font-bold text-ink hover:bg-hover">
+          ביטול
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={pending || !preview.canUpdate}
+          title={preview.reason ?? undefined}
+          className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+        >
+          עדכון הנכס הקיים ב־Channex
+        </button>
+      </div>
+    </ConfirmDialog>
   );
 }
 
@@ -435,33 +517,7 @@ function ConfirmDialog({ title, onClose, children }: { title: string; onClose: (
   );
 }
 
-function Field({ label, v, onChange, ph, ltr }: { label: string; v: string | null | undefined; onChange: (v: string) => void; ph?: string; ltr?: boolean }) {
-  return (
-    <label className="flex flex-col gap-1 text-sm">
-      <span className="font-semibold text-text2">{label}</span>
-      <input
-        type="text"
-        value={v ?? ""}
-        placeholder={ph}
-        onChange={(e) => onChange(e.target.value)}
-        dir={ltr ? "ltr" : undefined}
-        className="bw-fld"
-      />
-    </label>
-  );
-}
-
 const Dt = ({ children }: { children: React.ReactNode }) => <dt className="text-faint">{children}</dt>;
 const Dd = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
   <dd className={`truncate font-semibold text-text2 ${className}`}>{children}</dd>
 );
-
-function numStr(n: number | null | undefined): string {
-  return n === null || n === undefined ? "" : String(n);
-}
-function toNum(s: string): number | null {
-  const t = s.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  return Number.isFinite(n) ? n : null;
-}

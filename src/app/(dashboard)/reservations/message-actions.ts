@@ -13,6 +13,7 @@ import {
 import { sendEmailMessage, sendWhatsAppMessage } from "@/lib/messaging/service";
 import { resolveEmailProvider, resolveWhatsAppProvider } from "@/lib/messaging/providers";
 import { getReservationAction } from "./actions";
+import { getPublicPropertyName } from "@/lib/business/store";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // Booking editor messaging actions (D53). The composer NEVER trusts a second
@@ -72,7 +73,7 @@ async function buildContext(reservationId: string): Promise<{ ctx: BookingMessag
     infants: rooms.infants,
     totalPrice: d.total_price,
     balanceDue: d.balance,
-    propertyName: actor.tenantName,
+    propertyName: await getPublicPropertyName(actor.tenantId, actor.tenantName),
   };
   return { ctx, guestName: `${d.guest.first_name} ${d.guest.last_name}`.trim(), email: d.guest.email, phone: d.guest.phone, guestId: d.guest.id };
 }

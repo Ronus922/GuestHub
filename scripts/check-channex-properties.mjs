@@ -173,6 +173,39 @@ res = await api.listChannexProperties({ apiKey: "x", baseUrl: STAGING, fetchImpl
 assert.equal(res.category, "network_error", "throw → network_error");
 
 // ============================================================
+// detail extractor surfaces address/contact/geo (for the PUT preview diff)
+// ============================================================
+const detFull = api.extractPropertyDetail({
+  data: { id: "p9", attributes: { title: "T", currency: "ILS", country: "IL", city: "TLV",
+    address: "Rothschild 1", zip_code: "6688101", email: "a@b.co", phone: "+972500000000",
+    website: "https://x.co", latitude: 32.06, longitude: 34.77, property_type: "apartment" } },
+});
+assert.equal(detFull.address, "Rothschild 1", "address extracted");
+assert.equal(detFull.zipCode, "6688101", "zip extracted");
+assert.equal(detFull.email, "a@b.co", "email extracted");
+assert.equal(detFull.phone, "+972500000000", "phone extracted");
+assert.equal(detFull.website, "https://x.co", "website extracted");
+assert.equal(detFull.latitude, "32.06", "numeric latitude → string");
+assert.equal(detFull.longitude, "34.77", "numeric longitude → string");
+
+// ============================================================
+// updateChannexProperty — PUT to the SAME id, never POST/create
+// ============================================================
+const capPut = {};
+res = await api.updateChannexProperty({
+  apiKey: "x", baseUrl: STAGING, id: "keep-me-123",
+  payload: { property: { title: "נכס (Staging)", currency: "ILS" } },
+  fetchImpl: async (u, init) => { capPut.url = u; capPut.method = init.method; capPut.body = init.body; return mkRes(200, { data: { id: "keep-me-123", attributes: { title: "נכס (Staging)", currency: "ILS" } } }); },
+});
+assert.equal(res.ok, true, "PUT ok");
+assert.equal(capPut.method, "PUT", "update uses PUT, not POST");
+assert.equal(capPut.url, `${STAGING}/properties/keep-me-123`, "PUT targets the SAME property id");
+assert.equal(res.property.id, "keep-me-123", "same id preserved in result");
+assert.equal(JSON.parse(capPut.body).property.title, "נכס (Staging)", "PUT body carries the derived title");
+res = await api.updateChannexProperty({ apiKey: "x", baseUrl: STAGING, id: "z", payload: {}, fetchImpl: async () => mkRes(422, { errors: {} }) });
+assert.equal(res.category, "validation", "422 on update → validation");
+
+// ============================================================
 // the api-key / upstream body NEVER leaks into a returned result
 // ============================================================
 const LEAK = "kx_live_SUPERSECRET_9f8a7b6c";

@@ -9,6 +9,7 @@ import {
 } from "@/lib/commercial/service";
 import { SettingsShell } from "./SettingsShell";
 import { getMessagingSettingsAction } from "./messaging-actions";
+import { getBusinessProfileContextAction, type BusinessProfileContext } from "./business-actions";
 import type { MessagingSettingsView } from "./types";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export default async function SettingsPage() {
   if (!actor) redirect("/auth/signout");
   if (!hasPermission(actor, "settings.edit")) redirect("/dashboard");
 
-  const [currency, vatRate, extraGuest, cancellationPolicies, paymentPolicies, paymentMethods] =
+  const [currency, vatRate, extraGuest, cancellationPolicies, paymentPolicies, paymentMethods, businessCtx] =
     await Promise.all([
       getTenantCurrency(actor.tenantId),
       getTenantVatRate(actor.tenantId),
@@ -29,7 +30,10 @@ export default async function SettingsPage() {
       listCancellationPolicies(actor.tenantId),
       listPaymentPolicies(actor.tenantId),
       getPaymentMethods(actor.tenantId),
+      getBusinessProfileContextAction(),
     ]);
+  const businessProfile: BusinessProfileContext | null =
+    businessCtx.success && businessCtx.data ? businessCtx.data : null;
 
   // Messaging providers are super_admin-only integration secrets (§ guards).
   const canManageMessaging = actor.roleKey === "super_admin";
@@ -42,6 +46,7 @@ export default async function SettingsPage() {
   return (
     <SettingsShell
       tenantName={actor.tenantName}
+      businessProfile={businessProfile}
       currency={currency}
       vatRate={vatRate}
       extraGuest={extraGuest}

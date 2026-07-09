@@ -12,10 +12,13 @@ import {
   listChannexProperties,
   getChannexProperty,
   createChannexProperty as apiCreateChannexProperty,
+  updateChannexProperty as apiUpdateChannexProperty,
   type ChannexApiFailure,
   type ChannexPropertyDetail,
   type ChannexPropertySummary,
 } from "./channex-properties";
+import { getBusinessProfile } from "@/lib/business/store";
+import { buildChannexUpdatePayload, diffChannexUpdate, type ChannexFieldChange } from "@/lib/business/profile";
 import {
   resolveChannexProfile,
   computeReadiness,
@@ -431,8 +434,15 @@ function toPropertySnapshot(p: ChannexPropertyDetail): Record<string, unknown> {
     currency: p.currency,
     country: p.country,
     city: p.city,
+    address: p.address,
+    zip_code: p.zipCode,
+    email: p.email,
+    phone: p.phone,
+    website: p.website,
     timezone: p.timezone,
     property_type: p.propertyType,
+    latitude: p.latitude,
+    longitude: p.longitude,
     is_active: p.isActive,
     room_type_count: p.roomTypeCount,
   };
@@ -462,6 +472,9 @@ export type ChannexPropertyContextView = {
   activeRoomCount: number;
   roomTypeCount: number;
   mapping: ChannexPropertyMappingView;
+  // canonical Business Profile identity (source of truth — NOT tenants.name).
+  // The /channels card shows these; editing happens in /settings, not here.
+  business: { businessName: string | null; propertyName: string | null; hasPropertyName: boolean };
 };
 
 type TenantContextRow = {
@@ -562,9 +575,15 @@ export async function getChannexPropertyContextAction(): Promise<Result<ChannexP
     ]);
 
     const profile = resolveChannexProfile(ctx.identity, ctx.overrides);
+    const business = await getBusinessProfile(actor.tenantId);
     return {
       success: true,
       data: {
+        business: {
+          businessName: business?.businessName ?? null,
+          propertyName: business?.propertyName ?? null,
+          hasPropertyName: !!business?.propertyName,
+        },
         secretsKeyConfigured: channelSecretsConfigured(),
         apiKeyConfigured: !!keyRow?.api_key_ciphertext,
         tenant: ctx.identity,
@@ -881,6 +900,147 @@ export async function refreshChannexPropertyAction(): Promise<
     });
     if (inaccessible) return { success: true, data: { verified: false, reconcileState: "inaccessible" } };
     return apiFail(got);
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ============================================================
+// Channex property CORRECTION via PUT (D61) — updates the EXISTING mapped
+// property from the canonical Business Profile. Never POST /properties, never
+// creates a second property, never changes rooms/rates/inventory. The external
+// Staging title is "<property_name> (Staging)"; the canonical property name is
+// unchanged. super_admin ONLY.
+// ============================================================
+
+export type ChannexUpdatePreview = {
+  propertyId: string;
+  environment: string;
+  canUpdate: boolean;
+  reason: string | null; // why update is blocked (e.g. no property name), else null
+  currentTitle: string | null;
+  proposedTitle: string | null;
+  currentCountry: string | null;
+  proposedCountry: string | null;
+  currentCity: string | null;
+  proposedCity: string | null;
+  currentAddress: string | null;
+  proposedAddress: string | null;
+  changes: ChannexFieldChange[];
+};
+
+// Fresh current-state (GET) + proposed payload derived from the Business Profile,
+// for the confirmation modal. No mutation. Reads coordinates/address ONLY from
+// the canonical Business Profile — never a Channex-only source.
+export async function previewChannexUpdateAction(): Promise<Result<ChannexUpdatePreview>> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+    const mapping = await loadPropertyMappingRow(actor.tenantId);
+    if (!mapping?.channex_property_id) return { success: false, error: "אין נכס Channex ממופה לעדכון" };
+
+    const profile = await getBusinessProfile(actor.tenantId);
+    const built = profile ? buildChannexUpdatePayload(profile) : null;
+
+    const key = await withChannexKey(actor.tenantId);
+    if (!key.ok) return { success: false, error: key.error };
+    const got = await getChannexProperty({
+      apiKey: key.apiKey,
+      baseUrl: CHANNEX_BASE_URLS.staging,
+      id: mapping.channex_property_id,
+    });
+    if (!got.ok) return apiFail(got);
+
+    const current = toPropertySnapshot(got.property);
+    const attrs = built?.property ?? {};
+    const str = (v: unknown) => (typeof v === "string" ? v : v == null ? null : String(v));
+    return {
+      success: true,
+      data: {
+        propertyId: mapping.channex_property_id,
+        environment: CHANNEX_ENV,
+        canUpdate: !!built,
+        reason: built ? null : "יש להזין שם נכס בפרופיל העסק לפני עדכון Channex",
+        currentTitle: str(current.title),
+        proposedTitle: str(attrs.title),
+        currentCountry: str(current.country),
+        proposedCountry: str(attrs.country),
+        currentCity: str(current.city),
+        proposedCity: str(attrs.city),
+        currentAddress: str(current.address),
+        proposedAddress: str(attrs.address),
+        changes: diffChannexUpdate(current, attrs),
+      },
+    };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// Apply the correction: PUT the SAME property id with the Business-Profile-derived
+// payload. Preserves id, mapping method, environment, api-key, and all room/rate/
+// inventory state. On failure the mapping is untouched.
+export async function updateChannexPropertyFromBusinessProfileAction(): Promise<
+  Result<{ propertyId: string; title: string | null }>
+> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+    const mapping = await loadPropertyMappingRow(actor.tenantId);
+    if (!mapping?.channex_property_id) return { success: false, error: "אין נכס Channex ממופה לעדכון" };
+
+    const profile = await getBusinessProfile(actor.tenantId);
+    const built = profile ? buildChannexUpdatePayload(profile) : null;
+    if (!built) return { success: false, error: "יש להזין שם נכס בפרופיל העסק לפני עדכון Channex" };
+
+    const key = await withChannexKey(actor.tenantId);
+    if (!key.ok) return { success: false, error: key.error };
+    const auditCtx = await auditRequestContext();
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: null,
+      action: "channex_property_update_requested",
+      after: { environment: CHANNEX_ENV, propertyId: mapping.channex_property_id, fields: Object.keys(built.property) },
+      ip: auditCtx.ip,
+      session: auditCtx.session,
+    });
+
+    const updated = await apiUpdateChannexProperty({
+      apiKey: key.apiKey,
+      baseUrl: CHANNEX_BASE_URLS.staging,
+      id: mapping.channex_property_id, // SAME id — never a new property
+      payload: built,
+    });
+    if (!updated.ok) {
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: null,
+        action: "channex_property_update_failed",
+        after: { environment: CHANNEX_ENV, propertyId: mapping.channex_property_id, category: updated.category },
+        ip: auditCtx.ip,
+        session: auditCtx.session,
+      });
+      return apiFail(updated);
+    }
+
+    await sql`
+      UPDATE guesthub.channel_connections
+      SET channex_property_title = ${updated.property.title},
+          channex_property_snapshot = ${sql.json(toPropertySnapshot(updated.property) as never)},
+          channex_property_verified_at = now(),
+          channex_reconcile_state = 'ok', updated_by = ${actor.userId}, updated_at = now()
+      WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: null,
+      action: "channex_property_updated",
+      after: { environment: CHANNEX_ENV, propertyId: updated.property.id, title: updated.property.title },
+      ip: auditCtx.ip,
+      session: auditCtx.session,
+    });
+    return { success: true, data: { propertyId: updated.property.id, title: updated.property.title } };
   } catch (e) {
     return failFrom(e);
   }
