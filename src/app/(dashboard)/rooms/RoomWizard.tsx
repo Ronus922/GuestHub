@@ -876,10 +876,22 @@ function ImagesSection({
         form.set("roomId", roomId);
         form.set("file", file);
         const res = await fetch("/api/rooms/images", { method: "POST", body: form });
-        const data = (await res.json()) as { image?: RoomImage; error?: string };
+        // The response isn't always JSON: a proxy can reject an oversized upload
+        // with an HTML 413 page before it reaches the API. Parse defensively so we
+        // surface a real error instead of throwing "Unexpected token '<'".
+        let data: { image?: RoomImage; error?: string } = {};
+        try {
+          data = (await res.json()) as { image?: RoomImage; error?: string };
+        } catch {
+          /* non-JSON body (e.g. proxy 413/502 HTML page) */
+        }
         if (!res.ok || !data.image) {
           failed++;
-          toast.error(data.error ?? "העלאה נכשלה");
+          toast.error(
+            res.status === 413
+              ? `הקובץ "${file.name}" גדול מדי — עד 15MB לתמונה`
+              : data.error ?? "העלאה נכשלה",
+          );
           continue;
         }
         onUploaded(data.image);
