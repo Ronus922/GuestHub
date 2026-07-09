@@ -3,8 +3,11 @@
 import { sql } from "@/lib/db";
 import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
-import { writeAudit } from "@/lib/audit";
+import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob } from "./queue";
+import { CHANNEX_BASE_URLS } from "./config";
+import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
+import { runChannexConnectionTest, type ChannexErrorCategory } from "./connection-test";
 
 // ============================================================
 // Channel-management server actions (§O) — super_admin ONLY, enforced
@@ -201,6 +204,188 @@ export async function requestFullSyncAction(connectionId: string): Promise<Resul
       after: { state: conn.state },
     });
     return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ============================================================
+// Channex STAGING connection (D59) — secure credential handling + a real,
+// server-side "Test connection". super_admin ONLY (requireChannelAdmin). The
+// api-key is stored AES-256-GCM encrypted (crypto.ts, key from env), never
+// returned to the browser, never placed in an audit payload, a log or an
+// error. Scope: prove the connection only — no property/room-type/rate-plan/
+// webhook/booking is created here.
+// ============================================================
+
+const CHANNEX_ENV = "staging" as const;
+
+// Masked, secret-free view of the staging connection for the UI.
+export type ChannexConnectionView = {
+  environment: "staging";
+  baseUrl: string;
+  secretsKeyConfigured: boolean;
+  configured: boolean; // an api-key is stored
+  apiKeyHint: string | null; // "••••/BaJ" — never the key
+  state: string;
+  lastTestOkAt: string | null;
+  lastTestFailedAt: string | null;
+  lastTestErrorCode: string | null;
+  lastError: string | null;
+};
+
+type ChannexRow = {
+  state: string;
+  api_key_ciphertext: string | null;
+  api_key_hint: string | null;
+  last_test_ok_at: Date | null;
+  last_test_failed_at: Date | null;
+  last_test_error_code: string | null;
+  last_error: string | null;
+};
+
+async function loadChannexRow(tenantId: string): Promise<ChannexRow | null> {
+  const [row] = await sql<ChannexRow[]>`
+    SELECT state, api_key_ciphertext, api_key_hint, last_test_ok_at,
+           last_test_failed_at, last_test_error_code, last_error
+    FROM guesthub.channel_connections
+    WHERE tenant_id = ${tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+  return row ?? null;
+}
+
+const iso = (v: Date | null): string | null => (v ? v.toISOString() : null);
+
+// 1) Masked staging-connection view. NEVER selects/returns the ciphertext.
+export async function getChannexConnectionAction(): Promise<Result<ChannexConnectionView>> {
+  try {
+    const actor = await requireChannelAdmin();
+    const row = await loadChannexRow(actor.tenantId);
+    return {
+      success: true,
+      data: {
+        environment: CHANNEX_ENV,
+        baseUrl: CHANNEX_BASE_URLS.staging,
+        secretsKeyConfigured: channelSecretsConfigured(),
+        configured: !!row?.api_key_hint,
+        apiKeyHint: row?.api_key_hint ?? null,
+        state: row?.state ?? "disconnected",
+        lastTestOkAt: iso(row?.last_test_ok_at ?? null),
+        lastTestFailedAt: iso(row?.last_test_failed_at ?? null),
+        lastTestErrorCode: row?.last_test_error_code ?? null,
+        lastError: row?.last_error ?? null,
+      },
+    };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 2) Save or replace the staging api-key (encrypted at rest). A blank input is
+// rejected — replacement always supplies the full new key; the existing value
+// is never exposed to enable a "keep current" flow.
+export async function saveChannexApiKeyAction(input: { apiKey: string }): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+    const apiKey = input.apiKey.trim();
+    if (!apiKey) return { success: false, error: "יש להזין מפתח API" };
+
+    const existing = await loadChannexRow(actor.tenantId);
+    const replacing = !!existing?.api_key_ciphertext;
+
+    const [row] = await sql<{ id: string }[]>`
+      INSERT INTO guesthub.channel_connections
+        (tenant_id, provider, environment, state, api_key_ciphertext, api_key_hint,
+         created_by, updated_by)
+      VALUES (${actor.tenantId}, 'channex', ${CHANNEX_ENV}, 'configured',
+              ${encryptSecret(apiKey)}, ${secretHint(apiKey)}, ${actor.userId}, ${actor.userId})
+      ON CONFLICT (tenant_id, provider, environment) DO UPDATE SET
+        api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+        api_key_hint = EXCLUDED.api_key_hint,
+        -- a new credential invalidates any prior test verdict
+        state = CASE WHEN guesthub.channel_connections.state = 'active'
+                     THEN 'active' ELSE 'configured' END,
+        last_test_ok_at = NULL, last_test_failed_at = NULL,
+        last_test_error_code = NULL, last_error = NULL,
+        updated_by = ${actor.userId}, updated_at = now()
+      RETURNING id`;
+
+    // Audit carries ONLY the environment + a boolean — never the key or the hint.
+    const ctx = await auditRequestContext();
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: row.id,
+      action: replacing ? "channex_credential_replaced" : "channex_credential_configured",
+      after: { environment: CHANNEX_ENV },
+      ip: ctx.ip,
+      session: ctx.session,
+    });
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// 3) Real, server-side connection test against Channex Staging. Decrypts the
+// stored key, performs ONE GET /properties/options, records only sanitized
+// metadata, and returns a safe result. The credential is preserved on failure.
+export async function testChannexConnectionAction(): Promise<
+  Result<{ ok: boolean; propertyCount?: number; category?: ChannexErrorCategory; message?: string }>
+> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (!channelSecretsConfigured())
+      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
+
+    const row = await loadChannexRow(actor.tenantId);
+    if (!row?.api_key_ciphertext) return { success: false, error: "מפתח API לא הוגדר" };
+
+    let apiKey: string;
+    try {
+      apiKey = decryptSecret(row.api_key_ciphertext);
+    } catch {
+      // Wrong/rotated CHANNEL_SECRETS_KEY — never leak the ciphertext or error.
+      return { success: false, error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה" };
+    }
+
+    const result = await runChannexConnectionTest({
+      apiKey,
+      baseUrl: CHANNEX_BASE_URLS.staging,
+    });
+
+    const ctx = await auditRequestContext();
+    if (result.ok) {
+      await sql`
+        UPDATE guesthub.channel_connections
+        SET state = 'ready', last_test_ok_at = now(),
+            last_test_error_code = NULL, last_error = NULL, updated_at = now()
+        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: null,
+        action: "channex_connection_test_succeeded",
+        after: { environment: CHANNEX_ENV, propertyCount: result.propertyCount },
+        ip: ctx.ip,
+        session: ctx.session,
+      });
+      return { success: true, data: { ok: true, propertyCount: result.propertyCount } };
+    }
+
+    await sql`
+      UPDATE guesthub.channel_connections
+      SET state = 'error', last_test_failed_at = now(),
+          last_test_error_code = ${result.category}, last_error = ${result.message}, updated_at = now()
+      WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: null,
+      action: "channex_connection_test_failed",
+      after: { environment: CHANNEX_ENV, category: result.category },
+      ip: ctx.ip,
+      session: ctx.session,
+    });
+    return { success: true, data: { ok: false, category: result.category, message: result.message } };
   } catch (e) {
     return failFrom(e);
   }
