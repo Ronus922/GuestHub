@@ -1,60 +1,39 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { Field } from "@/components/reservations/BookingPanel";
+import { googleMapsLink, type NormalizedPlace } from "@/lib/business/google-place";
+import { sanitizeMapsError, type SanitizedMapsError } from "@/lib/business/maps-errors";
 import {
-  normalizeGooglePlace,
-  placeHasCoordinates,
-  googleMapsLink,
-  type NormalizedPlace,
-} from "@/lib/business/google-place";
+  loadMapsApi,
+  importPlaces,
+  importMaps,
+  importMarker,
+  importGeocoding,
+  mountAutocomplete,
+  renderMap,
+  renderMarker,
+  reverseGeocode,
+  type LatLngLiteral,
+  type MapObj,
+  type MarkerObj,
+  type GeocodingLibrary,
+} from "@/lib/business/maps-picker";
 import type { BusinessProfile, LocationSource } from "@/lib/business/profile";
 import { saveBusinessLocationAction } from "./business-actions";
 
-// Google Maps is the PRIMARY location workflow (Place Autocomplete New). When no
-// browser key is configured it degrades to a clear message + the super_admin
-// manual-coordinate fallback. Coordinates always come from a selected Google
-// place, a confirmed marker move, or an explicitly confirmed manual entry —
-// never fabricated. Raw Google responses are never stored (only normalized
-// fields via normalizeGooglePlace, shared with the check script).
+// Google Maps is the PRIMARY location workflow (Place Autocomplete New).
+// Coordinates always come from a selected Google place, a CONFIRMED marker move,
+// or an explicitly confirmed manual entry — never fabricated, never auto-saved.
+// Raw Google responses are never stored (only normalized fields). The saved
+// canonical location is rendered independently of the SDK, so a Maps failure can
+// never blank or replace it.
 
 const BROWSER_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY;
 
-// ---- minimal typed surface of the Maps JS SDK (no `any`) ----
-type PlaceJSON = Parameters<typeof normalizeGooglePlace>[0];
-interface PlaceObj {
-  fetchFields(opts: { fields: string[] }): Promise<unknown>;
-  toJSON(): PlaceJSON;
-}
-type GmpSelectEvent = { placePrediction: { toPlace(): PlaceObj } };
-interface GoogleMapsApi {
-  places: { PlaceAutocompleteElement: new (opts?: Record<string, unknown>) => HTMLElement };
-}
-declare global {
-  interface Window {
-    google?: { maps?: GoogleMapsApi };
-  }
-}
-
-let sdkPromise: Promise<GoogleMapsApi> | null = null;
-function loadSdk(): Promise<GoogleMapsApi> {
-  if (sdkPromise) return sdkPromise;
-  sdkPromise = new Promise<GoogleMapsApi>((resolve, reject) => {
-    if (window.google?.maps) return resolve(window.google.maps);
-    const s = document.createElement("script");
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
-      BROWSER_KEY ?? "",
-    )}&libraries=places,marker,geocoding&loading=async&language=he&region=IL`;
-    s.async = true;
-    s.onload = () => (window.google?.maps ? resolve(window.google.maps) : reject(new Error("maps unavailable")));
-    s.onerror = () => reject(new Error("maps script failed"));
-    document.head.appendChild(s);
-  });
-  return sdkPromise;
-}
-
+type SdkStatus = "idle" | "loading" | "ready" | "error";
 type Pending = { place: NormalizedPlace; source: LocationSource } | null;
 
 export function LocationPicker({
@@ -69,47 +48,135 @@ export function LocationPicker({
   onSaved: () => Promise<void> | void;
 }) {
   const acHostRef = useRef<HTMLDivElement>(null);
-  const [sdkError, setSdkError] = useState(false);
+  const mapHostRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<MapObj | null>(null);
+  const markerRef = useRef<MarkerObj | null>(null);
+  const geocoderRef = useRef<GeocodingLibrary | null>(null);
+
+  const [status, setStatus] = useState<SdkStatus>("idle");
+  const [sdkError, setSdkError] = useState<SanitizedMapsError | null>(null);
   const [pending, setPending] = useState<Pending>(null);
+  const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [manual, setManual] = useState({ lat: "", lng: "" });
   const [manualConfirm, setManualConfirm] = useState(false);
   const [saving, startSave] = useTransition();
 
-  // Mount the New Place Autocomplete when Maps is configured.
+  const savedCenter: LatLngLiteral | null =
+    profile.latitude !== null && profile.longitude !== null
+      ? { lat: profile.latitude, lng: profile.longitude }
+      : null;
+  const pendingCenter: LatLngLiteral | null =
+    pending && pending.place.latitude !== null && pending.place.longitude !== null
+      ? { lat: pending.place.latitude, lng: pending.place.longitude }
+      : null;
+  const center = pendingCenter ?? savedCenter;
+
+  const reportError = useCallback((e: unknown, fallback: Parameters<typeof sanitizeMapsError>[1]) => {
+    const safe = sanitizeMapsError(e, fallback);
+    // sanitized category + message only — never the key, the script URL or a body
+    console.error(`[maps:${safe.code}]`, safe.detail);
+    setSdkError(safe);
+    return safe;
+  }, []);
+
+  // Move the marker → PENDING adjustment. Dragging never saves; the operator must
+  // confirm. The reverse-geocoded address is shown separately and never silently
+  // replaces the address of the selected Google place.
+  const onMarkerDragEnd = useCallback(
+    (at: LatLngLiteral) => {
+      setResolvedAddress(null);
+      setPending((prev) => {
+        const base: NormalizedPlace = prev?.place ?? profileAsPlace(profile);
+        return {
+          place: { ...base, latitude: at.lat, longitude: at.lng },
+          source: "google_marker_adjustment",
+        };
+      });
+      const geo = geocoderRef.current;
+      if (!geo) return;
+      void reverseGeocode(geo, at).then((p) => setResolvedAddress(p?.formattedAddress ?? null));
+    },
+    [profile],
+  );
+
+  // Bootstrap the SDK, then mount the autocomplete. Strict Mode double-invokes
+  // this effect: `cancelled` aborts the late async continuation and
+  // mountAutocomplete refuses to append a second widget to the same host.
   useEffect(() => {
     if (!googleMapsConfigured || !BROWSER_KEY) return;
     let cancelled = false;
-    loadSdk()
-      .then((maps) => {
-        if (cancelled || !acHostRef.current) return;
-        const el = new maps.places.PlaceAutocompleteElement();
-        el.style.width = "100%";
-        acHostRef.current.innerHTML = "";
-        acHostRef.current.appendChild(el);
-        el.addEventListener("gmp-select", (e: Event) => {
-          const { placePrediction } = e as unknown as GmpSelectEvent;
-          void (async () => {
-            try {
-              const place = placePrediction.toPlace();
-              await place.fetchFields({ fields: ["id", "formattedAddress", "addressComponents", "location"] });
-              const norm = normalizeGooglePlace(place.toJSON());
-              if (!placeHasCoordinates(norm)) {
-                toast.error("לתוצאה שנבחרה אין קואורדינטות");
-                return;
-              }
-              setPending({ place: norm, source: "google_place" });
-            } catch {
-              toast.error("שליפת פרטי המקום נכשלה");
-            }
-          })();
+    let unmountAc: (() => void) | null = null;
+    setStatus("loading");
+    setSdkError(null);
+
+    void (async () => {
+      try {
+        const maps = await loadMapsApi(BROWSER_KEY);
+        const [places] = await Promise.all([importPlaces(maps), importMaps(maps), importMarker(maps)]);
+        if (cancelled) return;
+        if (!acHostRef.current) throw new Error("autocomplete host missing");
+
+        unmountAc = mountAutocomplete({
+          host: acHostRef.current,
+          places,
+          onSelect: (place) => {
+            setResolvedAddress(null);
+            setPending({ place, source: "google_place" });
+          },
+          onError: (e) => {
+            const safe = sanitizeMapsError(e, "PLACE_SELECTION_FAILED");
+            console.error(`[maps:${safe.code}]`, safe.detail);
+            toast.error(safe.message);
+          },
         });
-      })
-      .catch(() => !cancelled && setSdkError(true));
+        if (cancelled) return;
+        setStatus("ready");
+
+        // geocoding is advisory (marker adjustment only) — never blocks readiness
+        importGeocoding(maps).then(
+          (g) => !cancelled && (geocoderRef.current = g),
+          () => {},
+        );
+      } catch (e) {
+        if (!cancelled) {
+          reportError(e, "MAPS_SCRIPT_LOAD_FAILED");
+          setStatus("error");
+        }
+      }
+    })();
+
     return () => {
       cancelled = true;
+      unmountAc?.();
     };
-  }, [googleMapsConfigured]);
+  }, [googleMapsConfigured, reportError]);
+
+  // Create/update the map + draggable marker whenever there is a center to show.
+  // When the center disappears the container unmounts with it, so the map and
+  // marker handles must be dropped — otherwise the next render would centre a
+  // map that is no longer in the document.
+  useEffect(() => {
+    if (!center) {
+      mapRef.current = null;
+      markerRef.current = null;
+      return;
+    }
+    if (status !== "ready") return;
+    try {
+      const maps = window.google?.maps;
+      if (!maps) return;
+      void Promise.all([importMaps(maps), importMarker(maps)]).then(([mapsLib, markerLib]) => {
+        if (!mapHostRef.current) return;
+        if (!mapRef.current) mapRef.current = renderMap(mapsLib, mapHostRef.current, center);
+        else mapRef.current.setCenter(center);
+        if (!markerRef.current) markerRef.current = renderMarker(markerLib, mapRef.current, center, onMarkerDragEnd);
+        else markerRef.current.setPosition(center);
+      });
+    } catch (e) {
+      reportError(e, "MAP_RENDER_FAILED");
+    }
+  }, [status, center?.lat, center?.lng, onMarkerDragEnd, reportError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function saveLocation(place: NormalizedPlace, source: LocationSource) {
     startSave(async () => {
@@ -133,6 +200,7 @@ export function LocationPicker({
       }
       toast.success("המיקום נשמר");
       setPending(null);
+      setResolvedAddress(null);
       setManualOpen(false);
       setManualConfirm(false);
       setManual({ lat: "", lng: "" });
@@ -140,36 +208,30 @@ export function LocationPicker({
     });
   }
 
+  function discardPending() {
+    setPending(null);
+    setResolvedAddress(null);
+    if (savedCenter) markerRef.current?.setPosition(savedCenter); // snap back to the saved location
+  }
+
   function onManualSave() {
     const lat = Number(manual.lat.trim());
     const lng = Number(manual.lng.trim());
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return toast.error("קואורדינטות לא תקינות");
-    saveLocation(
-      {
-        latitude: lat,
-        longitude: lng,
-        googlePlaceId: null,
-        formattedAddress: null,
-        country: null,
-        countryCode: null,
-        city: null,
-        street: null,
-        streetNumber: null,
-        postalCode: null,
-      },
-      "manual_override",
-    );
+    saveLocation({ ...emptyPlace(), latitude: lat, longitude: lng }, "manual_override");
   }
 
+  const linkTarget = pending?.place ?? profile;
   const mapsHref = googleMapsLink({
-    placeId: profile.googlePlaceId,
-    latitude: profile.latitude,
-    longitude: profile.longitude,
+    placeId: linkTarget.googlePlaceId,
+    latitude: linkTarget.latitude,
+    longitude: linkTarget.longitude,
   });
 
   return (
     <div className="flex flex-col gap-4">
-      {/* current saved location */}
+      {/* Saved canonical location — rendered from the profile alone, so a Maps
+          failure or an unconfirmed edit can never blank or replace it. */}
       <div className="grid gap-x-4 gap-y-1.5 rounded-xl border border-line bg-hover/30 p-4 text-sm sm:grid-cols-2">
         <Row label="כתובת מלאה" value={profile.formattedAddress} span />
         <Row label="עיר" value={profile.city} />
@@ -187,20 +249,86 @@ export function LocationPicker({
         </a>
       )}
 
-      {/* Google autocomplete OR not-configured message */}
-      {googleMapsConfigured && !sdkError ? (
-        <Field label="כתובת / חיפוש ב-Google Maps">
-          <div ref={acHostRef} className="w-full [&_gmp-place-autocomplete]:w-full" />
-        </Field>
-      ) : (
+      {!googleMapsConfigured ? (
         <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
-          {sdkError
-            ? "טעינת Google Maps נכשלה. בדוק את מפתח הדפדפן המורשה או נסה שוב."
-            : "Google Maps אינו מוגדר. הוסף מפתח Google Maps מוגבל כדי לאפשר חיפוש כתובת וקואורדינטות אוטומטיות."}
+          Google Maps אינו מוגדר. הוסף מפתח Google Maps מוגבל כדי לאפשר חיפוש כתובת וקואורדינטות אוטומטיות.
         </p>
+      ) : (
+        <>
+          {/* The autocomplete host must always exist while configured — the widget
+              is appended into it once the places library has actually loaded.
+              relative + z-30 keeps Google's dropdown above the following cards. */}
+          <Field label="כתובת / חיפוש ב-Google Maps">
+            <div className="relative z-30">
+              <div ref={acHostRef} className="w-full [&_gmp-place-autocomplete]:w-full" />
+              {status === "loading" && (
+                <p className="mt-1 text-xs font-semibold text-faint">טוען את Google Maps…</p>
+              )}
+            </div>
+          </Field>
+
+          {status === "error" && sdkError && (
+            <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
+              {sdkError.message}
+              <span className="mx-1 font-mono text-[10px] opacity-70">[{sdkError.code}]</span>
+            </p>
+          )}
+
+          {/* Rendered only when there is a location to show, never merely hidden:
+              a Map initialized inside a display:none container mis-sizes its tiles.
+              Explicit non-zero height; the flex-column parent cannot collapse it. */}
+          {center && (
+            <>
+              <div ref={mapHostRef} className="h-72 w-full shrink-0 overflow-hidden rounded-xl border border-line" />
+              <p className="text-xs font-medium text-faint">
+                גרור את הסמן כדי לתקן את המיקום המדויק של הבניין. שינוי אינו נשמר עד לאישור.
+              </p>
+            </>
+          )}
+        </>
       )}
 
-      {/* Manual advanced fallback — super_admin only */}
+      {/* Pending selection / marker adjustment — nothing is persisted until confirmed. */}
+      {pending && pendingCenter && (
+        <div className="flex flex-col gap-3 rounded-xl border border-brand/40 bg-brand/5 p-4">
+          <h4 className="text-sm font-bold text-ink">
+            {pending.source === "google_place" ? "מיקום נבחר — ממתין לאישור" : "התאמת סמן — ממתינה לאישור"}
+          </h4>
+          <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
+            <Dt>כתובת</Dt>
+            <Dd className="col-span-2">{pending.place.formattedAddress ?? "—"}</Dd>
+            <Dt>עיר</Dt>
+            <Dd className="col-span-2">{pending.place.city ?? "—"}</Dd>
+            <Dt>קואורדינטות</Dt>
+            <Dd className="col-span-2 font-mono text-xs" dir="ltr">
+              {pendingCenter.lat}, {pendingCenter.lng}
+            </Dd>
+            {pending.source === "google_marker_adjustment" && (
+              <>
+                <Dt>כתובת לפי הסמן</Dt>
+                <Dd className="col-span-2 text-xs">
+                  {resolvedAddress ?? "לא זוהתה כתובת עבור הנקודה שנבחרה"}
+                </Dd>
+              </>
+            )}
+          </dl>
+          <div className="flex gap-2">
+            <button
+              className="bw-btn bw-btn-primary"
+              disabled={saving}
+              onClick={() => saveLocation(pending.place, pending.source)}
+            >
+              <Icon name="check" size={15} />
+              אישור ושמירת המיקום
+            </button>
+            <button className="bw-btn" disabled={saving} onClick={discardPending}>
+              ביטול
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Advanced manual fallback — super_admin only, collapsed, never the main flow. */}
       {isSuperAdmin && (
         <div className="rounded-xl border border-line">
           <button
@@ -217,23 +345,42 @@ export function LocationPicker({
           {manualOpen && (
             <div className="flex flex-col gap-3 border-t border-line p-4">
               <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
-                דריסה ידנית של המיקום שנבחר ב-Google. יש להזין קואורדינטות מדויקות ולאשר במפורש.
+                Google Maps הוא המקור המועדף למיקום. דריסה ידנית מבטלת את המיקום שנבחר ב-Google — יש להזין
+                קואורדינטות מדויקות ולאשר במפורש.
               </p>
               <div className="bw-grid2">
                 <Field label="קו רוחב (-90..90)">
-                  <input className="bw-fld" dir="ltr" inputMode="decimal" value={manual.lat}
-                    onChange={(e) => setManual((m) => ({ ...m, lat: e.target.value }))} placeholder="32.0853" />
+                  <input
+                    className="bw-fld"
+                    dir="ltr"
+                    inputMode="decimal"
+                    value={manual.lat}
+                    onChange={(e) => setManual((m) => ({ ...m, lat: e.target.value }))}
+                  />
                 </Field>
                 <Field label="קו אורך (-180..180)">
-                  <input className="bw-fld" dir="ltr" inputMode="decimal" value={manual.lng}
-                    onChange={(e) => setManual((m) => ({ ...m, lng: e.target.value }))} placeholder="34.7818" />
+                  <input
+                    className="bw-fld"
+                    dir="ltr"
+                    inputMode="decimal"
+                    value={manual.lng}
+                    onChange={(e) => setManual((m) => ({ ...m, lng: e.target.value }))}
+                  />
                 </Field>
               </div>
               <label className="flex items-center gap-2 text-xs font-semibold text-text2">
-                <input type="checkbox" checked={manualConfirm} onChange={(e) => setManualConfirm(e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={manualConfirm}
+                  onChange={(e) => setManualConfirm(e.target.checked)}
+                />
                 אני מאשר/ת דריסה ידנית של המיקום
               </label>
-              <button className="bw-btn bw-btn-primary w-fit" disabled={saving || !manualConfirm} onClick={onManualSave}>
+              <button
+                className="bw-btn bw-btn-primary w-fit"
+                disabled={saving || !manualConfirm}
+                onClick={onManualSave}
+              >
                 <Icon name="check" size={15} />
                 שמירת מיקום ידני
               </button>
@@ -241,31 +388,37 @@ export function LocationPicker({
           )}
         </div>
       )}
-
-      {/* confirm a Google-selected place before saving */}
-      {pending && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 backdrop-blur-sm" dir="rtl" onClick={() => setPending(null)}>
-          <div className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-line bg-surface p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-ink">אישור מיקום</h3>
-            <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
-              <Dt>כתובת</Dt><Dd className="col-span-2">{pending.place.formattedAddress ?? "—"}</Dd>
-              <Dt>עיר</Dt><Dd className="col-span-2">{pending.place.city ?? "—"}</Dd>
-              <Dt>מדינה</Dt><Dd className="col-span-2">{pending.place.country ?? pending.place.countryCode ?? "—"}</Dd>
-              <Dt>קואורדינטות</Dt><Dd className="col-span-2 font-mono text-xs">{pending.place.latitude}, {pending.place.longitude}</Dd>
-            </dl>
-            <div className="flex justify-end gap-2">
-              <button className="bw-btn" onClick={() => setPending(null)}>ביטול</button>
-              <button className="bw-btn bw-btn-primary" disabled={saving} onClick={() => saveLocation(pending.place, pending.source)}>
-                <Icon name="check" size={15} />
-                שמירת המיקום
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
+
+const emptyPlace = (): NormalizedPlace => ({
+  googlePlaceId: null,
+  formattedAddress: null,
+  country: null,
+  countryCode: null,
+  city: null,
+  street: null,
+  streetNumber: null,
+  postalCode: null,
+  latitude: null,
+  longitude: null,
+});
+
+// The already-saved location as a place, so a marker drag on a previously saved
+// property keeps its address/place id while only the coordinates change.
+const profileAsPlace = (p: BusinessProfile): NormalizedPlace => ({
+  googlePlaceId: p.googlePlaceId,
+  formattedAddress: p.formattedAddress,
+  country: p.country,
+  countryCode: p.countryCode,
+  city: p.city,
+  street: p.street,
+  streetNumber: p.streetNumber,
+  postalCode: p.postalCode,
+  latitude: p.latitude,
+  longitude: p.longitude,
+});
 
 function sourceLabel(s: LocationSource | null): string | null {
   if (s === "google_place") return "בחירה מ-Google";
@@ -278,11 +431,23 @@ function Row({ label, value, span }: { label: string; value: string | null | und
   return (
     <div className={span ? "sm:col-span-2" : ""}>
       <p className="text-xs font-medium text-faint">{label}</p>
-      <p className="truncate font-semibold text-text2" title={value ?? undefined}>{value || "—"}</p>
+      <p className="truncate font-semibold text-text2" title={value ?? undefined}>
+        {value || "—"}
+      </p>
     </div>
   );
 }
 const Dt = ({ children }: { children: React.ReactNode }) => <dt className="text-faint">{children}</dt>;
-const Dd = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
-  <dd className={`font-semibold text-text2 ${className}`}>{children}</dd>
+const Dd = ({
+  children,
+  className = "",
+  dir,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  dir?: "ltr" | "rtl";
+}) => (
+  <dd dir={dir} className={`font-semibold text-text2 ${className}`}>
+    {children}
+  </dd>
 );
