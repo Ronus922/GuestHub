@@ -33,6 +33,7 @@
     "check:messaging": "node scripts/check-messaging.mjs",
     "check:channex-connection": "node scripts/check-channex-connection.mjs",
     "check:channex-properties": "node scripts/check-channex-properties.mjs",
+    "check:business-profile": "node scripts/check-business-profile.mjs",
     "check-e2e-safety": "node scripts/check-e2e-safety.mjs",
     "guard:deploy": "node scripts/production-deploy-guard.mjs"
   },

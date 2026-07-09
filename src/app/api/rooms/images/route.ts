@@ -3,37 +3,17 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { roomUploadsDir, roomUploadPath } from "@/lib/rooms/uploads";
+import { IMAGE_TYPES as TYPES, MAX_IMAGE_BYTES as MAX_BYTES, isRealImage } from "@/lib/uploads/image";
 
 // Room image upload (wizard step 2). Session-authenticated + rooms.edit,
-// tenant-scoped room ownership check, strict type/size + magic-byte validation.
-// Files land in the durable uploads store (lib/rooms/uploads.ts — outside the
-// app tree) and rows in guesthub.room_images.
+// tenant-scoped room ownership check, strict type/size + magic-byte validation
+// (shared with the business-logo upload via lib/uploads/image.ts). Files land in
+// the durable uploads store (lib/rooms/uploads.ts — outside the app tree) and
+// rows in guesthub.room_images.
 // ponytail: local-disk storage; move to Supabase storage if multi-node serving
 // ever matters.
 
 export const dynamic = "force-dynamic";
-
-const MAX_BYTES = 15 * 1024 * 1024;
-const TYPES: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
-};
-
-// magic-byte check — the client-declared MIME is not trusted on its own
-function isRealImage(buf: Buffer, mime: string): boolean {
-  if (buf.length < 12) return false;
-  switch (mime) {
-    case "image/jpeg":
-      return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-    case "image/png":
-      return buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-    case "image/webp":
-      return buf.subarray(0, 4).toString("latin1") === "RIFF" && buf.subarray(8, 12).toString("latin1") === "WEBP";
-    default:
-      return false;
-  }
-}
 
 export async function POST(request: Request) {
   try {

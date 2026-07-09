@@ -2,6 +2,7 @@ import "server-only";
 import { getActor, hasPermission, type Actor } from "@/lib/auth/actor";
 import { getReservationAction } from "@/app/(dashboard)/reservations/actions";
 import { getTenantCurrency, getTenantVatRate } from "@/lib/settings";
+import { getPublicPropertyName } from "@/lib/business/store";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { includedVatAmount } from "@/lib/vat";
 import { sql } from "@/lib/db";
@@ -208,7 +209,7 @@ export async function loadBookingDocData(
     sourceLabel: r.source_label,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
-    propertyName: actor.tenantName,
+    propertyName: await getPublicPropertyName(actor.tenantId, actor.tenantName),
     currency,
     guest: {
       fullName: guestFullName,

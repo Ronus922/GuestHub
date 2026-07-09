@@ -43,8 +43,15 @@ export type ChannexPropertySummary = {
 export type ChannexPropertyDetail = ChannexPropertySummary & {
   country: string | null;
   city: string | null;
+  address: string | null;
+  zipCode: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
   timezone: string | null;
   propertyType: string | null;
+  latitude: string | null;
+  longitude: string | null;
   isActive: boolean | null;
   roomTypeCount: number | null;
 };
@@ -117,14 +124,23 @@ export function extractPropertyDetail(body: unknown): ChannexPropertyDetail | nu
   const a = asObj(data.attributes) ?? data;
   const rtRaw = a.room_types_count ?? a.room_type_count;
   const active = a.is_active;
+  const numAsStr = (v: unknown): string | null =>
+    typeof v === "number" && Number.isFinite(v) ? String(v) : asStr(v);
   return {
     id,
     title: asStr(a.title),
     currency: asStr(a.currency),
     country: asStr(a.country),
     city: asStr(a.city),
+    address: asStr(a.address),
+    zipCode: asStr(a.zip_code),
+    email: asStr(a.email),
+    phone: asStr(a.phone),
+    website: asStr(a.website),
     timezone: asStr(a.timezone),
     propertyType: asStr(a.property_type),
+    latitude: numAsStr(a.latitude),
+    longitude: numAsStr(a.longitude),
     isActive: typeof active === "boolean" ? active : null,
     roomTypeCount: typeof rtRaw === "number" ? rtRaw : null,
   };
