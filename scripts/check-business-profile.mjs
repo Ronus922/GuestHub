@@ -7,7 +7,7 @@
 // property name unchanged, coordinates from the profile only).
 // Usage: node scripts/check-business-profile.mjs
 import { execSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -158,5 +158,60 @@ const changes = p.diffChannexUpdate({ title: "ישן (Staging)", city: "תל א�
 const titleChange = changes.find((c) => c.key === "title");
 assert.ok(titleChange && titleChange.to === "נכס (Staging)", "title change surfaced");
 assert.ok(!changes.find((c) => c.key === "city"), "unchanged city not listed");
+
+// ============================================================
+// sidebar account-card identity line (formatPropertyIdentity)
+// ============================================================
+const identity = (stored) => p.formatPropertyIdentity(p.resolveBusinessProfile(tenant, stored));
+const CANON = { propertyName: "מגדל הים", city: "חיפה" };
+
+assert.equal(identity(CANON), "מגדל הים - חיפה", "property + city joined with a plain hyphen");
+assert.ok(identity(CANON).includes(" - "), "separator is exactly space-hyphen-space");
+assert.ok(!identity(CANON).includes(" · "), "middle-dot separator is never used");
+assert.equal(identity({ ...CANON, businessName: "בית מלון הים" }), "מגדל הים - חיפה", "property beats business");
+assert.equal(identity({ propertyName: "מגדל הים" }), "מגדל הים", "no city → no dangling separator");
+assert.ok(!identity({ propertyName: "מגדל הים" }).includes("-"), "absent city renders no hyphen at all");
+assert.equal(identity({ businessName: "בית מלון הים", city: "חיפה" }), "בית מלון הים - חיפה", "business + city when no property");
+assert.equal(identity({ businessName: "בית מלון הים" }), "בית מלון הים", "business alone when no property/city");
+assert.equal(identity({ propertyName: "  מגדל הים  ", city: "  חיפה  " }), "מגדל הים - חיפה", "values trimmed");
+assert.equal(identity({ propertyName: "   ", city: "חיפה" }), p.IDENTITY_NOT_SET, "whitespace-only name + city → not-set, never a bare city");
+
+// never the tenant/app/Channex identity
+assert.equal(identity(null), p.IDENTITY_NOT_SET, "empty profile → neutral Hebrew fallback");
+assert.equal(p.IDENTITY_NOT_SET, "פרופיל העסק לא הוגדר");
+assert.notEqual(identity(null), tenant.fallbackName, "tenants.name is NOT the public identity");
+assert.notEqual(identity(null), "GuestHub", "app name is never the property fallback");
+assert.ok(!identity(CANON).includes("GuestHub"), "app name never appended");
+assert.ok(!identity(CANON).includes("(Staging)"), "Channex external title/suffix never displayed");
+assert.notEqual(identity(CANON), p.channexStagingTitle(CANON.propertyName), "identity is not the Channex title");
+
+// tenant isolation: the formatter is pure — same tenant object, different stored
+// profiles never bleed. The accessor is tenant-scoped by argument (asserted below).
+assert.equal(identity({ propertyName: "נכס א" }), "נכס א");
+assert.equal(identity({ propertyName: "נכס ב" }), "נכס ב", "no state retained between calls");
+
+// ============================================================
+// wiring — the sidebar reuses the canonical accessor, nothing else
+// ============================================================
+const src = (f) => readFileSync(f, "utf8");
+const sidebar = src("src/components/layout/Sidebar.tsx");
+const layout = src("src/app/(dashboard)/layout.tsx");
+const store = src("src/lib/business/store.ts");
+const section = src("src/app/(dashboard)/settings/BusinessProfileSection.tsx");
+
+assert.ok(!sidebar.includes("actor.tenantName"), "sidebar no longer renders tenants.name");
+assert.ok(!/מגדל הים|חיפה/.test(sidebar), "identity is not hardcoded in the sidebar");
+assert.ok(sidebar.includes("propertyIdentity"), "sidebar renders the server-formatted identity");
+assert.ok(/actor\.fullName \?\? actor\.username/.test(sidebar), "line 1 is still the authenticated user name");
+
+assert.ok(layout.includes("getBusinessProfile(actor.tenantId)"), "layout reads the canonical accessor, tenant-scoped");
+assert.ok(layout.includes("formatPropertyIdentity"), "layout uses the shared formatter");
+assert.ok(!/getBusinessProfile\((?!actor\.tenantId)/.test(layout), "no unscoped profile read");
+
+assert.ok(/SELECT[\s\S]*WHERE id = \$\{tenantId\}/.test(store), "accessor filters by the tenant id it is given");
+assert.ok(!/^(const|let|var)\s+\w+\s*(:|=)\s*(new Map|\{\})/m.test(store), "no module-level profile cache (no cross-tenant bleed)");
+
+assert.ok(section.includes("router.refresh()"), "save refreshes the router so the layout re-renders");
+assert.ok(/async function reload\(\)[\s\S]{0,400}router\.refresh\(\)/.test(section), "refresh happens on every save path (identity/logo/location funnel through reload)");
 
 console.log("check-business-profile: all assertions passed ✓");

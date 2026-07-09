@@ -153,6 +153,24 @@ export function resolveBusinessProfile(
   };
 }
 
+// ---- account-card identity line ----
+// The one formatter for the dashboard sidebar's second line. Reads the CANONICAL
+// property/business identity only: never tenants.name (an internal label), never
+// the application name, never the Channex external title (which carries a
+// " (Staging)" suffix). Property beats business; city is appended with a plain
+// hyphen and only when present, so an absent city never leaves a dangling " - ".
+const IDENTITY_SEPARATOR = " - ";
+export const IDENTITY_NOT_SET = "פרופיל העסק לא הוגדר";
+
+export function formatPropertyIdentity(
+  p: Pick<BusinessProfile, "propertyName" | "businessName" | "city">,
+): string {
+  const name = cleanStr(p.propertyName) ?? cleanStr(p.businessName);
+  if (!name) return IDENTITY_NOT_SET;
+  const city = cleanStr(p.city);
+  return city ? `${name}${IDENTITY_SEPARATOR}${city}` : name;
+}
+
 // ---- completion vs channel readiness (§10) ----
 export type ProfileCheckItem = { key: string; label: string; present: boolean };
 export type BusinessProfileStatus = {

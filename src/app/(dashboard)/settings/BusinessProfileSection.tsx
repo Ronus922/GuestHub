@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { CardTitle, Field } from "@/components/reservations/BookingPanel";
@@ -63,9 +64,15 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
   const [uploading, setUploading] = useState(false);
   const [saving, startSave] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
 
   const dirty = JSON.stringify(form) !== JSON.stringify(toForm(ctx));
 
+  // Every save path (identity, logo, location) funnels through here. The action's
+  // revalidatePath("/settings") only covers the page — the dashboard LAYOUT, which
+  // renders the sidebar account card, is above it and is not re-rendered by a
+  // Server Action. router.refresh() refetches the whole tree, so the sidebar picks
+  // up the new property identity with no logout, hard refresh or redeploy.
   async function reload() {
     const res = await getBusinessProfileContextAction();
     if (res.success && res.data) {
@@ -73,6 +80,7 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
       setForm(toForm(res.data));
       setLogo(res.data.profile.logo);
     }
+    router.refresh();
   }
 
   function set<K extends keyof IdentityForm>(k: K, v: string) {
