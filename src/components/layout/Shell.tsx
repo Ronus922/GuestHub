@@ -22,10 +22,12 @@ export type NewReservationConfig = {
 
 export function Shell({
   actor,
+  propertyIdentity,
   newReservation,
   children,
 }: {
   actor: ActorContext;
+  propertyIdentity: string;
   newReservation: NewReservationConfig;
   children: React.ReactNode;
 }) {
@@ -37,7 +39,7 @@ export function Shell({
         <NewReservationProvider {...newReservation}>
           <div className="flex h-screen overflow-hidden bg-appbg">
             {/* Sidebar — צד ימין ב-RTL (הילד הראשון) */}
-            <Sidebar collapsed={collapsed} />
+            <Sidebar collapsed={collapsed} propertyIdentity={propertyIdentity} />
 
             <div className="flex min-w-0 flex-1 flex-col">
               <TopBar onToggleSidebar={() => setCollapsed((v) => !v)} />

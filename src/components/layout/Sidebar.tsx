@@ -8,7 +8,16 @@ import { useActor, usePermission } from "@/components/providers/TenantProvider";
 import { useNewReservation } from "@/components/reservations/NewReservationProvider";
 import { logoutAction } from "@/lib/auth/actions";
 
-export function Sidebar({ collapsed }: { collapsed: boolean }) {
+// `propertyIdentity` is the canonical Business Profile identity line, formatted
+// on the server (formatPropertyIdentity). The account card shows WHO is logged in
+// on line 1 and WHICH property this is on line 2 — the two are separate.
+export function Sidebar({
+  collapsed,
+  propertyIdentity,
+}: {
+  collapsed: boolean;
+  propertyIdentity: string;
+}) {
   const actor = useActor();
   const { openNewReservation, canCreate } = useNewReservation();
   const initial = (actor.fullName ?? actor.username).trim().charAt(0) || "G";
@@ -87,7 +96,9 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                 <p className="truncate text-sm font-bold text-ink">
                   {actor.fullName ?? actor.username}
                 </p>
-                <p className="truncate text-xs text-faint">{actor.tenantName}</p>
+                <p className="truncate text-xs text-faint" title={propertyIdentity}>
+                  {propertyIdentity}
+                </p>
               </div>
               <Icon name="chevron" size={16} className="shrink-0 text-faint" />
             </>
