@@ -36,7 +36,8 @@
     "check:business-profile": "node scripts/check-business-profile.mjs",
     "check:maps-picker": "node scripts/check-maps-picker.mjs",
     "check-e2e-safety": "node scripts/check-e2e-safety.mjs",
-    "guard:deploy": "node scripts/production-deploy-guard.mjs"
+    "guard:deploy": "node scripts/production-deploy-guard.mjs",
+    "check:channex-room-types": "node scripts/check-channex-room-types.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

@@ -287,7 +287,11 @@ export type BusinessProfileInput = Partial<
     | "propertyType"
     | "email"
     | "phone"
-    | "website",
+    | "website"
+    // canonical postal code (§location). Editable because Google Places does not
+    // always return a postal_code, and sometimes returns a partial one. Channex
+    // reads zip_code from THIS field only — there is no Channex-only postal code.
+    | "postalCode",
     string | null
   >
 >;
@@ -333,6 +337,9 @@ export function validateBusinessProfileInput(input: BusinessProfileInput): Valid
   set("slogan", field(input.slogan, MAX.slogan));
   set("propertyName", field(input.propertyName, MAX.propertyName));
   set("propertySubtitle", field(input.propertySubtitle, MAX.propertySubtitle));
+  // trimmed text, capped. Deliberately NOT numeric-only: postal codes carry
+  // letters in the UK, Canada, the Netherlands and elsewhere.
+  set("postalCode", field(input.postalCode, MAX.postalCode));
 
   if (input.propertyType !== undefined) {
     const pt = (input.propertyType ?? "").trim();

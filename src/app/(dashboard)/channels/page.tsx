@@ -7,9 +7,11 @@ import {
   getChannexConnectionAction,
   getChannexPropertyContextAction,
 } from "@/lib/channel/admin";
+import { getChannexRoomSyncContextAction } from "@/lib/channel/room-type-admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
+import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
 
 export const dynamic = "force-dynamic";
 
@@ -43,8 +45,10 @@ type CountsRow = {
   failed_jobs: number;
   dead_letter_jobs: number;
   dirty_ranges: number;
-  room_types: number;
-  mapped_room_types: number;
+  room_categories: number;
+  active_rooms: number;
+  mapped_rooms: number;
+  channex_room_types: number;
   quarantined_revisions: number;
 };
 
@@ -108,10 +112,13 @@ export default async function ChannelsPage() {
   // admin does NOT qualify). UI hiding is not security: this is the real boundary.
   if (!canManageChannels({ userId: actor.userId, roleKey: actor.roleKey }).ok) redirect("/dashboard");
 
-  const [res, channex, channexProperty] = await Promise.all([
+  // Every one of these is a DB read. Loading /channels performs no Channex call
+  // and creates nothing upstream.
+  const [res, channex, channexProperty, roomSync] = await Promise.all([
     getChannelStatusAction(),
     getChannexConnectionAction(),
     getChannexPropertyContextAction(),
+    getChannexRoomSyncContextAction(),
   ]);
 
   return (
@@ -134,8 +141,8 @@ export default async function ChannelsPage() {
           <Link href="/rates" className="font-bold text-primary hover:underline">
             /rates
           </Link>
-          . חיבור Channex (Staging) ובדיקתו זמינים בכרטיס למטה; פעולות מיפוי, סנכרון והתאמה
-          יופעלו בשלב הבא (Phase 4B).
+          . חיבור Channex (Staging), מיפוי הנכס וסנכרון החדרים הפיזיים זמינים בכרטיסים למטה;
+          סנכרון זמינות ותעריפים (ARI) יופעל בשלב הבא.
         </div>
       </div>
 
@@ -144,6 +151,9 @@ export default async function ChannelsPage() {
 
       {/* Channex Staging property mapping — existing tenant → one Channex property (D60) */}
       {channexProperty.success && <ChannexPropertySection initial={channexProperty.data!} />}
+
+      {/* Physical room → Channex Room Type synchronization (D64) */}
+      {roomSync.success && <ChannexRoomTypesSection initial={roomSync.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
@@ -232,22 +242,41 @@ function StatusView({ data }: { data: ChannelStatus }) {
         </div>
       </section>
 
-      {/* Mapping summary */}
+      {/* Inventory mapping summary. The three GuestHub room categories are
+          DESCRIPTIVE metadata — they are deliberately NOT presented as Channex
+          mapping progress (the old "0/3" read as if they were the inventory
+          unit). The Channex inventory unit is the individual physical room. */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-ink">מיפוי סוגי חדרים</h2>
-        <div className="flex flex-wrap items-center gap-4 rounded-2xl border border-line bg-surface p-4">
-          <div>
-            <p className="text-2xl font-extrabold text-ink">
-              {counts.mapped_room_types}
-              <span className="text-base font-bold text-faint"> / {counts.room_types}</span>
-            </p>
-            <p className="mt-1 text-xs font-medium text-muted">סוגי חדרים ממופים מתוך סך הכל</p>
+        <h2 className="text-lg font-bold text-ink">מיפוי מלאי ל-Channex</h2>
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <p className="text-2xl font-extrabold text-ink">{counts.room_categories}</p>
+            <p className="mt-1 text-xs font-medium text-muted">קטגוריות חדרים ב-GuestHub</p>
+            <p className="text-[10px] font-medium text-faint">תיאוריות בלבד — אינן יחידת המלאי</p>
           </div>
-          {counts.room_types > counts.mapped_room_types && (
-            <span className="rounded-full bg-status-warning-050 px-2.5 py-0.5 text-xs font-bold text-status-warning">
-              {counts.room_types - counts.mapped_room_types} ללא מיפוי
-            </span>
-          )}
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <p className="text-2xl font-extrabold text-ink">{counts.active_rooms}</p>
+            <p className="mt-1 text-xs font-medium text-muted">חדרים פיזיים לסנכרון</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
+            <div>
+              <p className="text-2xl font-extrabold text-ink">
+                {counts.mapped_rooms}
+                <span className="text-base font-bold text-faint"> / {counts.active_rooms}</span>
+              </p>
+              <p className="mt-1 text-xs font-medium text-muted">חדרים פיזיים ממופים</p>
+            </div>
+            {counts.active_rooms > counts.mapped_rooms && (
+              <span className="rounded-full bg-status-warning-050 px-2.5 py-0.5 text-xs font-bold text-status-warning">
+                {counts.active_rooms - counts.mapped_rooms} ללא מיפוי
+              </span>
+            )}
+          </div>
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <p className="text-2xl font-extrabold text-ink">{counts.channex_room_types}</p>
+            <p className="mt-1 text-xs font-medium text-muted">סוגי חדרים ב-Channex</p>
+            <p className="text-[10px] font-medium text-faint">יחידה פיזית אחת לכל סוג חדר</p>
+          </div>
         </div>
       </section>
 
@@ -291,7 +320,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-bold text-ink">פעולות ניהול</h2>
         <div className="flex flex-wrap gap-2">
-          {["מיפוי סוגי חדרים", "סנכרון מלא", "התאמה מחדש (reconcile)"].map((label) => (
+          {["סנכרון מלא", "התאמה מחדש (reconcile)"].map((label) => (
             <button
               key={label}
               type="button"
