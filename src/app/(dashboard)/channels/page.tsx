@@ -8,10 +8,12 @@ import {
   getChannexPropertyContextAction,
 } from "@/lib/channel/admin";
 import { getChannexRoomSyncContextAction } from "@/lib/channel/room-type-admin";
+import { getChannexRatePlanSyncContextAction } from "@/lib/channel/rate-plan-admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
 import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
+import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
 
 export const dynamic = "force-dynamic";
 
@@ -114,11 +116,12 @@ export default async function ChannelsPage() {
 
   // Every one of these is a DB read. Loading /channels performs no Channex call
   // and creates nothing upstream.
-  const [res, channex, channexProperty, roomSync] = await Promise.all([
+  const [res, channex, channexProperty, roomSync, ratePlanSync] = await Promise.all([
     getChannelStatusAction(),
     getChannexConnectionAction(),
     getChannexPropertyContextAction(),
     getChannexRoomSyncContextAction(),
+    getChannexRatePlanSyncContextAction(),
   ]);
 
   return (
@@ -154,6 +157,9 @@ export default async function ChannelsPage() {
 
       {/* Physical room → Channex Room Type synchronization (D64) */}
       {roomSync.success && <ChannexRoomTypesSection initial={roomSync.data!} />}
+
+      {/* (Local Rate Plan × mapped room) → Channex Rate Plan synchronization (D65) */}
+      {ratePlanSync.success && <ChannexRatePlansSection initial={ratePlanSync.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">

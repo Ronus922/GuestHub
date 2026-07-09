@@ -17,7 +17,9 @@ export type ChannelJobType =
   | "reconcile_inventory" | "retry_failed_range"
   // D64 — physical room → Channex Room Type sync: one parent operation plus one
   // deduplicated durable item per physical room (db/migrations/024).
-  | "sync_room_types" | "create_room_type";
+  | "sync_room_types" | "create_room_type"
+  // D65 — (room × local rate plan) → Channex Rate Plan sync (db/migrations/025).
+  | "sync_rate_plans" | "create_rate_plan";
 
 export async function enqueueChannelJob(
   db: Sql | TransactionSql,
