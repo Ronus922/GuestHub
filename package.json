@@ -51,6 +51,7 @@
     "check:channels-hydration": "node scripts/check-channels-hydration.mjs",
     "check:channels-fullsync-ui": "node scripts/check-channels-fullsync-ui.mjs",
     "check:rates-sync": "node scripts/check-rates-sync.mjs",
+    "check:realtime": "node scripts/check-realtime-cancellation.mjs",
     "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs"
   },
   "dependencies": {

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import {
   getInboundStatusAction,
   requestInboundPullAction,
+  reregisterWebhookAction,
   setInboundEnabledAction,
   type InboundStatusView,
 } from "@/lib/channel/inbound-admin";
@@ -62,6 +63,32 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
     });
   }
 
+  function testWebhook() {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await reregisterWebhookAction();
+      if (!res.success) {
+        setMsg({ tone: "err", text: res.error });
+      } else if (res.data) {
+        const r = res.data;
+        const parts = [
+          r.created ? "webhook חדש נרשם ב-Channex" : "webhook קיים אומת ב-Channex",
+          r.selfTestHttpStatus === 200 && r.eventRecorded && r.jobEnqueued
+            ? "בדיקה עצמית עברה: כתובת ציבורית → אימות → אירוע → משימת משיכה"
+            : (r.warning ?? "הבדיקה העצמית לא הושלמה"),
+          r.staleUpstream > 0
+            ? `${r.staleUpstream} רישומים ישנים נותרו ב-Channex — מומלץ למחוק אותם בממשק Channex`
+            : null,
+        ].filter(Boolean);
+        setMsg({
+          tone: r.warning ? "warn" : "ok",
+          text: parts.join(" · "),
+        });
+      }
+      await reload();
+    });
+  }
+
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-bold text-ink">הזמנות נכנסות מהערוצים</h2>
@@ -78,14 +105,52 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
             value={view.webhookRegistered ? "רשום" : "לא רשום — משיכה תקופתית בלבד"}
             tone={view.webhookRegistered ? "ok" : undefined}
           />
+          {view.callbackDisplay && (
+            <Row label="כתובת Callback" value={view.callbackDisplay} />
+          )}
+          <Row
+            label="אירועי Webhook שהתקבלו"
+            value={String(view.webhookEventsTotal)}
+            tone={view.webhookRegistered && view.webhookEventsTotal === 0 ? "warn" : undefined}
+          />
+          <Row
+            label="אירוע Webhook אחרון"
+            value={
+              view.display.lastWebhookAt === "—"
+                ? "—"
+                : `${view.display.lastWebhookAt} (${view.display.lastWebhookType})`
+            }
+          />
+          <Row label="רוויזיה אחרונה שנמשכה" value={view.display.lastRevisionAt} />
           <Row label="ייבוא מוצלח אחרון" value={view.display.lastImportAt} />
+          <Row label="אישור (ACK) אחרון" value={view.display.lastAckAt} />
           <Row label="משיכה אחרונה" value={view.display.lastPullAt} />
+          <Row label="שידור זמינות אחרון" value={view.display.lastDrainAt} />
           <Row
             label="משיכה ממתינה"
             value={view.pendingPull ? "כן" : "לא"}
             tone={view.pendingPull ? "warn" : undefined}
           />
+          {view.inboundLagSeconds > 0 && (
+            <Row
+              label="עיכוב ייבוא נוכחי"
+              value={`${view.inboundLagSeconds} שניות`}
+              tone={view.inboundLagSeconds > 60 ? "warn" : undefined}
+            />
+          )}
+          {view.outboundLagSeconds > 0 && (
+            <Row
+              label="עיכוב שידור זמינות"
+              value={`${view.outboundLagSeconds} שניות`}
+              tone={view.outboundLagSeconds > 300 ? "err" : "warn"}
+            />
+          )}
           <Row label="הזמנות שיובאו" value={String(view.importedTotal)} />
+          <Row
+            label="משימות בתור / בהמתנה לניסיון חוזר / כשל סופי"
+            value={`${view.jobs.pending} / ${view.jobs.retryWait} / ${view.jobs.deadLetter}`}
+            tone={view.jobs.deadLetter > 0 ? "err" : view.jobs.retryWait > 0 ? "warn" : undefined}
+          />
           {view.unacked > 0 && (
             <Row label="רוויזיות ללא אישור" value={String(view.unacked)} tone="warn" />
           )}
@@ -103,6 +168,16 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
           {view.lastError && <Row label="שגיאה אחרונה" value={view.lastError} tone="err" />}
         </div>
       </div>
+
+      {view.alerts.length > 0 && (
+        <ul className="flex flex-col gap-1 rounded-xl border border-status-warning bg-status-warning-050 p-4">
+          {view.alerts.map((a, i) => (
+            <li key={i} className="text-sm font-semibold text-ink">
+              ⚠ {a}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {msg && (
         <p
@@ -124,6 +199,15 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
           className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
           משיכת הזמנות עכשיו
+        </button>
+        <button
+          type="button"
+          onClick={testWebhook}
+          disabled={pending || !view.enabled}
+          aria-disabled={pending || !view.enabled}
+          className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          רישום ובדיקת Webhook
         </button>
         <button
           type="button"

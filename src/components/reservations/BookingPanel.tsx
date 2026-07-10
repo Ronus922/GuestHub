@@ -79,6 +79,7 @@ export function BookingPanel({
   prefill,
   bookingSources,
   paymentMethods,
+  workflowStatuses = [],
   ratePlans,
   vatRate,
   canSaveCard,
@@ -89,6 +90,8 @@ export function BookingPanel({
   prefill: BookingPrefill;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  /** tenant workflow statuses (D77 §11) — optional explicit pick on create */
+  workflowStatuses?: LookupItem[];
   ratePlans: { id: string; name: string; code: string }[];
   vatRate: number;
   canSaveCard: boolean;
@@ -109,9 +112,8 @@ export function BookingPanel({
   // card values are sent ONLY to the dedicated guarded save action after
   // the reservation is created, then cleared (see CardFields security note)
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
-  // card section is always available; expanded eagerly when the operator picks
-  // credit-card as the method, or manually via the "הוסף כרטיס אשראי" button
-  const [showCard, setShowCard] = useState(false);
+  // workflow status (D77 §11) — "" = tenant default, applied server-side
+  const [workflowStatusId, setWorkflowStatusId] = useState("");
   const paidRef = useRef<HTMLInputElement | null>(null);
   const [saving, startSaving] = useTransition();
   // dirty-state protection: snapshot of the form right after open
@@ -150,7 +152,7 @@ export function BookingPanel({
     setNotes("");
     setAsDraft(false);
     setCc(EMPTY_CARD);
-    setShowCard(false);
+    setWorkflowStatusId("");
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
@@ -257,6 +259,7 @@ export function BookingPanel({
         discountAmount: discount || undefined,
         paidAmount: paid || undefined,
         paymentMethod: method || undefined,
+        workflowStatusId: workflowStatusId || undefined,
       });
       if (!res.success) {
         toast.error(res.error);
@@ -716,7 +719,8 @@ export function BookingPanel({
                       value={method}
                       onChange={(e) => {
                         setMethod(e.target.value);
-                        if (e.target.value === "credit_card") setShowCard(true);
+                        // §15 — leaving credit-card destroys any unsaved card draft
+                        if (e.target.value !== "credit_card") setCc(EMPTY_CARD);
                       }}
                     >
                       <option value="">בחירה…</option>
@@ -749,17 +753,16 @@ export function BookingPanel({
                     />
                   </Field>
                 </div>
-                {/* manual card entry — always available on any booking (D46),
-                    not tied to the chosen payment method or source */}
+                {/* manual card entry (D77 §15) — the area is always visible but
+                    activates (white/enabled/focusable) ONLY when the selected
+                    payment method is credit card; otherwise grey + disabled */}
                 {canSaveCard ? (
-                  showCard ? (
-                    <CardFields value={cc} onChange={setCc} chargeAmount={Math.max(0, total - paid)} />
-                  ) : (
-                    <button type="button" className="bw-addroom mt-4" onClick={() => setShowCard(true)}>
-                      <Icon name="credit-card" size={16} />
-                      הוסף כרטיס אשראי
-                    </button>
-                  )
+                  <CardFields
+                    value={cc}
+                    onChange={setCc}
+                    chargeAmount={Math.max(0, total - paid)}
+                    disabled={method !== "credit_card"}
+                  />
                 ) : (
                   <p className="bw-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
                 )}
@@ -778,6 +781,23 @@ export function BookingPanel({
                 <Field label="מקור הזמנה">
                   <div className="bw-fld flex items-center font-bold">{sourceLabel ?? "—"}</div>
                 </Field>
+                {workflowStatuses.length > 0 && (
+                  <Field label="סטטוס טיפול">
+                    {/* "" = the tenant's default status, applied server-side (§11) */}
+                    <select
+                      className="bw-fld"
+                      value={workflowStatusId}
+                      onChange={(e) => setWorkflowStatusId(e.target.value)}
+                    >
+                      <option value="">ברירת מחדל</option>
+                      {workflowStatuses.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
               </div>
               <div className="mt-4 flex flex-col gap-2.5">
                 {stays.map((s, i) => {

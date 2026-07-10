@@ -62,6 +62,7 @@ export function CalendarScreen({
   statusItems,
   paymentMethods,
   bookingSources,
+  workflowStatuses = [],
   ratePlans,
   can,
   vatRate,
@@ -71,6 +72,7 @@ export function CalendarScreen({
   statusItems: LookupItem[];
   paymentMethods: LookupItem[];
   bookingSources: LookupItem[];
+  workflowStatuses?: LookupItem[];
   ratePlans: { id: string; name: string; code: string }[];
   can: CalendarCan;
   vatRate: number;
@@ -226,6 +228,7 @@ export function CalendarScreen({
         paymentMethods={paymentMethods}
         ratePlans={ratePlans}
         statusItems={statusItems}
+        workflowStatuses={workflowStatuses}
         canEdit={can.edit}
         canCancel={can.cancel}
         vatRate={vatRate}

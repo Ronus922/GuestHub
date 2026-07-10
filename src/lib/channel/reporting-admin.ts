@@ -6,6 +6,7 @@ import { getActor, requirePermission, AuthorizationError, type Actor } from "@/l
 import { writeAudit } from "@/lib/audit";
 import { markAriDirty } from "./outbox";
 import { enqueueChannelJob } from "./queue";
+import { publishDomainEvent } from "@/lib/realtime/publish";
 import { decryptSecret } from "./crypto";
 import { CHANNEX_BASE_URLS } from "./config";
 import { otaSourceKey } from "./booking-normalize";
@@ -228,8 +229,13 @@ export async function reportInvalidCardAction(input: {
         action: "ota_invalid_card_report",
         after: { ota_reservation_code: res.ota_reservation_code, workflow_changed: workflowChanged },
       }, tx);
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.workflow_status_changed",
+        reservationId: res.id,
+      });
     });
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true, data: { workflowChanged } };
   } catch (e) {
     return failFrom(e);
@@ -276,8 +282,16 @@ export async function cancelDueInvalidCardAction(input: {
         priority: 40,
         idempotencyKey: `inbound_pull:${res.channel_connection_id}`,
       });
+      // the honest pending-external state is derived from the stamp — panels
+      // refresh on this signal, nothing is cancelled locally yet
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.modified",
+        reservationId: res.id,
+        lifecycle: res.status,
+      });
     });
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true };
   } catch (e) {
     return failFrom(e);
@@ -324,8 +338,24 @@ export async function reportNoShowAction(input: {
         before: { status: res.status },
         after: { status: "no_show", waived_fees: input.waivedFees },
       }, tx);
+      const roomIds = rooms.map((r) => r.room_id).filter((x): x is string => !!x);
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.no_show",
+        reservationId: res.id,
+        roomIds,
+        dateFrom: res.check_in,
+        dateTo: res.check_out,
+        lifecycle: "no_show",
+      });
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "inventory.changed",
+        roomIds,
+        dateFrom: res.check_in,
+        dateTo: res.check_out,
+      });
     });
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true };
   } catch (e) {
     return failFrom(e);

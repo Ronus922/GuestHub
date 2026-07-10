@@ -6,6 +6,7 @@ import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/acto
 import { writeAudit } from "@/lib/audit";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { publishDomainEvent } from "@/lib/realtime/publish";
 import { closureSchema } from "@/lib/validation/reservation";
 import type { ActionResult } from "./types";
 
@@ -68,6 +69,12 @@ export async function createClosureAction(raw: {
         dateFrom: input.startDate,
         dateTo: input.endDate,
       });
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "inventory.changed",
+        roomIds: [input.roomId],
+        dateFrom: input.startDate,
+        dateTo: input.endDate,
+      });
     });
 
     revalidatePath("/calendar");
@@ -103,6 +110,12 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
       // lifting a closure returns those nights to sale → availability dirty
       await markAriDirty(tx, {
         tenantId: actor.tenantId,
+        roomIds: [closure.room_id],
+        dateFrom: closure.start_date,
+        dateTo: closure.end_date,
+      });
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "inventory.changed",
         roomIds: [closure.room_id],
         dateFrom: closure.start_date,
         dateTo: closure.end_date,

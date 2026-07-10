@@ -42,7 +42,8 @@ export default async function CalendarPage({
   >`
     SELECT id, category, key, label, color FROM guesthub.lookup_items
     WHERE tenant_id = ${actor.tenantId}
-      AND category IN ('reservation_statuses', 'payment_methods', 'booking_sources')
+      AND category IN ('reservation_statuses', 'payment_methods', 'booking_sources',
+                       'workflow_statuses')
       AND is_active
     ORDER BY category, sort_order`;
 
@@ -53,6 +54,7 @@ export default async function CalendarPage({
       statusItems={lookups.filter((l) => l.category === "reservation_statuses")}
       paymentMethods={lookups.filter((l) => l.category === "payment_methods")}
       bookingSources={lookups.filter((l) => l.category === "booking_sources")}
+      workflowStatuses={lookups.filter((l) => l.category === "workflow_statuses")}
       ratePlans={ratePlans}
       can={{
         create: hasPermission(actor, "reservations.create"),

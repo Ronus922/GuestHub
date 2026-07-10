@@ -82,12 +82,18 @@ export function CardFields({
   value,
   onChange,
   chargeAmount,
+  disabled = false,
 }: {
   value: CardDraft;
   // functional updater (owners pass setCc): each field patches the PREVIOUS
   // draft, never a captured snapshot, so keystrokes can never clobber each other
   onChange: (updater: (prev: CardDraft) => CardDraft) => void;
   chargeAmount: number;
+  /** D77 §15 — card entry activates ONLY when the selected payment method is
+   *  credit card; otherwise the whole area is grey, disabled, unfocusable.
+   *  The OWNER also clears the draft on deactivation (unsaved sensitive state
+   *  must not survive a method switch). */
+  disabled?: boolean;
 }) {
   const digits = normalizePan(value.number);
   const numberBad = digits.length > 0 && !panValid(digits);
@@ -97,11 +103,17 @@ export function CardFields({
   const idBad = value.idNum.length > 0 && !/^\d{5,9}$/.test(value.idNum);
 
   return (
-    <div className="bw-ccbox">
+    <div className={`bw-ccbox ${disabled ? "bw-ccbox-off" : ""}`}>
       <div className="bw-cc-top">
         <Icon name="credit-card" size={19} />
         פרטי כרטיס אשראי
       </div>
+      {disabled && (
+        <p className="mb-3 text-xs font-bold text-muted">
+          בחרו אמצעי תשלום ״כרטיס אשראי״ כדי להפעיל את הזנת פרטי הכרטיס
+        </p>
+      )}
+      <fieldset disabled={disabled} className="m-0 min-w-0 border-0 p-0">
       <div className="bw-grid2">
         <label className="bw-fg">
           <span className="bw-lbl">
@@ -206,6 +218,7 @@ export function CardFields({
           הכרטיס נשמר מוצפן · לא מתבצע חיוב
         </span>
       </div>
+      </fieldset>
     </div>
   );
 }

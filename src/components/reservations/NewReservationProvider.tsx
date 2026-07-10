@@ -40,6 +40,7 @@ export function NewReservationProvider({
   children,
   bookingSources,
   paymentMethods,
+  workflowStatuses,
   ratePlans,
   vatRate,
   canSaveCard,
@@ -49,6 +50,7 @@ export function NewReservationProvider({
   children: React.ReactNode;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  workflowStatuses: LookupItem[];
   ratePlans: { id: string; name: string; code: string }[];
   vatRate: number;
   canSaveCard: boolean;
@@ -74,6 +76,7 @@ export function NewReservationProvider({
         prefill={prefill ?? {}}
         bookingSources={bookingSources}
         paymentMethods={paymentMethods}
+        workflowStatuses={workflowStatuses}
         ratePlans={ratePlans}
         vatRate={vatRate}
         canSaveCard={canSaveCard}

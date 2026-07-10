@@ -251,6 +251,36 @@ export async function createStripePaymentMethod(
   return { ok: true, reference };
 }
 
+// List the property's registered webhooks — read-only diagnostics (D77 §23).
+export type ChannexWebhookRow = { id: string; callbackUrl: string | null; isActive: boolean };
+
+export async function listChannexWebhooks(
+  opts: ReqOpts,
+  propertyId: string,
+): Promise<{ ok: true; webhooks: ChannexWebhookRow[] } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "GET",
+    path: `/webhooks?filter[property_id]=${encodeURIComponent(propertyId)}&pagination[limit]=100`,
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200) return fail(mapErrorStatus(res.status), res.status);
+  const rows = asObj(res.body)?.data;
+  if (!Array.isArray(rows)) return fail("bad_response", res.status);
+  const webhooks: ChannexWebhookRow[] = [];
+  for (const row of rows) {
+    const o = asObj(row);
+    if (!o) continue;
+    const attrs = asObj(o.attributes);
+    webhooks.push({
+      id: asStr(o.id) ?? "",
+      callbackUrl: attrs ? asStr(attrs.callback_url) : null,
+      isActive: attrs?.is_active === true,
+    });
+  }
+  return { ok: true, webhooks };
+}
+
 // ---- webhook registration (wake-up signal only) ----
 // Ensures ONE active Channex webhook points at our per-connection callback URL.
 // Idempotent: an existing webhook with the same callback is adopted, not

@@ -9,6 +9,7 @@ import {
   type AriConnection,
 } from "./ari-sync";
 import { loadInboundConnections, runInboundPull } from "./booking-import";
+import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 
 // ============================================================
 // The GuestHub channel worker (D68) — a long-running PM2 process
@@ -214,8 +215,9 @@ export async function runTick(workerId: string, log: (m: string) => void): Promi
   return summary;
 }
 
-/** Interruptible sleep — SIGTERM does not wait out the poll interval. */
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+/** Interruptible sleep — SIGTERM (or a queue wake) does not wait out the poll
+ *  interval. `arm` hands the caller a wake function bound to THIS sleep. */
+function sleep(ms: number, signal: AbortSignal, arm?: (wake: () => void) => void): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve();
     const t = setTimeout(done, ms);
@@ -225,6 +227,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     }
     signal.addEventListener("abort", done, { once: true });
+    arm?.(done);
   });
 }
 
@@ -233,7 +236,27 @@ export async function runChannelWorker(opts: WorkerOptions): Promise<void> {
   const log = opts.log ?? (() => {});
   log(`channel worker ${opts.workerId} started (interval ${intervalMs}ms)`);
 
+  // Immediate wake (D77 §4): every durable enqueue NOTIFYs on commit; this
+  // dedicated LISTEN connection (postgres.js — outside the pool, auto-
+  // reconnect + re-subscribe) interrupts the sleep so a webhook-enqueued job
+  // is claimed within ~a tick's overhead, not the poll interval. The interval
+  // poll below KEEPS running as the missed-NOTIFY watchdog; a failed LISTEN
+  // degrades to poll-only — never a dead worker.
+  let wakeFlag = false;
+  let wakeSleep: (() => void) | null = null;
+  const onWake = () => {
+    wakeFlag = true;
+    wakeSleep?.();
+  };
+  try {
+    await sql.listen(JOBS_WAKE_CHANNEL, onWake);
+    log(`listening on ${JOBS_WAKE_CHANNEL} — instant wake enabled`);
+  } catch (e) {
+    log(`wake listener unavailable (${e instanceof Error ? e.message : "error"}) — poll-only mode`);
+  }
+
   while (!opts.signal.aborted) {
+    wakeFlag = false;
     let lastError: string | null = null;
     let summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
     try {
@@ -248,8 +271,14 @@ export async function runChannelWorker(opts: WorkerOptions): Promise<void> {
       // a heartbeat failure must never kill the worker
     }
     if (opts.signal.aborted) break;
-    // idle: sleep the full interval — never a busy loop, never a tight poll
-    await sleep(intervalMs, opts.signal);
+    // a wake that landed DURING the tick means runnable work already exists —
+    // re-tick immediately; otherwise sleep until interval / abort / wake.
+    if (!wakeFlag) {
+      await sleep(intervalMs, opts.signal, (wake) => {
+        wakeSleep = wake;
+      });
+      wakeSleep = null;
+    }
   }
   log(`channel worker ${opts.workerId} stopped`);
 }

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Toaster } from "sonner";
 import { TenantProvider } from "@/components/providers/TenantProvider";
+import { RealtimeProvider } from "@/components/providers/RealtimeProvider";
 import { NewReservationProvider } from "@/components/reservations/NewReservationProvider";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type { ActorContext } from "@/lib/auth/actor";
@@ -13,6 +14,7 @@ import { TopBar } from "./TopBar";
 export type NewReservationConfig = {
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
+  workflowStatuses: LookupItem[];
   ratePlans: { id: string; name: string; code: string }[];
   vatRate: number;
   canSaveCard: boolean;
@@ -36,6 +38,7 @@ export function Shell({
   return (
     <TenantProvider actor={actor}>
       <NuqsAdapter>
+        <RealtimeProvider>
         <NewReservationProvider {...newReservation}>
           <div className="flex h-screen overflow-hidden bg-appbg">
             {/* Sidebar — צד ימין ב-RTL (הילד הראשון) */}
@@ -47,6 +50,7 @@ export function Shell({
             </div>
           </div>
         </NewReservationProvider>
+        </RealtimeProvider>
         <Toaster
           position="bottom-center"
           richColors

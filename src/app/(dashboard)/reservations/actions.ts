@@ -28,6 +28,7 @@ import { calculateReservationPrice } from "@/lib/pricing/engine";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { loadCollectionView, type CollectionView } from "@/lib/payments/collection";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { publishDomainEvent } from "@/lib/realtime/publish";
 import {
   createReservationSchema,
   updateReservationSchema,
@@ -219,7 +220,18 @@ export async function createReservationAction(
       const total = reservationTotal(agg.roomsTotal, discount, 0);
       const paid = input.paidAmount ?? 0;
 
-      const workflowStatusId = await defaultWorkflowStatusId(tx, actor.tenantId);
+      // explicit workflow choice (validated: this tenant, active) or default
+      let workflowStatusId: string | null = null;
+      if (input.workflowStatusId) {
+        const [wf] = await tx<{ id: string }[]>`
+          SELECT id FROM guesthub.lookup_items
+          WHERE id = ${input.workflowStatusId} AND tenant_id = ${actor.tenantId}
+            AND category = 'workflow_statuses' AND is_active`;
+        if (!wf) throw new DomainError("סטטוס הטיפול שנבחר אינו זמין");
+        workflowStatusId = wf.id;
+      } else {
+        workflowStatusId = await defaultWorkflowStatusId(tx, actor.tenantId);
+      }
       const [res] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.reservations
           (tenant_id, reservation_number, primary_guest_id, source_id, status,
@@ -275,10 +287,27 @@ export async function createReservationAction(
           dateTo: agg.checkOut,
         });
       }
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.created",
+        reservationId: res.id,
+        roomIds: priced.map((s) => s.roomId),
+        dateFrom: agg.checkIn,
+        dateTo: agg.checkOut,
+        lifecycle: input.status,
+      });
+      if (isBlocking(input.status)) {
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds: priced.map((s) => s.roomId),
+          dateFrom: agg.checkIn,
+          dateTo: agg.checkOut,
+        });
+      }
       return { reservationId: res.id, reservationNumber: number };
     });
 
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true, data: result };
   } catch (e) {
     return fail(errorMessage(e));
@@ -509,20 +538,57 @@ export async function updateReservationAction(
       // must be re-published as available, not just the newly-taken ones. The
       // span covers both sides (a superset is always safe — the projection
       // recomputes canonical state for every date it covers).
+      const eventRoomIds = [
+        ...oldRows.map((r) => r.room_id),
+        ...priced.map((s) => s.roomId),
+      ];
+      const eventDates = [
+        existing.check_in, existing.check_out, agg.checkIn, agg.checkOut,
+      ].sort();
       if (wasBlocking || nowBlocking) {
-        const dates = [
-          existing.check_in, existing.check_out, agg.checkIn, agg.checkOut,
-        ].sort();
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomIds: [...oldRows.map((r) => r.room_id), ...priced.map((s) => s.roomId)],
-          dateFrom: dates[0],
-          dateTo: dates[dates.length - 1],
+          roomIds: eventRoomIds,
+          dateFrom: eventDates[0],
+          dateTo: eventDates[eventDates.length - 1],
+        });
+      }
+
+      // lifecycle-aware event: a check-in/out/no-show save is its own signal
+      const lifecycleEvent =
+        input.status !== existing.status && input.status === "checked_in"
+          ? "reservation.checked_in"
+          : input.status !== existing.status && input.status === "checked_out"
+            ? "reservation.checked_out"
+            : input.status !== existing.status && input.status === "no_show"
+              ? "reservation.no_show"
+              : "reservation.modified";
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: lifecycleEvent,
+        reservationId: input.id,
+        roomIds: eventRoomIds,
+        dateFrom: eventDates[0],
+        dateTo: eventDates[eventDates.length - 1],
+        lifecycle: input.status,
+      });
+      if (addPay > 0) {
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "reservation.payment_changed",
+          reservationId: input.id,
+        });
+      }
+      if (wasBlocking || nowBlocking) {
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds: eventRoomIds,
+          dateFrom: eventDates[0],
+          dateTo: eventDates[eventDates.length - 1],
         });
       }
     });
 
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true };
   } catch (e) {
     return fail(errorMessage(e));
@@ -539,6 +605,7 @@ export async function cancelReservationAction(
   try {
     const actor = await getActor();
     requirePermission(actor, "reservations.cancel");
+    const reason = opts?.reason?.trim() || null;
     await sql.begin(async (tx) => {
       const [res] = await tx<
         { id: string; status: string; check_in: string; check_out: string;
@@ -550,7 +617,7 @@ export async function cancelReservationAction(
       if (!res) throw new DomainError("הזמנה לא נמצאה");
       if (res.status === "cancelled") return;
 
-      // D77 §H — an ACTIVE OTA reservation is never cancelled locally: that
+      // D77 §9 — an ACTIVE OTA reservation is never cancelled locally: that
       // would release inventory while the booking stays live on the channel.
       // The provider-aware dialog offers the supported reporting actions; the
       // canonical local cancellation happens when the real cancelled revision
@@ -560,32 +627,58 @@ export async function cancelReservationAction(
           "הזמנת ערוץ פעילה — לא ניתן לבטל מקומית. יש לבטל ב-Booking.com ולהמתין לעדכון האוטומטי.",
         );
       }
+      // a required reason keeps the cancellation history meaningful (§7/§9)
+      if (!reason) throw new DomainError("נדרשת סיבת ביטול");
 
+      // cancel-never-delete: the row keeps rooms/price/payments/identity;
+      // who/when/why is recorded ON the row (031), full trail in audit
       await tx`
-        UPDATE guesthub.reservations SET status = 'cancelled'
+        UPDATE guesthub.reservations SET
+          status = 'cancelled',
+          cancelled_at = now(),
+          cancelled_by_type = 'operator',
+          cancelled_by_user_id = ${actor.userId},
+          cancellation_origin = 'operator_direct_booking',
+          cancellation_reason = ${reason}
         WHERE id = ${id} AND tenant_id = ${actor.tenantId}`;
       await writeAudit(actor, {
         entityType: "reservation",
         entityId: id,
         action: "cancel",
         before: { status: res.status },
-        after: { status: "cancelled", reason: opts?.reason ?? null },
+        after: { status: "cancelled", reason },
       }, tx);
 
       // the cancelled stay releases its nights → republish those rooms/dates
+      const rooms = await tx<{ room_id: string | null }[]>`
+        SELECT rr.room_id FROM guesthub.reservation_rooms rr
+        WHERE rr.reservation_id = ${id} AND rr.tenant_id = ${actor.tenantId}`;
+      const roomIds = rooms.map((r) => r.room_id).filter((x): x is string => !!x);
       if (isBlocking(res.status)) {
-        const rooms = await tx<{ room_id: string | null }[]>`
-          SELECT rr.room_id FROM guesthub.reservation_rooms rr
-          WHERE rr.reservation_id = ${id} AND rr.tenant_id = ${actor.tenantId}`;
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomIds: rooms.map((r) => r.room_id),
+          roomIds,
+          dateFrom: res.check_in,
+          dateTo: res.check_out,
+        });
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds,
           dateFrom: res.check_in,
           dateTo: res.check_out,
         });
       }
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.cancelled",
+        reservationId: id,
+        roomIds,
+        dateFrom: res.check_in,
+        dateTo: res.check_out,
+        lifecycle: "cancelled",
+      });
     });
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true };
   } catch (e) {
     return fail(errorMessage(e));
@@ -627,8 +720,13 @@ export async function setWorkflowStatusAction(input: {
         before: { workflow_status_id: res.workflow_status_id },
         after: { workflow_status_id: input.workflowStatusId },
       }, tx);
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.workflow_status_changed",
+        reservationId: input.reservationId,
+      });
     });
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true, data: { workflowStatusId: input.workflowStatusId } };
   } catch (e) {
     return fail(errorMessage(e));
@@ -747,18 +845,33 @@ export async function rescheduleReservationRoomAction(raw: {
       }, tx);
 
       // a move/resize frees the OLD room/dates and takes the NEW ones
+      const moveDates = [rr.check_in, rr.check_out, s.checkIn, s.checkOut].sort();
       if (blocking) {
-        const dates = [rr.check_in, rr.check_out, s.checkIn, s.checkOut].sort();
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
           roomIds: [rr.room_id, s.roomId],
-          dateFrom: dates[0],
-          dateTo: dates[dates.length - 1],
+          dateFrom: moveDates[0],
+          dateTo: moveDates[moveDates.length - 1],
+        });
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds: [rr.room_id, s.roomId],
+          dateFrom: moveDates[0],
+          dateTo: moveDates[moveDates.length - 1],
         });
       }
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.modified",
+        reservationId: rr.reservation_id,
+        roomIds: [rr.room_id, s.roomId],
+        dateFrom: moveDates[0],
+        dateTo: moveDates[moveDates.length - 1],
+        lifecycle: rr.status,
+      });
     });
 
     revalidatePath("/calendar");
+    revalidatePath("/reservations");
     return { success: true };
   } catch (e) {
     return fail(errorMessage(e));
@@ -1055,6 +1168,15 @@ export type ReservationDetail = {
   } | null;
   /** honest payment-collection state (D77 §D) */
   collection: CollectionView;
+  /** cancellation history (031) — non-null only when status='cancelled' */
+  cancellation: {
+    at: string | null;
+    byType: string | null;
+    byUserName: string | null;
+    origin: string | null;
+    reason: string | null;
+    externalConfirmedAt: string | null;
+  } | null;
   source_id: string | null;
   notes: string | null;
   discount_amount: number;
@@ -1135,6 +1257,12 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         invalid_card_reported_at: string | null;
         external_cancellation_requested_at: string | null;
         no_show_reported_at: string | null;
+        cancelled_at: string | null;
+        cancelled_by_type: string | null;
+        cancelled_by_name: string | null;
+        cancellation_origin: string | null;
+        cancellation_reason: string | null;
+        external_cancellation_confirmed_at: string | null;
       }[]
     >`
       SELECT res.id, res.reservation_number, res.status, res.source_id, res.notes,
@@ -1144,6 +1272,11 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
              res.invalid_card_reported_at::text AS invalid_card_reported_at,
              res.external_cancellation_requested_at::text AS external_cancellation_requested_at,
              res.no_show_reported_at::text AS no_show_reported_at,
+             res.cancelled_at::text AS cancelled_at,
+             res.cancelled_by_type,
+             cu.full_name AS cancelled_by_name,
+             res.cancellation_origin, res.cancellation_reason,
+             res.external_cancellation_confirmed_at::text AS external_cancellation_confirmed_at,
              res.discount_amount::float8 AS discount_amount,
              res.extra_charges::float8 AS extra_charges,
              res.total_price::float8 AS total_price,
@@ -1157,6 +1290,7 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
       FROM guesthub.reservations res
       LEFT JOIN guesthub.guests g ON g.id = res.primary_guest_id
       LEFT JOIN guesthub.lookup_items src ON src.id = res.source_id
+      LEFT JOIN guesthub.users cu ON cu.id = res.cancelled_by_user_id
       WHERE res.id = ${id} AND res.tenant_id = ${actor.tenantId}`;
     if (!res) return fail("הזמנה לא נמצאה");
 
@@ -1245,6 +1379,17 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
             }
           : null,
         collection,
+        cancellation:
+          res.status === "cancelled"
+            ? {
+                at: res.cancelled_at,
+                byType: res.cancelled_by_type,
+                byUserName: res.cancelled_by_name,
+                origin: res.cancellation_origin,
+                reason: res.cancellation_reason,
+                externalConfirmedAt: res.external_cancellation_confirmed_at,
+              }
+            : null,
         source_id: res.source_id,
         notes: res.notes,
         discount_amount: res.discount_amount,

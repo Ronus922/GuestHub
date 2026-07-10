@@ -2,6 +2,7 @@ import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { sql } from "@/lib/db";
 import { backoffMs, isPermanentError } from "./ranges";
+import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 
 // ============================================================
 // Database-backed channel job queue (§T). Foundation only in Phase 3:
@@ -51,6 +52,13 @@ export async function enqueueChannelJob(
       WHERE idempotency_key IS NOT NULL AND status IN ('queued','processing','retry_wait')
       DO NOTHING
     RETURNING id`;
+  // Durable-then-wake (D77 §4): the job row is the truth; the NOTIFY only
+  // wakes the worker's sleep. Inside a transaction PostgreSQL delivers it on
+  // COMMIT, so the worker can never be woken for an uncommitted job. A
+  // duplicate needs no wake — its live twin already produced one.
+  if (rows[0] && !job.suppressed) {
+    await db`SELECT pg_notify(${JOBS_WAKE_CHANNEL}, ${job.jobType})`;
+  }
   return rows[0] ?? { duplicate: true };
 }
 

@@ -25,6 +25,7 @@ import {
 } from "@/lib/card-vault";
 import { getPaymentGateway, NO_GATEWAY_MESSAGE } from "@/lib/payments/gateway";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
+import { publishDomainEvent } from "@/lib/realtime/publish";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
@@ -375,6 +376,11 @@ export async function recordExternalPaymentAction(input: {
         ip: ctx.ip,
         session: ctx.session,
       }, tx);
+
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.payment_changed",
+        reservationId: input.reservationId,
+      });
 
       return { paid, balance, payment };
     });

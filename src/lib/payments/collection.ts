@@ -18,17 +18,18 @@ import { paymentGatewayConfigured } from "./gateway";
 // chargeable instrument and never marks anything paid.
 // ============================================================
 
-export type CollectionState =
-  | "ota_collected"
-  | "property_tokenized"
-  | "property_masked_only"
-  | "no_card_or_other_method";
+import { COLLECTION_LABEL, type CollectionState } from "./collection-labels";
+
+export { COLLECTION_LABEL };
+export type { CollectionState };
 
 export type GuaranteeMeta = {
   brand: string | null;
   last4: string | null;
   expMonth: number | null;
   expYear: number | null;
+  /** cardholder display name from the channel guarantee — never a PAN */
+  holderName: string | null;
   maskedDisplay: string | null;
   isVirtual: boolean;
   /** channel-supplied virtual-card activation window, when present */
@@ -77,18 +78,12 @@ export function deriveCollectionState(input: {
   return { state, chargeable };
 }
 
-export const COLLECTION_LABEL: Record<CollectionState, string> = {
-  ota_collected: "נגבה על ידי הערוץ",
-  property_tokenized: "אמצעי תשלום מאובטח קיים",
-  property_masked_only: "כרטיס ערבות ממוסך — טרם ניתן לחיוב",
-  no_card_or_other_method: "ללא כרטיס / אמצעי אחר",
-};
-
 type RevisionCardMeta = {
   brand?: string | null;
   last4?: string | null;
   exp_month?: number | null;
   exp_year?: number | null;
+  holder_name?: string | null;
   masked_display?: string | null;
   is_virtual?: boolean;
   available_from?: string | null;
@@ -127,6 +122,7 @@ export async function loadCollectionView(
         last4: rev.card_meta.last4 ?? null,
         expMonth: rev.card_meta.exp_month ?? null,
         expYear: rev.card_meta.exp_year ?? null,
+        holderName: rev.card_meta.holder_name ?? null,
         maskedDisplay: rev.card_meta.masked_display ?? null,
         isVirtual: rev.card_meta.is_virtual === true,
         availableFrom: rev.card_meta.available_from ?? null,
