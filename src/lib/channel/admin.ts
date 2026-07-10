@@ -8,7 +8,13 @@ import { enqueueChannelJob } from "./queue";
 import { CHANNEX_BASE_URLS } from "./config";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest, type ChannexErrorCategory } from "./connection-test";
-import { outcomeOf, sanitizeProgress, type FullSyncOutcome, type FullSyncProgress } from "./ari-progress";
+import {
+  formatDuration,
+  outcomeOf,
+  sanitizeProgress,
+  type FullSyncOutcome,
+  type FullSyncProgress,
+} from "./ari-progress";
 import {
   listChannexProperties,
   getChannexProperty,
@@ -363,10 +369,38 @@ export async function requestFullSyncAction(
 // stuck?". READ-ONLY: no Channex call, no secret, no raw upstream body.
 // ============================================================
 
+/**
+ * Every timestamp the ARI card shows, ALREADY FORMATTED on the server in the
+ * canonical property timezone.
+ *
+ * Why not format in the component: the Node server runs in UTC and the operator's
+ * browser does not, so any `toLocaleString`/`new Date()` in a render path makes the
+ * server HTML and the first client render disagree — React hydration error #418,
+ * which regenerates the tree and can drop the confirmation buttons. Shipping the
+ * final strings means the client renders text it cannot disagree about, on ANY
+ * browser, in ANY timezone. The card contains no date, locale or clock API at all;
+ * scripts/check-channels-hydration.mjs enforces that.
+ */
+export type AriSyncDisplay = {
+  lastSuccessfulSyncAt: string;
+  workerBeatAt: string;
+  /** of the latest run, "—" when there is none */
+  startedAt: string;
+  finishedAt: string;
+  /** finished runs only: completedAt−startedAt, so no clock is read */
+  duration: string | null;
+  /** epoch ms — the ONLY clock input the browser gets, used post-mount to tick */
+  startedAtMs: number | null;
+};
+
 export type AriSyncStatus = {
   /** the connection has an established, warning-free baseline */
   active: boolean;
+  outboundEnabled: boolean;
   fullSyncRequired: boolean;
+  /** the persisted run id of the latest Full Sync — the UI restores from this */
+  runId: string | null;
+  display: AriSyncDisplay;
   fullSyncJob: {
     status: string;
     dateFrom: string | null;
@@ -399,6 +433,25 @@ const LIVE_JOB_STATES = new Set(["queued", "processing", "retry_wait"]);
 /** A heartbeat older than this means the PM2 worker is not running. */
 const WORKER_STALE_SECONDS = 90;
 
+// The canonical property timezone. Fixed locale + fixed timeZone: the same Date
+// renders to the same string wherever this runs. Matches the other /channels cards.
+const PROPERTY_TIME_ZONE = "Asia/Jerusalem";
+const HE_DATE_TIME = new Intl.DateTimeFormat("he-IL", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: PROPERTY_TIME_ZONE,
+});
+const displayTime = (v: Date | string | null | undefined): string => {
+  if (!v) return "—";
+  const d = typeof v === "string" ? new Date(v) : v;
+  return Number.isNaN(d.getTime()) ? "—" : HE_DATE_TIME.format(d);
+};
+const msOf = (iso: string | null | undefined): number | null => {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+};
+
 export async function getAriSyncStatusAction(connectionId: string): Promise<Result<AriSyncStatus>> {
   try {
     const actor = await requireChannelAdmin();
@@ -412,10 +465,10 @@ export async function getAriSyncStatusAction(connectionId: string): Promise<Resu
     if (!conn) return { success: false, error: "חיבור לא נמצא" };
 
     const [job] = await sql<
-      { status: string; date_from: string | null; date_to: string | null; payload: unknown;
+      { id: string; status: string; date_from: string | null; date_to: string | null; payload: unknown;
         finished_at: Date | null; last_error_code: string | null }[]
     >`
-      SELECT status, date_from::text AS date_from, date_to::text AS date_to, payload,
+      SELECT id, status, date_from::text AS date_from, date_to::text AS date_to, payload,
              finished_at, last_error_code
       FROM guesthub.channel_sync_jobs
       WHERE connection_id = ${connectionId} AND job_type = 'full_sync'
@@ -442,11 +495,27 @@ export async function getAriSyncStatusAction(connectionId: string): Promise<Resu
     const progress = sanitizeProgress(payload.progress);
     const running = job ? LIVE_JOB_STATES.has(job.status) : false;
 
+    // A finished run's duration is a difference between two persisted instants —
+    // deterministic, so it is computed here rather than from the browser's clock.
+    const startedMs = msOf(progress?.startedAt);
+    const endedMs = msOf(progress?.completedAt ?? progress?.failedAt);
+    const display: AriSyncDisplay = {
+      lastSuccessfulSyncAt: displayTime(conn.last_outbound_sync_at),
+      workerBeatAt: displayTime(w?.beat_at ?? null),
+      startedAt: displayTime(progress?.startedAt ?? null),
+      finishedAt: displayTime(progress?.completedAt ?? progress?.failedAt ?? null),
+      duration: startedMs !== null && endedMs !== null ? formatDuration(endedMs - startedMs) : null,
+      startedAtMs: startedMs,
+    };
+
     return {
       success: true,
       data: {
         active: conn.state === "active" && conn.outbound_sync_enabled && !conn.full_sync_required,
+        outboundEnabled: conn.outbound_sync_enabled,
         fullSyncRequired: conn.full_sync_required,
+        runId: job?.id ?? null,
+        display,
         fullSyncJob: job
           ? {
               status: job.status,

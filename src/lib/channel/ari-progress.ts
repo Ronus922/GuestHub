@@ -137,6 +137,15 @@ export function initialProgress(runId: string, startedAt: string): FullSyncProgr
   };
 }
 
+// Elapsed/duration text from a millisecond span. Takes the span, never reads a
+// clock — so the server (finished runs) and the browser's post-mount ticker
+// (live runs) produce the same string from the same number.
+export function formatDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m} דק׳ ${s % 60} שנ׳` : `${s} שנ׳`;
+}
+
 /** How a finished run should be read. Warnings are NEVER a full success (§8). */
 export type FullSyncOutcome = "running" | "success" | "warnings" | "partial_failure" | "failed";
 
