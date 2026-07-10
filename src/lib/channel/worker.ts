@@ -8,6 +8,7 @@ import {
   drainAriDirtyRanges, runInitialFullSync, loadDrainableConnections,
   type AriConnection,
 } from "./ari-sync";
+import { loadInboundConnections, runInboundPull } from "./booking-import";
 
 // ============================================================
 // The GuestHub channel worker (D68) — a long-running PM2 process
@@ -83,9 +84,33 @@ async function runJob(
   jobType: ChannelJobType,
   jobId: string,
   connectionId: string,
+  payload: unknown,
 ): Promise<{ sentValues: number }> {
   const conn = await loadConnection(connectionId);
   if (!conn) throw Object.assign(new Error("connection not found"), { code: "not_found" });
+
+  if (jobType === "pull_booking_revisions") {
+    // inbound import (D76): feed → persist → import → ack, per revision. Only
+    // an inbound-enabled active connection is ever pulled; anything else is a
+    // definite no (the job dead-letters instead of retrying forever).
+    const [inbound] = (await loadInboundConnections(sql)).filter((c) => c.id === connectionId);
+    if (!inbound) {
+      throw Object.assign(new Error("inbound sync is not enabled for this connection"), {
+        code: "validation_error",
+      });
+    }
+    const revisionId =
+      payload && typeof payload === "object" && "revision_id" in payload
+        ? String((payload as Record<string, unknown>).revision_id ?? "") || undefined
+        : undefined;
+    const summary = await runInboundPull(sql, inbound, revisionId ? { revisionId } : undefined);
+    // a feed/network failure with zero progress is a transient job failure —
+    // bounded retries + backoff via the queue's existing mechanics
+    if (summary.errors.length > 0 && summary.pulled === 0 && summary.acked === 0) {
+      throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+    }
+    return { sentValues: summary.imported + summary.alreadyImported };
+  }
 
   if (jobType === "full_sync") {
     const result = await runInitialFullSync(sql, conn, jobId);
@@ -137,16 +162,43 @@ async function ensureDrainJobs(): Promise<void> {
   }
 }
 
+// Low-frequency durable fallback poll (D76 §3): a missed webhook can never
+// lose a booking. Runs inside the EXISTING worker loop — no second process, no
+// cron. At most one pull job per connection exists at a time (idempotency key),
+// and a new one is enqueued only when no pull ran (or was enqueued) within the
+// window. The webhook enqueues the SAME job, so both paths converge.
+export const INBOUND_POLL_MINUTES = 5;
+
+async function ensureInboundPullJobs(): Promise<void> {
+  for (const conn of await loadInboundConnections(sql)) {
+    const [recent] = await sql<{ x: number }[]>`
+      SELECT 1 AS x FROM guesthub.channel_sync_jobs
+      WHERE connection_id = ${conn.id} AND job_type = 'pull_booking_revisions'
+        AND (status IN ('queued', 'processing', 'retry_wait')
+             OR created_at > now() - make_interval(mins => ${INBOUND_POLL_MINUTES}))
+      LIMIT 1`;
+    if (recent) continue;
+    await enqueueChannelJob(sql, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      jobType: "pull_booking_revisions",
+      priority: 40,
+      idempotencyKey: `inbound_pull:${conn.id}`,
+    });
+  }
+}
+
 export async function runTick(workerId: string, log: (m: string) => void): Promise<TickSummary> {
   const summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
   await ensureDrainJobs();
+  await ensureInboundPullJobs();
   const jobs = await claimChannelJobs(workerId, JOBS_PER_TICK);
   summary.claimed = jobs.length;
   if (jobs.length === 0) return summary;
 
   for (const job of jobs) {
     try {
-      const { sentValues } = await runJob(job.job_type, job.id, job.connection_id);
+      const { sentValues } = await runJob(job.job_type, job.id, job.connection_id, job.payload);
       await completeChannelJob(job.id);
       summary.succeeded += 1;
       summary.sentValues += sentValues;
