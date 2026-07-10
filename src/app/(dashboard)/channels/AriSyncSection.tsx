@@ -217,9 +217,23 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
     startTransition(async () => {
       const res = await requestFullSyncAction(connectionId);
       if (!res.success) setMsg({ tone: "err", text: res.error });
-      // §6 — the server refuses to create a second run and reports the live one
-      else if (res.data?.alreadyRunning) setMsg({ tone: "warn", text: "סנכרון מלא כבר מתבצע" });
-      else setMsg({ tone: "ok", text: "הסנכרון המלא נשלח לעובד הרקע ויתבצע ברקע" });
+      else {
+        // §5 — the creation response IS the transition: the persisted runId goes
+        // straight into state and the progress area appears immediately (honest
+        // 0% "waiting for worker"), without waiting for the first status fetch.
+        // progress is cleared so a PREVIOUS run's finished payload can never be
+        // shown as this run's progress; reload() below refines from the DB.
+        setView((v) => ({
+          ...v,
+          running: true,
+          outcome: "running",
+          runId: res.data?.runId ?? v.runId,
+          progress: null,
+        }));
+        // §6 — the server refuses to create a second run and reports the live one
+        if (res.data?.alreadyRunning) setMsg({ tone: "warn", text: "סנכרון מלא כבר מתבצע" });
+        else setMsg({ tone: "ok", text: "הסנכרון המלא נשלח לעובד הרקע ויתבצע ברקע" });
+      }
       await reload();
     });
   }
@@ -297,7 +311,7 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
                 onClick={confirmFullSync}
                 disabled={busy}
                 aria-disabled={busy}
-                className="rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 בצע סנכרון מלא
               </button>
