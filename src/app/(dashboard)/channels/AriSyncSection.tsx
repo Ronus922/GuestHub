@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { getAriSyncStatusAction, requestFullSyncAction, type AriSyncStatus } from "@/lib/channel/admin";
-import { PHASE_LABELS, type FullSyncProgress } from "@/lib/channel/ari-progress";
+import { PHASE_LABELS, formatDuration, type FullSyncProgress } from "@/lib/channel/ari-progress";
 
 // ARI synchronisation status + THE Full Sync action (D68), with real persisted
 // progress (D69). This is the same single control that replaced the disabled
@@ -12,6 +12,16 @@ import { PHASE_LABELS, type FullSyncProgress } from "@/lib/channel/ari-progress"
 // the PM2 channel worker writes as it goes. Nothing here computes progress, and
 // nothing here is timer-driven: closing the tab, refreshing or restarting the web
 // process does not affect the run or lose its state.
+//
+// HYDRATION CONTRACT (D71). This component renders ONLY what the server put in the
+// snapshot. It calls no date, locale, clock or browser API during render — every
+// timestamp arrives pre-formatted as `initial.display.*`, formatted once on the
+// server in the property timezone. The server ran in UTC and the operator's browser
+// does not; formatting here made the two renders disagree and React threw #418,
+// regenerating the tree (which is what made the confirmation buttons unreliable).
+// The one clock read left, `Date.now()` in the elapsed ticker, lives inside a
+// useEffect and therefore cannot run before hydration.
+// Enforced by scripts/check-channels-hydration.mjs.
 //
 // DELIBERATELY NOT HERE (§12/§14): no daily price table, no preview grid, no
 // simulator, no wizard, no editable pricing control, no per-room or per-plan
@@ -23,15 +33,21 @@ type Msg = { tone: "ok" | "err" | "warn"; text: string } | null;
 /** poll only while a run is live (§5) */
 const POLL_MS = 2500;
 
-const fmt = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" }) : "—";
-
-function elapsed(fromIso: string, toIso: string | null): string {
-  const from = new Date(fromIso).getTime();
-  const to = toIso ? new Date(toIso).getTime() : Date.now();
-  const s = Math.max(0, Math.floor((to - from) / 1000));
-  const m = Math.floor(s / 60);
-  return m > 0 ? `${m} דק׳ ${s % 60} שנ׳` : `${s} שנ׳`;
+/**
+ * Live elapsed time for a run in flight. Returns `null` on the server and on the
+ * first client render, so both produce the same markup; the caller falls back to
+ * the persisted start time until this mounts.
+ */
+function useElapsed(startedAtMs: number | null): string | null {
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    if (startedAtMs === null) return;
+    const tick = () => setText(formatDuration(Date.now() - startedAtMs));
+    tick(); // after hydration, not during it
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [startedAtMs]);
+  return text;
 }
 
 function Row({ label, value, tone }: { label: string; value: string; tone?: "ok" | "warn" | "err" }) {
@@ -66,20 +82,17 @@ function ProgressBar({ percent, label, tone }: { percent: number; label: string;
   );
 }
 
-function RunningPanel({ p }: { p: FullSyncProgress }) {
-  // re-render once a second purely so the elapsed clock ticks; the PERCENTAGE
-  // never comes from here — it is whatever the worker last persisted.
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
+function RunningPanel({ p, display }: { p: FullSyncProgress; display: AriSyncStatus["display"] }) {
+  // Before hydration both renders show the persisted start time; the live clock
+  // takes over only once the effect has run. The PERCENTAGE never comes from here
+  // — it is whatever the worker last persisted.
+  const live = useElapsed(display.startedAtMs);
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-bold text-ink">סנכרון מלא מתבצע — {p.percent}%</span>
-        <span className="text-xs text-muted">{elapsed(p.startedAt, null)}</span>
+        <span className="text-xs text-muted">{live ?? display.startedAt}</span>
       </div>
 
       <ProgressBar percent={p.percent} label={PHASE_LABELS[p.phase]} tone="run" />
@@ -106,7 +119,7 @@ function RunningPanel({ p }: { p: FullSyncProgress }) {
           </>
         )}
         <dt>התחיל</dt>
-        <dd className="text-end font-semibold text-text2">{fmt(p.startedAt)}</dd>
+        <dd className="text-end font-semibold text-text2">{display.startedAt}</dd>
       </dl>
 
       <p className="text-xs text-faint">הסנכרון ממשיך ברקע גם אם תסגור את הדף.</p>
@@ -114,7 +127,15 @@ function RunningPanel({ p }: { p: FullSyncProgress }) {
   );
 }
 
-function FinishedPanel({ p, outcome }: { p: FullSyncProgress; outcome: AriSyncStatus["outcome"] }) {
+function FinishedPanel({
+  p,
+  outcome,
+  display,
+}: {
+  p: FullSyncProgress;
+  outcome: AriSyncStatus["outcome"];
+  display: AriSyncStatus["display"];
+}) {
   const success = outcome === "success";
   const partial = outcome === "partial_failure";
   const warned = outcome === "warnings";
@@ -141,8 +162,8 @@ function FinishedPanel({ p, outcome }: { p: FullSyncProgress; outcome: AriSyncSt
         <li>אזהרות: {p.warnings}</li>
         <li>סנכרון אוטומטי: {success ? "פעיל" : "לא הופעל"}</li>
         {p.blocked > 0 && <li className="text-status-warning">שילובים ללא מחיר (נשלחו כסגורים למכירה): {p.blocked}</li>}
-        <li>זמן סיום: {fmt(p.completedAt ?? p.failedAt)}</li>
-        {p.startedAt && <li>משך: {elapsed(p.startedAt, p.completedAt ?? p.failedAt)}</li>}
+        <li>זמן סיום: {display.finishedAt}</li>
+        {display.duration && <li>משך: {display.duration}</li>}
         {p.taskIds.length > 0 && (
           <li className="font-mono text-[11px] text-muted">
             מזהי משימה: {p.taskIds.map((t) => t.slice(0, 8)).join(", ")}
@@ -160,6 +181,8 @@ function FinishedPanel({ p, outcome }: { p: FullSyncProgress; outcome: AriSyncSt
 }
 
 export function AriSyncSection({ connectionId, initial }: { connectionId: string; initial: AriSyncStatus }) {
+  // §3 — the ONE serialized server snapshot, used verbatim for the first render.
+  // Nothing is re-derived from the browser clock, browser storage or a second fetch.
   const [view, setView] = useState(initial);
   const [msg, setMsg] = useState<Msg>(null);
   const [confirming, setConfirming] = useState(false);
@@ -169,13 +192,15 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
   const running = view.running;
   const busy = pending || running;
   const progress = view.progress;
+  const display = view.display;
 
   const reload = useCallback(async () => {
     const res = await getAriSyncStatusAction(connectionId);
     if (mounted.current && res.success && res.data) setView(res.data);
   }, [connectionId]);
 
-  // §5 — poll only while a run is live; stop on completed/failed/no run/unmount.
+  // §5 — polling begins only after hydration, only while a run is live, and stops
+  // on completed/failed/no run/unmount. It never touches the first render.
   useEffect(() => {
     mounted.current = true;
     if (!running) return () => { mounted.current = false; };
@@ -213,8 +238,8 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
           <p className="text-xs text-faint">הסנכרון ממשיך ברקע גם אם תסגור את הדף.</p>
         </div>
       )}
-      {running && progress && <RunningPanel p={progress} />}
-      {!running && progress && <FinishedPanel p={progress} outcome={view.outcome} />}
+      {running && progress && <RunningPanel p={progress} display={display} />}
+      {!running && progress && <FinishedPanel p={progress} outcome={view.outcome} display={display} />}
 
       <div className="rounded-xl border border-line bg-surface">
         <div className="divide-y divide-line">
@@ -223,12 +248,12 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
             value={view.active ? "פעיל — סנכרון מצטבר רץ" : view.fullSyncRequired ? "נדרש סנכרון מלא" : "לא פעיל"}
             tone={view.active ? "ok" : "warn"}
           />
-          <Row label="סנכרון מוצלח אחרון" value={fmt(view.lastSuccessfulSyncAt)} />
+          <Row label="סנכרון מוצלח אחרון" value={display.lastSuccessfulSyncAt} />
           <Row label="טווחים ממתינים לשליחה" value={String(view.pendingRanges)} />
           {view.failedRanges > 0 && <Row label="טווחים שנכשלו" value={String(view.failedRanges)} tone="err" />}
           <Row
             label="עובד הרקע"
-            value={view.worker?.online ? `פעיל (${fmt(view.worker.beatAt)})` : "אינו פועל"}
+            value={view.worker?.online ? `פעיל (${display.workerBeatAt})` : "אינו פועל"}
             tone={view.worker?.online ? "ok" : "err"}
           />
           {view.lastError && <Row label="שגיאה אחרונה" value={view.lastError} tone="err" />}
@@ -246,7 +271,9 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
         </p>
       )}
 
-      {/* THE single Full Sync control (§12: no second sync button anywhere) */}
+      {/* THE single Full Sync control (§12: no second sync button anywhere).
+          Plain buttons in a div — no <form>, no nested form, no interactive
+          element inside another, so the markup is identical on both renders. */}
       <div className="flex flex-wrap items-center gap-2">
         {!confirming ? (
           <button
@@ -269,14 +296,16 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
                 type="button"
                 onClick={confirmFullSync}
                 disabled={busy}
+                aria-disabled={busy}
                 className="rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                אישור ושליחה
+                בצע סנכרון מלא
               </button>
               <button
                 type="button"
                 onClick={() => setConfirming(false)}
-                className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 transition hover:bg-hover"
+                disabled={pending}
+                className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
               >
                 ביטול
               </button>

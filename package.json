@@ -45,7 +45,9 @@
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
     "check:channex-ari": "node scripts/check-channex-ari.mjs",
     "check:channel-worker": "node scripts/check-channel-worker.mjs",
-    "check:channex-credential": "node scripts/check-channex-credential.mjs"
+    "check:channex-credential": "node scripts/check-channex-credential.mjs",
+    "check:channels-hydration": "node scripts/check-channels-hydration.mjs",
+    "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
