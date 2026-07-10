@@ -20,6 +20,45 @@ import {
 import { LANGS } from "@/lib/rooms/service";
 import { roomUploadsDir, roomUploadPath, IMAGE_NAME_RE } from "@/lib/rooms/uploads";
 import { z } from "zod";
+import type { TransactionSql } from "postgres";
+
+// Every physical room owns exactly one sellable unit — the Phase-4A external
+// inventory identity (D66 closure: rooms born through the app never got one, so
+// they were absent from Rate Plan selection, the Rates grid and price
+// resolution). Born with the room in the SAME transaction: unit, membership,
+// SU-scoped base plan. Idempotent — an existing membership wins; a code already
+// taken by history gets a short room-id suffix so a re-created room number can
+// never collide with an old unit. No base-ARI rows are invented: pricing falls
+// back to the room type's base_price until the operator sets dated prices.
+async function ensureSellableUnit(tx: TransactionSql, tenantId: string, roomId: string): Promise<void> {
+  const [room] = await tx<{ room_number: string | null; name: string | null; room_type_id: string | null; su_id: string | null }[]>`
+    SELECT r.room_number, r.name, r.room_type_id, sur.sellable_unit_id AS su_id
+    FROM guesthub.rooms r
+    LEFT JOIN guesthub.sellable_unit_rooms sur ON sur.room_id = r.id
+    WHERE r.id = ${roomId} AND r.tenant_id = ${tenantId}`;
+  if (!room || room.su_id) return;
+  const code = room.room_number?.trim() || `unit-${roomId.slice(0, 8)}`;
+  const name = room.name?.trim() || code;
+  let [su] = await tx<{ id: string }[]>`
+    INSERT INTO guesthub.sellable_units (tenant_id, code, name, room_type_id)
+    VALUES (${tenantId}, ${code}, ${name}, ${room.room_type_id})
+    ON CONFLICT (tenant_id, code) DO NOTHING
+    RETURNING id`;
+  if (!su) {
+    [su] = await tx<{ id: string }[]>`
+      INSERT INTO guesthub.sellable_units (tenant_id, code, name, room_type_id)
+      VALUES (${tenantId}, ${`${code}#${roomId.slice(0, 8)}`}, ${name}, ${room.room_type_id})
+      RETURNING id`;
+  }
+  await tx`
+    INSERT INTO guesthub.sellable_unit_rooms (tenant_id, sellable_unit_id, room_id)
+    VALUES (${tenantId}, ${su.id}, ${roomId})
+    ON CONFLICT (room_id) DO NOTHING`;
+  await tx`
+    INSERT INTO guesthub.pricing_plans (tenant_id, sellable_unit_id, code, name, is_base)
+    VALUES (${tenantId}, ${su.id}, 'base', 'מחיר בסיס', true)
+    ON CONFLICT (sellable_unit_id, code) DO NOTHING`;
+}
 
 // Room occupancy + extra-guest override save (§7/§8). Gated by rooms.edit
 // (server-side; hiding a control is not authorization). Validates with the shared
@@ -219,6 +258,10 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
         roomId = row.id;
       }
 
+      // the room's sellable unit — created with the room; also self-heals a
+      // legacy room that predates the lifecycle rule on its next save
+      await ensureSellableUnit(tx, actor.tenantId, roomId);
+
       // upsert ONLY the provided languages (protects the rest from overwrite)
       for (const lang of LANGS) {
         const t = r.translations[lang];
@@ -312,6 +355,8 @@ export async function duplicateRoomAction(roomId: string): Promise<ActionResult 
         RETURNING id`;
       const newId = row.id;
 
+      await ensureSellableUnit(tx, actor.tenantId, newId);
+
       await tx`
         INSERT INTO guesthub.room_translations (
           tenant_id, room_id, lang, name, description, summary, slug,
@@ -367,12 +412,16 @@ export async function duplicateRoomAction(roomId: string): Promise<ActionResult 
   }
 }
 
-// History-integrity delete rule (D49 closure): a room may be HARD-deleted only
-// if it has never been used — zero rows in every dependency table. Any history
-// (reservations incl. past, housekeeping, closures, rates, sellable-unit links,
+// History-integrity delete rule (D49 closure, amended by D66): a room may be
+// HARD-deleted only if it has never been used — zero rows in every dependency
+// table. Any history (reservations incl. past, housekeeping, closures, rates,
 // bulk-update history) blocks deletion with a category breakdown; such rooms are
 // archived instead (חדר פעיל → כבוי). The room's own content (translations,
 // images, amenities) is not usage history and cascades on a legitimate delete.
+// D66: the room's sellable unit is likewise the room's OWN identity, not usage
+// history — it is deleted with the never-used room (sole-member only), taking
+// its technical pricing substrate (base plan, base-ARI rows, plan assignments)
+// with it, so an orphaned unit can never stay selectable in Rate Plans.
 // reservation_rooms.room_id is additionally ON DELETE RESTRICT (migration 015),
 // so reservation history can never lose its room even if this guard is bypassed.
 export async function deleteRoomAction(roomId: string): Promise<ActionResult> {
@@ -382,21 +431,19 @@ export async function deleteRoomAction(roomId: string): Promise<ActionResult> {
     if (!z.uuid().safeParse(roomId).success) return { success: false, error: "קלט לא תקין" };
 
     const [deps] = await sql<
-      { reservations: number; housekeeping: number; closures: number; rates: number; sellable: number; bulk: number }[]
+      { reservations: number; housekeeping: number; closures: number; rates: number; bulk: number }[]
     >`
       SELECT
         (SELECT COUNT(*)::int FROM guesthub.reservation_rooms WHERE room_id = ${roomId}) AS reservations,
         (SELECT COUNT(*)::int FROM guesthub.housekeeping_tasks WHERE room_id = ${roomId}) AS housekeeping,
         (SELECT COUNT(*)::int FROM guesthub.room_closures WHERE room_id = ${roomId}) AS closures,
         (SELECT COUNT(*)::int FROM guesthub.rates WHERE room_id = ${roomId}) AS rates,
-        (SELECT COUNT(*)::int FROM guesthub.sellable_unit_rooms WHERE room_id = ${roomId}) AS sellable,
         (SELECT COUNT(*)::int FROM guesthub.bulk_rate_update_items WHERE room_id = ${roomId}) AS bulk`;
     const blockers = [
       [deps.reservations, "הזמנות (כולל היסטוריה)"],
       [deps.housekeeping, "היסטוריית ניקיון"],
       [deps.closures, "חסימות זמינות"],
       [deps.rates, "היסטוריית תעריפים"],
-      [deps.sellable, "שיוך ליחידת מכירה"],
       [deps.bulk, "היסטוריית עדכונים קבוצתיים"],
     ].filter(([n]) => Number(n) > 0);
     if (blockers.length > 0) {
@@ -412,6 +459,16 @@ export async function deleteRoomAction(roomId: string): Promise<ActionResult> {
         SELECT room_number FROM guesthub.rooms
         WHERE id = ${roomId} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
       if (!room) throw new AuthorizationError("החדר לא נמצא");
+      // the room's own sellable unit dies with it — sole-member only (a pooled
+      // unit with other member rooms survives; its membership row cascades and
+      // the 026 trigger archives it if this was the last member)
+      await tx`
+        DELETE FROM guesthub.sellable_units su
+        WHERE su.tenant_id = ${actor.tenantId}
+          AND EXISTS (SELECT 1 FROM guesthub.sellable_unit_rooms sur
+                      WHERE sur.sellable_unit_id = su.id AND sur.room_id = ${roomId})
+          AND NOT EXISTS (SELECT 1 FROM guesthub.sellable_unit_rooms sur2
+                          WHERE sur2.sellable_unit_id = su.id AND sur2.room_id <> ${roomId})`;
       await tx`DELETE FROM guesthub.rooms WHERE id = ${roomId} AND tenant_id = ${actor.tenantId}`;
       await writeAudit(actor, {
         entityType: "room",
