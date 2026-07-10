@@ -18,7 +18,7 @@ import {
 // facts are shown read-only with LINKS to the proper operational screens — the
 // grid never changes room status, reservations, or blocks (§5).
 export function CellDetailPanel({
-  open, onClose, unit, cell, today, editable,
+  open, onClose, unit, cell, today, editable, onSaved,
 }: {
   open: boolean;
   onClose: () => void;
@@ -26,6 +26,7 @@ export function CellDetailPanel({
   cell: RateCellState | null;
   today: DateOnly;
   editable: boolean;
+  onSaved: () => void;
 }) {
   const router = useRouter();
   const [detail, setDetail] = useState<CellDetailData | null>(null);
@@ -59,6 +60,7 @@ export function CellDetailPanel({
     });
     setBusy(false);
     if (res.success) {
+      onSaved();
       router.refresh(); // re-render the grid (server) without remounting → scroll kept
       void load();
     } else if (res.error) window.alert(res.error);

@@ -3,6 +3,7 @@ import { getActor, hasPermission } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
 import { addDays, addYears, clampRatesFrom, isDateOnly, RATES_HORIZON_YEARS, todayInTz } from "@/lib/dates";
 import { getRateGridState } from "@/lib/rates/grid-state";
+import { getRatesSyncStatus } from "@/lib/channel/rates-sync";
 import { RateGridScreen } from "./RateGridScreen";
 import { RATE_VIEW_DAYS, type RateView } from "./types";
 
@@ -38,6 +39,9 @@ export default async function RatesPage({
   const toInclusive = addDays(from, RATE_VIEW_DAYS[view] - 1);
 
   const state = await getRateGridState(sql, actor.tenantId, from, toInclusive);
+  // The ONE serialized sync snapshot for the toolbar chip — persisted DB state,
+  // formatted on the server (D71 hydration discipline, as /channels).
+  const syncStatus = await getRatesSyncStatus(sql, actor.tenantId);
 
   return (
     <RateGridScreen
@@ -48,6 +52,7 @@ export default async function RatesPage({
         edit: hasPermission(actor, "rates.edit"),
         bulk: hasPermission(actor, "rates.bulk_update"),
       }}
+      syncStatus={syncStatus}
     />
   );
 }

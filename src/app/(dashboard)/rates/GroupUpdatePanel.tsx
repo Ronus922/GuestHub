@@ -33,6 +33,7 @@ export function GroupUpdatePanel({
   maxDate,
   presetUnitIds,
   onClose,
+  onSaved,
 }: {
   open: boolean;
   types: RateGridType[];
@@ -44,6 +45,7 @@ export function GroupUpdatePanel({
   maxDate: DateOnly;
   presetUnitIds: string[];
   onClose: () => void;
+  onSaved: () => void;
 }) {
   // Clamp a requested date into [minDate, maxDate].
   const clampDate = (d: DateOnly): DateOnly => (d < minDate ? minDate : d > maxDate ? maxDate : d);
@@ -201,6 +203,7 @@ export function GroupUpdatePanel({
     const res = await bulkUpdateRatesAction(input as BulkUpdateRatesInput);
     setBusy(false);
     if (res.success) {
+      onSaved();
       router.refresh();
       onClose();
     } else {

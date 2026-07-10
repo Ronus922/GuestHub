@@ -31,7 +31,7 @@ type CellPatch = {
 const cellKey = (u: string, d: string, f: string) => `${u}|${d}|${f}`;
 
 export function RateGrid({
-  types, dates, today, can, collapsed, onToggleCollapse, onGroupUpdateForType, onOpenDetail,
+  types, dates, today, can, collapsed, onToggleCollapse, onGroupUpdateForType, onOpenDetail, onSaved,
 }: {
   types: RateGridType[];
   dates: DateOnly[];
@@ -41,6 +41,7 @@ export function RateGrid({
   onToggleCollapse: (typeKey: string) => void;
   onGroupUpdateForType: (unitIds: string[]) => void;
   onOpenDetail: (unit: RateGridUnit, cell: RateCellState) => void;
+  onSaved: () => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<{ unitId: string; field: string; date: DateOnly } | null>(null);
@@ -67,9 +68,9 @@ export function RateGrid({
     setEditing(null);
     const res = await upsertRateCellAction({ sellableUnitId: unit.sellableUnitId, pricingPlanId: unit.pricingPlanId ?? undefined, date, patch });
     setSaving((s) => { const n = new Set(s); n.delete(k); return n; });
-    if (res.success) router.refresh();
+    if (res.success) { onSaved(); router.refresh(); }
     else if (res.error) window.alert(res.error);
-  }, [router]);
+  }, [router, onSaved]);
 
   const ctx: CellCtx = {
     editable: can.edit,
