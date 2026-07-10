@@ -107,9 +107,16 @@ export function EditReservationPanel({
   const [composer, setComposer] = useState<null | "email" | "whatsapp">(null);
 
   const open = reservationId !== null;
+  const reservationIdRef = useRef(reservationId);
+  reservationIdRef.current = reservationId;
 
-  const loadDetail = useCallback((id: string) => {
+  // `force` = an explicit state change (initial load, post-cancel) that must
+  // apply; a background realtime reload is dropped if the response is stale
+  // (panel switched reservations) or the operator started editing mid-flight.
+  const loadDetail = useCallback((id: string, opts?: { force?: boolean }) => {
     getReservationAction(id).then((res) => {
+      if (reservationIdRef.current !== id) return;
+      if (!opts?.force && dirtyRef.current) return;
       if (!res.success || !res.data) {
         setLoadError(res.success ? "הזמנה לא נמצאה" : res.error);
         return;
@@ -198,7 +205,7 @@ export function EditReservationPanel({
     setLoadError(null);
     setCancelOpen(false);
     staleToastRef.current = false;
-    loadDetail(reservationId);
+    loadDetail(reservationId, { force: true });
   }, [reservationId, loadDetail]);
 
   const dirty =
@@ -377,6 +384,10 @@ export function EditReservationPanel({
       }
     });
 
+  // a cancelled reservation is HISTORY — every business field is read-only
+  // (the cancellation banner + activity trail tell the story); the workflow
+  // tag select below deliberately stays on plain canEdit.
+  const canEditNow = canEdit && detail?.status !== "cancelled";
   const statusMeta = detail ? statusItems.find((s) => s.key === detail.status) : null;
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "—";
   const payState = paymentState(total, paidAfter);
@@ -431,7 +442,7 @@ export function EditReservationPanel({
             onClose={() => setCancelOpen(false)}
             onDone={() => {
               setCancelOpen(false);
-              loadDetail(detail.id);
+              loadDetail(detail.id, { force: true });
             }}
           />
         ) : null
@@ -478,7 +489,7 @@ export function EditReservationPanel({
               <button type="button" className="bw-btn bw-btn-ghost" onClick={requestClose}>
                 סגור
               </button>
-              {canEdit && (
+              {canEditNow && (
                 <button
                   type="button"
                   className="bw-btn bw-btn-primary"
@@ -560,29 +571,29 @@ export function EditReservationPanel({
               <CardTitle icon="user" title="פרטי אורח" />
               <div className="bw-grid2">
                 <Field label="שם פרטי" required>
-                  <input className="bw-fld" value={guest.firstName} disabled={!canEdit}
+                  <input className="bw-fld" value={guest.firstName} disabled={!canEditNow}
                     onChange={(e) => setGuest({ ...guest, firstName: e.target.value })} />
                 </Field>
                 <Field label="שם משפחה" required>
-                  <input className="bw-fld" value={guest.lastName} disabled={!canEdit}
+                  <input className="bw-fld" value={guest.lastName} disabled={!canEditNow}
                     onChange={(e) => setGuest({ ...guest, lastName: e.target.value })} />
                 </Field>
                 <Field label="טלפון">
                   <div className="bw-fld-wrap">
                     <Icon name="phone" size={16} className="bw-fi" />
-                    <input className="bw-fld ic" dir="ltr" value={guest.phone} disabled={!canEdit}
+                    <input className="bw-fld ic" dir="ltr" value={guest.phone} disabled={!canEditNow}
                       onChange={(e) => setGuest({ ...guest, phone: e.target.value })} />
                   </div>
                 </Field>
                 <Field label="אימייל">
                   <div className="bw-fld-wrap">
                     <Icon name="mail" size={16} className="bw-fi" />
-                    <input className="bw-fld ic" dir="ltr" type="email" value={guest.email} disabled={!canEdit}
+                    <input className="bw-fld ic" dir="ltr" type="email" value={guest.email} disabled={!canEditNow}
                       onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
                   </div>
                 </Field>
                 <Field label="סטטוס הזמנה">
-                  <select className="bw-fld" value={status} disabled={!canEdit} onChange={(e) => setStatus(e.target.value)}>
+                  <select className="bw-fld" value={status} disabled={!canEditNow} onChange={(e) => setStatus(e.target.value)}>
                     {EDITABLE_STATUSES.map((s) => (
                       <option key={s} value={s}>
                         {statusItems.find((x) => x.key === s)?.label ?? s}
@@ -591,7 +602,7 @@ export function EditReservationPanel({
                   </select>
                 </Field>
                 <Field label="מקור הזמנה">
-                  <select className="bw-fld" value={sourceId} disabled={!canEdit} onChange={(e) => setSourceId(e.target.value)}>
+                  <select className="bw-fld" value={sourceId} disabled={!canEditNow} onChange={(e) => setSourceId(e.target.value)}>
                     <option value="">—</option>
                     {bookingSources.map((s) => (
                       <option key={s.id} value={s.id}>
@@ -644,16 +655,16 @@ export function EditReservationPanel({
                     index={i}
                     value={s}
                     excludeReservationId={detail.id}
-                    disabled={!canEdit}
-                    onChange={(next) => canEdit && setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}
+                    disabled={!canEditNow}
+                    onChange={(next) => canEditNow && setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}
                     onRemove={
-                      canEdit && stays.length > 1
+                      canEditNow && stays.length > 1
                         ? () => setStays((all) => all.filter((x) => x.key !== s.key))
                         : undefined
                     }
                   />
                 ))}
-                {canEdit && (
+                {canEditNow && (
                   <button
                     type="button"
                     className="bw-addroom"
@@ -690,7 +701,7 @@ export function EditReservationPanel({
                     <div>
                       <b>חדר {i + 1}</b>
                       <div className="bw-plr">
-                        {ratePlans.length > 0 && canEdit && (
+                        {ratePlans.length > 0 && canEditNow && (
                           /* changing the plan re-prices server-side on save */
                           <select
                             className="ml-2 rounded-lg border border-line px-2 py-1 text-xs font-semibold"
@@ -765,7 +776,7 @@ export function EditReservationPanel({
                 </div>
               </div>
 
-              {canEdit && (
+              {canEditNow && (
                 <>
                   <div className="bw-grid3 mt-5">
                     <Field label="הנחה (₪)">
@@ -855,9 +866,9 @@ export function EditReservationPanel({
                 <StoredCardBox
                   card={cardMeta}
                   canReveal={canRevealCard}
-                  canManage={canSaveCard && canEdit}
+                  canManage={canSaveCard && canEditNow}
                   canCharge={canChargeCard}
-                  canRecordPayment={canChargeCard && canEdit}
+                  canRecordPayment={canChargeCard && canEditNow}
                   chargeAmount={Math.max(0, total - paidAfter)}
                   reservationId={detail.id}
                   onReplace={() => setReplacingCard(true)}
@@ -872,7 +883,7 @@ export function EditReservationPanel({
                   deleting={cardBusy}
                 />
               )}
-              {canSaveCard && canEdit && (replacingCard || !cardMeta) && (
+              {canSaveCard && canEditNow && (replacingCard || !cardMeta) && (
                 <>
                   {/* §15 — entry activates only when the payment method is
                        credit card; switching away destroys the unsaved draft */}
@@ -925,7 +936,7 @@ export function EditReservationPanel({
             {/* notes */}
             <section className="bw-card">
               <CardTitle icon="documents" title="הערות להזמנה" />
-              <textarea className="bw-fld" value={notes} disabled={!canEdit}
+              <textarea className="bw-fld" value={notes} disabled={!canEditNow}
                 placeholder="בקשות מיוחדות, שעת הגעה…" onChange={(e) => setNotes(e.target.value)} />
             </section>
           </div>
@@ -997,7 +1008,7 @@ export function EditReservationPanel({
                 system truly supports: check-in via the same validated save
                 path, and jumping to the room editor. שלח אישור הזמנה is not
                 rendered (no messaging infra — D40). */}
-            {canEdit && ["confirmed", "draft", "checked_in"].includes(detail.status) && (
+            {canEditNow && ["confirmed", "draft", "checked_in"].includes(detail.status) && (
               <div className="bw-sum">
                 <div className="bw-sum-h">
                   <Icon name="automations" size={17} className="text-primary" />

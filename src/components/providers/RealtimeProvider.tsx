@@ -39,6 +39,19 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const source = new EventSource("/api/events");
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let firstOpen = true;
+
+    // pg NOTIFY has no replay: anything committed while this tab's stream was
+    // down (deploy, network blip, the render→connect gap) would be silently
+    // missed — so every RECONNECT does one catch-up refresh.
+    source.onopen = () => {
+      if (firstOpen) {
+        firstOpen = false;
+        return; // the initial render is already fresh (force-dynamic)
+      }
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => router.refresh(), REFRESH_DEBOUNCE_MS);
+    };
 
     source.onmessage = (message) => {
       let event: DomainEvent;

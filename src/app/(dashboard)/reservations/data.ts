@@ -102,16 +102,19 @@ export async function getReservationsList(
   const tenantId = actor.tenantId;
   const [tenant] = await sql<{ timezone: string; currency: string }[]>`
     SELECT timezone, currency FROM guesthub.tenants WHERE id = ${tenantId}`;
-  const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
-  const tomorrow = addDays(today, 1);
+  const tz = tenant?.timezone || "Asia/Jerusalem";
+  const today = todayInTz(tz);
   const dayAfter = addDays(today, 2);
 
   const like = f.q.trim() ? `%${f.q.trim()}%` : null;
+  // timestamptz → date must happen in the PROPERTY timezone (the session is
+  // UTC): otherwise anything between local midnight and ~03:00 lands on the
+  // wrong day relative to todayInTz
   const dateCol =
     f.dateType === "checkout"
       ? sql`res.check_out`
       : f.dateType === "created"
-        ? sql`res.created_at::date`
+        ? sql`(res.created_at AT TIME ZONE ${tz})::date`
         : sql`res.check_in`;
 
   // quick filters — each one is a single honest predicate over canonical state
@@ -139,7 +142,8 @@ export async function getReservationsList(
                         : f.quick === "invalid_card"
                           ? sql`AND (res.invalid_card_reported_at IS NOT NULL OR wf.key = 'card_declined')`
                           : f.quick === "cancelled_today"
-                            ? sql`AND res.status = 'cancelled' AND res.cancelled_at::date = ${today}`
+                            ? sql`AND res.status = 'cancelled'
+                                  AND (res.cancelled_at AT TIME ZONE ${tz})::date = ${today}`
                             : f.quick === "noshow_candidates"
                               ? sql`AND res.status = 'confirmed' AND res.check_in <= ${today}`
                               : sql``;

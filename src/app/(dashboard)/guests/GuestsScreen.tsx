@@ -196,6 +196,11 @@ export function GuestsScreen({
                 </div>
                 <div className="rl-td">
                   <span className="rl-pay paid">{money(g.total_paid, data.currency)}</span>
+                  {g.foreign_currency_count > 0 && (
+                    /* foreign-currency bookings are never summed into the
+                       tenant-currency totals — flagged instead of faked */
+                    <span className="rl-otacode">+{g.foreign_currency_count} במט״ח</span>
+                  )}
                 </div>
                 <div className="rl-td" style={{ textAlign: "left" }}>
                   <span className={`rl-pay ${g.outstanding > 0 ? "unpaid" : "paid"}`} dir="ltr">
@@ -259,7 +264,10 @@ export function GuestsScreen({
             <section className="bw-card">
               <div className="bw-grid3">
                 <div className="bw-tile">
-                  <p className="bw-tl">שולם סה״כ</p>
+                  <p className="bw-tl">
+                    שולם סה״כ
+                    {profile.totals.foreignCount > 0 && ` (+${profile.totals.foreignCount} במט״ח)`}
+                  </p>
                   <p className="bw-tv" style={{ color: "#15803D" }} dir="ltr">
                     {money(profile.totals.paid, data.currency)}
                   </p>

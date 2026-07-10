@@ -17,6 +17,10 @@ import { subscribeTenantEvents } from "@/lib/realtime/hub";
 export const dynamic = "force-dynamic";
 
 const HEARTBEAT_MS = 25_000;
+// bounded stream lifetime: auth is checked at connect; closing periodically
+// forces the browser's automatic reconnect through a FRESH auth check, so a
+// deactivated/logged-out user stops receiving events within this window
+const MAX_STREAM_MS = 10 * 60_000;
 
 export async function GET(request: Request) {
   const actor = await getActor();
@@ -42,9 +46,14 @@ export async function GET(request: Request) {
         send(`data: ${JSON.stringify(event)}\n\n`);
       });
       const heartbeat = setInterval(() => send(`: hb\n\n`), HEARTBEAT_MS);
+      let cleaned = false; // teardown fires via BOTH abort and cancel — once only
+      const lifetime = setTimeout(() => cleanup(), MAX_STREAM_MS);
       cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
         open = false;
         clearInterval(heartbeat);
+        clearTimeout(lifetime);
         unsubscribe();
         try {
           controller.close();

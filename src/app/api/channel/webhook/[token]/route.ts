@@ -21,12 +21,16 @@ const MAX_BODY_BYTES = 256 * 1024;
 // store if the app ever runs multi-process inbound webhooks.
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = 120;
+// bounded: keys are attacker-supplied — an unauthenticated spray of random
+// tokens must not grow this map forever
+const MAX_TRACKED_KEYS = 5_000;
 const hits = new Map<string, { windowStart: number; count: number }>();
 
 function rateLimited(key: string): boolean {
   const now = Date.now();
   const h = hits.get(key);
   if (!h || now - h.windowStart > WINDOW_MS) {
+    if (hits.size >= MAX_TRACKED_KEYS) hits.clear();
     hits.set(key, { windowStart: now, count: 1 });
     return false;
   }

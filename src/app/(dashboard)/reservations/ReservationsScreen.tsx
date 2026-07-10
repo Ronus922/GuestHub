@@ -127,6 +127,9 @@ export function ReservationsScreen({
 
   const apply = (patch: Partial<ListFilters>) => {
     const next = { ...filters, ...patch };
+    // the cancellation-origin control exists only on the בוטל tab — leaving
+    // it must drop the filter, or other tabs silently show nothing
+    if (next.tab !== "cancelled") next.cancellationOrigin = null;
     const p = new URLSearchParams();
     if (next.tab !== "all") p.set("tab", next.tab);
     if (next.q.trim()) p.set("q", next.q.trim());

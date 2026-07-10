@@ -20,6 +20,12 @@ const QUICK_KEYS: QuickFilter[] = [
   "cancelled_today", "noshow_candidates",
 ];
 
+// uuid-typed params are validated HERE — a mistyped/malicious filter link
+// must fall back to "no filter", never crash the page with a 22P02
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidOrNull = (v: string | undefined) => (v && UUID_RE.test(v) ? v : null);
+const ORIGIN_RE = /^[a-z_]{1,40}$/;
+
 function parseFilters(p: Record<string, string | undefined>): ListFilters {
   return {
     tab: TAB_KEYS.includes(p.tab as ListTab) ? (p.tab as ListTab) : "all",
@@ -28,12 +34,12 @@ function parseFilters(p: Record<string, string | undefined>): ListFilters {
       p.dtype === "checkout" || p.dtype === "created" ? p.dtype : "checkin",
     from: p.from && isDateOnly(p.from) ? p.from : null,
     to: p.to && isDateOnly(p.to) ? p.to : null,
-    sourceId: p.source || null,
-    workflowId: p.wf || null,
+    sourceId: uuidOrNull(p.source),
+    workflowId: uuidOrNull(p.wf),
     payment:
       p.pay === "unpaid" || p.pay === "partial" || p.pay === "paid" ? p.pay : null,
-    roomId: p.room || null,
-    cancellationOrigin: p.corigin || null,
+    roomId: uuidOrNull(p.room),
+    cancellationOrigin: p.corigin && ORIGIN_RE.test(p.corigin) ? p.corigin : null,
     quick: QUICK_KEYS.includes(p.quick as QuickFilter) ? (p.quick as QuickFilter) : null,
   };
 }

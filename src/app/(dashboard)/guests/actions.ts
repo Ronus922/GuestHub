@@ -41,7 +41,9 @@ export type GuestProfile = {
     cancellation_origin: string | null;
   }[];
   otaSources: string[];
-  totals: { paid: number; outstanding: number };
+  /** tenant-currency totals only — foreign-currency rows are counted, never
+   *  summed into a mixed number */
+  totals: { paid: number; outstanding: number; currency: string; foreignCount: number };
   messages: { channel: string; status: string; created_at: string }[];
 };
 
@@ -76,7 +78,10 @@ export async function getGuestProfileAction(id: string): Promise<ActionResult<Gu
       ORDER BY created_at DESC
       LIMIT 15`;
 
-    const active = reservations.filter((r) => r.status !== "cancelled");
+    const [tenant] = await sql<{ currency: string }[]>`
+      SELECT currency FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
+    const cur = tenant?.currency || "ILS";
+    const active = reservations.filter((r) => r.status !== "cancelled" && r.currency === cur);
     return {
       success: true,
       data: {
@@ -88,6 +93,8 @@ export async function getGuestProfileAction(id: string): Promise<ActionResult<Gu
           outstanding: active
             .filter((r) => r.status !== "no_show")
             .reduce((s, r) => s + Math.max(0, r.total_price - r.paid_amount), 0),
+          currency: cur,
+          foreignCount: reservations.filter((r) => r.currency !== cur && r.status !== "cancelled").length,
         },
         messages,
       },

@@ -45,23 +45,28 @@ function dispatch(raw: string): void {
   }
 }
 
+const LISTEN_RETRY_MS = 5_000;
+
 function ensureListening(): void {
   const h = hub();
   if (h.starting) return;
   // sql.listen re-subscribes automatically after a connection drop; only the
-  // INITIAL failure needs a retry path — clearing `starting` lets the next
-  // subscriber try again instead of wedging the hub forever.
+  // INITIAL failure needs a retry path. Already-connected SSE streams keep
+  // heartbeating even while the hub is deaf, so a failed attempt schedules
+  // its own retry — it must not wait for a NEW subscriber to arrive.
   h.starting = sql
     .listen(EVENTS_CHANNEL, dispatch)
     .then(() => {})
     .catch((e) => {
       console.error("[realtime] listen failed", e instanceof Error ? e.message : e);
       h.starting = null;
+      setTimeout(ensureListening, LISTEN_RETRY_MS);
     });
 }
 
 /** Subscribe an authenticated SSE stream to its tenant's events.
- *  Returns the unsubscribe function. */
+ *  Returns the unsubscribe function (idempotent — SSE teardown can fire
+ *  through both request-abort and stream-cancel). */
 export function subscribeTenantEvents(tenantId: string, fn: Subscriber): () => void {
   ensureListening();
   const h = hub();
@@ -73,6 +78,8 @@ export function subscribeTenantEvents(tenantId: string, fn: Subscriber): () => v
   set.add(fn);
   return () => {
     set.delete(fn);
-    if (set.size === 0) h.subs.delete(tenantId);
+    // delete the tenant entry ONLY if it still points at THIS set — a fresh
+    // subscriber may have replaced it after the set emptied earlier
+    if (set.size === 0 && h.subs.get(tenantId) === set) h.subs.delete(tenantId);
   };
 }

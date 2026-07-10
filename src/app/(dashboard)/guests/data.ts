@@ -29,6 +29,9 @@ export type GuestRow = {
   next_stay: string | null;
   total_paid: number;
   outstanding: number;
+  /** reservations in a currency other than the tenant's — those amounts are
+   *  NOT inside total_paid/outstanding (never summed across currencies) */
+  foreign_currency_count: number;
 };
 
 export type GuestsListData = {
@@ -59,10 +62,14 @@ export async function getGuestsList(actor: Actor, q: string): Promise<GuestsList
            MIN(res.check_in) FILTER
              (WHERE res.check_in > ${today} AND res.status IN ('confirmed', 'checked_in'))::text
              AS next_stay,
-           COALESCE(SUM(res.paid_amount) FILTER (WHERE res.status <> 'cancelled'), 0)::float8
-             AS total_paid,
-           COALESCE(SUM(GREATEST(res.total_price - res.paid_amount, 0))
-             FILTER (WHERE res.status NOT IN ('cancelled', 'no_show')), 0)::float8 AS outstanding,
+           COALESCE(SUM(res.paid_amount) FILTER
+             (WHERE res.status <> 'cancelled' AND res.currency = ${tenant?.currency || "ILS"}),
+             0)::float8 AS total_paid,
+           COALESCE(SUM(GREATEST(res.total_price - res.paid_amount, 0)) FILTER
+             (WHERE res.status NOT IN ('cancelled', 'no_show')
+              AND res.currency = ${tenant?.currency || "ILS"}), 0)::float8 AS outstanding,
+           COUNT(*) FILTER (WHERE res.currency <> ${tenant?.currency || "ILS"})::int
+             AS foreign_currency_count,
            COUNT(*) OVER ()::int AS total_count
     FROM guesthub.guests g
     LEFT JOIN guesthub.reservations res
