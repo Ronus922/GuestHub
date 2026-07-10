@@ -9,7 +9,11 @@
 // Usage: node --env-file=.env.local scripts/check-rate-grid.mjs
 import postgres from "postgres";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createRequire } from "node:module";
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
 const DAY = "2027-03-15"; // far-future, collision-free window
@@ -199,6 +203,96 @@ try {
     assert.ok(uq >= 1, "pricing_plan_rates uniquely keyed by (pricing_plan_id, date)");
   }
   ok("grid write path is canonical only (no legacy guesthub.rates writes; unique keying)");
+
+  // ---- H. ACTIVE connection: axis C runs on the ROOM model (D73 regression) ----
+  // THE defect: with an active channel connection the old branch selected the
+  // DROPPED channel_dirty_ranges.room_type_id column (re-keyed to room_id in
+  // D68) → Postgres 42703 → the whole /rates route hit the error boundary. The
+  // branch was dormant until the first Full Sync activated the connection, so
+  // no earlier test executed it. This section runs the REAL compiled
+  // getRateGridState with an active connection, a mapped room and a live dirty
+  // range — on an ISOLATED scaffold tenant inside the rolled-back tx, so the
+  // live channex connection row is never read, locked or modified.
+  {
+    const tmp = mkdtempSync(join(tmpdir(), "gh-grid-"));
+    const out = join(tmp, "out");
+    writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({
+      compilerOptions: {
+        module: "commonjs", moduleResolution: "node10", target: "es2022",
+        esModuleInterop: true, skipLibCheck: true, strict: true,
+        baseUrl: join(process.cwd(), "src"), paths: { "@/*": ["*"] },
+        rootDir: join(process.cwd(), "src"), outDir: out,
+        typeRoots: [join(process.cwd(), "node_modules/@types")], types: ["node"],
+      },
+      include: [join(process.cwd(), "src/lib/rates/grid-state.ts")],
+    }));
+    execSync(`npx tsc --project ${join(tmp, "tsconfig.json")}`, { stdio: "inherit" });
+    const stub = join(tmp, "server-only-stub.js");
+    writeFileSync(stub, "module.exports = {};\n");
+    const req = createRequire(join(process.cwd(), "package.json"));
+    const Module = req("node:module");
+    const orig = Module._resolveFilename;
+    Module._resolveFilename = function (request, ...rest) {
+      if (request === "server-only") return stub;
+      if (request.startsWith("@/")) return orig.call(this, join(out, request.slice(2)), ...rest);
+      return orig.call(this, request, ...rest);
+    };
+    const { getRateGridState } = req(join(out, "lib/rates/grid-state.js"));
+
+    await inTx(async (tx) => {
+      const [t2] = await tx`
+        INSERT INTO guesthub.tenants (name, slug) VALUES (${uniq("T")}, ${uniq("t")}) RETURNING id`;
+      const [rt] = await tx`
+        INSERT INTO guesthub.room_types (tenant_id, name, base_price)
+        VALUES (${t2.id}, ${uniq("RT")}, 400) RETURNING id`;
+      const roomIds = [];
+      for (let i = 0; i < 2; i++) {
+        const [r] = await tx`
+          INSERT INTO guesthub.rooms (tenant_id, room_number, room_type_id, status, is_active)
+          VALUES (${t2.id}, ${uniq("RM")}, ${rt.id}, 'available', true) RETURNING id`;
+        roomIds.push(r.id);
+      }
+      const suIds = [];
+      for (const rid of roomIds) {
+        const [su] = await tx`
+          INSERT INTO guesthub.sellable_units (tenant_id, code, name, room_type_id, is_pooled, is_active)
+          VALUES (${t2.id}, ${uniq("SU")}, 'axisC unit', ${rt.id}, false, true) RETURNING id`;
+        await tx`INSERT INTO guesthub.sellable_unit_rooms (tenant_id, sellable_unit_id, room_id)
+                 VALUES (${t2.id}, ${su.id}, ${rid})`;
+        suIds.push(su.id);
+      }
+      const [conn] = await tx`
+        INSERT INTO guesthub.channel_connections (tenant_id, provider, environment, state)
+        VALUES (${t2.id}, 'channex', 'staging', 'active') RETURNING id`;
+      // room 0 mapped; room 1 deliberately unmapped
+      await tx`
+        INSERT INTO guesthub.channel_room_mappings
+          (tenant_id, connection_id, channex_property_id, local_entity_type, room_id, room_number, status, method)
+        VALUES (${t2.id}, ${conn.id}, 'prop-test', 'physical_room', ${roomIds[0]}, 'axisC-1', 'mapped', 'created')`;
+      // a live (non-synced) dirty range on room 0 for DAY only ([DAY, NEXT))
+      await tx`
+        INSERT INTO guesthub.channel_dirty_ranges
+          (tenant_id, connection_id, room_id, kind, date_from, date_to, status)
+        VALUES (${t2.id}, ${conn.id}, ${roomIds[0]}, 'restrictions', ${DAY}, ${NEXT}, 'pending')`;
+
+      // pre-fix this THROWS 42703 (column room_type_id does not exist)
+      const grid = await getRateGridState(tx, t2.id, DAY, NEXT);
+      const cells = new Map(
+        grid.types.flatMap((b) => b.units).map((u) => [u.sellableUnitId, u.cells]),
+      );
+      const mappedCells = cells.get(suIds[0]), unmappedCells = cells.get(suIds[1]);
+      assert.ok(mappedCells && unmappedCells, "both scaffold units render");
+      assert.equal(mappedCells[0].syncState, "pending", "dirty (room, day) → pending");
+      assert.equal(mappedCells[1].syncState, "clean", "day outside the dirty range → clean");
+      assert.equal(mappedCells[0].mappingValid, true, "mapped room → mappingValid");
+      assert.equal(unmappedCells[0].mappingValid, false, "unmapped room → not mappingValid");
+      assert.equal(unmappedCells[0].syncState, "clean", "no dirty range on the other room");
+      assert.equal(mappedCells[0].outboundAvailability, mappedCells[0].availability,
+        "outbound availability is the SU's own physical availability (D64: one room = one Channex room type)");
+    });
+    Module._resolveFilename = orig;
+    ok("active connection renders axis C from the ROOM model — the 42703 crash path is executed and gone");
+  }
 
   console.log(`\nALL ${n} RATE-GRID CHECKS PASSED`);
 } catch (e) {

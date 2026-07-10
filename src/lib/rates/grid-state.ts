@@ -143,47 +143,47 @@ export async function getRateGridState(
   const pprByKey = new Map(ppr.map((r) => [key(r.pricing_plan_id, r.date), r]));
 
   // 4b. Channel mapping + connection state → mapping_valid + sync_state (axis C
-  // of the projection). With NO active connection (the current phase) everything
-  // is "not_connected" and unmapped — the honest state; GuestHub never shows
-  // "synced" without a remote ack. The connected branch derives pending-vs-clean
-  // from overlapping dirty ranges (Phase 4B activates a real connection/worker).
+  // of the projection). With NO active connection everything is "not_connected"
+  // and unmapped — the honest state; GuestHub never shows "synced" without a
+  // remote ack. Since D64/D68 the outbound unit is the PHYSICAL ROOM: mappings
+  // live in channel_room_mappings and dirty ranges are keyed by room_id (the
+  // pre-D64 room_type keying of this branch crashed the route the moment a
+  // connection first became active — D73). An SU cell derives its channel state
+  // from its member rooms via sellable_unit_rooms, the same join the outbound
+  // writer (outbox.ts) uses.
   const [conn] = await db<{ id: string }[]>`
     SELECT id FROM guesthub.channel_connections
     WHERE tenant_id = ${tenantId} AND state = 'active' LIMIT 1`;
   const hasActiveConnection = !!conn;
-  const mappedRoomTypes = new Set<string>(
-    hasActiveConnection
-      ? (
-          await db<{ room_type_id: string }[]>`
-            SELECT DISTINCT room_type_id FROM guesthub.channel_room_type_mappings
-            WHERE tenant_id = ${tenantId} AND status = 'mapped' AND is_active`
-        ).map((m) => m.room_type_id)
-      : [],
-  );
-  // pending (SU-room-type, day) set from overlapping non-synced dirty ranges.
-  const pendingRt = new Set<string>();
+  const suRooms = new Map<string, string[]>(); // SU id → member room ids
+  const mappedRooms = new Set<string>();
+  const pendingRoom = new Set<string>(); // (room, day) with a non-synced dirty range
   if (hasActiveConnection) {
-    const dirty = await db<{ room_type_id: string; date_from: string; date_to: string }[]>`
-      SELECT room_type_id, date_from::text AS date_from, date_to::text AS date_to
+    const members = await db<{ sellable_unit_id: string; room_id: string }[]>`
+      SELECT sellable_unit_id, room_id FROM guesthub.sellable_unit_rooms
+      WHERE tenant_id = ${tenantId}`;
+    for (const m of members) {
+      const list = suRooms.get(m.sellable_unit_id);
+      if (list) list.push(m.room_id);
+      else suRooms.set(m.sellable_unit_id, [m.room_id]);
+    }
+    const mapped = await db<{ room_id: string }[]>`
+      SELECT DISTINCT room_id FROM guesthub.channel_room_mappings
+      WHERE tenant_id = ${tenantId} AND status = 'mapped' AND room_id IS NOT NULL`;
+    for (const m of mapped) mappedRooms.add(m.room_id);
+    const dirty = await db<{ room_id: string | null; date_from: string; date_to: string }[]>`
+      SELECT room_id, date_from::text AS date_from, date_to::text AS date_to
       FROM guesthub.channel_dirty_ranges
       WHERE tenant_id = ${tenantId} AND status <> 'synced'
         AND date_from < ${toExclusive} AND date_to > ${from}`;
-    for (const dr of dirty) for (const day of eachDay(dr.date_from, dr.date_to)) pendingRt.add(key(dr.room_type_id, day));
-  }
-
-  // Outbound room-type availability (what WOULD be sent to Channex): the SUM of
-  // physical availability across a room-type's SUs per day — availability comes
-  // ONLY from physical inventory, never from stop_sell (the Channex contract).
-  const unitById = new Map(units.map((u) => [u.id, u]));
-  const rtAvail = new Map<string, number>();
-  for (const r of inv) {
-    const rt = unitById.get(r.sellable_unit_id)?.room_type_id;
-    if (!rt) continue;
-    const k = key(rt, r.day);
-    rtAvail.set(k, (rtAvail.get(k) ?? 0) + r.availability);
+    for (const dr of dirty) {
+      if (!dr.room_id) continue;
+      for (const day of eachDay(dr.date_from, dr.date_to)) pendingRoom.add(key(dr.room_id, day));
+    }
   }
 
   const gridUnits: RateGridUnit[] = units.map((u) => {
+    const memberRooms = suRooms.get(u.id) ?? [];
     const cells: RateCellState[] = dates.map((d) => {
       const e = essByKey.get(key(u.id, d));
       const iv = invByKey.get(key(u.id, d));
@@ -218,7 +218,7 @@ export async function getRateGridState(
       const closedToDeparture = row?.closed_to_departure ?? false;
       const syncState: SyncState = !hasActiveConnection
         ? "not_connected"
-        : u.room_type_id && pendingRt.has(key(u.room_type_id, d))
+        : memberRooms.some((r) => pendingRoom.has(key(r, d)))
           ? "pending"
           : "clean";
       return {
@@ -249,9 +249,13 @@ export async function getRateGridState(
         inheritedRate: u.base_price,
         activeRatePlan: !!u.plan_id,
         reasonCodes,
-        mappingValid: u.room_type_id ? mappedRoomTypes.has(u.room_type_id) : false,
+        // valid iff EVERY member room is mapped — an SU with any unmapped room
+        // cannot be fully represented outbound (the writer sends per room).
+        mappingValid: memberRooms.length > 0 && memberRooms.every((r) => mappedRooms.has(r)),
         syncState,
-        outboundAvailability: (u.room_type_id ? rtAvail.get(key(u.room_type_id, d)) : undefined) ?? availability,
+        // D64: one room → one Channex Room Type (count_of_rooms=1), so what the
+        // projection sends for this SU's room(s) IS the SU's own availability.
+        outboundAvailability: availability,
         outboundRestrictions: {
           rate: effectivePrice,
           stopSell,
