@@ -88,12 +88,22 @@ const addDays = (d, k) => {
 };
 
 // ---- a recording fetch: counts requests, captures values, never touches the net ----
-function recordingFetch(responder = () => ({ ok: true })) {
+// `calls` records ONLY ARI requests (POST /availability, POST /restrictions).
+// The credential preflight (GET /properties/options) is recorded separately, so a
+// test can assert "authenticated, then sent ZERO ARI requests".
+function recordingFetch(responder = () => ({ ok: true }), authStatus = 200) {
   const calls = [];
+  const auth = [];
   const impl = async (url, init) => {
+    const u = String(url);
+    if (u.endsWith("/properties/options")) {
+      auth.push(u);
+      if (authStatus !== 200) return { status: authStatus, ok: false, json: async () => ({ errors: {} }) };
+      return { status: 200, ok: true, json: async () => ({ data: [{ id: "cx-prop" }] }) };
+    }
     const body = JSON.parse(init.body);
-    calls.push({ url: String(url), values: body.values });
-    const r = responder(String(url), body);
+    calls.push({ url: u, values: body.values });
+    const r = responder(u, body);
     if (r.status && r.status !== 200) return { status: r.status, ok: false, json: async () => ({ errors: {} }) };
     return {
       status: 200, ok: true,
@@ -102,8 +112,14 @@ function recordingFetch(responder = () => ({ ok: true })) {
         : { data: [{ id: `task-${calls.length}`, type: "task" }], meta: { message: "Success", warnings: [] } }),
     };
   };
-  return { impl, calls };
+  return { impl, calls, auth };
 }
+
+// read back the PERSISTED progress record — exactly what a page refresh would see
+const readProgress = async (jobId) => {
+  const [j] = await sql`SELECT payload FROM guesthub.channel_sync_jobs WHERE id = ${jobId}`;
+  return j?.payload?.progress ?? null;
+};
 
 // ---- fixture (committed, then cleaned up in `finally`) ----
 const TAG = `worker-check-${process.pid}`;
@@ -185,7 +201,29 @@ try {
     ok("no incremental send — and no backlog — before the operator's initial Full Sync");
   }
 
-  // ---- the operator's Full Sync: exactly 2 requests, availability then restrictions ----
+  // ---- D70: a Full Sync on an UNAUTHENTICATED stored key sends ZERO ARI ----
+  {
+    const rec = recordingFetch(() => ({ ok: true }), 401);
+    const [job] = await sql`
+      INSERT INTO guesthub.channel_sync_jobs (tenant_id, connection_id, job_type, status, priority)
+      VALUES (${f.T}, ${f.conn}, 'full_sync', 'queued', 10) RETURNING id`;
+    const result = await runInitialFullSync(sql, await connRow(f.conn), job.id, { fetchImpl: rec.impl });
+    assert.equal(result.ok, false, "the run fails");
+    assert.equal(rec.auth.length, 1, "the stored key was probed once");
+    assert.equal(rec.calls.length, 0, "and NOT ONE ARI request was sent");
+    const p = await readProgress(job.id);
+    assert.equal(p.phase, "failed", "it fails during validating");
+    assert.equal(p.errorCategory, "unauthorized", "with the safe 401 category");
+    assert.ok(p.percent < 10, "the bar stops in the validating phase — never 100%");
+    assert.equal(p.roomsProjected, 0, "nothing was projected");
+    assert.ok(!JSON.stringify(p).includes("fake-key"), "the api-key never enters the progress record");
+    const c = (await sql`SELECT state, outbound_sync_enabled FROM guesthub.channel_connections WHERE id = ${f.conn}`)[0];
+    assert.equal(c.outbound_sync_enabled, false, "incremental sync is not activated");
+    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    ok("Full Sync with a rejected stored key: probes once, sends NO ARI, fails in `validating`, never 100%");
+  }
+
+  // ---- the operator's Full Sync: exactly 2 ARI requests, availability then restrictions ----
   {
     const rec = recordingFetch();
     const [job] = await sql`
@@ -193,7 +231,28 @@ try {
       VALUES (${f.T}, ${f.conn}, 'full_sync', 'queued', 10, ${`full_sync:${f.conn}`}) RETURNING id`;
     const result = await runInitialFullSync(sql, await connRow(f.conn), job.id, { fetchImpl: rec.impl });
     assert.equal(result.ok, true, `full sync clean (${result.error ?? ""})`);
-    assert.equal(rec.calls.length, 2, "a full sync is exactly two API calls");
+    assert.equal(rec.auth.length, 1, "the stored key is authenticated first (a GET, not ARI)");
+    assert.equal(rec.calls.length, 2, "a full sync is exactly two ARI calls");
+
+    // the persisted progress a page refresh would read
+    const p = await readProgress(job.id);
+    assert.equal(p.phase, "completed");
+    assert.equal(p.percent, 100, "100% only after a clean completion");
+    assert.equal(p.runId, job.id, "the job id IS the run id");
+    assert.equal(p.roomsProjected, 2);
+    assert.equal(p.roomsTotal, 2, "real room counts");
+    assert.equal(p.ratePlansProjected, 2);
+    assert.equal(p.ratePlansTotal, 2, "real (room × plan) counts");
+    assert.equal(p.availabilitySubmitted, true);
+    assert.equal(p.restrictionsSubmitted, true);
+    assert.equal(p.warnings, 0);
+    assert.equal(p.days, 500);
+    assert.equal(p.taskIds.length, 2, "safe Channex task references are persisted");
+    assert.ok(p.completedAt && !p.failedAt);
+    const dump = JSON.stringify(p);
+    for (const leak of ["fake-key", "property_id", "rate_plan_id", '"rates"', "min_stay_arrival"]) {
+      assert.ok(!dump.includes(leak), `the progress record holds no ${leak} — no api-key, no ARI payload`);
+    }
     assert.ok(rec.calls[0].url.endsWith("/availability"), "availability is sent first");
     assert.ok(rec.calls[1].url.endsWith("/restrictions"), "rates/restrictions are sent separately, second");
 
@@ -215,7 +274,75 @@ try {
     assert.equal(saved.date_from, TODAY);
     assert.equal(saved.date_to, addDays(TODAY, 499), "the submitted range is recorded");
     assert.equal(saved.payload.task_ids.length, 2, "safe Channex task references are stored");
-    ok("Full Sync: 500 dates, 2 separate requests, task refs recorded, connection activated");
+    ok("Full Sync: 500 dates, 2 separate ARI requests, task refs recorded, connection activated");
+    ok("progress persists to 100% only on clean completion, with real counts and safe task refs");
+  }
+
+  // ---- D69: 200-with-warnings ends the run WITHOUT 100% and WITHOUT activation ----
+  {
+    await sql`UPDATE guesthub.channel_connections SET state='ready', outbound_sync_enabled=false, full_sync_required=true WHERE id = ${f.conn}`;
+    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    const rec = recordingFetch((url) =>
+      url.endsWith("/restrictions")
+        ? { warnings: [{ date_from: TODAY, date_to: TODAY, rate_plan_id: "cx-rp-W1", warning: { rate: ["bad"] } }] }
+        : { ok: true });
+    const [job] = await sql`
+      INSERT INTO guesthub.channel_sync_jobs (tenant_id, connection_id, job_type, status, priority)
+      VALUES (${f.T}, ${f.conn}, 'full_sync', 'queued', 10) RETURNING id`;
+    const result = await runInitialFullSync(sql, await connRow(f.conn), job.id, { fetchImpl: rec.impl });
+    assert.equal(result.ok, false, "warnings are never a success");
+    const p = await readProgress(job.id);
+    assert.equal(p.phase, "failed");
+    assert.ok(p.percent < 100, "a warned run never shows 100%");
+    assert.equal(p.warnings, 1, "the warning count is persisted");
+    assert.equal(p.errorCategory, "partial_warnings");
+    assert.equal(p.availabilitySubmitted, true, "availability did land");
+    assert.ok(!JSON.stringify(p).includes("bad"), "the upstream warning text is never persisted");
+    const c = (await sql`SELECT outbound_sync_enabled, full_sync_required FROM guesthub.channel_connections WHERE id = ${f.conn}`)[0];
+    assert.equal(c.outbound_sync_enabled, false, "incremental sync is NOT activated on warnings");
+    assert.equal(c.full_sync_required, true, "the operator must re-run after fixing");
+    ok("HTTP 200 + warnings: not 100%, not successful, incremental sync not activated");
+  }
+
+  // ---- D69: partial failure — availability sent, rates/restrictions failed ----
+  {
+    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    const rec = recordingFetch((url) => (url.endsWith("/restrictions") ? { status: 500 } : { ok: true }));
+    const [job] = await sql`
+      INSERT INTO guesthub.channel_sync_jobs (tenant_id, connection_id, job_type, status, priority)
+      VALUES (${f.T}, ${f.conn}, 'full_sync', 'queued', 10) RETURNING id`;
+    const result = await runInitialFullSync(sql, await connRow(f.conn), job.id, { fetchImpl: rec.impl });
+    assert.equal(result.ok, false);
+    const p = await readProgress(job.id);
+    assert.equal(p.phase, "failed");
+    assert.equal(p.availabilitySubmitted, true, "availability genuinely landed");
+    assert.equal(p.restrictionsSubmitted, false, "rates/restrictions genuinely did not");
+    assert.ok(p.percent >= 75 && p.percent < 100, "the bar stops in submitting_rates — the phase it actually reached");
+    assert.equal(p.errorCategory, "server_error", "a safe category, never an upstream body");
+    assert.ok(p.taskIds.length >= 1, "the task reference from the SUCCESSFUL availability request is preserved");
+    const c = (await sql`SELECT outbound_sync_enabled FROM guesthub.channel_connections WHERE id = ${f.conn}`)[0];
+    assert.equal(c.outbound_sync_enabled, false, "incremental sync is not activated on partial failure");
+    ok("partial failure: correct phase preserved, availability task ref kept, no activation, no 100%");
+  }
+
+  // ---- D69 §6: an ACTIVE run prevents a duplicate Full Sync (database-enforced) ----
+  {
+    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    const key = `full_sync:${f.conn}`;
+    const a = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "full_sync", idempotencyKey: key });
+    const b = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "full_sync", idempotencyKey: key });
+    assert.ok(a.id, "the first Full Sync request creates a run");
+    assert.ok(b.duplicate, "a second request while one is live creates NO second run");
+    const [{ n }] = await sql`SELECT count(*)::int AS n FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn} AND job_type = 'full_sync'`;
+    assert.equal(n, 1, "exactly one Full Sync row exists — enforced by uq_jobs_idempotency, not by the button");
+    // once it finishes, a NEW run may be requested
+    await sql`UPDATE guesthub.channel_sync_jobs SET status = 'succeeded' WHERE id = ${a.id}`;
+    const c = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "full_sync", idempotencyKey: key });
+    assert.ok(c.id, "after completion the operator may run a fresh Full Sync");
+    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    // restore the activated baseline for the incremental tests below
+    await sql`UPDATE guesthub.channel_connections SET state='active', outbound_sync_enabled=true, full_sync_required=false WHERE id = ${f.conn}`;
+    ok("a live run blocks a duplicate Full Sync server-side; a finished one allows a fresh request");
   }
 
   // ---- incremental: only the affected room/plan/dates are sent ----

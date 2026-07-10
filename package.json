@@ -44,7 +44,8 @@
     "build:worker": "tsc -p tsconfig.worker.json",
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
     "check:channex-ari": "node scripts/check-channex-ari.mjs",
-    "check:channel-worker": "node scripts/check-channel-worker.mjs"
+    "check:channel-worker": "node scripts/check-channel-worker.mjs",
+    "check:channex-credential": "node scripts/check-channex-credential.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

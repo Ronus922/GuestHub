@@ -8,6 +8,7 @@ import { enqueueChannelJob } from "./queue";
 import { CHANNEX_BASE_URLS } from "./config";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest, type ChannexErrorCategory } from "./connection-test";
+import { outcomeOf, sanitizeProgress, type FullSyncOutcome, type FullSyncProgress } from "./ari-progress";
 import {
   listChannexProperties,
   getChannexProperty,
@@ -220,11 +221,76 @@ export async function upsertRatePlanMappingAction(input: {
 // for a connection that is not yet usable (disconnected/configured/validating/
 // paused/error), where it would be a dead backlog.
 //
-// The job is idempotent per connection while queued/processing/retry_wait, so a
-// double click produces one sync.
-const FULL_SYNC_RUNNABLE_STATES = new Set(["ready", "active"]);
+// ============================================================
+// THE stored-key probe (D70). One GET /properties/options with the credential
+// that is ALREADY in the database — decrypted server-side, never taken from a
+// request body, a form field, a query parameter or any browser state. Used by
+// "בדיקת חיבור" and by the Full Sync preflight, so the two can never disagree.
+//
+// It records the verdict on the connection row (state + last_test_*), and
+// returns only a fixed, safe Hebrew message keyed by category. The key, the
+// ciphertext and the upstream body never leave this function.
+// ============================================================
+type ProbeResult =
+  | { ok: true; propertyCount: number }
+  | { ok: false; error: string; category: ChannexErrorCategory | "not_configured" | "undecryptable" };
 
-export async function requestFullSyncAction(connectionId: string): Promise<Result> {
+async function probeStoredChannexKey(tenantId: string): Promise<ProbeResult> {
+  if (!channelSecretsConfigured())
+    return { ok: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת", category: "not_configured" };
+
+  const row = await loadChannexRow(tenantId);
+  if (!row?.api_key_ciphertext)
+    return { ok: false, error: "מפתח API לא הוגדר", category: "not_configured" };
+
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret(row.api_key_ciphertext);
+  } catch {
+    // Wrong/rotated CHANNEL_SECRETS_KEY — never leak the ciphertext or the error.
+    return { ok: false, error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה", category: "undecryptable" };
+  }
+
+  const result = await runChannexConnectionTest({ apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+
+  if (result.ok) {
+    await sql`
+      UPDATE guesthub.channel_connections
+      SET state = CASE WHEN state = 'active' THEN 'active' ELSE 'ready' END,
+          last_test_ok_at = now(), last_test_error_code = NULL, last_error = NULL, updated_at = now()
+      WHERE tenant_id = ${tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+    return { ok: true, propertyCount: result.propertyCount };
+  }
+
+  await sql`
+    UPDATE guesthub.channel_connections
+    SET state = CASE WHEN state = 'active' THEN 'active' ELSE 'error' END,
+        last_test_failed_at = now(), last_test_error_code = ${result.category},
+        last_error = ${result.message}, updated_at = now()
+    WHERE tenant_id = ${tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+  return { ok: false, error: result.message, category: result.category };
+}
+
+// DUPLICATE PREVENTION (D69 §6) is enforced by the DATABASE, not the button: the
+// partial unique index uq_jobs_idempotency (connection_id, idempotency_key) WHERE
+// status IN ('queued','processing','retry_wait') makes a second concurrent
+// full_sync row impossible. enqueueChannelJob's ON CONFLICT DO NOTHING reports
+// that as `duplicate`, and we answer with the ALREADY-ACTIVE run's id and status
+// instead of starting a second sync. The disabled button is only cosmetic.
+const FULL_SYNC_RUNNABLE_STATES = new Set(["ready", "active"]);
+const ACTIVE_JOB_STATES = ["queued", "processing", "retry_wait"];
+
+export type FullSyncRequestResult = {
+  /** the channel_sync_jobs row id — the run id the progress record is keyed by */
+  runId: string | null;
+  status: string;
+  /** true ⇒ a Full Sync was ALREADY running; no second one was created */
+  alreadyRunning: boolean;
+};
+
+export async function requestFullSyncAction(
+  connectionId: string,
+): Promise<Result<FullSyncRequestResult>> {
   try {
     const actor = await requireChannelAdmin();
     const [conn] = await sql<{ id: string; state: string; channex_property_id: string | null }[]>`
@@ -236,6 +302,15 @@ export async function requestFullSyncAction(connectionId: string): Promise<Resul
     if (runnable && !conn.channex_property_id)
       return { success: false, error: "לא קיים נכס Channex ממופה — יש למפות נכס תחילה" };
 
+    // D70 §7 — a Full Sync must never *start* on a credential that cannot
+    // authenticate. Probe the STORED key first (one GET /properties/options,
+    // never an ARI request). On failure: no job row, no progress run, no
+    // projection, no ARI — and the operator sees the real, safe reason.
+    if (runnable) {
+      const auth = await probeStoredChannexKey(actor.tenantId);
+      if (!auth.ok) return { success: false, error: auth.error };
+    }
+
     const enqueued = await enqueueChannelJob(sql, {
       tenantId: actor.tenantId,
       connectionId: conn.id,
@@ -244,18 +319,39 @@ export async function requestFullSyncAction(connectionId: string): Promise<Resul
       idempotencyKey: `full_sync:${conn.id}`,
       suppressed: !runnable,
     });
-    await sql`
-      UPDATE guesthub.channel_connections SET full_sync_required = true
-      WHERE id = ${conn.id}`;
+    const alreadyRunning = "duplicate" in enqueued;
+
+    // Only a genuinely NEW run re-arms the flag; a duplicate click changes nothing.
+    if (!alreadyRunning) {
+      await sql`
+        UPDATE guesthub.channel_connections SET full_sync_required = true
+        WHERE id = ${conn.id}`;
+    }
     await writeAudit(actor, {
       entityType: "channel_connection",
       entityId: conn.id,
       action: "request_full_sync",
-      after: { state: conn.state, runnable, duplicate: "duplicate" in enqueued },
+      after: { state: conn.state, runnable, duplicate: alreadyRunning },
     });
+
     if (!runnable)
       return { success: false, error: "החיבור אינו מוכן לסנכרון — יש לאמת מפתח ולמפות נכס" };
-    return { success: true };
+
+    // Report the run that is actually live — the existing one on a duplicate.
+    const [active] = await sql<{ id: string; status: string }[]>`
+      SELECT id, status FROM guesthub.channel_sync_jobs
+      WHERE connection_id = ${conn.id} AND job_type = 'full_sync'
+        AND status = ANY(${ACTIVE_JOB_STATES})
+      ORDER BY created_at DESC LIMIT 1`;
+
+    return {
+      success: true,
+      data: {
+        runId: active?.id ?? ("id" in enqueued ? enqueued.id : null),
+        status: active?.status ?? "queued",
+        alreadyRunning,
+      },
+    };
   } catch (e) {
     return failFrom(e);
   }
@@ -279,6 +375,16 @@ export type AriSyncStatus = {
     finishedAt: string | null;
     errorCode: string | null;
   } | null;
+  /**
+   * Persisted, milestone-based Full Sync progress (D69). Written ONLY by the
+   * channel worker into channel_sync_jobs.payload.progress, so it survives a page
+   * refresh, navigation, a closed browser and a web-process restart. Sanitized:
+   * no api-key, no ciphertext, no ARI payload, no upstream response body.
+   */
+  progress: FullSyncProgress | null;
+  outcome: FullSyncOutcome;
+  /** a run is live — the UI polls and the Full Sync button stays disabled */
+  running: boolean;
   lastSuccessfulSyncAt: string | null;
   pendingRanges: number;
   failedRanges: number;
@@ -286,6 +392,9 @@ export type AriSyncStatus = {
   lastError: string | null;
   worker: { online: boolean; beatAt: string | null; lastDrainAt: string | null } | null;
 };
+
+/** job states in which a Full Sync run is still live */
+const LIVE_JOB_STATES = new Set(["queued", "processing", "retry_wait"]);
 
 /** A heartbeat older than this means the PM2 worker is not running. */
 const WORKER_STALE_SECONDS = 90;
@@ -324,10 +433,14 @@ export async function getAriSyncStatusAction(connectionId: string): Promise<Resu
              (beat_at > now() - make_interval(secs => ${WORKER_STALE_SECONDS})) AS fresh
       FROM guesthub.channel_worker_state WHERE id = 'singleton'`;
 
-    const payload = (job?.payload ?? {}) as { task_ids?: unknown };
+    const payload = (job?.payload ?? {}) as { task_ids?: unknown; progress?: unknown };
     const taskIds = Array.isArray(payload.task_ids)
       ? payload.task_ids.filter((t): t is string => typeof t === "string")
       : [];
+    // sanitizeProgress drops anything not on the whitelist — a stale or
+    // hand-edited payload can never smuggle a field into the browser.
+    const progress = sanitizeProgress(payload.progress);
+    const running = job ? LIVE_JOB_STATES.has(job.status) : false;
 
     return {
       success: true,
@@ -344,6 +457,9 @@ export async function getAriSyncStatusAction(connectionId: string): Promise<Resu
               errorCode: job.last_error_code,
             }
           : null,
+        progress,
+        outcome: running ? "running" : outcomeOf(progress),
+        running,
         lastSuccessfulSyncAt: conn.last_outbound_sync_at?.toISOString() ?? null,
         pendingRanges: ranges?.pending ?? 0,
         failedRanges: ranges?.failed ?? 0,
@@ -382,6 +498,7 @@ export type ChannexConnectionView = {
 };
 
 type ChannexRow = {
+  id: string;
   state: string;
   api_key_ciphertext: string | null;
   api_key_hint: string | null;
@@ -393,7 +510,7 @@ type ChannexRow = {
 
 async function loadChannexRow(tenantId: string): Promise<ChannexRow | null> {
   const [row] = await sql<ChannexRow[]>`
-    SELECT state, api_key_ciphertext, api_key_hint, last_test_ok_at,
+    SELECT id, state, api_key_ciphertext, api_key_hint, last_test_ok_at,
            last_test_failed_at, last_test_error_code, last_error
     FROM guesthub.channel_connections
     WHERE tenant_id = ${tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
@@ -430,6 +547,12 @@ export async function getChannexConnectionAction(): Promise<Result<ChannexConnec
 // 2) Save or replace the staging api-key (encrypted at rest). A blank input is
 // rejected — replacement always supplies the full new key; the existing value
 // is never exposed to enable a "keep current" flow.
+//
+// D70 — VERIFY BEFORE PERSIST. The candidate key is authenticated against Channex
+// (one GET /properties/options — never an ARI request) and is written ONLY on a
+// 200. A working credential can therefore never be replaced by a rejected one, an
+// unverifiable one, or a value a password manager put in the field. On any
+// non-200 the stored ciphertext is left exactly as it was.
 export async function saveChannexApiKeyAction(input: { apiKey: string }): Promise<Result> {
   try {
     const actor = await requireChannelAdmin();
@@ -441,19 +564,34 @@ export async function saveChannexApiKeyAction(input: { apiKey: string }): Promis
     const existing = await loadChannexRow(actor.tenantId);
     const replacing = !!existing?.api_key_ciphertext;
 
+    // Authenticate the CANDIDATE before it touches the database.
+    const probe = await runChannexConnectionTest({ apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+    if (!probe.ok) {
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: existing?.id ?? null,
+        action: "channex_credential_rejected",
+        // category only — never the candidate value, never the stored key
+        after: { environment: CHANNEX_ENV, category: probe.category, replacing },
+      });
+      const keep = replacing ? " — המפתח הקיים נשמר ללא שינוי" : "";
+      return { success: false, error: `${probe.message}${keep}` };
+    }
+
     const [row] = await sql<{ id: string }[]>`
       INSERT INTO guesthub.channel_connections
         (tenant_id, provider, environment, state, api_key_ciphertext, api_key_hint,
          created_by, updated_by)
-      VALUES (${actor.tenantId}, 'channex', ${CHANNEX_ENV}, 'configured',
+      VALUES (${actor.tenantId}, 'channex', ${CHANNEX_ENV}, 'ready',
               ${encryptSecret(apiKey)}, ${secretHint(apiKey)}, ${actor.userId}, ${actor.userId})
       ON CONFLICT (tenant_id, provider, environment) DO UPDATE SET
         api_key_ciphertext = EXCLUDED.api_key_ciphertext,
         api_key_hint = EXCLUDED.api_key_hint,
-        -- a new credential invalidates any prior test verdict
+        -- the credential was authenticated moments ago (verify-before-persist),
+        -- so the fresh verdict IS this write; an already-active link stays active
         state = CASE WHEN guesthub.channel_connections.state = 'active'
-                     THEN 'active' ELSE 'configured' END,
-        last_test_ok_at = NULL, last_test_failed_at = NULL,
+                     THEN 'active' ELSE 'ready' END,
+        last_test_ok_at = now(), last_test_failed_at = NULL,
         last_test_error_code = NULL, last_error = NULL,
         updated_by = ${actor.userId}, updated_at = now()
       RETURNING id`;
@@ -474,65 +612,48 @@ export async function saveChannexApiKeyAction(input: { apiKey: string }): Promis
   }
 }
 
-// 3) Real, server-side connection test against Channex Staging. Decrypts the
-// stored key, performs ONE GET /properties/options, records only sanitized
-// metadata, and returns a safe result. The credential is preserved on failure.
+// 3) Real, server-side connection test against Channex Staging.
+//
+// It takes NO ARGUMENT — by construction it can only use the credential stored in
+// the database. The replacement input, unsaved React state, query parameters,
+// localStorage and cookies have no path into it. scripts/check-channex-credential.mjs
+// asserts that at the source level (zero parameters, zero request-body reads).
+//
+// The credential is preserved on failure; only sanitized metadata is recorded.
 export async function testChannexConnectionAction(): Promise<
-  Result<{ ok: boolean; propertyCount?: number; category?: ChannexErrorCategory; message?: string }>
+  Result<{ ok: boolean; propertyCount?: number; category?: string; message?: string }>
 > {
   try {
     const actor = await requireChannelAdmin();
-    if (!channelSecretsConfigured())
-      return { success: false, error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת" };
-
-    const row = await loadChannexRow(actor.tenantId);
-    if (!row?.api_key_ciphertext) return { success: false, error: "מפתח API לא הוגדר" };
-
-    let apiKey: string;
-    try {
-      apiKey = decryptSecret(row.api_key_ciphertext);
-    } catch {
-      // Wrong/rotated CHANNEL_SECRETS_KEY — never leak the ciphertext or error.
-      return { success: false, error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה" };
-    }
-
-    const result = await runChannexConnectionTest({
-      apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
-    });
-
+    const probe = await probeStoredChannexKey(actor.tenantId);
     const ctx = await auditRequestContext();
-    if (result.ok) {
-      await sql`
-        UPDATE guesthub.channel_connections
-        SET state = 'ready', last_test_ok_at = now(),
-            last_test_error_code = NULL, last_error = NULL, updated_at = now()
-        WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+
+    if (probe.ok) {
       await writeAudit(actor, {
         entityType: "channel_connection",
         entityId: null,
         action: "channex_connection_test_succeeded",
-        after: { environment: CHANNEX_ENV, propertyCount: result.propertyCount },
+        after: { environment: CHANNEX_ENV, propertyCount: probe.propertyCount },
         ip: ctx.ip,
         session: ctx.session,
       });
-      return { success: true, data: { ok: true, propertyCount: result.propertyCount } };
+      return { success: true, data: { ok: true, propertyCount: probe.propertyCount } };
     }
 
-    await sql`
-      UPDATE guesthub.channel_connections
-      SET state = 'error', last_test_failed_at = now(),
-          last_test_error_code = ${result.category}, last_error = ${result.message}, updated_at = now()
-      WHERE tenant_id = ${actor.tenantId} AND provider = 'channex' AND environment = ${CHANNEX_ENV}`;
+    // A missing/undecryptable key is a configuration problem, not a test verdict.
+    if (probe.category === "not_configured" || probe.category === "undecryptable") {
+      return { success: false, error: probe.error };
+    }
+
     await writeAudit(actor, {
       entityType: "channel_connection",
       entityId: null,
       action: "channex_connection_test_failed",
-      after: { environment: CHANNEX_ENV, category: result.category },
+      after: { environment: CHANNEX_ENV, category: probe.category },
       ip: ctx.ip,
       session: ctx.session,
     });
-    return { success: true, data: { ok: false, category: result.category, message: result.message } };
+    return { success: true, data: { ok: false, category: probe.category, message: probe.error } };
   } catch (e) {
     return failFrom(e);
   }

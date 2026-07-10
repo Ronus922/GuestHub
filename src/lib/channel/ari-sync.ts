@@ -4,6 +4,7 @@ import { sql } from "@/lib/db";
 import { addDays, todayInTz, type DateOnly } from "@/lib/dates";
 import { CHANNEX_BASE_URLS } from "./config";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
+import { runChannexConnectionTest } from "./connection-test";
 import { projectAri, type AriProjection } from "./ari-projection";
 import {
   buildAvailabilityValues, buildRestrictionValues,
@@ -12,6 +13,10 @@ import {
 import { pushAri, summarizeWarnings, type AriPushResult, type SafeAriWarning } from "./channex-ari";
 import { logChannelError } from "./queue";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
+import {
+  PHASE_LABELS, initialProgress, isTerminalPhase, phaseFloor, phasePercent,
+  type FullSyncProgress,
+} from "./ari-progress";
 
 // ============================================================
 // Channex ARI synchronisation (D68). Two entry points, ONE projection:
@@ -83,7 +88,11 @@ export type DrainSummary = {
 // accepts. Absent everywhere in production — the worker never passes it — so a
 // test can assert "exactly these two requests, with exactly these values" without
 // any network, and no test-only branch exists in the send path itself.
-export type AriSyncDeps = { fetchImpl?: typeof fetch };
+export type AriSyncDeps = {
+  fetchImpl?: typeof fetch;
+  /** injectable clock for the progress throttle + timestamps ONLY — never the percentage */
+  now?: () => number;
+};
 
 // ---- credentials (never returned, never logged) ----
 type Creds = { apiKey: string; baseUrl: string; propertyId: string; fetchImpl?: typeof fetch };
@@ -102,6 +111,59 @@ function credentialsFor(conn: AriConnection, deps?: AriSyncDeps): Creds | { erro
   } catch {
     return { error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה" };
   }
+}
+
+// ============================================================
+// Persisted progress (D69). THE single writer: only runInitialFullSync — which
+// only ever runs inside the PM2 channel worker — writes it. The web process
+// reads it. There is no second progress writer anywhere.
+//
+// Storage is the EXISTING job row: guesthub.channel_sync_jobs.payload.progress,
+// merged with jsonb `||` so the task_ids/warnings the run records separately are
+// never clobbered. The job id IS the run id, and status/started_at/finished_at
+// already live on the row — no new table, no new column, no migration.
+//
+// Writes are throttled: a phase change or a terminal state always flushes, and
+// otherwise at most one write per PROGRESS_WRITE_MS. Over a 500-day sync that is
+// a few dozen updates, never one per date.
+// ============================================================
+const PROGRESS_WRITE_MS = 900;
+
+type ProgressPatch = Partial<Omit<FullSyncProgress, "runId" | "startedAt">>;
+
+type ProgressReporter = {
+  set: (patch: ProgressPatch) => Promise<void>;
+  /** current in-memory record (already merged) */
+  current: () => FullSyncProgress;
+};
+
+function makeProgressReporter(
+  db: Sql,
+  jobId: string | null,
+  startedAt: string,
+  now: () => number,
+): ProgressReporter {
+  let state = initialProgress(jobId ?? "", startedAt);
+  let lastWrite = 0;
+
+  const flush = async () => {
+    if (!jobId) return;
+    lastWrite = now();
+    await db`
+      UPDATE guesthub.channel_sync_jobs
+      SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('progress', ${db.json(state as never)})
+      WHERE id = ${jobId}`;
+  };
+
+  return {
+    current: () => state,
+    async set(patch) {
+      const phaseChanged = patch.phase !== undefined && patch.phase !== state.phase;
+      state = { ...state, ...patch, updatedAt: new Date(now()).toISOString() };
+      const terminal = isTerminalPhase(state.phase);
+      if (phaseChanged || terminal || now() - lastWrite >= PROGRESS_WRITE_MS) await flush();
+    },
+  };
 }
 
 // ---- mapping lookups ----
@@ -221,6 +283,12 @@ export async function runInitialFullSync(
   jobId: string | null,
   deps?: AriSyncDeps,
 ): Promise<FullSyncResult> {
+  // injectable clock: the throttle and the timestamps are the only time inputs,
+  // and NEITHER feeds the percentage (§3 — progress is milestone-based).
+  const now = deps?.now ?? (() => Date.now());
+  const startedAt = new Date(now()).toISOString();
+  const progress = makeProgressReporter(db, jobId, startedAt, now);
+
   const [tenant] = await db<{ timezone: string | null }[]>`
     SELECT timezone FROM guesthub.tenants WHERE id = ${conn.tenant_id}`;
   const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
@@ -228,53 +296,152 @@ export async function runInitialFullSync(
   const dateToInclusive = addDays(today, FULL_SYNC_DAYS - 1);
 
   const empty: SendOutcome = { requests: 0, taskIds: [], warnings: [], failure: null, deferredBatches: 0 };
-  const bail = (error: string): FullSyncResult => ({
-    ok: false, dateFrom: today, dateTo: dateToInclusive,
-    availability: empty, restrictions: empty, blocked: 0, error,
+
+  // A failed run FREEZES the bar at the phase it actually reached — never 100%,
+  // and never a phase it did not enter.
+  const fail = async (error: string, category: string): Promise<FullSyncResult> => {
+    await progress.set({
+      phase: "failed",
+      percent: progress.current().percent,
+      message: error,
+      errorCategory: category,
+      failedAt: new Date(now()).toISOString(),
+    });
+    return {
+      ok: false, dateFrom: today, dateTo: dateToInclusive,
+      availability: empty, restrictions: empty, blocked: 0, error,
+    };
+  };
+
+  // ---- phase: validating (0–10%) ----
+  await progress.set({
+    phase: "validating", percent: phaseFloor("validating"), message: PHASE_LABELS.validating,
+    dateFrom: today, dateTo: dateToInclusive, days: FULL_SYNC_DAYS,
   });
 
   const ready = await validateFullSyncReadiness(db, conn);
-  if (!ready.ok) return bail(ready.error);
+  if (!ready.ok) return fail(ready.error, "validation");
 
   const creds = credentialsFor(conn, deps);
-  if ("error" in creds) return bail(creds.error);
+  if ("error" in creds) return fail(creds.error, "configuration");
 
-  const projection = await projectAri(db, {
-    tenantId: conn.tenant_id,
-    connectionId: conn.id,
-    dateFrom: today,
-    dateTo: dateToExclusive,
+  // D70 §7 — authenticate the STORED key before anything is projected or sent.
+  // A job enqueued before the credential rotated (or was revoked) must fail here,
+  // during `validating`, and never reach an ARI request. This is a GET, not ARI.
+  const auth = await runChannexConnectionTest({
+    apiKey: creds.apiKey,
+    baseUrl: creds.baseUrl,
+    ...(creds.fetchImpl ? { fetchImpl: creds.fetchImpl } : {}),
   });
-  if (projection.availability.length === 0) return bail("לא נמצאו חדרים ממופים לסנכרון");
-  const sellable = projection.commercial.filter((c) => c.rates !== null).length;
-  if (sellable === 0) return bail("לא ניתן לחשב מחיר לאף שילוב חדר×תוכנית — בדוק תמחור לפני סנכרון");
+  if (!auth.ok) return fail(auth.message, auth.category);
 
   const { roomTypeByRoomId, ratePlanByCombo } = await loadMappings(db, conn.id);
-  const inputs = toInputs(projection);
-  const avail = buildAvailabilityValues(inputs.availability, creds.propertyId, roomTypeByRoomId);
-  const restr = buildRestrictionValues(inputs.restrictions, creds.propertyId, ratePlanByCombo);
+  await progress.set({
+    percent: phasePercent("validating", 1, 1),
+    roomsTotal: roomTypeByRoomId.size,
+    ratePlansTotal: ratePlanByCombo.size,
+  });
 
-  // §3.3 — availability first, then rates/restrictions. Separate requests.
+  const projectArgs = {
+    tenantId: conn.tenant_id, connectionId: conn.id,
+    dateFrom: today, dateTo: dateToExclusive,
+  };
+
+  // ---- phase: projecting availability (10–30%) ----
+  await progress.set({
+    phase: "projecting_availability", percent: phaseFloor("projecting_availability"),
+    message: PHASE_LABELS.projecting_availability,
+  });
+  const availProjection = await projectAri(
+    db, { ...projectArgs, include: { availability: true, commercial: false } },
+    async (p) => {
+      if (p.kind !== "availability") return;
+      await progress.set({
+        percent: phasePercent("projecting_availability", p.done, p.total),
+        roomsProjected: p.done, roomsTotal: p.total,
+      });
+    },
+  );
+  if (availProjection.availability.length === 0) {
+    return fail("לא נמצאו חדרים ממופים לסנכרון", "validation");
+  }
+  const avail = buildAvailabilityValues(
+    toInputs(availProjection).availability, creds.propertyId, roomTypeByRoomId,
+  );
+  const availabilityValues = avail.batches.reduce((n, b) => n + b.values.length, 0);
+
+  // ---- phase: submitting availability (30–45%) ----
+  await progress.set({
+    phase: "submitting_availability", percent: phaseFloor("submitting_availability"),
+    message: PHASE_LABELS.submitting_availability, availabilityValues,
+  });
   const availabilityOutcome = await sendBatches(creds, "availability", avail.batches);
-  const restrictionsOutcome = availabilityOutcome.failure
-    ? empty
-    : await sendBatches(creds, "restrictions", restr.batches);
+  if (availabilityOutcome.failure) {
+    return fail(availabilityOutcome.failure.message, availabilityOutcome.failure.code);
+  }
+  await progress.set({
+    percent: phasePercent("submitting_availability", 1, 1),
+    availabilitySubmitted: true,
+    taskIds: [...availabilityOutcome.taskIds],
+  });
 
-  const failure = availabilityOutcome.failure ?? restrictionsOutcome.failure;
+  // ---- phase: projecting rates + restrictions (45–75%) ----
+  await progress.set({
+    phase: "projecting_rates", percent: phaseFloor("projecting_rates"),
+    message: PHASE_LABELS.projecting_rates,
+  });
+  const rateProjection = await projectAri(
+    db, { ...projectArgs, include: { availability: false, commercial: true } },
+    async (p) => {
+      if (p.kind !== "commercial") return;
+      await progress.set({
+        percent: phasePercent("projecting_rates", p.done, p.total),
+        ratePlansProjected: p.done, ratePlansTotal: p.total,
+      });
+    },
+  );
+  const sellable = rateProjection.commercial.filter((c) => c.rates !== null).length;
+  if (sellable === 0) {
+    return fail("לא ניתן לחשב מחיר לאף שילוב חדר×תוכנית — בדוק תמחור לפני סנכרון", "validation");
+  }
+  const restr = buildRestrictionValues(
+    toInputs(rateProjection).restrictions, creds.propertyId, ratePlanByCombo,
+  );
+  const restrictionValues = restr.batches.reduce((n, b) => n + b.values.length, 0);
+
+  // ---- phase: submitting rates + restrictions (75–90%) ----
+  await progress.set({
+    phase: "submitting_rates", percent: phaseFloor("submitting_rates"),
+    message: PHASE_LABELS.submitting_rates,
+    blocked: rateProjection.blocked.length, restrictionValues,
+  });
+  const restrictionsOutcome = await sendBatches(creds, "restrictions", restr.batches);
+
+  const failure = restrictionsOutcome.failure;
   const warnings = [...availabilityOutcome.warnings, ...restrictionsOutcome.warnings];
   const deferred = availabilityOutcome.deferredBatches + restrictionsOutcome.deferredBatches;
   const clean = !failure && warnings.length === 0 && deferred === 0;
+  const projectionBlocked = rateProjection.blocked.length;
+
+  if (!failure) {
+    await progress.set({
+      percent: phasePercent("submitting_rates", 1, 1),
+      restrictionsSubmitted: true,
+      taskIds: [...availabilityOutcome.taskIds, ...restrictionsOutcome.taskIds],
+    });
+  }
 
   // §3.5 — record range, timestamp, safe task references and safe warnings.
+  // `payload || …` MERGES, so the progress record written above survives.
   if (jobId) {
     await db`
       UPDATE guesthub.channel_sync_jobs SET
         date_from = ${today}, date_to = ${dateToInclusive},
         provider_task_id = ${availabilityOutcome.taskIds[0] ?? restrictionsOutcome.taskIds[0] ?? null},
-        payload = ${db.json({
+        payload = COALESCE(payload, '{}'::jsonb) || ${db.json({
           task_ids: [...availabilityOutcome.taskIds, ...restrictionsOutcome.taskIds],
           warnings,
-          blocked: projection.blocked.length,
+          blocked: projectionBlocked,
           deferred_batches: deferred,
         } as never)}
       WHERE id = ${jobId}`;
@@ -295,21 +462,57 @@ export async function runInitialFullSync(
     });
   }
 
+  // ---- phase: checking warnings + results (90–97%) ----
+  // Reached even on failure: the run genuinely got this far, and the bar must
+  // stop where the work stopped.
+  await progress.set({
+    phase: "checking_warnings", percent: phaseFloor("checking_warnings"),
+    message: PHASE_LABELS.checking_warnings, warnings: warnings.length,
+  });
+
+  const errorMessage = failure ? failure.message : warnings.length ? summarizeWarnings(warnings) : null;
+
   // §11 — a 200 carrying warnings is NOT a fully successful synchronisation.
   // Incremental delivery is enabled only from a clean baseline; anything else
   // leaves full_sync_required=true so the operator re-runs after fixing.
   if (clean) {
+    await progress.set({ percent: phasePercent("checking_warnings", 1, 1) });
+
+    // ---- phase: activating incremental sync (97–100%) ----
+    await progress.set({
+      phase: "activating_incremental_sync", percent: phaseFloor("activating_incremental_sync"),
+      message: PHASE_LABELS.activating_incremental_sync,
+    });
     await db`
       UPDATE guesthub.channel_connections SET
         state = 'active', outbound_sync_enabled = true, full_sync_required = false,
         last_outbound_sync_at = now(), last_error = NULL
       WHERE id = ${conn.id}`;
+
+    // ---- phase: completed (100%) — reachable ONLY from a clean run ----
+    await progress.set({
+      phase: "completed", percent: 100, message: PHASE_LABELS.completed,
+      completedAt: new Date(now()).toISOString(),
+    });
   } else {
     await db`
       UPDATE guesthub.channel_connections SET
         full_sync_required = true,
-        last_error = ${failure ? failure.message : summarizeWarnings(warnings)}
+        last_error = ${errorMessage}
       WHERE id = ${conn.id}`;
+
+    // Warnings, a deferred batch or a rates failure all end the run WITHOUT
+    // 100% and WITHOUT activating incremental sync. availabilitySubmitted /
+    // restrictionsSubmitted already record how far the external state got, so
+    // the UI can say "זמינות נשלחה, מחירים והגבלות נכשלו" truthfully.
+    await progress.set({
+      phase: "failed",
+      percent: progress.current().percent,
+      message: errorMessage ?? PHASE_LABELS.failed,
+      errorCategory: failure ? failure.code : warnings.length ? "partial_warnings" : "deferred_batches",
+      warnings: warnings.length,
+      failedAt: new Date(now()).toISOString(),
+    });
   }
 
   return {
@@ -318,8 +521,8 @@ export async function runInitialFullSync(
     dateTo: dateToInclusive,
     availability: availabilityOutcome,
     restrictions: restrictionsOutcome,
-    blocked: projection.blocked.length,
-    error: failure ? failure.message : warnings.length ? summarizeWarnings(warnings) : null,
+    blocked: projectionBlocked,
+    error: errorMessage,
   };
 }
 
@@ -387,6 +590,7 @@ export async function drainAriDirtyRanges(
     const roomIds = [...new Set(availRows.map((r) => r.room_id))];
     const projection = await projectAri(db, {
       tenantId: conn.tenant_id, connectionId: conn.id, dateFrom: from, dateTo: to, roomIds,
+      include: { availability: true, commercial: false }, // rates were not dirtied
     });
     const wanted = new Set(availRows.map((r) => r.room_id));
     const inputs = projection.availability
@@ -413,6 +617,7 @@ export async function drainAriDirtyRanges(
       : undefined;
     const projection = await projectAri(db, {
       tenantId: conn.tenant_id, connectionId: conn.id, dateFrom: from, dateTo: to, roomIds, planIds,
+      include: { availability: false, commercial: true }, // availability was not dirtied
     });
     const inputs = projection.commercial
       .filter((c) => coveredBy(commRows, c.roomId, c.planId, c.date))

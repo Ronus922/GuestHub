@@ -84,7 +84,23 @@ export type ProjectAriArgs = {
   roomIds?: string[];
   /** restrict to these tenant-level plans; omitted = every channel-visible plan */
   planIds?: string[];
+  /**
+   * Which half to compute. Both by default. The two halves feed two separate
+   * Channex endpoints and are never sent together, so a caller that needs only
+   * one (the Full Sync phases; the incremental drain) skips the other's loads
+   * entirely. It changes NOTHING about how either half is calculated.
+   */
+  include?: { availability?: boolean; commercial?: boolean };
 };
+
+// Real processed counts, emitted at room / (room × plan) boundaries so a caller
+// can drive a milestone-based progress bar (D69). Never per-date: the callback
+// fires at most `rooms + combos` times per projection.
+export type ProjectionProgress =
+  | { kind: "availability"; done: number; total: number }
+  | { kind: "commercial"; done: number; total: number };
+
+export type ProjectionProgressFn = (p: ProjectionProgress) => void | Promise<void>;
 
 type TenantRow = { timezone: string | null; extra_guest: unknown };
 
@@ -190,7 +206,11 @@ function extraPerNightByOccupancy(
 export async function projectAri(
   db: Sql | TransactionSql,
   args: ProjectAriArgs,
+  onProgress?: ProjectionProgressFn,
 ): Promise<AriProjection> {
+  const wantAvailability = args.include?.availability ?? true;
+  const wantCommercial = args.include?.commercial ?? true;
+
   const dates = eachDay(args.dateFrom, args.dateTo);
   const empty: AriProjection = { availability: [], commercial: [], blocked: [] };
   if (dates.length === 0) return empty;
@@ -226,14 +246,41 @@ export async function projectAri(
   if (roomRows.length === 0) return empty;
   const roomIds = roomRows.map((r) => r.room_id);
 
-  // ---- availability: THE canonical physical projection, unmodified ----
-  const invRows = await db<{ room_id: string; day: string; availability: number }[]>`
-    SELECT sur.room_id, inv.day::text AS day, inv.availability
-    FROM guesthub.sellable_unit_inventory(${args.tenantId}, ${args.dateFrom}, ${args.dateTo}) inv
-    JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = inv.sellable_unit_id
-    WHERE sur.tenant_id = ${args.tenantId} AND sur.room_id = ANY(${roomIds}::uuid[])`;
-  const availByRoomDay = new Map<string, number>();
-  for (const r of invRows) availByRoomDay.set(`${r.room_id}|${r.day}`, r.availability);
+  const out: AriProjection = { availability: [], commercial: [], blocked: [] };
+
+  // one Channex Room Type IS one physical room: a pooled sellable unit would
+  // make `availability` a count of OTHER rooms. Refuse rather than over-sell.
+  const isExclusive = (room: MappedRoomRow) =>
+    room.sellable_unit_id != null && room.su_room_count === 1;
+
+  // ============================================================
+  // Pass 1 — availability: THE canonical physical projection, unmodified.
+  // ============================================================
+  if (wantAvailability) {
+    const invRows = await db<{ room_id: string; day: string; availability: number }[]>`
+      SELECT sur.room_id, inv.day::text AS day, inv.availability
+      FROM guesthub.sellable_unit_inventory(${args.tenantId}, ${args.dateFrom}, ${args.dateTo}) inv
+      JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = inv.sellable_unit_id
+      WHERE sur.tenant_id = ${args.tenantId} AND sur.room_id = ANY(${roomIds}::uuid[])`;
+    const availByRoomDay = new Map<string, number>();
+    for (const r of invRows) availByRoomDay.set(`${r.room_id}|${r.day}`, r.availability);
+
+    for (let i = 0; i < roomRows.length; i++) {
+      const room = roomRows[i];
+      const exclusive = isExclusive(room);
+      for (const date of dates) {
+        const raw = exclusive ? (availByRoomDay.get(`${room.room_id}|${date}`) ?? 0) : 0;
+        out.availability.push({ roomId: room.room_id, date, availability: raw > 0 ? 1 : 0 });
+      }
+      if (onProgress) await onProgress({ kind: "availability", done: i + 1, total: roomRows.length });
+    }
+  }
+
+  if (!wantCommercial) return out;
+
+  // ============================================================
+  // Pass 2 — rates + restrictions.
+  // ============================================================
 
   // ---- tenant-level Rate Plans (the whole small set: parent chains resolve
   // without per-plan roundtrips, exactly as engine.ts loads them) ----
@@ -320,18 +367,12 @@ export async function projectAri(
   const EMPTY_OVERLAY = new Map<string, PlanRateRow>();
 
   // ---- assemble ----
-  const out: AriProjection = { availability: [], commercial: [], blocked: [] };
+  // total (room × plan) combinations, so progress reports a real denominator
+  const combosTotal = roomRows.reduce((n, r) => n + (combosByRoom.get(r.room_id)?.length ?? 0), 0);
+  let combosDone = 0;
 
   for (const room of roomRows) {
-    // one Channex Room Type IS one physical room: a pooled sellable unit would
-    // make `availability` a count of OTHER rooms. Refuse rather than over-sell.
-    const exclusive = room.sellable_unit_id != null && room.su_room_count === 1;
-
-    for (const date of dates) {
-      const raw = exclusive ? (availByRoomDay.get(`${room.room_id}|${date}`) ?? 0) : 0;
-      out.availability.push({ roomId: room.room_id, date, availability: raw > 0 ? 1 : 0 });
-    }
-
+    const exclusive = isExclusive(room);
     const su = room.sellable_unit_id;
     const base = baseRates.get(room.room_id);
     const baseByDate = indexByDate(base?.rows ?? []);
@@ -444,6 +485,10 @@ export async function projectAri(
           blockedReason: null,
         });
       }
+
+      // one (room × rate plan) combination is genuinely finished
+      combosDone += 1;
+      if (onProgress) await onProgress({ kind: "commercial", done: combosDone, total: combosTotal });
     }
   }
 

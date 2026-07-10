@@ -61,6 +61,7 @@ writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({
   },
   include: [
     join(ROOT, "src/lib/channel/ari-payloads.ts"),
+    join(ROOT, "src/lib/channel/ari-progress.ts"),
     join(ROOT, "src/lib/channel/channex-ari.ts"),
     join(ROOT, "src/lib/channel/ari-projection.ts"),
     join(ROOT, "src/lib/channel/outbox.ts"),
@@ -87,6 +88,7 @@ Module._resolveFilename = function (request, ...rest) {
 };
 
 const ari = req(join(out, "lib/channel/ari-payloads.js"));
+const prog = req(join(out, "lib/channel/ari-progress.js"));
 const client = req(join(out, "lib/channel/channex-ari.js"));
 const { projectAri } = req(join(out, "lib/channel/ari-projection.js"));
 const { markAriDirty, expandPlanFamily, roomsForPlans } = req(join(out, "lib/channel/outbox.js"));
@@ -162,6 +164,91 @@ const { calculateQuote } = req(join(out, "lib/pricing/engine.js"));
   const reversed = { values: [{ property_id: "p", room_type_id: "r", date_from: "2026-08-05", date_to: "2026-08-01" }] };
   assert.ok(ari.validateAriBatch(reversed), "reversed range refused");
   ok("validation: zero rate, occupancy 0 and reversed ranges never reach the network");
+}
+
+// ============================================================
+// Part A2 — Full Sync progress: milestone-based, never timer-based (D69)
+// ============================================================
+{
+  const PHASES = [
+    "validating", "projecting_availability", "submitting_availability",
+    "projecting_rates", "submitting_rates", "checking_warnings",
+    "activating_incremental_sync", "completed", "failed",
+  ];
+  for (const p of PHASES) assert.ok(prog.PHASE_LABELS[p], `phase ${p} has a Hebrew label`);
+  assert.equal(prog.PHASE_LABELS.projecting_rates, "מחשב מחירים והגבלות");
+  assert.equal(prog.initialProgress("run-1", "T0").phase, "validating", "a run starts at `validating`");
+  assert.equal(prog.initialProgress("run-1", "T0").percent, 0, "…at 0%");
+  ok("progress starts at `validating`, 0%, with the specified phases and Hebrew labels");
+}
+{
+  // percentage is a pure function of (phase, done, total) — it cannot see a clock
+  const src = readFileSync(join(ROOT, "src/lib/channel/ari-progress.ts"), "utf8");
+  assert.ok(/export function phasePercent\(phase: FullSyncPhase, done = 0, total = 0\): number/.test(src),
+    "phasePercent takes only (phase, done, total) — no elapsed time, no start time");
+  assert.ok(!/Date\.now|performance\.now|setInterval|setTimeout|new Date\(\)/.test(src),
+    "the progress module reads no clock at all — a stalled run cannot advance");
+  assert.ok(!/^import /m.test(src), "the progress model is pure and import-free");
+  ok("the percentage is milestone-based: no clock is even reachable from the module");
+}
+{
+  // the weighted milestone model from the spec
+  assert.equal(prog.phasePercent("validating", 0, 0), 0);
+  assert.equal(prog.phasePercent("validating", 1, 1), 10, "validation completes at 10%");
+  assert.equal(prog.phaseFloor("projecting_availability"), 10);
+  assert.equal(prog.phasePercent("projecting_availability", 0, 13), 10, "nothing projected ⇒ the phase floor");
+  assert.equal(prog.phasePercent("projecting_availability", 13, 13), 30, "13/13 rooms ⇒ the phase ceiling");
+  // real processed counts drive it, linearly
+  assert.equal(prog.phasePercent("projecting_availability", 7, 13), 20);
+  assert.equal(prog.phasePercent("submitting_availability", 1, 1), 45);
+  assert.equal(prog.phasePercent("projecting_rates", 0, 52), 45);
+  assert.equal(prog.phasePercent("projecting_rates", 34, 52), 64, "34/52 rate plans ⇒ 64%");
+  assert.equal(prog.phasePercent("projecting_rates", 52, 52), 75);
+  assert.equal(prog.phasePercent("submitting_rates", 1, 1), 90);
+  assert.equal(prog.phasePercent("checking_warnings", 1, 1), 97);
+  assert.equal(prog.phaseFloor("activating_incremental_sync"), 97);
+  assert.equal(prog.phasePercent("completed"), 100, "only `completed` is 100%");
+  ok("availability and rates projection advance the bar from REAL processed counts");
+}
+{
+  // 100% is unreachable except through a clean completion
+  for (const p of ["validating", "projecting_availability", "submitting_availability",
+                   "projecting_rates", "submitting_rates", "checking_warnings", "activating_incremental_sync"]) {
+    assert.ok(prog.phasePercent(p, 1e9, 1) < 100, `phase ${p} can never reach 100% however much work it reports`);
+  }
+  assert.ok(prog.phasePercent("failed", 1, 1) < 100, "a failed run never shows 100%");
+  assert.ok(prog.isTerminalPhase("completed") && prog.isTerminalPhase("failed"));
+  assert.ok(!prog.isTerminalPhase("submitting_rates"));
+  ok("100% is reachable ONLY from a clean `completed` — never from any other phase");
+}
+{
+  // outcomes: warnings and partial failure are NOT success
+  const base = prog.initialProgress("r", "T0");
+  assert.equal(prog.outcomeOf({ ...base, phase: "completed", percent: 100 }), "success");
+  assert.equal(prog.outcomeOf({ ...base, phase: "failed", warnings: 3, percent: 97 }), "warnings",
+    "a 200-with-warnings run is `warnings`, never success");
+  assert.equal(prog.outcomeOf({ ...base, phase: "failed", availabilitySubmitted: true, restrictionsSubmitted: false, percent: 80 }),
+    "partial_failure", "availability sent + rates failed ⇒ partial failure");
+  assert.equal(prog.outcomeOf({ ...base, phase: "failed", percent: 5 }), "failed");
+  assert.equal(prog.outcomeOf({ ...base, phase: "projecting_rates" }), "running");
+  assert.equal(prog.outcomeOf(null), "running");
+  ok("warnings never produce a successful 100% state; partial failure is reported as such");
+}
+{
+  // the persisted record is a strict whitelist — nothing else can reach the browser
+  const dirty = {
+    runId: "r", phase: "completed", percent: 100, apiKey: "SECRET", api_key_ciphertext: "CT",
+    payload: [{ rate: 1 }], upstream: "raw body", taskIds: ["t1", 42], warnings: 0,
+  };
+  const clean = prog.sanitizeProgress(dirty);
+  assert.ok(clean, "a valid record sanitizes");
+  assert.ok(!("apiKey" in clean) && !("api_key_ciphertext" in clean) && !("payload" in clean) && !("upstream" in clean),
+    "unknown keys — including secrets and payloads — are dropped");
+  assert.deepEqual(clean.taskIds, ["t1"], "task ids are strings only");
+  assert.equal(prog.sanitizeProgress({ runId: "r", phase: "not_a_phase" }), null, "an unknown phase is rejected");
+  assert.equal(prog.sanitizeProgress(null), null);
+  assert.equal(prog.sanitizeProgress("nope"), null);
+  ok("the progress DTO is a strict whitelist: no api-key, ciphertext or ARI payload can pass through it");
 }
 
 // ============================================================
@@ -695,6 +782,50 @@ const code = (f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/
   assert.ok(deploy.includes("dist/worker/lib/channel/worker.js"), "deploy fails closed if the worker was not built");
   assert.ok(/WORKER_STATUS.*=.*online|\[ "\$WORKER_STATUS" = "online" \]/.test(deploy), "deploy verifies the worker is online");
   ok("deploy builds first, restarts only the web app + worker, verifies both, touches no unrelated PM2 app");
+}
+{
+  // D69 — the progress UI: real bar, bounded polling, no fake timer progress
+  const card = code("src/app/(dashboard)/channels/AriSyncSection.tsx");
+  assert.ok(/role="progressbar"/.test(card), "a real progressbar role is used");
+  for (const a of ["aria-valuenow", "aria-valuemin", "aria-valuemax"]) {
+    assert.ok(card.includes(a), `the bar exposes ${a}`);
+  }
+  assert.ok(/dir="rtl"/.test(card), "the bar is RTL");
+  assert.ok(/\{p\.percent\}%/.test(card), "the percentage is visible");
+  assert.ok(!/animate-pulse|animate-\[|indeterminate/.test(card), "no endless animated bar — progress is determinate");
+  // the percentage is READ, never computed here
+  assert.ok(!/phasePercent/.test(card), "the client never computes a percentage");
+  assert.ok(/percent=\{p\.percent\}/.test(card), "it renders exactly what the worker persisted");
+  // polling: only while running, cleared on unmount
+  assert.ok(/if \(!running\) return/.test(card), "polling never starts unless a run is live");
+  assert.ok(/clearInterval\(t\)/.test(card), "the poll is cleared on unmount / when the run ends");
+  assert.ok(/const POLL_MS = 2500/.test(card), "the poll interval is 2–3s while running");
+  // duplicate prevention surfaced
+  assert.ok(/סנכרון מלא כבר מתבצע/.test(card), "a duplicate request is reported to the operator");
+  assert.ok(/disabled=\{busy\}/.test(card), "the Full Sync button is disabled while a run is live");
+  ok("progress bar is determinate + accessible + RTL; polling runs only while a run is live");
+}
+{
+  // only super_admin may read the technical progress
+  const admin = code("src/lib/channel/admin.ts");
+  const status = admin.slice(admin.indexOf("export async function getAriSyncStatusAction"));
+  assert.ok(/const actor = await requireChannelAdmin\(\)/.test(status.slice(0, 400)),
+    "getAriSyncStatusAction gates on requireChannelAdmin (super_admin only)");
+  assert.ok(/sanitizeProgress\(payload\.progress\)/.test(status),
+    "the progress record is sanitized before it leaves the server");
+  assert.ok(!existsSync(join(ROOT, "src/app/api/channel/status")), "no public status endpoint exists");
+  ok("only super_admin can read Full Sync progress; there is no unauthenticated status endpoint");
+}
+{
+  // the progress record is stored on the EXISTING job row — no new table/migration
+  const sync = code("src/lib/channel/ari-sync.ts");
+  assert.ok(/UPDATE guesthub\.channel_sync_jobs[\s\S]{0,200}jsonb_build_object\('progress'/.test(sync),
+    "progress lives in channel_sync_jobs.payload.progress");
+  assert.ok(/COALESCE\(payload, '\{\}'::jsonb\) \|\|/.test(sync), "it merges — task_ids/warnings are never clobbered");
+  assert.ok(/const PROGRESS_WRITE_MS = \d+/.test(sync), "writes are throttled, never one per date");
+  const migrations = readdirSync(join(ROOT, "db/migrations")).filter((f) => f.endsWith(".sql"));
+  assert.ok(!migrations.some((m) => /progress/i.test(m)), "no migration was needed for progress");
+  ok("progress is persisted on the existing job row, merged and throttled — no new table, no migration");
 }
 {
   // the worker never sends before the operator's Full Sync
