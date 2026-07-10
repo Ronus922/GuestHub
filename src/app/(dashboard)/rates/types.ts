@@ -118,6 +118,9 @@ export const SELL_REASON_KIND: Record<SellReason, SellReasonKind> = {
 export type RateGridUnit = {
   sellableUnitId: string;
   pricingPlanId: string | null;
+  // The sole member physical room — the unit's canonical identity (D74).
+  // null only for a pooled unit, which is its own identity.
+  roomId: string | null;
   code: string;
   name: string;
   isPooled: boolean;

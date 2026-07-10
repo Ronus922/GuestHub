@@ -36,6 +36,7 @@ export type RateCell = {
 export type RateChange = {
   sellableUnitId: string;
   pricingPlanId: string;
+  roomId: string | null;
   roomTypeId: string | null;
   date: DateOnly;
   oldPrice: number | null;
@@ -139,6 +140,7 @@ export async function writeRateCells(
     changes.push({
       sellableUnitId: c.sellableUnitId,
       pricingPlanId: c.pricingPlanId,
+      roomId: meta.room_id,
       roomTypeId: meta.room_type_id,
       date: c.date,
       oldPrice: old ? old.price : null,
