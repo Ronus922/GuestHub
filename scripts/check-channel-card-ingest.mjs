@@ -1,14 +1,21 @@
 // Channel-card ingestion INTEGRATION test (D43/D52). Compiles the real server
 // modules (card-vault, card-rules, channel/payloads, channel/revisions,
-// channel/card-ingest), then exercises them against the live DB inside a
-// transaction that is ALWAYS ROLLED BACK — no live data is modified and temp
-// records never persist. Proves the operational seam:
+// channel/card-ingest), then exercises them against the ISOLATED test DB inside
+// a transaction that is ALWAYS ROLLED BACK. Proves the operational seam:
 //   raw payload → extract → encrypt PAN → stage on revision (payload redacted)
 //                → attach to reservation_cards on import
 // and that no plaintext PAN is ever stored or logged, and that the CVV is NEVER
 // stored anywhere (D52 §2) — no cvv column exists, and a CVV in the raw payload
 // is scrubbed by the redaction guard.
-// Usage: node --env-file=.env.local scripts/check-channel-card-ingest.mjs
+//
+// D68: this script used to inherit DATABASE_URL from .env.local and therefore ran
+// against PRODUCTION (:5432). Rolled back or not, a check must never open a
+// transaction on the live database — and once a real Channex connection existed
+// there, its fixture INSERT collided with it and the check failed outright. It
+// now targets guesthub-testdb (:5433) and fails closed on a production marker,
+// exactly like its sibling checks.
+//
+// Usage: node scripts/check-channel-card-ingest.mjs
 import { execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -16,6 +23,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import postgres from "postgres";
+
+const TEST_URL =
+  process.env.TEST_DATABASE_URL ||
+  "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
+for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
+  if (TEST_URL.includes(marker)) {
+    console.error(`REFUSED: TEST_DATABASE_URL contains production marker "${marker}"`);
+    process.exit(1);
+  }
+}
+process.env.DATABASE_URL = TEST_URL;
 
 const out = mkdtempSync(join(tmpdir(), "chan-card-"));
 execSync(

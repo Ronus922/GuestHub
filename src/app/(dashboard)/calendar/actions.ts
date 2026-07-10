@@ -59,12 +59,12 @@ export async function createClosureAction(raw: {
         after: { room_id: input.roomId, start: input.startDate, end: input.endDate, reason: input.reason },
       }, tx);
 
-      const [room] = await tx<{ room_type_id: string | null }[]>`
-        SELECT room_type_id FROM guesthub.rooms
-        WHERE id = ${input.roomId} AND tenant_id = ${actor.tenantId}`;
+      // a closure removes physical inventory for its nights → availability dirty.
+      // Restrictions are NOT marked: the canonical effective state derives
+      // stop_sell from commercial rows, never from a closure (§7).
       await markAriDirty(tx, {
         tenantId: actor.tenantId,
-        roomTypeIds: [room?.room_type_id ?? null],
+        roomIds: [input.roomId],
         dateFrom: input.startDate,
         dateTo: input.endDate,
       });
@@ -83,11 +83,10 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
     requirePermission(actor, "rooms.edit");
     await sql.begin(async (tx) => {
       const [closure] = await tx<
-        { id: string; room_id: string; start_date: string; end_date: string; room_type_id: string | null }[]
+        { id: string; room_id: string; start_date: string; end_date: string }[]
       >`
-        SELECT c.id, c.room_id, c.start_date::text, c.end_date::text, r.room_type_id
+        SELECT c.id, c.room_id, c.start_date::text, c.end_date::text
         FROM guesthub.room_closures c
-        JOIN guesthub.rooms r ON r.id = c.room_id
         WHERE c.id = ${id} AND c.tenant_id = ${actor.tenantId}
         FOR UPDATE OF c`;
       if (!closure) throw new DomainError("חסימה לא נמצאה");
@@ -101,9 +100,10 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
         action: "delete",
         before: { room_id: closure.room_id, start: closure.start_date, end: closure.end_date },
       }, tx);
+      // lifting a closure returns those nights to sale → availability dirty
       await markAriDirty(tx, {
         tenantId: actor.tenantId,
-        roomTypeIds: [closure.room_type_id],
+        roomIds: [closure.room_id],
         dateFrom: closure.start_date,
         dateTo: closure.end_date,
       });

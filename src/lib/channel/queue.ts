@@ -54,9 +54,17 @@ export async function enqueueChannelJob(
   return rows[0] ?? { duplicate: true };
 }
 
-// Claim runnable jobs. FIFO per connection: a connection with a job already
-// processing is skipped entirely, so two workers can never publish
-// conflicting ARI ranges for the same connection concurrently.
+// How long a claim stays valid. A worker that crashes mid-job leaves its row in
+// 'processing' forever; without a lease the FIFO guard below would then wedge
+// that connection permanently. After the lease expires the job is reclaimable by
+// any worker (PM2 will have restarted the dead one), so no job is ever stuck.
+// Sized well above the slowest run: a full sync paces ~6.5s between requests.
+export const JOB_LEASE_MINUTES = 10;
+
+// Claim runnable jobs. FIFO per connection: a connection with a LIVE processing
+// job is skipped entirely, so two workers can never publish conflicting ARI
+// ranges for the same connection concurrently. `FOR UPDATE SKIP LOCKED` makes the
+// claim itself atomic — two workers starting at once never take the same row.
 export async function claimChannelJobs(workerId: string, limit = 5) {
   return sql.begin(async (tx) => {
     const jobs = await tx<{ id: string; job_type: ChannelJobType; connection_id: string; payload: unknown }[]>`
@@ -65,11 +73,17 @@ export async function claimChannelJobs(workerId: string, limit = 5) {
         started_at = COALESCE(j.started_at, now()), attempts = j.attempts + 1
       WHERE j.id IN (
         SELECT c.id FROM guesthub.channel_sync_jobs c
-        WHERE c.status IN ('queued', 'retry_wait')
-          AND c.next_attempt_at <= now()
+        WHERE (
+            (c.status IN ('queued', 'retry_wait') AND c.next_attempt_at <= now())
+            -- expired lease: the previous worker died holding this job
+            OR (c.status = 'processing'
+                AND c.locked_at < now() - make_interval(mins => ${JOB_LEASE_MINUTES}))
+          )
           AND NOT EXISTS (
             SELECT 1 FROM guesthub.channel_sync_jobs p
-            WHERE p.connection_id = c.connection_id AND p.status = 'processing')
+            WHERE p.connection_id = c.connection_id AND p.status = 'processing'
+              AND p.id <> c.id
+              AND p.locked_at >= now() - make_interval(mins => ${JOB_LEASE_MINUTES}))
         ORDER BY c.priority, c.created_at
         FOR UPDATE SKIP LOCKED
         LIMIT ${limit})

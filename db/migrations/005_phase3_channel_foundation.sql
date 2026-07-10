@@ -100,9 +100,21 @@ CREATE TABLE IF NOT EXISTS guesthub.channel_dirty_ranges (
   updated_at    timestamptz NOT NULL DEFAULT now(),
   CHECK (date_to > date_from)
 );
-CREATE INDEX IF NOT EXISTS idx_dirty_pending
-  ON guesthub.channel_dirty_ranges (connection_id, room_type_id, kind, date_from)
-  WHERE status = 'pending';
+-- Migration 027 re-keys this table from room_type_id to room_id and replaces
+-- this index. The whole chain is replayed by every check script, so this
+-- statement must stay runnable on a database where 027 has already dropped the
+-- column: create the historical index ONLY while its column still exists.
+-- On a fresh database the column exists here, so the original behaviour is kept.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+             WHERE table_schema = 'guesthub' AND table_name = 'channel_dirty_ranges'
+               AND column_name = 'room_type_id') THEN
+    CREATE INDEX IF NOT EXISTS idx_dirty_pending
+      ON guesthub.channel_dirty_ranges (connection_id, room_type_id, kind, date_from)
+      WHERE status = 'pending';
+  END IF;
+END $$;
 
 -- ---- 4. durable job queue (§T) ----
 CREATE TABLE IF NOT EXISTS guesthub.channel_sync_jobs (

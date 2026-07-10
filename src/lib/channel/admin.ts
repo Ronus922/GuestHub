@@ -206,23 +206,43 @@ export async function upsertRatePlanMappingAction(input: {
   }
 }
 
-// Records a full-sync request (§V). While the connection is not active the
-// job is stored 'suppressed' — visible, auditable, and never runnable, so no
-// dead backlog forms. Actual execution is a future activation deliverable.
+// THE Full Sync action (§V, wired by D68) — super_admin only, explicitly
+// operator-triggered from /channels, and the ONLY way a Channex connection ever
+// becomes outbound-enabled.
+//
+// It enqueues a durable `full_sync` job and returns immediately: the PM2 channel
+// worker runs the projection and the two API calls (availability, then
+// rates/restrictions) out of band, so the operator's request never waits on
+// Channex and a lost browser tab cannot abandon a half-finished sync.
+//
+// 'ready' — a validated connection with a mapped property — is exactly the state
+// Full Sync exists to leave, so the job is runnable there. It is suppressed only
+// for a connection that is not yet usable (disconnected/configured/validating/
+// paused/error), where it would be a dead backlog.
+//
+// The job is idempotent per connection while queued/processing/retry_wait, so a
+// double click produces one sync.
+const FULL_SYNC_RUNNABLE_STATES = new Set(["ready", "active"]);
+
 export async function requestFullSyncAction(connectionId: string): Promise<Result> {
   try {
     const actor = await requireChannelAdmin();
-    const [conn] = await sql<{ id: string; state: string }[]>`
-      SELECT id, state FROM guesthub.channel_connections
+    const [conn] = await sql<{ id: string; state: string; channex_property_id: string | null }[]>`
+      SELECT id, state, channex_property_id FROM guesthub.channel_connections
       WHERE id = ${connectionId} AND tenant_id = ${actor.tenantId}`;
     if (!conn) return { success: false, error: "חיבור לא נמצא" };
-    await enqueueChannelJob(sql, {
+
+    const runnable = FULL_SYNC_RUNNABLE_STATES.has(conn.state);
+    if (runnable && !conn.channex_property_id)
+      return { success: false, error: "לא קיים נכס Channex ממופה — יש למפות נכס תחילה" };
+
+    const enqueued = await enqueueChannelJob(sql, {
       tenantId: actor.tenantId,
       connectionId: conn.id,
       jobType: "full_sync",
       priority: 10,
       idempotencyKey: `full_sync:${conn.id}`,
-      suppressed: conn.state !== "active",
+      suppressed: !runnable,
     });
     await sql`
       UPDATE guesthub.channel_connections SET full_sync_required = true
@@ -231,9 +251,106 @@ export async function requestFullSyncAction(connectionId: string): Promise<Resul
       entityType: "channel_connection",
       entityId: conn.id,
       action: "request_full_sync",
-      after: { state: conn.state },
+      after: { state: conn.state, runnable, duplicate: "duplicate" in enqueued },
     });
+    if (!runnable)
+      return { success: false, error: "החיבור אינו מוכן לסנכרון — יש לאמת מפתח ולמפות נכס" };
     return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ============================================================
+// ARI synchronisation status (D68) — everything the existing diagnostics area
+// needs to answer "is the baseline established, is the worker alive, is anything
+// stuck?". READ-ONLY: no Channex call, no secret, no raw upstream body.
+// ============================================================
+
+export type AriSyncStatus = {
+  /** the connection has an established, warning-free baseline */
+  active: boolean;
+  fullSyncRequired: boolean;
+  fullSyncJob: {
+    status: string;
+    dateFrom: string | null;
+    dateTo: string | null;
+    taskIds: string[];
+    finishedAt: string | null;
+    errorCode: string | null;
+  } | null;
+  lastSuccessfulSyncAt: string | null;
+  pendingRanges: number;
+  failedRanges: number;
+  /** safe, fixed-vocabulary message — never an upstream response body */
+  lastError: string | null;
+  worker: { online: boolean; beatAt: string | null; lastDrainAt: string | null } | null;
+};
+
+/** A heartbeat older than this means the PM2 worker is not running. */
+const WORKER_STALE_SECONDS = 90;
+
+export async function getAriSyncStatusAction(connectionId: string): Promise<Result<AriSyncStatus>> {
+  try {
+    const actor = await requireChannelAdmin();
+    const [conn] = await sql<
+      { state: string; outbound_sync_enabled: boolean; full_sync_required: boolean;
+        last_outbound_sync_at: Date | null; last_error: string | null }[]
+    >`
+      SELECT state, outbound_sync_enabled, full_sync_required, last_outbound_sync_at, last_error
+      FROM guesthub.channel_connections
+      WHERE id = ${connectionId} AND tenant_id = ${actor.tenantId}`;
+    if (!conn) return { success: false, error: "חיבור לא נמצא" };
+
+    const [job] = await sql<
+      { status: string; date_from: string | null; date_to: string | null; payload: unknown;
+        finished_at: Date | null; last_error_code: string | null }[]
+    >`
+      SELECT status, date_from::text AS date_from, date_to::text AS date_to, payload,
+             finished_at, last_error_code
+      FROM guesthub.channel_sync_jobs
+      WHERE connection_id = ${connectionId} AND job_type = 'full_sync'
+      ORDER BY created_at DESC LIMIT 1`;
+
+    const [ranges] = await sql<{ pending: number; failed: number }[]>`
+      SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending,
+             count(*) FILTER (WHERE status = 'failed')::int  AS failed
+      FROM guesthub.channel_dirty_ranges WHERE connection_id = ${connectionId}`;
+
+    const [w] = await sql<
+      { beat_at: Date | null; last_drain_at: Date | null; fresh: boolean }[]
+    >`
+      SELECT beat_at, last_drain_at,
+             (beat_at > now() - make_interval(secs => ${WORKER_STALE_SECONDS})) AS fresh
+      FROM guesthub.channel_worker_state WHERE id = 'singleton'`;
+
+    const payload = (job?.payload ?? {}) as { task_ids?: unknown };
+    const taskIds = Array.isArray(payload.task_ids)
+      ? payload.task_ids.filter((t): t is string => typeof t === "string")
+      : [];
+
+    return {
+      success: true,
+      data: {
+        active: conn.state === "active" && conn.outbound_sync_enabled && !conn.full_sync_required,
+        fullSyncRequired: conn.full_sync_required,
+        fullSyncJob: job
+          ? {
+              status: job.status,
+              dateFrom: job.date_from,
+              dateTo: job.date_to,
+              taskIds,
+              finishedAt: job.finished_at?.toISOString() ?? null,
+              errorCode: job.last_error_code,
+            }
+          : null,
+        lastSuccessfulSyncAt: conn.last_outbound_sync_at?.toISOString() ?? null,
+        pendingRanges: ranges?.pending ?? 0,
+        failedRanges: ranges?.failed ?? 0,
+        lastError: conn.last_error,
+        worker: w ? { online: !!w.fresh, beatAt: w.beat_at?.toISOString() ?? null, lastDrainAt: w.last_drain_at?.toISOString() ?? null } : null,
+      },
+    };
   } catch (e) {
     return failFrom(e);
   }

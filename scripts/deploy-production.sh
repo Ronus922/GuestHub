@@ -13,6 +13,9 @@ set -euo pipefail
 PROD_DIR="${PROD_DIR:-/var/www/guesthub-production}"
 PORT="${PORT:-3007}"
 PM2_APP="${PM2_APP:-guesthub}"
+# the channel worker (D68) — declared in ecosystem.config.cjs, same checkout,
+# same .env.local. Only these two PM2 apps are ever touched by this script.
+PM2_WORKER="${PM2_WORKER:-guesthub-channel-worker}"
 
 fail() { echo "✗ DEPLOY FAILED: $*" >&2; exit 1; }
 
@@ -45,17 +48,36 @@ TARGET_COMMIT="$(git rev-parse HEAD)"
 [ "$TARGET_COMMIT" = "$(git rev-parse origin/main)" ] || fail "HEAD != origin/main after fast-forward"
 
 # 9. build (marker present → prebuild-guard requires this same opt-in)
+#    `npm run build` also runs postbuild → tsc -p tsconfig.worker.json → dist/worker
 echo "→ building $TARGET_COMMIT ..."
 PROD_DEPLOY_OK=1 npm run build || fail "build failed"
 NEW_BUILD_ID="$(cat .next/BUILD_ID)"
 [ -n "$NEW_BUILD_ID" ] || fail "no BUILD_ID produced"
+[ -f "dist/worker/lib/channel/worker.js" ] || fail "channel worker was not built (dist/worker missing)"
 
-# 10. restart ONLY the guesthub process (unrelated PM2 services untouched)
+# 10. restart ONLY the two guesthub processes (unrelated PM2 services untouched)
 pm2 restart "$PM2_APP" --update-env || fail "pm2 restart failed"
+# the worker is declared in ecosystem.config.cjs; startOrRestart registers it on
+# the first deploy and restarts it on every later one. The web app is NOT declared
+# there — restarting it by name above leaves its existing registration intact.
+pm2 startOrRestart ecosystem.config.cjs --only "$PM2_WORKER" --update-env \
+  || fail "pm2 restart of $PM2_WORKER failed"
+pm2 save --force >/dev/null 2>&1 || true
 
-# verify PM2 is running this exact directory (app name passed as argv[1])
-RUN_CWD="$(pm2 jlist | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=process.argv[1];const a=JSON.parse(s).find(p=>p.name===n);process.stdout.write(a&&a.pm2_env?(a.pm2_env.pm_cwd||""):"")})' "$PM2_APP")"
-[ "$RUN_CWD" = "$PROD_DIR" ] || fail "PM2 cwd is '$RUN_CWD', expected '$PROD_DIR'"
+# verify PM2 is running both from this exact directory (app name passed as argv[1])
+pm2_cwd() {
+  pm2 jlist | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=process.argv[1];const a=JSON.parse(s).find(p=>p.name===n);process.stdout.write(a&&a.pm2_env?(a.pm2_env.pm_cwd||""):"")})' "$1"
+}
+pm2_status() {
+  pm2 jlist | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=process.argv[1];const a=JSON.parse(s).find(p=>p.name===n);process.stdout.write(a&&a.pm2_env?(a.pm2_env.status||""):"missing")})' "$1"
+}
+[ "$(pm2_cwd "$PM2_APP")" = "$PROD_DIR" ] || fail "PM2 cwd for $PM2_APP is '$(pm2_cwd "$PM2_APP")', expected '$PROD_DIR'"
+[ "$(pm2_cwd "$PM2_WORKER")" = "$PROD_DIR" ] || fail "PM2 cwd for $PM2_WORKER is '$(pm2_cwd "$PM2_WORKER")', expected '$PROD_DIR'"
+
+# the worker must survive its first seconds (a crash-loop exits 'errored'/'stopped')
+sleep 6
+WORKER_STATUS="$(pm2_status "$PM2_WORKER")"
+[ "$WORKER_STATUS" = "online" ] || fail "$PM2_WORKER is '$WORKER_STATUS', expected online"
 
 # 11. verify port answers
 ok=0; for i in $(seq 1 30); do curl -sf -o /dev/null "http://localhost:$PORT/login" && { ok=1; break; }; sleep 1; done
@@ -70,3 +92,4 @@ done
 
 # 12. report deployed commit / build id
 echo "✓ DEPLOYED  commit=${TARGET_COMMIT:0:8}  build=$NEW_BUILD_ID  cwd=$PROD_DIR  port=$PORT"
+echo "  pm2: $PM2_APP=online  $PM2_WORKER=$WORKER_STATUS"

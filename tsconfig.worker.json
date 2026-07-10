@@ -1,0 +1,19 @@
+{
+  "//": "Compiles ONLY the channel-worker graph (src/lib/channel/worker.ts and its imports) to CommonJS in dist/worker/, so PM2 can run it as a plain Node process outside Next.js. The `@/*` specifiers survive compilation; scripts/channel-worker.cjs maps them at require time. Nothing in this graph may import next/*, react or server actions — tsc fails here if one sneaks in.",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "target": "es2022",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmitOnError": true,
+    "baseUrl": "src",
+    "paths": { "@/*": ["*"] },
+    "rootDir": "src",
+    "outDir": "dist/worker"
+  },
+  "include": ["src/lib/channel/worker.ts"]
+}

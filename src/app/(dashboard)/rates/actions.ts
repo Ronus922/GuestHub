@@ -6,6 +6,7 @@ import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/acto
 import { writeAudit } from "@/lib/audit";
 import { addDays, eachDay, dayOfWeek, todayInTz, ratesWritableWindow, type DateOnly } from "@/lib/dates";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { ARI_HORIZON_DAYS } from "@/lib/channel/ranges";
 import { writeRateCells, type RateCell, type RateCellPatch } from "@/lib/rates/service";
 import { applyPriceMode } from "@/lib/rates/rules";
 import {
@@ -240,8 +241,8 @@ export async function setRoomStatusAction(raw: RoomStatusInput): Promise<ActionR
     const input = parsed.data;
 
     await sql.begin(async (tx) => {
-      const [room] = await tx<{ id: string; status: string; is_active: boolean; room_type_id: string | null; timezone: string }[]>`
-        SELECT r.id, r.status, r.is_active, r.room_type_id, t.timezone
+      const [room] = await tx<{ id: string; status: string; is_active: boolean; timezone: string }[]>`
+        SELECT r.id, r.status, r.is_active, t.timezone
         FROM guesthub.rooms r
         JOIN guesthub.tenants t ON t.id = r.tenant_id
         WHERE r.id = ${input.roomId} AND r.tenant_id = ${actor.tenantId}
@@ -270,14 +271,16 @@ export async function setRoomStatusAction(raw: RoomStatusInput): Promise<ActionR
         tx,
       );
 
-      // physical inventory changed → mark availability dirty over a forward
-      // horizon (no-op until a connection is active; horizon is a 4B decision).
+      // Physical eligibility changed (available ⇄ inactive/out_of_order) and has
+      // no natural end date → mark availability dirty over exactly the published
+      // horizon, so no date the baseline covers is left stale.
+      // No-op until a connection is active.
       const today = todayInTz(room.timezone || "Asia/Jerusalem");
       await markAriDirty(tx, {
         tenantId: actor.tenantId,
-        roomTypeIds: [room.room_type_id],
+        roomIds: [room.id],
         dateFrom: today,
-        dateTo: addDays(today, 365),
+        dateTo: addDays(today, ARI_HORIZON_DAYS),
         kinds: ["availability"],
       });
     });

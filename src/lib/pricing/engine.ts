@@ -9,7 +9,7 @@ import { checkRoomAvailability } from "@/lib/inventory";
 import { normalizeExtraGuestDefaults, roundMoney, type ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import { calculateChargeableGuests, resolveEffectivePricing } from "@/lib/commercial/room-pricing";
 import {
-  assignmentViolation, mergeRestrictionRows, planStayRuleViolation, resolveNightPrice, resolveParentChain,
+  assignmentViolation, mergeRestrictionRows, planStayRuleViolation, resolveChainNightPrice, resolveParentChain,
   type EngineAssignment, type EnginePlan, type PlanKind,
 } from "./resolve";
 import { PRICING_ERROR_MESSAGES } from "./messages";
@@ -442,41 +442,24 @@ export async function calculateQuote(
         continue;
       }
 
-      let parentResolved: number | null = null;
-      let directParentPrice: number | null = null;
-      let resolution = null as ReturnType<typeof resolveNightPrice> | null;
-      if (!plan) {
-        // base-ARI mode: the base layer IS the price — same resolver, kind 'base'
-        resolution = resolveNightPrice({
-          kind: "base", overridePrice: null, parentResolved: null,
-          planAdjustment: null, assignmentAdjustment: null,
-          basePrice: basePriceRaw, basePriceSource,
-        });
-      } else {
-        for (let i = chain.length - 1; i >= 0; i--) {
-          const level = chain[i];
-          if (i === 0) directParentPrice = parentResolved; // chain[1]'s resolved value
-          const levelOverlay = su ? overlayByPlanUnit.get(`${level.id}|${su}`) : undefined;
-          const levelAssignment = su ? assignmentByKey.get(`${level.id}|${su}`) : undefined;
-          resolution = resolveNightPrice({
-            kind: level.planKind,
-            overridePrice: levelOverlay?.get(date)?.price ?? null,
-            parentResolved,
-            planAdjustment: level.adjustmentValue,
-            assignmentAdjustment: levelAssignment?.adjustmentValue ?? null,
-            basePrice: basePriceRaw,
-            basePriceSource,
-          });
-          parentResolved = resolution.price;
-        }
-      }
-      const resolved = resolution?.price ?? null;
+      // THE canonical chain resolution — shared verbatim with the Channex ARI
+      // projection (src/lib/channel/ari-projection.ts). An empty chain is the
+      // base-ARI layer.
+      const { resolution, directParentPrice } = resolveChainNightPrice({
+        chain: plan ? chain : [],
+        date,
+        basePrice: basePriceRaw,
+        basePriceSource,
+        overlayFor: (planId) => (su ? overlayByPlanUnit.get(`${planId}|${su}`) : undefined),
+        assignmentFor: (planId) => (su ? assignmentByKey.get(`${planId}|${su}`) : undefined),
+      });
+      const resolved = resolution.price;
       const parent = chain.length > 1 ? chain[1] : null;
       if (resolved == null || resolved <= 0) {
         priced = false;
         roomErrors.push(err("NO_PRICE_FOR_DATE", { ...ctx, date }));
       }
-      if (resolved != null && resolution?.source) sourcesUsed.add(resolution.source);
+      if (resolved != null && resolution.source) sourcesUsed.add(resolution.source);
 
       const nightTotal = resolved != null && resolved > 0 ? round2(resolved + extraPerNight) : null;
       if (nightTotal != null) subtotalCents += cents(nightTotal);
@@ -486,11 +469,11 @@ export async function calculateQuote(
         basePriceSource,
         parentPlanId: parent?.id ?? null,
         parentResolvedPrice: directParentPrice,
-        adjustmentValue: resolution?.adjustmentValue ?? null,
-        adjustmentSource: resolution?.adjustmentSource ?? null,
+        adjustmentValue: resolution.adjustmentValue,
+        adjustmentSource: resolution.adjustmentSource,
         overridePrice: plan && su ? (overlayByPlanUnit.get(`${plan.id}|${su}`)?.get(date)?.price ?? null) : null,
         resolvedPlanPrice: resolved != null ? round2(resolved) : null,
-        priceSource: resolution?.source ?? null,
+        priceSource: resolution.source,
         extraGuestAmount: extraPerNight,
         nightTotal,
       });
