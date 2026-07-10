@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { addYears, clampRatesFrom, RATES_HORIZON_YEARS, type DateOnly } from "@/lib/dates";
+import type { RatesSyncStatus } from "@/lib/channel/sync-state";
 import { RateToolbar } from "./RateToolbar";
 import { RateGrid } from "./RateGrid";
 import { GroupUpdatePanel } from "./GroupUpdatePanel";
@@ -14,18 +15,23 @@ import type { RateCan, RateGridState, RateView } from "./types";
 // and composes the toolbar + grid + legend + panel. Data-loading is the server
 // view-model (src/lib/rates/grid-state.ts); interaction lives in the children.
 export function RateGridScreen({
-  state, view, today, can,
+  state, view, today, can, syncStatus,
 }: {
   state: RateGridState;
   view: RateView;
   today: DateOnly;
   can: RateCan;
+  syncStatus: RatesSyncStatus;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Every successful canonical save on this screen bumps the pulse; the sync
+  // control refetches the persisted status and narrates it (Phase 5 feedback).
+  const [savePulse, setSavePulse] = useState(0);
+  const onSaved = useCallback(() => setSavePulse((p) => p + 1), []);
   // Group Update open/close is the canonical panel opened over this same grid;
   // its state lives in the URL (?panel=group-update) so the sidebar active
   // highlight, deep-links and Back/Forward all work. from/view are preserved.
@@ -75,6 +81,7 @@ export function RateGridScreen({
       <RateToolbar
         state={state} view={view} today={today} can={can}
         typeFilter={typeFilter} allCollapsed={allCollapsed}
+        syncStatus={syncStatus} savePulse={savePulse}
         onFilter={setTypeFilter}
         onToggleCollapseAll={() => setCollapsed(allCollapsed ? new Set() : new Set(state.types.map((t) => t.roomTypeId ?? "—")))}
         onNavigate={navigate}
@@ -88,6 +95,7 @@ export function RateGridScreen({
           types={visibleTypes} dates={state.dates} today={today} can={can}
           collapsed={collapsed} onToggleCollapse={toggleCollapse} onGroupUpdateForType={openGroupUpdate}
           onOpenDetail={(u, c) => setDetailKey({ unitId: u.sellableUnitId, date: c.date })}
+          onSaved={onSaved}
         />
       )}
 
@@ -109,6 +117,7 @@ export function RateGridScreen({
         types={state.types} from={state.from} toInclusive={state.toInclusive}
         minDate={today} maxDate={horizonLatest}
         presetUnitIds={preset} onClose={closeGroupUpdate}
+        onSaved={onSaved}
       />
 
       <CellDetailPanel
@@ -118,6 +127,7 @@ export function RateGridScreen({
         cell={detail?.cell ?? null}
         today={today}
         editable={can.edit}
+        onSaved={onSaved}
       />
     </div>
   );

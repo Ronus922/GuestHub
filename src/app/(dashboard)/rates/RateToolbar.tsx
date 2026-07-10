@@ -2,6 +2,8 @@
 
 import { Icon } from "@/components/shared/Icon";
 import { addDays, HEBREW_MONTHS, type DateOnly } from "@/lib/dates";
+import type { RatesSyncStatus } from "@/lib/channel/sync-state";
+import { ChannelSyncControl } from "./ChannelSyncControl";
 import { RATE_VIEW_DAYS, type RateCan, type RateGridState, type RateView } from "./types";
 
 function rangeLabel(from: DateOnly, toInclusive: DateOnly): string {
@@ -13,7 +15,7 @@ function rangeLabel(from: DateOnly, toInclusive: DateOnly): string {
 // The Rate Grid toolbar: title + summary, primary actions, room-type filters,
 // and the date-window navigation (today / prev-next / range / 2w-month).
 export function RateToolbar({
-  state, view, today, can, typeFilter, allCollapsed,
+  state, view, today, can, typeFilter, allCollapsed, syncStatus, savePulse,
   onFilter, onToggleCollapseAll, onNavigate, onGroupUpdate,
 }: {
   state: RateGridState;
@@ -22,6 +24,8 @@ export function RateToolbar({
   can: RateCan;
   typeFilter: string;
   allCollapsed: boolean;
+  syncStatus: RatesSyncStatus;
+  savePulse: number;
   onFilter: (typeKey: string) => void;
   onToggleCollapseAll: () => void;
   onNavigate: (from: DateOnly, view: RateView) => void;
@@ -45,13 +49,7 @@ export function RateToolbar({
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <span
-            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-xl border-[1.5px] border-[var(--color-line)] text-[12.5px] font-bold text-[var(--color-faint)] cursor-not-allowed select-none"
-            title="אין חיבור ערוצים פעיל · יסונכרן בשלב 4B"
-          >
-            <Icon name="channels" size={15} />
-            סנכרון ערוצים
-          </span>
+          <ChannelSyncControl initial={syncStatus} savePulse={savePulse} />
           {can.bulk && (
             <button
               type="button" onClick={onGroupUpdate}
