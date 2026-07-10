@@ -33,6 +33,7 @@ type UnitMetaRow = {
   code: string;
   name: string;
   is_pooled: boolean;
+  room_id: string | null;
   room_type_id: string | null;
   room_type_name: string | null;
   base_price: number;
@@ -84,19 +85,40 @@ export async function getRateGridState(
   const toExclusive = addOneDay(toInclusive);
 
   // 1. SU meta: base plan, base price (room-type fallback), member room count.
+  // Identity (code / name / room type) is JOINED from the canonical rooms table
+  // for a sole-member unit — never read from the unit's own copied columns, so a
+  // room rename or re-type shows immediately and stale backfill labels (101/G1…)
+  // can never surface (D74). A pooled unit (>1 member room) is its own identity.
+  // Rooms sort numerically (926 < 1006 < … < 1424) inside each type band.
   const units = await db<UnitMetaRow[]>`
-    SELECT su.id, su.code, su.name, su.is_pooled,
-           su.room_type_id, rt.name AS room_type_name,
+    SELECT su.id, su.is_pooled,
+           COALESCE(m.room_number, su.code) AS code,
+           COALESCE(NULLIF(m.room_name, ''), su.name) AS name,
+           m.room_id,
+           COALESCE(m.room_type_id, su.room_type_id) AS room_type_id,
+           rt.name AS room_type_name,
            COALESCE(rt.base_price, 0)::float8 AS base_price,
            bp.id AS plan_id,
            (SELECT count(*)::int FROM guesthub.sellable_unit_rooms sur
              WHERE sur.sellable_unit_id = su.id) AS room_count
     FROM guesthub.sellable_units su
-    LEFT JOIN guesthub.room_types rt ON rt.id = su.room_type_id
+    LEFT JOIN LATERAL (
+      SELECT r.id AS room_id, r.room_number, r.name AS room_name, r.room_type_id
+      FROM guesthub.sellable_unit_rooms sur
+      JOIN guesthub.rooms r ON r.id = sur.room_id
+      WHERE sur.sellable_unit_id = su.id
+        AND NOT EXISTS (SELECT 1 FROM guesthub.sellable_unit_rooms s2
+                        WHERE s2.sellable_unit_id = su.id AND s2.room_id <> r.id)
+      LIMIT 1
+    ) m ON true
+    LEFT JOIN guesthub.room_types rt ON rt.id = COALESCE(m.room_type_id, su.room_type_id)
     LEFT JOIN guesthub.pricing_plans bp
       ON bp.sellable_unit_id = su.id AND bp.is_base AND bp.is_active
     WHERE su.tenant_id = ${tenantId} AND su.is_active
-    ORDER BY COALESCE(rt.base_price, 0), rt.name NULLS LAST, su.code`;
+    ORDER BY COALESCE(rt.base_price, 0), rt.name NULLS LAST,
+             (CASE WHEN COALESCE(m.room_number, su.code) ~ '^\\d+$'
+                   THEN COALESCE(m.room_number, su.code)::bigint END) NULLS LAST,
+             COALESCE(m.room_number, su.code)`;
 
   // 2. Authoritative Effective Sell State (derived price + availability + sellable).
   const ess = await db<EssRow[]>`
@@ -270,6 +292,7 @@ export async function getRateGridState(
     return {
       sellableUnitId: u.id,
       pricingPlanId: u.plan_id,
+      roomId: u.room_id,
       code: u.code,
       name: u.name,
       isPooled: u.is_pooled,

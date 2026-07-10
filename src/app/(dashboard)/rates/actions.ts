@@ -192,7 +192,7 @@ export async function bulkUpdateRatesAction(
       const items = changes.map((c) => ({
         tenant_id: actor.tenantId,
         log_id: log.id,
-        room_id: null,
+        room_id: c.roomId,
         room_type_id: c.roomTypeId,
         date: c.date,
         old_price: c.oldPrice,

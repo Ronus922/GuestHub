@@ -40,6 +40,7 @@
     "check:channex-room-types": "node scripts/check-channex-room-types.mjs",
     "check:channex-rate-plans": "node scripts/check-channex-rate-plans.mjs",
     "check:su-lifecycle": "node scripts/check-su-lifecycle.mjs",
+    "check:room-identity": "node scripts/check-room-identity.mjs",
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",

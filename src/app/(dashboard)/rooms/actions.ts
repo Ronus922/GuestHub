@@ -19,6 +19,9 @@ import {
 } from "@/lib/validation/rooms";
 import { LANGS } from "@/lib/rooms/service";
 import { roomUploadsDir, roomUploadPath, IMAGE_NAME_RE } from "@/lib/rooms/uploads";
+import { addDays, todayInTz } from "@/lib/dates";
+import { markAriDirty } from "@/lib/channel/outbox";
+import { ARI_HORIZON_DAYS } from "@/lib/channel/ranges";
 import { z } from "zod";
 import type { TransactionSql } from "postgres";
 
@@ -212,10 +215,13 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
 
     const id = await sql.begin(async (tx) => {
       let roomId = r.id;
+      let wasSellable: boolean | null = null; // physical eligibility before an update
       if (roomId) {
-        const [exists] = await tx<{ id: string }[]>`
-          SELECT id FROM guesthub.rooms WHERE id = ${roomId} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+        const [exists] = await tx<{ id: string; status: string; is_active: boolean }[]>`
+          SELECT id, status, is_active FROM guesthub.rooms
+          WHERE id = ${roomId} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
         if (!exists) throw new AuthorizationError("החדר לא נמצא");
+        wasSellable = exists.status === "available" && exists.is_active;
         await tx`
           UPDATE guesthub.rooms SET
             room_number = ${r.room_number}, room_type_id = ${r.room_type_id},
@@ -261,6 +267,23 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
       // the room's sellable unit — created with the room; also self-heals a
       // legacy room that predates the lifecycle rule on its next save
       await ensureSellableUnit(tx, actor.tenantId, roomId);
+
+      // Physical eligibility flipped through the wizard (available ⇄ inactive/
+      // out_of_order) → availability dirty over the published horizon, exactly
+      // like setRoomStatusAction. No-op unless an outbound connection is active.
+      const nowSellable = r.status === "available" && r.is_active;
+      if (wasSellable !== null && wasSellable !== nowSellable) {
+        const [t] = await tx<{ timezone: string | null }[]>`
+          SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
+        const today = todayInTz(t?.timezone || "Asia/Jerusalem");
+        await markAriDirty(tx, {
+          tenantId: actor.tenantId,
+          roomIds: [roomId],
+          dateFrom: today,
+          dateTo: addDays(today, ARI_HORIZON_DAYS),
+          kinds: ["availability"],
+        });
+      }
 
       // upsert ONLY the provided languages (protects the rest from overwrite)
       for (const lang of LANGS) {
