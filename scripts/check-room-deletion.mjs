@@ -1,7 +1,9 @@
-// Room deletion-integrity matrix (D49 closure audit).
+// Room deletion-integrity matrix (D49 closure audit, amended by D66).
 // Rule: HARD delete only for a never-used room (zero dependency rows anywhere);
 // any history — reservations (past/active/future), housekeeping, closures,
-// rates, sellable-unit links, bulk-update history — blocks; archive instead.
+// rates, bulk-update history — blocks; archive instead. The room's sellable
+// unit is the room's OWN identity, not usage history (D66): it no longer
+// blocks, it is deleted with the never-used room (see check-su-lifecycle.mjs).
 // reservation_rooms.room_id is ON DELETE RESTRICT (migration 015) so history
 // keeps its room even below the app guard.
 //
@@ -25,7 +27,6 @@ async function blockers(roomId) {
       (SELECT COUNT(*)::int FROM guesthub.housekeeping_tasks WHERE room_id = ${roomId}) AS housekeeping,
       (SELECT COUNT(*)::int FROM guesthub.room_closures WHERE room_id = ${roomId}) AS closures,
       (SELECT COUNT(*)::int FROM guesthub.rates WHERE room_id = ${roomId}) AS rates,
-      (SELECT COUNT(*)::int FROM guesthub.sellable_unit_rooms WHERE room_id = ${roomId}) AS sellable,
       (SELECT COUNT(*)::int FROM guesthub.bulk_rate_update_items WHERE room_id = ${roomId}) AS bulk`;
   return Object.values(d).reduce((a, b) => a + Number(b), 0);
 }

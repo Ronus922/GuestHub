@@ -38,7 +38,8 @@
     "check-e2e-safety": "node scripts/check-e2e-safety.mjs",
     "guard:deploy": "node scripts/production-deploy-guard.mjs",
     "check:channex-room-types": "node scripts/check-channex-room-types.mjs",
-    "check:channex-rate-plans": "node scripts/check-channex-rate-plans.mjs"
+    "check:channex-rate-plans": "node scripts/check-channex-rate-plans.mjs",
+    "check:su-lifecycle": "node scripts/check-su-lifecycle.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

@@ -145,9 +145,12 @@ export async function getRatePlanDetail(
   return { ...plan, ...(extra ?? { description: null, public_description: null, payment_policy_id: null }), assignments };
 }
 
-// The assignable-unit list for Step 3 + the simulator: every sellable unit with
-// its (1:1 today) member room, status, and how many tenant plans cover it — the
-// "rooms with no active Rate Plan" indicator comes from active_plan_count = 0.
+// The assignable-unit list for Step 3 + the simulator, derived from the
+// canonical ACTIVE physical rooms and their valid sellable units (D66): a unit
+// with no member room — or whose room/unit is archived — is never selectable.
+// Each row is a unit with its (1:1 today) member room, status, and how many
+// tenant plans cover it — the "rooms with no active Rate Plan" indicator comes
+// from active_plan_count = 0.
 export type AssignableUnit = {
   sellable_unit_id: string;
   unit_name: string;
@@ -174,10 +177,10 @@ export async function listAssignableUnits(
              WHERE u.sellable_unit_id = su.id AND u.is_active
                AND p.is_active AND NOT p.is_archived) AS active_plan_count
     FROM guesthub.sellable_units su
-    LEFT JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = su.id
-    LEFT JOIN guesthub.rooms r ON r.id = sur.room_id
+    JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = su.id
+    JOIN guesthub.rooms r ON r.id = sur.room_id AND r.is_active
     LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
-    WHERE su.tenant_id = ${tenantId}
+    WHERE su.tenant_id = ${tenantId} AND su.is_active
     ORDER BY r.room_number NULLS LAST, su.name`;
 }
 

@@ -111,14 +111,20 @@ try {
 
   // ---- queue idempotency + duplicate revision rejection (rolled back) ----
   await sql.begin(async (tx) => {
+    // throwaway tenant: the REAL tenant now owns a live (channex, staging)
+    // connection (D59), and UNIQUE(tenant_id, provider, environment) would
+    // reject a second one even inside this rolled-back transaction
+    const [tt] = await tx`
+      INSERT INTO guesthub.tenants (name, slug)
+      VALUES ('inventory-check', ${"inv-" + crypto.randomUUID().slice(0, 8)}) RETURNING id`;
     const [conn] = await tx`
       INSERT INTO guesthub.channel_connections (tenant_id, provider, environment)
-      VALUES (${tenantId}, 'channex', 'staging') RETURNING id`;
+      VALUES (${tt.id}, 'channex', 'staging') RETURNING id`;
 
     const ins = (key) => tx`
       INSERT INTO guesthub.channel_sync_jobs
         (tenant_id, connection_id, job_type, idempotency_key)
-      VALUES (${tenantId}, ${conn.id}, 'sync_ari_range', ${key})
+      VALUES (${tt.id}, ${conn.id}, 'sync_ari_range', ${key})
       ON CONFLICT (connection_id, idempotency_key)
         WHERE idempotency_key IS NOT NULL AND status IN ('queued','processing','retry_wait')
         DO NOTHING
@@ -131,7 +137,7 @@ try {
     const rev = (revId) => tx`
       INSERT INTO guesthub.channel_booking_revisions
         (tenant_id, connection_id, provider_booking_id, provider_revision_id, revision_kind)
-      VALUES (${tenantId}, ${conn.id}, 'BK-1', ${revId}, 'new')
+      VALUES (${tt.id}, ${conn.id}, 'BK-1', ${revId}, 'new')
       ON CONFLICT (connection_id, provider_revision_id) DO NOTHING
       RETURNING id`;
     const r1 = await rev("REV-1");
