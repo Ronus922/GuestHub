@@ -57,10 +57,10 @@ export type RateCellState = {
   activeRatePlan: boolean; // a base plan exists & is active (= hasBasePlan for the SU)
   // Every applicable reason (primary first), not just the dominant one:
   reasonCodes: SellReason[];
-  // Channel projection (calculated; nothing is sent this phase):
-  mappingValid: boolean; // the SU's room-type has a valid Channex mapping
-  syncState: SyncState; // "not_connected" until 4B
-  outboundAvailability: number; // room-type-level availability that WOULD be sent (physical)
+  // Channel projection (D64: the outbound unit is the physical room):
+  mappingValid: boolean; // every member room of the SU has a valid Channex mapping
+  syncState: SyncState; // "not_connected" without an active connection
+  outboundAvailability: number; // the SU's physical availability that WOULD be sent
   outboundRestrictions: OutboundRestrictions; // rate-plan-level restrictions that WOULD be sent (commercial)
 };
 
