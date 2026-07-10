@@ -2,16 +2,22 @@
 
 import { useState, useTransition } from "react";
 import { Icon, type IconName } from "@/components/shared/Icon";
-import {
-  saveChannexApiKeyAction,
-  testChannexConnectionAction,
-  type ChannexConnectionView,
-} from "@/lib/channel/admin";
+import { testChannexConnectionAction, type ChannexConnectionView } from "@/lib/channel/admin";
+import { ChannexKeyReplacementForm } from "./ChannexKeyReplacementForm";
 
 // Channex STAGING connection card (D59) — super_admin only (the page already
-// gates on canManageChannels). Lets the operator save/replace the api-key and
-// run a real server-side "Test connection". The key is never sent back here;
-// only the masked hint + sanitized status are shown.
+// gates on canManageChannels). The key is never sent back here; only the masked
+// hint + sanitized status are shown.
+//
+// D70: the api-key input is NO LONGER permanently mounted. It used to be the only
+// `type="password"` field on /channels, so the browser's password manager filled
+// its saved credential for this origin into it on every page load (Chrome and
+// Firefox ignore `autocomplete="off"` on password fields). The masked hint is now
+// plain read-only text, and the replacement field exists only after an explicit
+// "החלפת מפתח API" click — see ./ChannexKeyReplacementForm.
+//
+// "בדיקת חיבור" takes NO argument: it always decrypts and uses the STORED key
+// server-side. Nothing typed into the replacement form can reach it.
 
 const dtFmt = new Intl.DateTimeFormat("he-IL", {
   dateStyle: "short",
@@ -40,33 +46,43 @@ const STATUS_META: Record<Status, { label: string; cls: string; icon: IconName }
 
 export function ChannexStagingSection({ initial }: { initial: ChannexConnectionView }) {
   const [view, setView] = useState(initial);
-  const [apiKey, setApiKey] = useState("");
   const [msg, setMsg] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
   const [testing, setTesting] = useState(false);
 
+  // The replacement field is mounted ONLY while this is true. `mountId` forces a
+  // brand-new component instance on every open, so a remount can never inherit a
+  // previous value — not even React's.
+  const [replacing, setReplacing] = useState(false);
+  const [mountId, setMountId] = useState(0);
+
   const status = deriveStatus(view, testing);
   const meta = STATUS_META[status];
 
-  function onSave() {
+  function openReplace() {
     setMsg(null);
-    startTransition(async () => {
-      const res = await saveChannexApiKeyAction({ apiKey });
-      if (!res.success) return setMsg({ tone: "err", text: res.error });
-      const hint = `••••${apiKey.trim().slice(-4)}`;
-      setApiKey("");
-      setView((v) => ({
-        ...v,
-        configured: true,
-        apiKeyHint: hint,
-        state: "configured",
-        lastTestOkAt: null,
-        lastTestFailedAt: null,
-        lastTestErrorCode: null,
-        lastError: null,
-      }));
-      setMsg({ tone: "ok", text: "המפתח נשמר" });
-    });
+    setMountId((n) => n + 1);
+    setReplacing(true);
+  }
+
+  // Unmounting destroys the child's state — the unsaved value is gone.
+  function closeReplace() {
+    setReplacing(false);
+  }
+
+  function onSaved(hint: string) {
+    setReplacing(false); // unmount: the new secret is never rendered again
+    setView((v) => ({
+      ...v,
+      configured: true,
+      apiKeyHint: hint,
+      state: "configured",
+      lastTestOkAt: null,
+      lastTestFailedAt: null,
+      lastTestErrorCode: null,
+      lastError: null,
+    }));
+    setMsg({ tone: "ok", text: "המפתח נשמר ואומת מול Channex" });
   }
 
   function onTest() {
@@ -126,8 +142,6 @@ export function ChannexStagingSection({ initial }: { initial: ChannexConnectionV
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
         <dt className="text-faint">כתובת בסיס</dt>
         <dd className="truncate font-mono text-xs text-text2" title={view.baseUrl}>{view.baseUrl}</dd>
-        <dt className="text-faint">מפתח API</dt>
-        <dd className="font-semibold text-text2">{view.apiKeyHint ?? "לא הוגדר"}</dd>
         <dt className="text-faint">בדיקה מוצלחת אחרונה</dt>
         <dd className="font-semibold text-text2">{fmt(view.lastTestOkAt)}</dd>
         <dt className="text-faint">בדיקה כושלת אחרונה</dt>
@@ -135,37 +149,45 @@ export function ChannexStagingSection({ initial }: { initial: ChannexConnectionV
       </dl>
 
       {status === "failed" && view.lastError && (
-        <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
+        <p role="alert" className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
           {view.lastError}
         </p>
       )}
 
-      {/* Save / replace key */}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="channex-key" className="text-sm font-semibold text-text2">
-          {view.configured ? "החלפת מפתח API" : "מפתח API"}
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <input
-            id="channex-key"
-            type="password"
-            autoComplete="off"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={view.configured ? "הדבק מפתח חדש להחלפה" : "user-api-key מ-Channex"}
-            disabled={!view.secretsKeyConfigured || pending}
-            className="bw-fld min-w-[240px] flex-1 disabled:opacity-60"
-            dir="ltr"
+      {/* The stored key: READ-ONLY TEXT. Never an input, never stars in a value,
+          never the key itself — only the safe stored api_key_hint. */}
+      <div className="flex flex-col gap-3">
+        <p className="text-sm font-semibold text-text2">
+          {view.configured ? (
+            <>
+              מפתח API מוגדר: <span dir="ltr" className="font-mono">{view.apiKeyHint}</span>
+            </>
+          ) : (
+            "מפתח API לא הוגדר"
+          )}
+        </p>
+
+        {/* The replacement input does not exist in the DOM until this click. */}
+        {!replacing ? (
+          <div>
+            <button
+              type="button"
+              onClick={openReplace}
+              disabled={!view.secretsKeyConfigured || pending}
+              className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-bold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {view.configured ? "החלפת מפתח API" : "הגדרת מפתח API"}
+            </button>
+          </div>
+        ) : (
+          <ChannexKeyReplacementForm
+            key={mountId}
+            configured={view.configured}
+            disabled={!view.secretsKeyConfigured}
+            onCancel={closeReplace}
+            onSaved={onSaved}
           />
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!view.secretsKeyConfigured || pending || apiKey.trim() === ""}
-            className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-          >
-            {view.configured ? "החלף מפתח" : "שמור מפתח"}
-          </button>
-        </div>
+        )}
       </div>
 
       {/* Test connection */}

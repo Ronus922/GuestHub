@@ -688,3 +688,38 @@ The local GuestHub Rate Plan (tenant-scoped `pricing_plans` row, `sellable_unit_
 **Not built (deliberately):** no ARI editor, simulator, preview grid, second calendar, wizard, per-room/per-plan sync button, new ARI settings category, or new pricing route. Prices, restrictions and availability remain editable only in Bulk Update (`/rates`) and Rate Plans (`/rate-plans`). No Channex Property, Room Type or Rate Plan is created; no OTA channel, webhook or booking functionality is added.
 
 **Also fixed:** `check:channel-card-ingest` ran against **production** (`:5432`, no fail-closed guard) and had begun failing outright once a real Channex connection existed. It now targets `guesthub-testdb` (:5433) and refuses production markers like its siblings. Migration 005's `idx_dirty_pending` is now guarded on its column existing, so the whole migration chain stays replayable (every check script replays it).
+
+## D69 — real, persisted progress for the existing Channex Full Sync
+
+Progress lives on the EXISTING job row: `channel_sync_jobs.payload.progress` (the job id IS the run id; `status`/`started_at`/`finished_at` already existed). No new table, no new column, **no migration**. It is written with jsonb `||` so the `task_ids`/`warnings` the run records separately are never clobbered, and writes are throttled (phase change or terminal always flush; otherwise ≤1 write per 900 ms) — never one write per date. Because it is persisted, it survives a page refresh, navigation, a closed browser, a client disconnect and a web-process restart.
+
+**One writer.** Only `runInitialFullSync` writes progress, and it only ever runs inside the PM2 channel worker. The web process reads. There are no competing writers, and no ARI calculation moved into the browser.
+
+**Milestone-based percentage, never a timer.** `src/lib/channel/ari-progress.ts` is pure and *import-free*: it cannot reach `Date.now`, `performance.now`, `setInterval` or `new Date()` — a check asserts that at the source level. `phasePercent(phase, done, total)` interpolates inside a phase's band from REAL processed counts (rooms projected / total; (room × rate plan) combinations projected / total). A stalled run therefore stops advancing. Bands: validating 0–10, availability projection 10–30, availability submission 30–45, rates projection 45–75, rates submission 75–90, warnings/verification 90–97, activation 97–**99**. 99, not 100 — **only `completed` may be 100**, and it is reachable solely from a clean, warning-free run. A failed run FREEZES at the percentage it actually reached; it never shows 100.
+
+To report the two projection phases honestly, `projectAri` gained an `include: { availability, commercial }` switch and an `onProgress` callback fired at room / combination boundaries (never per date). The fused single loop became two passes with byte-identical output — the price-equality check against `calculateQuote` still passes. The incremental drain now also skips the half it never needed, which is a free efficiency win.
+
+**Warnings are not success.** A 200-with-warnings ends the run at `failed` with `errorCategory='partial_warnings'`, below 100%, and does **not** activate incremental sync. Availability-sent-but-rates-failed is surfaced as a partial failure that preserves the successful availability task reference and stops in `submitting_rates`.
+
+**Duplicate prevention is the database**, not the button: the partial unique index `uq_jobs_idempotency` makes a second live `full_sync` row impossible; the action answers a duplicate with the ALREADY-ACTIVE run's id and status. The disabled button is cosmetic.
+
+The UI extends only the existing ARI card: a determinate `role="progressbar"` (aria-valuenow/min/max, RTL, visible %), the phase label, started/elapsed time, real counters, and a note that the sync continues if the page is closed. Polling runs at 2.5 s **only while a run is live** and stops on completion, failure, no-run and unmount. No new page, no wizard, no log viewer, no fake timer bar. The percentage is read, never computed client-side.
+
+## D70 — the "Java2026" credential-field defect: browser autofill, not GuestHub
+
+**Proven source: (B) browser / password-manager autofill.** Evidence: `Java2026` occurs in **zero** tracked or untracked files, zero build output, zero git history and zero environment variables; the server-rendered `/channels` HTML contains no `Java2026`, no api-key and no ciphertext; the only DTO, `ChannexConnectionView`, exposes `apiKeyHint` alone; the React state initialised to `""` with no `defaultValue`, no seeding effect and no server prop. The page rendered exactly **one** `type="password"` input (`id="channex-key"`), permanently mounted, relying on `autocomplete="off"` — which Chrome and Firefox deliberately ignore on password fields. The browser filled its saved credential for the origin into it.
+
+**The stored key was never overwritten.** It decrypts to a 64-character value that is not `Java2026`; `api_key_hint` derives from it; a live `GET /properties/options` returns **200** with 1 property accessible. The audit trail shows the last `channex_credential_replaced` (2026-07-09 21:59:08) was followed six seconds later by a successful test, and nothing since. No credential replacement occurred. The key was preserved untouched.
+
+Fixes, strongest first:
+1. **The replacement input no longer exists in the DOM until the operator clicks "החלפת מפתח API".** Password managers fill on page load; there is nothing to fill. It lives in its own component (`ChannexKeyReplacementForm`), so cancel/success *unmount* it and React destroys the value; a `key={mountId}` forces a fresh instance on every open.
+2. `autocomplete="new-password"` on the input (managers offer to generate, they do not fill), a unique non-generic `name`/`id` (`channex-api-key-replacement-value` — never `password`/`apiKey`/`key`/`secret`), `spellCheck={false}`, `autoCapitalize="none"`, `autoCorrect="off"`, plus 1Password/LastPass/Dashlane opt-out attributes.
+3. The saved key is **read-only text** — `מפתח API מוגדר: ••••IBaJ` — never an input value, never `value="********"`.
+4. **Verify before persist:** `saveChannexApiKeyAction` authenticates the candidate against Channex (one `GET /properties/options`, never ARI) and writes it **only on 200**. A working credential can no longer be replaced by a rejected or unverifiable one — even if something did submit an autofilled value. On failure the operator is told the existing key was preserved.
+5. A save can only happen from an explicit submit; the button is disabled while the field is empty. No effect ever calls the save action.
+
+An off-screen autofill decoy was deliberately **not** added: it is unverifiable here, browser-version dependent, and a screen-reader hazard. The four structural defences above do not depend on browser cooperation.
+
+`testChannexConnectionAction()` takes **zero parameters** by construction, so the replacement input, unsaved React state, query parameters, localStorage and cookies have no path into it; it and the new Full Sync preflight share one `probeStoredChannexKey(tenantId)` that decrypts the stored ciphertext. Every category (401/403/404/429/5xx/timeout/network/malformed/missing-key) has a fixed, safe Hebrew message and is rendered visibly, with `role="alert"`.
+
+**Full Sync now fails fast (§7).** `requestFullSyncAction` probes the stored key *before* creating the job row, and `runInitialFullSync` re-authenticates during `validating` before it projects anything — so a job enqueued before a credential rotated can never reach an ARI request. A rejected key produces: no run, no projection, **no ARI**, a bar frozen below 10%, and a visible `unauthorized` message.
