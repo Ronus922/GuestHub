@@ -61,6 +61,8 @@ export type RateMapping = {
   local_rate_plan_id: string;
   channex_rate_plan_id: string | null;
   status: string; // creating | mapped | failed | reconciliation_required
+  /** stored external title snapshot — drives rename-mismatch detection */
+  channex_title: string | null;
 };
 
 export const SELL_MODE = "per_person" as const;
@@ -276,6 +278,109 @@ export function sortByRoomNumber<T extends { roomNumber: string }>(rooms: T[]): 
   });
 }
 
+// ---- title synchronization (external rename after a LOCAL plan rename) ----
+// The canonical name lives on the local pricing_plans row; the external title
+// must follow it. A mapped combination whose stored external title differs from
+// the CURRENT canonical "חדר <num> - <plan>" needs a title update — derived
+// dynamically for ANY renamed plan, any room set: no old name, no new name, no
+// count, no plan id and no external UUID is ever hardcoded.
+export type TitleMismatch = {
+  roomId: string;
+  roomNumber: string;
+  localRatePlanId: string;
+  localRatePlanName: string;
+  channexRatePlanId: string;
+  channexRoomTypeId: string | null;
+  currentTitle: string | null;
+  expectedTitle: string;
+};
+
+export function titleMismatches(
+  plan: ComboPlan,
+  mappings: Pick<RateMapping, "room_id" | "local_rate_plan_id" | "channex_title">[],
+): TitleMismatch[] {
+  const titleByCombo = new Map(
+    mappings.map((m) => [`${m.room_id}:${m.local_rate_plan_id}`, m.channex_title ?? null]),
+  );
+  const out: TitleMismatch[] = [];
+  for (const row of plan.rows) {
+    // only live, already-created combinations with a valid canonical title —
+    // creation gaps belong to the create flow, never to a rename
+    if (row.status !== "mapped" || !row.channexRatePlanId || !row.proposedTitle) continue;
+    const current = titleByCombo.get(`${row.roomId}:${row.localRatePlanId}`) ?? null;
+    if (current === row.proposedTitle) continue;
+    out.push({
+      roomId: row.roomId,
+      roomNumber: row.roomNumber,
+      localRatePlanId: row.localRatePlanId,
+      localRatePlanName: row.localRatePlanName,
+      channexRatePlanId: row.channexRatePlanId,
+      channexRoomTypeId: row.channexRoomTypeId,
+      currentTitle: current,
+      expectedTitle: row.proposedTitle,
+    });
+  }
+  return out;
+}
+
+// Channex documents Update Rate Plan as taking the SAME fields as Create — a
+// title-only partial body is never assumed to be supported. The update payload
+// therefore ECHOES the freshly-GET external plan: every documented rate-plan
+// field present upstream is sent back byte-for-byte; ONLY the title changes.
+// Keys the external plan does not carry are omitted, never fabricated.
+const RATE_PLAN_ECHO_FIELDS = [
+  "property_id",
+  "room_type_id",
+  "parent_rate_plan_id",
+  "currency",
+  "sell_mode",
+  "rate_mode",
+  "options",
+  "children_fee",
+  "infant_fee",
+  "meal_type",
+  "tax_set_id",
+  "stop_sell",
+  "closed_to_arrival",
+  "closed_to_departure",
+  "min_stay_arrival",
+  "min_stay_through",
+  "max_stay",
+  "max_sell",
+  "max_availability",
+  "availability_offset",
+  "inherit_rate",
+  "inherit_closed_to_arrival",
+  "inherit_closed_to_departure",
+  "inherit_stop_sell",
+  "inherit_min_stay_arrival",
+  "inherit_min_stay_through",
+  "inherit_max_stay",
+  "inherit_max_sell",
+  "inherit_max_availability",
+  "inherit_availability_offset",
+  "auto_rate_settings",
+] as const;
+
+export function buildTitleUpdatePayload(args: {
+  /** raw `attributes` of the fresh GET — echoed, never stored or logged */
+  attributes: Record<string, unknown>;
+  /** ids resolved from relationships when attributes omit them (JSON:API) */
+  propertyId: string;
+  roomTypeId: string;
+  title: string;
+}): { rate_plan: Record<string, unknown> } {
+  const rate_plan: Record<string, unknown> = {};
+  for (const key of RATE_PLAN_ECHO_FIELDS) {
+    if (args.attributes[key] !== undefined) rate_plan[key] = args.attributes[key];
+  }
+  // JSON:API GETs may carry these only under relationships — always present
+  rate_plan.property_id = rate_plan.property_id ?? args.propertyId;
+  rate_plan.room_type_id = rate_plan.room_type_id ?? args.roomTypeId;
+  rate_plan.title = args.title; // the ONE change
+  return { rate_plan };
+}
+
 // ---- durable job identity ----
 // tenant+provider+environment are encoded by connection_id (UNIQUE per tenant/
 // provider/environment); property, local plan, room and operation are explicit.
@@ -284,4 +389,7 @@ export function ratePlanJobKey(propertyId: string, planId: string, roomId: strin
 }
 export function ratePlanSyncJobKey(propertyId: string): string {
   return `channex:rate_plan:sync:${propertyId}`;
+}
+export function ratePlanTitleSyncJobKey(propertyId: string): string {
+  return `channex:rate_plan:title_sync:${propertyId}`;
 }

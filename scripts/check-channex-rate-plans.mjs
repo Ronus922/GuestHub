@@ -11,7 +11,9 @@
 // manual, zero placeholder rates, stop_sell on all 7 weekdays, NO fabricated
 // children/infant fees), the API client (pagination/truncation + every error
 // status + timeout/network/malformed + no key leak), ambiguity classification,
-// durable job keys, and source-level scope + durability guards.
+// durable job keys, source-level scope + durability guards, and the D67 title
+// rename (mismatch derivation, GET-before-PUT full-echo update, UUID pinning,
+// failed items kept mapped and retryable).
 //
 // Usage: node scripts/check-channex-rate-plans.mjs
 import { execSync } from "node:child_process";
@@ -294,7 +296,144 @@ assert.equal(sync.ratePlanJobKey(PROP, "plan-0", "room-926"), `channex:rate_plan
 assert.notEqual(sync.ratePlanJobKey(PROP, "plan-0", "room-926"), sync.ratePlanJobKey(PROP, "plan-1", "room-926"), "same room, different plan → different durable identity");
 assert.notEqual(sync.ratePlanJobKey(PROP, "plan-0", "room-926"), sync.ratePlanJobKey(PROP, "plan-0", "room-1006"));
 assert.equal(sync.ratePlanSyncJobKey(PROP), `channex:rate_plan:sync:${PROP}`);
+assert.equal(sync.ratePlanTitleSyncJobKey(PROP), `channex:rate_plan:title_sync:${PROP}`);
+assert.notEqual(sync.ratePlanTitleSyncJobKey(PROP), sync.ratePlanSyncJobKey(PROP), "title runs never collide with create runs");
 ok("durable job keys: property + local plan + room + operation");
+
+// ============================================================
+// TITLE RENAME (D67) — mismatch derivation + full-echo update payload
+// ============================================================
+// 4 plans × 13 mapped rooms, all created under each plan's ORIGINAL name; then
+// ONE local plan is renamed. Everything below is derived — no old/new name, no
+// count, no plan id, no external UUID is special-cased anywhere.
+{
+  const plans4 = ["ללא דמי ביטול", "ביטול גמיש", "תעריף שבועי", "תעריף חודשי"].map((p, i) => mkPlan(p, i));
+  const mkMappings = (plans) => {
+    const out = [];
+    for (const p of plans)
+      for (const r of rooms13)
+        out.push({
+          room_id: r.roomId,
+          local_rate_plan_id: p.id,
+          channex_rate_plan_id: `ext-${p.id}-${r.roomNumber}`,
+          status: "mapped",
+          channex_title: `חדר ${r.roomNumber} - ${p.name}`,
+        });
+    return out;
+  };
+  const mappings = mkMappings(plans4); // titles match the ORIGINAL names
+
+  // no rename → nothing to do (repeated execution performs no update work)
+  let combo = sync.buildComboPlan({ plans: plans4, rooms: rooms13, rateMappings: mappings });
+  assert.equal(sync.titleMismatches(combo, mappings).length, 0, "all titles match → zero work");
+
+  // rename ONE plan locally (the id is preserved, only the name changes)
+  const renamed = plans4.map((p) => (p.id === "plan-0" ? { ...p, name: "ללא החזר" } : p));
+  combo = sync.buildComboPlan({ plans: renamed, rooms: rooms13, rateMappings: mappings });
+  const mm = sync.titleMismatches(combo, mappings);
+  assert.equal(mm.length, rooms13.length, "exactly one mismatch per mapped room of the renamed plan — computed, never hardcoded");
+  assert.ok(mm.every((m) => m.localRatePlanId === "plan-0"), "ONLY the renamed plan's mappings are selected");
+  assert.equal(
+    combo.rows.filter((r) => r.status === "mapped").length - mm.length,
+    (plans4.length - 1) * rooms13.length,
+    "the other plans' combinations are untouched",
+  );
+  assert.deepEqual(
+    new Set(mm.map((m) => m.channexRatePlanId)),
+    new Set(rooms13.map((r) => `ext-plan-0-${r.roomNumber}`)),
+    "exactly the EXISTING external ids are targeted — no new UUID, none dropped",
+  );
+  assert.ok(
+    mm.every((m) => m.expectedTitle === `חדר ${m.roomNumber} - ללא החזר`),
+    "expected title derives from the CURRENT canonical local name",
+  );
+  assert.ok(mm.every((m) => m.currentTitle === `חדר ${m.roomNumber} - ללא דמי ביטול`), "old title reported for the audit trail");
+
+  // any other future rename works identically — the mechanism is generic
+  const renamed2 = plans4.map((p) => (p.id === "plan-2" ? { ...p, name: "תעריף שבועי מיוחד" } : p));
+  combo = sync.buildComboPlan({ plans: renamed2, rooms: rooms13, rateMappings: mappings });
+  const mm2 = sync.titleMismatches(combo, mappings);
+  assert.equal(mm2.length, rooms13.length);
+  assert.ok(mm2.every((m) => m.localRatePlanId === "plan-2" && m.expectedTitle.endsWith("תעריף שבועי מיוחד")));
+
+  // after a successful run the stored titles match again → zero mismatches
+  const refreshed = mkMappings(renamed);
+  combo = sync.buildComboPlan({ plans: renamed, rooms: rooms13, rateMappings: refreshed });
+  assert.equal(sync.titleMismatches(combo, refreshed).length, 0, "re-run after success selects nothing (idempotent)");
+
+  // never selected: unmapped / creating / failed / reconciliation rows, rows
+  // without an external id, and combos whose canonical title is invalid
+  const edge = [
+    { ...mappings[0], status: "creating" },
+    { ...mappings[13], status: "failed" },
+    { ...mappings[26], channex_rate_plan_id: null },
+  ];
+  combo = sync.buildComboPlan({ plans: renamed, rooms: rooms13, rateMappings: edge });
+  assert.equal(sync.titleMismatches(combo, edge).length, 0, "only live 'mapped' rows with an external id are ever renamed");
+  ok("title mismatches: derived per renamed plan, existing UUIDs only, idempotent, generic for any rename");
+
+  // ---- the full-echo update payload: title is the ONE change ----
+  const WEEK = (v) => [v, v, v, v, v, v, v];
+  const attrs = {
+    id: "ext-plan-0-926", // JSON:API id — NEVER part of a rate_plan payload
+    inserted_at: "2026-07-09T10:00:00", // upstream bookkeeping — never echoed
+    title: "חדר 926 - ללא דמי ביטול",
+    property_id: PROP,
+    room_type_id: "rt-926",
+    parent_rate_plan_id: null,
+    currency: "ILS",
+    sell_mode: "per_person",
+    rate_mode: "manual",
+    options: [
+      { occupancy: 2, is_primary: true, rate: 0 },
+      { occupancy: 1, is_primary: false, rate: 0 },
+    ],
+    children_fee: "0.00",
+    infant_fee: "0.00",
+    meal_type: "none",
+    tax_set_id: null,
+    stop_sell: WEEK(true),
+    closed_to_arrival: WEEK(false),
+    closed_to_departure: WEEK(false),
+    min_stay_arrival: WEEK(1),
+    min_stay_through: WEEK(1),
+    max_stay: WEEK(0),
+    max_sell: null,
+    max_availability: null,
+    availability_offset: null,
+    inherit_rate: false,
+    inherit_closed_to_arrival: false,
+    inherit_closed_to_departure: false,
+    inherit_stop_sell: false,
+    inherit_min_stay_arrival: false,
+    inherit_min_stay_through: false,
+    inherit_max_stay: false,
+    inherit_max_sell: false,
+    inherit_max_availability: false,
+    inherit_availability_offset: false,
+    auto_rate_settings: null,
+  };
+  const payload = sync.buildTitleUpdatePayload({
+    attributes: attrs,
+    propertyId: PROP,
+    roomTypeId: "rt-926",
+    title: "חדר 926 - ללא החזר",
+  });
+  assert.equal(payload.rate_plan.title, "חדר 926 - ללא החזר", "the title IS the change");
+  for (const [k, v] of Object.entries(payload.rate_plan))
+    if (k !== "title") assert.deepEqual(v, attrs[k], `field ${k} echoed byte-for-byte from the fresh GET`);
+  for (const k of ["property_id", "room_type_id", "currency", "sell_mode", "rate_mode", "options",
+    "children_fee", "infant_fee", "meal_type", "tax_set_id", "stop_sell", "min_stay_arrival",
+    "min_stay_through", "max_stay", "inherit_rate", "auto_rate_settings", "parent_rate_plan_id"])
+    assert.ok(k in payload.rate_plan, `documented field ${k} is preserved (no title-only partial body)`);
+  assert.ok(!("id" in payload.rate_plan) && !("inserted_at" in payload.rate_plan), "non-payload upstream keys never echoed");
+  // JSON:API GETs may carry ids only under relationships — injected, not invented
+  const bare = sync.buildTitleUpdatePayload({ attributes: { title: "x" }, propertyId: PROP, roomTypeId: "rt-1", title: "y" });
+  assert.equal(bare.rate_plan.property_id, PROP);
+  assert.equal(bare.rate_plan.room_type_id, "rt-1");
+  assert.deepEqual(Object.keys(bare.rate_plan).sort(), ["property_id", "room_type_id", "title"], "absent upstream fields are omitted, never fabricated");
+  ok("update payload: full echo of the fresh GET, only the title changes, nothing fabricated or leaked");
+}
 
 // ============================================================
 // API CLIENT — pagination, truncation, every error class, no key leak
@@ -405,7 +544,38 @@ r = await api.getChannexRatePlan({
   fetchImpl: async (url) => { assert.ok(url.endsWith("/rate_plans/abc")); return mkRes(200, { data: rp("abc") }); },
 });
 assert.equal(r.ok && r.ratePlan.roomTypeId, "rt-abc");
-ok("get one rate plan: detail + relationships extraction");
+assert.ok(r.ok && r.attributes && r.attributes.title === "t-abc", "raw attributes exposed for the full-echo update payload");
+ok("get one rate plan: detail + relationships extraction + raw attributes");
+
+// PUT one — the title-update write: /rate_plans/:id, echoed body, 200 parsed
+{
+  let putSeen = null;
+  const echo = { rate_plan: { property_id: PROP, room_type_id: "rt-u1", title: "חדר 926 - ללא החזר", currency: "ILS" } };
+  const r2 = await api.updateChannexRatePlan({
+    apiKey: KEY, baseUrl: STAGING, id: "u1", payload: echo,
+    fetchImpl: async (url, init) => {
+      putSeen = { url, init };
+      return mkRes(200, { data: rp("u1", { title: "חדר 926 - ללא החזר" }) });
+    },
+  });
+  assert.ok(putSeen.url.endsWith("/rate_plans/u1"), "PUT targets the EXISTING plan id");
+  assert.equal(putSeen.init.method, "PUT");
+  assert.equal(putSeen.init.headers["user-api-key"], KEY);
+  assert.deepEqual(JSON.parse(putSeen.init.body), echo, "the request body is exactly the echoed payload");
+  assert.equal(r2.ok && r2.ratePlan.id, "u1", "the external UUID is unchanged in the response");
+  assert.equal(r2.ok && r2.ratePlan.title, "חדר 926 - ללא החזר");
+  // error statuses map like every other call and never leak the key
+  for (const [status, category] of [[401, "unauthorized"], [404, "not_found"], [422, "validation"], [500, "server_error"]]) {
+    const rf = await api.updateChannexRatePlan({
+      apiKey: KEY, baseUrl: STAGING, id: "u1", payload: echo,
+      fetchImpl: async () => mkRes(status, { errors: {} }),
+    });
+    assert.equal(rf.ok, false);
+    assert.equal(rf.category, category);
+    assert.ok(!JSON.stringify(rf).includes(KEY), "api-key never in a failure");
+  }
+  ok("update rate plan: PUT /rate_plans/:id with the echoed body; statuses mapped; no key leak");
+}
 
 // ============================================================
 // SOURCE-LEVEL SCOPE + DURABILITY GUARDS
@@ -415,19 +585,21 @@ const adminSrc = readFileSync("src/lib/channel/rate-plan-admin.ts", "utf8");
 const uiSrc = readFileSync("src/app/(dashboard)/channels/ChannexRatePlansSection.tsx", "utf8");
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
-// client: GET+POST on /rate_plans only — no DELETE, no PUT, no other surface
+// client: GET+POST+PUT on /rate_plans only — never DELETE/PATCH, no other surface
 const clientCode = stripComments(clientSrc);
-assert.ok(!/"DELETE"|"PUT"|"PATCH"/.test(clientCode), "client never deletes or updates");
+assert.ok(!/"DELETE"|"PATCH"/.test(clientCode), "client never deletes");
+assert.equal((clientCode.match(/method: "PUT"/g) ?? []).length, 1, "exactly one PUT site (the title update)");
+assert.equal((clientCode.match(/method: "POST"/g) ?? []).length, 1, "exactly one POST site (creation)");
 for (const surface of ["/availability", "/restrictions", "/webhooks", "/bookings", "/properties", "/room_types", "/channels"])
   assert.ok(!clientCode.includes(`"${surface}`) && !clientCode.includes(`\`${surface}`), `client never touches ${surface}`);
-ok("client scope: /rate_plans GET+POST only");
+ok("client scope: /rate_plans GET+POST+PUT only; DELETE never exists");
 
-// admin: exactly the two intended server actions, both guarded
+// admin: exactly the three intended server actions, all guarded
 const exported = [...adminSrc.matchAll(/export async function (\w+)/g)].map((m) => m[1]);
 assert.deepEqual(
   exported.sort(),
-  ["getChannexRatePlanSyncContextAction", "startChannexRatePlanSyncAction"],
-  "exactly two server actions — context (read-only) and the explicit sync",
+  ["getChannexRatePlanSyncContextAction", "startChannexRatePlanSyncAction", "startChannexRatePlanTitleSyncAction"],
+  "exactly three server actions — read-only context, explicit create sync, explicit title sync",
 );
 for (const fn of exported) {
   const start = adminSrc.indexOf(`export async function ${fn}`);
@@ -448,7 +620,7 @@ const ctxBody = adminSrc.slice(
 );
 for (const netFn of ["createChannexRatePlan", "listChannexRatePlans", "getChannexRatePlan", "channexRequest"])
   assert.ok(!ctxBody.includes(`${netFn}(`), `page-load context must not call ${netFn}`);
-ok("admin: two guarded actions; one creation site; page load is network-free");
+ok("admin: three guarded actions; one creation site; page load is network-free");
 
 // forbidden writes / surfaces in EXECUTABLE admin code
 const adminCode = stripComments(adminSrc);
@@ -524,15 +696,57 @@ assert.ok((adminSrc.match(/catch \(auditErr\)/g) ?? []).length >= 2, "run-summar
 assert.ok(/&& r\.validationError === null,?\s*\n\s*\)\.length/.test(adminSrc), "remaining excludes validation_required combos");
 ok("durability guards: item-job reaper, UUID-before-commit, audit-outside-try, parent settled, safe clearing");
 
+// TITLE SYNC (D67) — source-level correctness + scope guards
+const titleBody = adminSrc.slice(adminSrc.indexOf("export async function startChannexRatePlanTitleSyncAction"));
+assert.ok(titleBody.length > 100, "title-sync action exists");
+assert.ok(!titleBody.includes("createChannexRatePlan("), "the title sync NEVER creates (no POST path)");
+assert.ok(
+  titleBody.indexOf("getChannexRatePlan(") > 0 &&
+    titleBody.indexOf("getChannexRatePlan(") < titleBody.indexOf("updateChannexRatePlan("),
+  "a fresh GET always precedes the PUT",
+);
+assert.equal((adminSrc.match(/updateChannexRatePlan\(/g) ?? []).length, 1, "exactly ONE external-update call site");
+assert.ok(
+  adminSrc.indexOf("updateChannexRatePlan(") > adminSrc.indexOf("export async function startChannexRatePlanTitleSyncAction"),
+  "the only update call lives inside the explicit title-sync action",
+);
+const createActionBody = adminSrc.slice(
+  adminSrc.indexOf("export async function startChannexRatePlanSyncAction"),
+  adminSrc.indexOf("export async function startChannexRatePlanTitleSyncAction"),
+);
+assert.ok(!createActionBody.includes("updateChannexRatePlan("), "the creation flow never PUTs");
+assert.ok(!titleBody.includes("INSERT INTO guesthub.channel_room_rate_mappings"), "the title sync never creates a mapping");
+assert.ok(titleBody.includes("buildTitleUpdatePayload("), "the PUT body is the full echo of the fresh GET");
+assert.ok(/mismatches\.length === 0/.test(titleBody), "matching titles → the run performs no PUT");
+assert.ok(/wrongProperty|wrongRoomType/.test(titleBody), "external identity (property + room type) verified before any PUT");
+assert.ok(/got\.ratePlan\.title === m\.expectedTitle/.test(titleBody), "an upstream title that already matches is refreshed, never re-PUT");
+// the local refresh pins the SAME external UUID in the WHERE and never assigns it
+const refreshBody = adminSrc.slice(adminSrc.indexOf("async function refreshMappingTitle"), adminSrc.indexOf("async function recordTitleFailure"));
+assert.ok(/AND channex_rate_plan_id = \$\{m\.channexRatePlanId\}/.test(refreshBody), "refresh WHERE pins the existing external UUID");
+assert.ok(!/SET[\s\S]*?channex_rate_plan_id\s*=/.test(refreshBody.slice(refreshBody.indexOf("SET"), refreshBody.indexOf("WHERE"))), "the external UUID is never rewritten");
+assert.ok(/last_verified_at = now\(\)/.test(refreshBody) && /last_error = NULL/.test(refreshBody), "refresh stamps last_verified_at and clears prior errors");
+// a failed item keeps its mapping: no status change, error recorded, retried later
+const failBody = adminSrc.slice(adminSrc.indexOf("async function recordTitleFailure"), adminSrc.indexOf("export async function startChannexRatePlanTitleSyncAction"));
+assert.ok(!/SET[\s\S]*?status\s*=/.test(failBody.slice(failBody.indexOf("SET"), failBody.indexOf("WHERE"))), "a failed title update never changes the mapping status");
+assert.ok(/AND status = 'mapped'/.test(failBody), "failure is recorded only on the still-mapped row");
+assert.ok(/parentKey = ratePlanTitleSyncJobKey/.test(titleBody) && /pg_advisory_xact_lock/.test(titleBody), "durable run mutex — duplicate submissions rejected");
+assert.ok(/unauthorized" \|\| .*forbidden"/.test(titleBody), "a rejected credential stops the run early");
+ok("title sync: GET-before-PUT, one update site, echo payload, UUID pinned, failures kept mapped and retryable");
+
 // UI: one compact card — no simulator, no table, no per-room buttons
 assert.ok(uiSrc.includes("תוכניות תעריף ב־Channex"), "card title");
-assert.ok(uiSrc.includes("יצירת תוכניות התעריף ב־Channex Staging"), "the single action button");
-assert.ok(uiSrc.includes("צור תוכניות תעריף") && uiSrc.includes("ביטול"), "confirm dialog buttons");
+assert.ok(uiSrc.includes("יצירת תוכניות התעריף ב־Channex Staging"), "the creation button");
+assert.ok(uiSrc.includes("צור תוכניות תעריף") && uiSrc.includes("ביטול"), "create confirm dialog buttons");
+assert.ok(uiSrc.includes("עדכון שמות ב־Channex"), "the title-update button");
+assert.ok(uiSrc.includes("שמות דורשים עדכון"), "mismatch count indicator");
+assert.ok(uiSrc.includes("לעדכן את שמות") && uiSrc.includes("עדכן שמות"), "title confirm dialog + its confirm button");
+assert.ok(/view\.titleMismatches > 0 &&/.test(uiSrc), "the title button is hidden when every external title matches");
 assert.ok(!/<table/.test(uiSrc), "no per-room preview table");
 assert.ok(!/simulator|סימולטור|מחשבון/.test(uiSrc), "no pricing simulator/calculator");
-assert.equal((uiSrc.match(/startChannexRatePlanSyncAction\(/g) ?? []).length, 1, "one action wire — no per-room/per-plan buttons");
+assert.equal((uiSrc.match(/startChannexRatePlanSyncAction\(/g) ?? []).length, 1, "one create wire — no per-room/per-plan buttons");
+assert.equal((uiSrc.match(/startChannexRatePlanTitleSyncAction\(/g) ?? []).length, 1, "one title-sync wire");
 assert.ok(!/\b65\b|\b13\b/.test(stripComments(uiSrc).replace(/max-w|z-50|h-11|p-\d|gap-\d|grid-cols-\d/g, "")), "no hardcoded combination counts in the UI");
 assert.ok(/submitting\) return/.test(uiSrc), "double-submit guarded");
-ok("UI: one card, one button, one confirmation dialog; counts fully dynamic");
+ok("UI: one card, two explicit confirmed actions; rename button only on drift; counts fully dynamic");
 
 console.log(`check-channex-rate-plans: ${n} groups, all assertions passed ✓`);

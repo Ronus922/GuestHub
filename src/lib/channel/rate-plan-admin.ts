@@ -8,20 +8,30 @@ import { enqueueChannelJob, logChannelError } from "./queue";
 import { CHANNEX_BASE_URLS } from "./config";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
 import { isAmbiguous, type ChannexApiFailure, type ChannexApiErrorCategory } from "./channex-http";
-import { listChannexRatePlans, createChannexRatePlan, type ChannexRatePlan } from "./channex-rate-plans";
+import {
+  listChannexRatePlans,
+  createChannexRatePlan,
+  getChannexRatePlan,
+  updateChannexRatePlan,
+  type ChannexRatePlan,
+} from "./channex-rate-plans";
 import {
   buildComboPlan,
   buildRatePlanTitle,
   buildOccupancyOptions,
   buildCreateRatePlanPayload,
+  buildTitleUpdatePayload,
+  titleMismatches,
   ratePlanJobKey,
   ratePlanSyncJobKey,
+  ratePlanTitleSyncJobKey,
   SELL_MODE,
   RATE_MODE,
   type ComboPlan,
   type LocalRatePlan,
   type RatePlanRoom,
   type RateMapping,
+  type TitleMismatch,
 } from "./rate-plan-sync";
 
 // ============================================================
@@ -38,7 +48,10 @@ import {
 //  • Every created plan is stop-sold on all 7 weekdays with zero placeholder
 //    rates — nothing becomes sellable before the first verified ARI snapshot.
 //  • NO real price, availability, restriction push, OTA connection, webhook,
-//    booking or cancellation-policy mapping is issued; DELETE/PUT never called.
+//    booking or cancellation-policy mapping is issued; DELETE never called.
+//    PUT is issued ONLY by the explicit title sync — a full-payload echo of a
+//    fresh GET with nothing but the title changed, on an EXISTING mapped plan
+//    whose local canonical name was renamed. External UUIDs never change.
 //  • NO GuestHub room / rate plan / price / policy / reservation is written.
 //  • An AMBIGUOUS external result is never blindly re-POSTed.
 //  • The api-key is decrypted per call, never returned, logged or audited.
@@ -49,6 +62,7 @@ const PROVIDER = "channex" as const;
 
 const RUN_BUDGET_MS = 25_000;
 const CREATE_TIMEOUT_MS = 15_000;
+const UPDATE_TIMEOUT_MS = 15_000;
 const STALE_RUN_MINUTES = 10;
 // A POST that timed out CLIENT-side may still be applied upstream moments later
 // (a "zombie write"). A complete external listing is proof of non-creation only
@@ -161,7 +175,7 @@ async function loadRooms(tenantId: string, connectionId: string): Promise<RatePl
 
 async function loadRateMappings(connectionId: string): Promise<RateMapping[]> {
   return sql<RateMapping[]>`
-    SELECT room_id, local_rate_plan_id, channex_rate_plan_id, status
+    SELECT room_id, local_rate_plan_id, channex_rate_plan_id, status, channex_title
     FROM guesthub.channel_room_rate_mappings
     WHERE connection_id = ${connectionId}`;
 }
@@ -196,6 +210,10 @@ export type RatePlanSyncContext = {
   requiredCombinations: number;
   mappedCombinations: number;
   creatable: number;
+  /** mapped combos whose external title no longer matches the canonical
+   *  "חדר <num> - <plan>" (a local plan was renamed) — derived, never counted
+   *  by hand; 0 hides the rename button entirely */
+  titleMismatches: number;
   /** combos needing attention — rendered only when non-empty */
   problems: { roomNumber: string; planName: string; message: string }[];
   running: boolean;
@@ -215,6 +233,7 @@ export async function getChannexRatePlanSyncContextAction(): Promise<Result<Rate
       requiredCombinations: 0,
       mappedCombinations: 0,
       creatable: 0,
+      titleMismatches: 0,
       problems: [],
       running: false,
     };
@@ -244,6 +263,7 @@ export async function getChannexRatePlanSyncContextAction(): Promise<Result<Rate
         requiredCombinations: plan.summary.requiredCombinations,
         mappedCombinations: plan.summary.mappedCombinations,
         creatable: plan.summary.creatable,
+        titleMismatches: titleMismatches(plan, rateMappings).length,
         problems: failedRows.map((r) => ({
           roomNumber: r.roomNumber,
           planName: r.localRatePlanName,
@@ -781,4 +801,285 @@ async function auditReconciliation(
     ip: ctx.ip,
     session: ctx.session,
   });
+}
+
+// ---- 3) title synchronization after a LOCAL Rate Plan rename ----
+// Updates ONLY the titles of EXISTING mapped Channex Rate Plans whose stored
+// external title differs from the canonical "חדר <num> - <plan>". Per item:
+// fresh GET → identity verification (property + room type + same local combo)
+// → full-payload echo with title as the ONE change → PUT → local snapshot
+// refresh. Never POST, never DELETE, never a new mapping, never a changed
+// UUID; a failed item keeps its mapping intact (status stays 'mapped') with a
+// sanitized error, and the next click retries only the still-mismatched set.
+// A title PUT is idempotent — re-running with matching titles performs no PUT.
+
+export type TitleSyncRunResult = {
+  updated: number;
+  skipped: number; // external already matched — snapshot refreshed, no PUT
+  failed: number;
+  remaining: number; // still-mismatched after this run (failed + not reached)
+  stopped: "budget" | null;
+};
+
+// The mapping refresh after a verified match/successful PUT. The WHERE pins the
+// exact combo AND the exact external UUID — channex_rate_plan_id is never
+// modified, and a row that was re-pointed by another flow is never clobbered.
+async function refreshMappingTitle(
+  connectionId: string,
+  m: TitleMismatch,
+  rp: ChannexRatePlan,
+  userId: string,
+): Promise<void> {
+  await sql`
+    UPDATE guesthub.channel_room_rate_mappings
+    SET channex_title = ${rp.title ?? m.expectedTitle},
+        snapshot = ${sql.json(externalSnapshot(rp) as never)},
+        last_verified_at = now(), last_error = NULL, last_error_code = NULL,
+        updated_by = ${userId}
+    WHERE connection_id = ${connectionId} AND room_id = ${m.roomId}
+      AND local_rate_plan_id = ${m.localRatePlanId}
+      AND channex_rate_plan_id = ${m.channexRatePlanId}
+      AND status = 'mapped'`;
+}
+
+// A failed item: the mapping is KEPT (status stays 'mapped', the external id
+// untouched) — only the sanitized error is recorded so the UI can count it and
+// the next run re-selects it via the unchanged title mismatch.
+async function recordTitleFailure(
+  connectionId: string,
+  m: TitleMismatch,
+  code: string,
+  message: string,
+  userId: string,
+): Promise<void> {
+  await sql`
+    UPDATE guesthub.channel_room_rate_mappings
+    SET last_error_code = ${code}, last_error = ${message}, updated_by = ${userId}
+    WHERE connection_id = ${connectionId} AND room_id = ${m.roomId}
+      AND local_rate_plan_id = ${m.localRatePlanId}
+      AND channex_rate_plan_id = ${m.channexRatePlanId}
+      AND status = 'mapped'`;
+}
+
+export async function startChannexRatePlanTitleSyncAction(): Promise<Result<TitleSyncRunResult>> {
+  let parentJobId: string | null = null;
+  try {
+    const actor = await requireChannelAdmin();
+    const ready = await requireReady(actor.tenantId);
+    if ("error" in ready) return { success: false, error: ready.error };
+    const { conn, propertyId, apiKey } = ready;
+    const baseUrl = CHANNEX_BASE_URLS.staging;
+
+    // durable run mutex (double-click / concurrent request safe). The job_type
+    // CHECK constraint is closed, so the run reuses 'sync_rate_plans' — its
+    // identity IS the idempotency key (…:title_sync:…), disjoint from the
+    // create run's key, and the payload names the operation.
+    const parentKey = ratePlanTitleSyncJobKey(propertyId);
+    const claim = await sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`channex:rp_title_sync:${actor.tenantId}:${CHANNEX_ENV}`}))`;
+      await tx`
+        UPDATE guesthub.channel_sync_jobs
+        SET status = 'failed', finished_at = now(), locked_at = NULL, locked_by = NULL,
+            last_error_code = 'abandoned', last_error_message = 'ריצת עדכון שמות קודמת נקטעה'
+        WHERE connection_id = ${conn.id} AND idempotency_key = ${parentKey}
+          AND status IN ('queued','processing','retry_wait')
+          AND COALESCE(locked_at, created_at) < now() - make_interval(mins => ${STALE_RUN_MINUTES})`;
+      const enq = await enqueueChannelJob(tx, {
+        tenantId: actor.tenantId,
+        connectionId: conn.id,
+        jobType: "sync_rate_plans",
+        priority: 10,
+        idempotencyKey: parentKey,
+        payload: { propertyId, environment: CHANNEX_ENV, operation: "title_sync" },
+      });
+      if ("duplicate" in enq) return null;
+      await tx`
+        UPDATE guesthub.channel_sync_jobs
+        SET status = 'processing', locked_at = now(), locked_by = ${`title-sync:${actor.userId}`},
+            started_at = now(), attempts = 1
+        WHERE id = ${enq.id}`;
+      return enq.id;
+    });
+    if (!claim) return { success: false, error: "עדכון שמות כבר פועל — המתן לסיומו" };
+    parentJobId = claim;
+
+    // the CURRENT canonical truth — plan names read fresh from pricing_plans,
+    // mismatches derived, never hardcoded
+    const [plans, rooms, rateMappings] = await Promise.all([
+      loadLocalPlans(actor.tenantId),
+      loadRooms(actor.tenantId, conn.id),
+      loadRateMappings(conn.id),
+    ]);
+    const combo = buildComboPlan({ plans, rooms, rateMappings });
+    const mismatches = titleMismatches(combo, rateMappings);
+
+    const run: TitleSyncRunResult = { updated: 0, skipped: 0, failed: 0, remaining: 0, stopped: null };
+    if (mismatches.length === 0) {
+      await sql`
+        UPDATE guesthub.channel_sync_jobs
+        SET status = 'succeeded', finished_at = now(), locked_at = NULL, locked_by = NULL
+        WHERE id = ${parentJobId}`;
+      return { success: true, data: run };
+    }
+
+    const auditCtx = await auditRequestContext();
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: conn.id,
+      action: "rate_plan_title_sync_requested",
+      after: {
+        environment: CHANNEX_ENV,
+        propertyId,
+        mismatched: mismatches.length,
+        planNames: [...new Set(mismatches.map((m) => m.localRatePlanName))],
+      },
+      ip: auditCtx.ip,
+      session: auditCtx.session,
+    });
+
+    const t0 = Date.now();
+    for (const m of mismatches) {
+      if (Date.now() - t0 > RUN_BUDGET_MS) {
+        run.stopped = "budget";
+        break;
+      }
+      await sql`UPDATE guesthub.channel_sync_jobs SET locked_at = now() WHERE id = ${parentJobId}`;
+
+      // (1) fresh external truth — GET always precedes any PUT
+      const got = await getChannexRatePlan({
+        apiKey,
+        baseUrl,
+        timeoutMs: UPDATE_TIMEOUT_MS,
+        id: m.channexRatePlanId,
+      });
+      if (!got.ok) {
+        await recordTitleFailure(conn.id, m, got.category, got.message, actor.userId);
+        run.failed++;
+        if (got.category === "unauthorized" || got.category === "forbidden") break;
+        continue;
+      }
+
+      // (2) identity verification — the external plan must still be OUR plan:
+      // same mapped property, same mapped room type. Anything else is never
+      // renamed; the mapping is kept and surfaced for explicit attention.
+      const wrongProperty = got.ratePlan.propertyId !== null && got.ratePlan.propertyId !== propertyId;
+      const wrongRoomType =
+        m.channexRoomTypeId !== null &&
+        got.ratePlan.roomTypeId !== null &&
+        got.ratePlan.roomTypeId !== m.channexRoomTypeId;
+      if (wrongProperty || wrongRoomType) {
+        await recordTitleFailure(
+          conn.id,
+          m,
+          "external_mismatch",
+          "התוכנית ב-Channex אינה תואמת את המיפוי (נכס או סוג חדר שונים) — לא עודכנה",
+          actor.userId,
+        );
+        run.failed++;
+        continue;
+      }
+
+      // (3) already renamed upstream (idempotent re-run) — refresh, NO PUT
+      if (got.ratePlan.title === m.expectedTitle) {
+        await refreshMappingTitle(conn.id, m, got.ratePlan, actor.userId);
+        run.skipped++;
+        continue;
+      }
+
+      // (4) full-payload echo of the fresh GET; title is the ONE change
+      const payload = buildTitleUpdatePayload({
+        attributes: got.attributes,
+        propertyId,
+        roomTypeId: got.ratePlan.roomTypeId ?? m.channexRoomTypeId ?? "",
+        title: m.expectedTitle,
+      });
+      const put = await updateChannexRatePlan({
+        apiKey,
+        baseUrl,
+        timeoutMs: UPDATE_TIMEOUT_MS,
+        id: m.channexRatePlanId,
+        payload,
+      });
+      if (!put.ok) {
+        await recordTitleFailure(conn.id, m, put.category, put.message, actor.userId);
+        await logChannelError(sql, {
+          tenantId: actor.tenantId,
+          connectionId: conn.id,
+          jobId: parentJobId,
+          code: put.category,
+          message: put.message,
+          context: { roomId: m.roomId, roomNumber: m.roomNumber, localRatePlanId: m.localRatePlanId },
+        });
+        run.failed++;
+        if (put.category === "unauthorized" || put.category === "forbidden") break;
+        continue;
+      }
+
+      // (5) local refresh: same UUID, new safe title snapshot, verified now
+      await refreshMappingTitle(conn.id, m, put.ratePlan, actor.userId);
+      run.updated++;
+      try {
+        await writeAudit(actor, {
+          entityType: "channel_room_rate_mapping",
+          entityId: null,
+          action: "channex_rate_plan_title_updated",
+          after: {
+            environment: CHANNEX_ENV,
+            propertyId,
+            roomId: m.roomId,
+            roomNumber: m.roomNumber,
+            localRatePlanId: m.localRatePlanId,
+            channexRatePlanId: m.channexRatePlanId,
+            fromTitle: m.currentTitle,
+            toTitle: m.expectedTitle,
+          },
+          ip: auditCtx.ip,
+          session: auditCtx.session,
+        });
+      } catch (auditErr) {
+        console.error("[channex-rate-plans] title-update audit failed (mapping already refreshed)", auditErr);
+      }
+    }
+
+    run.remaining = mismatches.length - run.updated - run.skipped;
+    await sql`
+      UPDATE guesthub.channel_sync_jobs
+      SET status = ${run.remaining > 0 ? "failed" : "succeeded"}, finished_at = now(),
+          locked_at = NULL, locked_by = NULL,
+          last_error_code = ${run.remaining > 0 ? (run.stopped ?? "partial") : null},
+          last_error_message = ${run.remaining > 0 ? "עדכון שמות חלקי — ניתן לנסות שוב" : null}
+      WHERE id = ${parentJobId}`;
+
+    try {
+      await writeAudit(actor, {
+        entityType: "channel_connection",
+        entityId: conn.id,
+        action: run.remaining > 0 ? "rate_plan_title_sync_partially_completed" : "rate_plan_title_sync_completed",
+        after: {
+          environment: CHANNEX_ENV,
+          propertyId,
+          updated: run.updated,
+          skipped: run.skipped,
+          failed: run.failed,
+          remaining: run.remaining,
+          stopped: run.stopped,
+        },
+        ip: auditCtx.ip,
+        session: auditCtx.session,
+      });
+    } catch (auditErr) {
+      console.error("[channex-rate-plans] title-sync summary audit failed (run already settled)", auditErr);
+    }
+
+    return { success: true, data: run };
+  } catch (e) {
+    if (parentJobId) {
+      try {
+        await settleJobFailed(parentJobId, "run_error", "עדכון השמות נעצר עקב שגיאה — ניתן לנסות שוב");
+      } catch (settleErr) {
+        console.error("[channex-rate-plans] failed to settle title-sync job after run error", settleErr);
+      }
+    }
+    return failFrom(e);
+  }
 }
