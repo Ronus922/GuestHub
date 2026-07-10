@@ -4,18 +4,21 @@ import { useState, useTransition } from "react";
 import {
   getChannexRatePlanSyncContextAction,
   startChannexRatePlanSyncAction,
+  startChannexRatePlanTitleSyncAction,
   type RatePlanSyncContext,
 } from "@/lib/channel/rate-plan-admin";
 
-// (Local Rate Plan × mapped physical room) → Channex Rate Plan sync (D65).
+// (Local Rate Plan × mapped physical room) → Channex Rate Plan sync (D65/D67).
 // super_admin only (the page gates on canManageChannels; the actions re-check
-// server-side). ONE compact card, ONE button, ONE confirmation dialog — the
-// local plans are read from the canonical pricing_plans table and the counts
-// are always calculated (plans × mapped rooms), never hardcoded.
+// server-side). ONE compact card — creation button + (only when a local plan
+// was renamed and external titles drifted) a title-update button, each with a
+// short confirmation dialog. The local plans are read from the canonical
+// pricing_plans table and every count is calculated, never hardcoded.
 //
-// Nothing here creates an external Rate Plan on load. Only the explicit,
-// confirmed action issues POST /rate_plans — every created plan is stop-sold
-// with zero placeholder rates until the ARI milestone.
+// Nothing here writes to Channex on load. Only the explicit, confirmed actions
+// issue POST /rate_plans (creation — stop-sold, zero placeholder rates) or
+// PUT /rate_plans/:id (title rename of an existing mapped plan — full-payload
+// echo, title is the only change, the external UUID is preserved).
 
 type Msg = { tone: "ok" | "err"; text: string } | null;
 
@@ -29,10 +32,13 @@ export function ChannexRatePlansSection({ initial }: { initial: RatePlanSyncCont
   const [msg, setMsg] = useState<Msg>(null);
   const [pending, startTransition] = useTransition();
   const [confirming, setConfirming] = useState(false);
+  const [confirmingTitles, setConfirmingTitles] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const busy = pending || submitting;
   const canAct = view.connected && view.configured && view.creatable > 0 && !view.running;
+  const canRename = view.connected && view.configured && view.titleMismatches > 0 && !view.running;
+  const matchingTitles = view.mappedCombinations - view.titleMismatches;
 
   async function reload() {
     const res = await getChannexRatePlanSyncContextAction();
@@ -81,6 +87,48 @@ export function ChannexRatePlansSection({ initial }: { initial: RatePlanSyncCont
     });
   }
 
+  // Title rename of EXISTING mapped plans after a local plan rename — only the
+  // still-mismatched set is ever sent; a re-click retries failed items only.
+  function runTitleSync() {
+    if (submitting) return;
+    setSubmitting(true);
+    setConfirmingTitles(false);
+    setMsg(null);
+    startTransition(async () => {
+      try {
+        let updated = 0;
+        let failed = 0;
+        for (let round = 0; round < MAX_RESUME_ROUNDS; round++) {
+          const res = await startChannexRatePlanTitleSyncAction();
+          if (!res.success) {
+            setMsg({
+              tone: updated > 0 ? "ok" : "err",
+              text: updated > 0 ? `עודכנו ${updated} שמות; ${res.error}` : res.error,
+            });
+            return;
+          }
+          updated += res.data!.updated + res.data!.skipped;
+          failed += res.data!.failed;
+          if (res.data!.stopped !== "budget") {
+            setMsg(
+              failed > 0 || res.data!.remaining > 0
+                ? {
+                    tone: "err",
+                    text: `עודכנו ${updated} שמות; ${failed} נכשלו — ניתן ללחוץ שוב לניסיון חוזר של הפריטים שנכשלו בלבד`,
+                  }
+                : { tone: "ok", text: `עודכנו ${updated} שמות ב־Channex — כל השמות תואמים` },
+            );
+            return;
+          }
+        }
+        setMsg({ tone: "err", text: `עודכנו ${updated} שמות — נותרו עוד, ניתן ללחוץ שוב להמשך` });
+      } finally {
+        await reload();
+        setSubmitting(false);
+      }
+    });
+  }
+
   return (
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-bold text-ink">תוכניות תעריף ב־Channex</h2>
@@ -108,7 +156,22 @@ export function ChannexRatePlansSection({ initial }: { initial: RatePlanSyncCont
               <span className="text-sm font-bold text-faint"> / {view.requiredCombinations}</span>
             </dd>
           </div>
+          {view.mappedCombinations > 0 && (
+            <div>
+              <dt className="text-xs font-medium text-faint">שמות תואמים</dt>
+              <dd className="text-xl font-extrabold text-ink">
+                {matchingTitles}
+                <span className="text-sm font-bold text-faint"> / {view.mappedCombinations}</span>
+              </dd>
+            </div>
+          )}
         </dl>
+
+        {view.titleMismatches > 0 && (
+          <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-sm font-semibold text-status-warning">
+            {view.titleMismatches} שמות דורשים עדכון
+          </p>
+        )}
 
         {view.planNames.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -145,7 +208,7 @@ export function ChannexRatePlansSection({ initial }: { initial: RatePlanSyncCont
           </p>
         )}
 
-        <div>
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             disabled={!canAct || busy}
@@ -154,8 +217,57 @@ export function ChannexRatePlansSection({ initial }: { initial: RatePlanSyncCont
           >
             {busy ? "מסנכרן…" : "יצירת תוכניות התעריף ב־Channex Staging"}
           </button>
+          {view.titleMismatches > 0 && (
+            <button
+              type="button"
+              disabled={!canRename || busy}
+              onClick={() => setConfirmingTitles(true)}
+              className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-bold text-text2 transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {busy ? "מעדכן…" : "עדכון שמות ב־Channex"}
+            </button>
+          )}
         </div>
       </div>
+
+      {confirmingTitles && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 backdrop-blur-sm"
+          dir="rtl"
+          onClick={() => setConfirmingTitles(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-line bg-surface p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-base font-bold text-ink">
+              לעדכן את שמות {view.titleMismatches} תוכניות התעריף הקיימות ב־Channex?
+            </p>
+            <p className="text-sm text-muted">
+              יעודכנו רק שמות (title) של תוכניות קיימות — ללא יצירה, מחיקה, מחירים או זמינות.
+            </p>
+            <div className="flex flex-row-reverse gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={runTitleSync}
+                className="min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                עדכן שמות
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingTitles(false)}
+                className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 hover:bg-hover"
+              >
+                ביטול
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirming && (
         <div
