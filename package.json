@@ -47,6 +47,7 @@
     "check:channel-worker": "node scripts/check-channel-worker.mjs",
     "check:channex-credential": "node scripts/check-channex-credential.mjs",
     "check:channels-hydration": "node scripts/check-channels-hydration.mjs",
+    "check:channels-fullsync-ui": "node scripts/check-channels-fullsync-ui.mjs",
     "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs"
   },
   "dependencies": {
