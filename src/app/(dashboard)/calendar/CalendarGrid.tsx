@@ -1416,6 +1416,16 @@ const StayBar = memo(function StayBar({
       }}
     >
       {stay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
+      {/* workflow-status tag (D77): color comes from the tenant DEFINITION via
+          the read model — never a hardcoded status→color switch */}
+      {stay.workflow_color && (
+        <span
+          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/70"
+          style={{ background: stay.workflow_color }}
+          title={stay.workflow_label ?? undefined}
+          aria-label={stay.workflow_label ? `סטטוס: ${stay.workflow_label}` : undefined}
+        />
+      )}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={11} className="shrink-0 opacity-70" />}
       <span className="cb-bn">

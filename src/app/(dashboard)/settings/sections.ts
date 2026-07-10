@@ -5,7 +5,8 @@ import type { IconName } from "@/components/shared/Icon";
 // design's lookup screens (sources/statuses/currencies/languages/…) are out of
 // scope here and are not stubbed (§I: do not redesign unrelated Settings sections).
 
-export type SettingsSectionKey = "business" | "vat" | "extra-guest" | "cancellation" | "payment" | "messaging";
+export type SettingsSectionKey =
+  | "business" | "vat" | "extra-guest" | "statuses" | "cancellation" | "payment" | "messaging";
 
 export type SettingsSectionDef = {
   key: SettingsSectionKey;
@@ -33,6 +34,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     title: "הזמנות",
     items: [
+      { key: "statuses", label: "סטטוסי הזמנה", icon: "check-circle", desc: "סטטוסים תפעוליים עם תגיות צבע" },
       { key: "cancellation", label: "מדיניות ביטול", icon: "circle-slash", desc: "תבניות מדיניות ביטול" },
     ],
   },

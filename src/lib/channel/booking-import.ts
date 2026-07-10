@@ -373,20 +373,27 @@ async function applyLiveRevision(
     reservationId = existing.id;
   } else {
     const number = await allocateReservationNumber(tx, conn.tenant_id);
+    // imported OTA reservations receive the tenant's default workflow status
+    // (D77 §C) — an operator tag only, never inventory or payment state
+    const [wf] = await tx<{ id: string }[]>`
+      SELECT id FROM guesthub.lookup_items
+      WHERE tenant_id = ${conn.tenant_id} AND category = 'workflow_statuses'
+        AND is_active AND (metadata->>'is_default') = 'true'`;
     const [created] = await tx<{ id: string }[]>`
       INSERT INTO guesthub.reservations
         (tenant_id, reservation_number, primary_guest_id, source_id, status,
          check_in, check_out, adults, children, infants,
          total_price, paid_amount, balance, currency, notes, created_by,
          channel_connection_id, external_booking_id, external_revision_id,
-         external_unique_id, ota_reservation_code, ota_name, external_booked_at)
+         external_unique_id, ota_reservation_code, ota_name, external_booked_at,
+         workflow_status_id)
       VALUES (${conn.tenant_id}, ${number}, ${guestId}, ${sourceId}, 'confirmed',
               ${agg.checkIn}, ${agg.checkOut},
               ${agg.adults}, ${agg.children}, ${agg.infants},
               ${total}, 0, ${total}, ${norm.currency ?? "ILS"}, ${norm.notes}, NULL,
               ${conn.id}, ${norm.bookingId}, ${norm.revisionId},
               ${norm.uniqueId}, ${norm.otaReservationCode}, ${norm.otaName},
-              ${norm.insertedAt})
+              ${norm.insertedAt}, ${wf?.id ?? null})
       RETURNING id`;
     reservationId = created.id;
   }

@@ -9,6 +9,7 @@ import {
 } from "@/lib/commercial/service";
 import { SettingsShell } from "./SettingsShell";
 import { getMessagingSettingsAction } from "./messaging-actions";
+import { listWorkflowStatusesAction } from "./status-actions";
 import { getBusinessProfileContextAction, type BusinessProfileContext } from "./business-actions";
 import type { MessagingSettingsView } from "./types";
 
@@ -32,6 +33,8 @@ export default async function SettingsPage() {
       getPaymentMethods(actor.tenantId),
       getBusinessProfileContextAction(),
     ]);
+  const workflowRes = await listWorkflowStatusesAction();
+  const workflowStatuses = workflowRes.success && workflowRes.data ? workflowRes.data : [];
   const businessProfile: BusinessProfileContext | null =
     businessCtx.success && businessCtx.data ? businessCtx.data : null;
 
@@ -55,6 +58,7 @@ export default async function SettingsPage() {
       paymentMethods={paymentMethods}
       canManageMessaging={canManageMessaging}
       messaging={messaging}
+      workflowStatuses={workflowStatuses}
     />
   );
 }

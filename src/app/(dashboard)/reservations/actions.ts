@@ -26,6 +26,7 @@ import {
 } from "@/lib/pricing/reservation-pricing";
 import { calculateReservationPrice } from "@/lib/pricing/engine";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
+import { loadCollectionView, type CollectionView } from "@/lib/payments/collection";
 import { markAriDirty } from "@/lib/channel/outbox";
 import {
   createReservationSchema,
@@ -126,6 +127,19 @@ function aggregates(stays: PricedStay[]) {
   };
 }
 
+// The tenant's ACTIVE default workflow status (D77 §B2) — applied to every
+// newly created reservation (manual and imported alike).
+export async function defaultWorkflowStatusId(
+  db: TransactionSql,
+  tenantId: string,
+): Promise<string | null> {
+  const [row] = await db<{ id: string }[]>`
+    SELECT id FROM guesthub.lookup_items
+    WHERE tenant_id = ${tenantId} AND category = 'workflow_statuses'
+      AND is_active AND (metadata->>'is_default') = 'true'`;
+  return row?.id ?? null;
+}
+
 // Per-tenant running reservation number. The tenant row is locked for the
 // transaction, serializing allocations (unique index is the hard backstop).
 async function allocateReservationNumber(tx: TransactionSql, tenantId: string): Promise<string> {
@@ -205,17 +219,18 @@ export async function createReservationAction(
       const total = reservationTotal(agg.roomsTotal, discount, 0);
       const paid = input.paidAmount ?? 0;
 
+      const workflowStatusId = await defaultWorkflowStatusId(tx, actor.tenantId);
       const [res] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.reservations
           (tenant_id, reservation_number, primary_guest_id, source_id, status,
            check_in, check_out, adults, children, infants,
            discount_amount, total_price, paid_amount, balance, currency,
-           notes, created_by)
+           notes, created_by, workflow_status_id)
         VALUES (${actor.tenantId}, ${number}, ${guestId}, ${input.sourceId ?? null},
                 ${input.status}, ${agg.checkIn}, ${agg.checkOut},
                 ${agg.adults}, ${agg.children}, ${agg.infants},
                 ${discount}, ${total}, 0, ${total}, 'ILS',
-                ${input.notes || null}, ${actor.userId})
+                ${input.notes || null}, ${actor.userId}, ${workflowStatusId})
         RETURNING id`;
 
       for (const s of priced) {
@@ -517,19 +532,34 @@ export async function updateReservationAction(
 // ---------------------------------------------------------------
 // cancel
 // ---------------------------------------------------------------
-export async function cancelReservationAction(id: string): Promise<ActionResult> {
+export async function cancelReservationAction(
+  id: string,
+  opts?: { reason?: string },
+): Promise<ActionResult> {
   try {
     const actor = await getActor();
     requirePermission(actor, "reservations.cancel");
     await sql.begin(async (tx) => {
       const [res] = await tx<
-        { id: string; status: string; check_in: string; check_out: string }[]
+        { id: string; status: string; check_in: string; check_out: string;
+          channel_connection_id: string | null }[]
       >`
-        SELECT id, status, check_in::text, check_out::text
+        SELECT id, status, check_in::text, check_out::text, channel_connection_id
         FROM guesthub.reservations
         WHERE id = ${id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
       if (!res) throw new DomainError("הזמנה לא נמצאה");
       if (res.status === "cancelled") return;
+
+      // D77 §H — an ACTIVE OTA reservation is never cancelled locally: that
+      // would release inventory while the booking stays live on the channel.
+      // The provider-aware dialog offers the supported reporting actions; the
+      // canonical local cancellation happens when the real cancelled revision
+      // arrives (D76 applyCancellation).
+      if (res.channel_connection_id && isBlocking(res.status)) {
+        throw new DomainError(
+          "הזמנת ערוץ פעילה — לא ניתן לבטל מקומית. יש לבטל ב-Booking.com ולהמתין לעדכון האוטומטי.",
+        );
+      }
 
       await tx`
         UPDATE guesthub.reservations SET status = 'cancelled'
@@ -539,7 +569,7 @@ export async function cancelReservationAction(id: string): Promise<ActionResult>
         entityId: id,
         action: "cancel",
         before: { status: res.status },
-        after: { status: "cancelled" },
+        after: { status: "cancelled", reason: opts?.reason ?? null },
       }, tx);
 
       // the cancelled stay releases its nights → republish those rooms/dates
@@ -557,6 +587,49 @@ export async function cancelReservationAction(id: string): Promise<ActionResult>
     });
     revalidatePath("/calendar");
     return { success: true };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// ---------------------------------------------------------------
+// workflow status (D77 §B2/§C) — updates ONLY workflow_status_id.
+// Deliberately touches no stay, no price, no lifecycle and no payment, so a
+// status-only change never revalidates an unchanged stay.
+// ---------------------------------------------------------------
+export async function setWorkflowStatusAction(input: {
+  reservationId: string;
+  workflowStatusId: string;
+}): Promise<ActionResult<{ workflowStatusId: string }>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "reservations.edit");
+    await sql.begin(async (tx) => {
+      const [res] = await tx<{ id: string; workflow_status_id: string | null }[]>`
+        SELECT id, workflow_status_id FROM guesthub.reservations
+        WHERE id = ${input.reservationId} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+      if (!res) throw new DomainError("הזמנה לא נמצאה");
+      // only an ACTIVE status of THIS tenant is selectable (deactivated ones
+      // stay visible on history but are never newly assigned)
+      const [status] = await tx<{ id: string }[]>`
+        SELECT id FROM guesthub.lookup_items
+        WHERE id = ${input.workflowStatusId} AND tenant_id = ${actor.tenantId}
+          AND category = 'workflow_statuses' AND is_active`;
+      if (!status) throw new DomainError("סטטוס לא זמין");
+      if (res.workflow_status_id === input.workflowStatusId) return;
+      await tx`
+        UPDATE guesthub.reservations SET workflow_status_id = ${input.workflowStatusId}
+        WHERE id = ${input.reservationId} AND tenant_id = ${actor.tenantId}`;
+      await writeAudit(actor, {
+        entityType: "reservation",
+        entityId: input.reservationId,
+        action: "workflow_status_change",
+        before: { workflow_status_id: res.workflow_status_id },
+        after: { workflow_status_id: input.workflowStatusId },
+      }, tx);
+    });
+    revalidatePath("/calendar");
+    return { success: true, data: { workflowStatusId: input.workflowStatusId } };
   } catch (e) {
     return fail(errorMessage(e));
   }
@@ -968,6 +1041,20 @@ export type ReservationDetail = {
   id: string;
   reservation_number: string;
   status: string;
+  /** tenant workflow status (D77 §B2) — operator tag, never inventory/payment */
+  workflow_status_id: string | null;
+  /** OTA context (D76/D77) — null for manual/direct reservations */
+  ota: {
+    otaName: string | null;
+    otaReservationCode: string | null;
+    externalUniqueId: string | null;
+    externalBookingId: string | null;
+    invalidCardReportedAt: string | null;
+    externalCancellationRequestedAt: string | null;
+    noShowReportedAt: string | null;
+  } | null;
+  /** honest payment-collection state (D77 §D) */
+  collection: CollectionView;
   source_id: string | null;
   notes: string | null;
   discount_amount: number;
@@ -1041,9 +1128,22 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         guest_id: string | null; g_first: string | null; g_last: string | null; g_full: string | null;
         g_phone: string | null; g_email: string | null; g_idnum: string | null;
         source_label: string | null;
+        workflow_status_id: string | null;
+        channel_connection_id: string | null;
+        ota_name: string | null; ota_reservation_code: string | null;
+        external_unique_id: string | null; external_booking_id: string | null;
+        invalid_card_reported_at: string | null;
+        external_cancellation_requested_at: string | null;
+        no_show_reported_at: string | null;
       }[]
     >`
       SELECT res.id, res.reservation_number, res.status, res.source_id, res.notes,
+             res.workflow_status_id, res.channel_connection_id,
+             res.ota_name, res.ota_reservation_code,
+             res.external_unique_id, res.external_booking_id,
+             res.invalid_card_reported_at::text AS invalid_card_reported_at,
+             res.external_cancellation_requested_at::text AS external_cancellation_requested_at,
+             res.no_show_reported_at::text AS no_show_reported_at,
              res.discount_amount::float8 AS discount_amount,
              res.extra_charges::float8 AS extra_charges,
              res.total_price::float8 AS total_price,
@@ -1109,6 +1209,12 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
       FROM guesthub.reservation_cards
       WHERE reservation_id = ${id} AND tenant_id = ${actor.tenantId}`;
 
+    const collection = await loadCollectionView(sql, actor.tenantId, {
+      id: res.id,
+      status: res.status,
+      channel_connection_id: res.channel_connection_id,
+    });
+
     const activity = await sql<{ action: string; created_at: string; user_name: string | null }[]>`
       SELECT a.action, a.created_at::text AS created_at, u.full_name AS user_name
       FROM guesthub.audit_logs a
@@ -1126,6 +1232,19 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         id: res.id,
         reservation_number: res.reservation_number,
         status: res.status,
+        workflow_status_id: res.workflow_status_id,
+        ota: res.channel_connection_id
+          ? {
+              otaName: res.ota_name,
+              otaReservationCode: res.ota_reservation_code,
+              externalUniqueId: res.external_unique_id,
+              externalBookingId: res.external_booking_id,
+              invalidCardReportedAt: res.invalid_card_reported_at,
+              externalCancellationRequestedAt: res.external_cancellation_requested_at,
+              noShowReportedAt: res.no_show_reported_at,
+            }
+          : null,
+        collection,
         source_id: res.source_id,
         notes: res.notes,
         discount_amount: res.discount_amount,

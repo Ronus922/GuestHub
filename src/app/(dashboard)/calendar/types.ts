@@ -38,6 +38,9 @@ export type CalendarStay = {
   paid_amount: number;
   payment: PaymentState;
   room_count: number; // rooms in the shared reservation
+  /** tenant workflow status tag (D77) — derived by JOIN, recolors dynamically */
+  workflow_label: string | null;
+  workflow_color: string | null;
 };
 
 export type CalendarClosure = {

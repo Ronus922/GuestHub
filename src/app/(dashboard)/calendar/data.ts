@@ -51,6 +51,7 @@ export async function getCalendarData(
              NULLIF(TRIM(CONCAT(rr.guest_first_name, ' ', rr.guest_last_name)), ''),
              g.full_name, 'אורח') AS guest_name,
            src.label AS source_label,
+           wf.label AS workflow_label, wf.color AS workflow_color,
            res.total_price::float8 AS total_price,
            res.paid_amount::float8 AS paid_amount,
            (SELECT COUNT(*)::int FROM guesthub.reservation_rooms x
@@ -59,6 +60,7 @@ export async function getCalendarData(
     JOIN guesthub.reservations res ON res.id = rr.reservation_id
     LEFT JOIN guesthub.guests g ON g.id = res.primary_guest_id
     LEFT JOIN guesthub.lookup_items src ON src.id = res.source_id
+    LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
     WHERE rr.tenant_id = ${tenantId}
       AND rr.room_id IS NOT NULL
       AND rr.check_in < ${to} AND rr.check_out > ${from}
