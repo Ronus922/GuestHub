@@ -167,6 +167,16 @@ export function ReservationTooltip({
             <span>מקור: {stay.source_label}</span>
           </p>
         )}
+        {stay.workflow_label && stay.workflow_color && (
+          <p className="cb-pl">
+            <span
+              className="mx-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ background: stay.workflow_color }}
+              aria-hidden
+            />
+            <span>סטטוס: {stay.workflow_label}</span>
+          </p>
+        )}
       </div>
       <p className="cb-pop-hint">לחצו על ההזמנה לעריכה · גררו להזזה</p>
     </div>

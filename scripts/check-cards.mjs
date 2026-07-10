@@ -273,10 +273,21 @@ assert.ok(recFn && /recomputePaymentAggregates\(/.test(recFn[0]),
 assert.ok(recFn && /payment_external_record/.test(recFn[0]) && /recorded_external/.test(recFn[0]),
   "it is audited as an EXTERNAL record, never as a GuestHub charge");
 
-// BookingPanel: manual card entry is NOT gated on the payment method (D46)
-assert.ok(!/method === "credit_card"/.test(booking),
-  "new-reservation card entry is no longer hidden behind method === credit_card");
-assert.ok(/הוסף כרטיס אשראי/.test(booking), "an always-available add-card affordance is present");
+// D77 §15 (supersedes D46 here): the card-entry AREA is always visible but
+// ACTIVATES only when the selected payment method is credit card — grey +
+// disabled + unfocusable otherwise, and switching away destroys the unsaved
+// draft (a stored card is never touched).
+assert.ok(/disabled=\{method !== "credit_card"\}/.test(booking),
+  "new-reservation card entry activates only for the credit-card method");
+assert.ok(/setCc\(EMPTY_CARD\)/.test(booking),
+  "leaving the credit-card method clears the unsaved card draft");
+const editPanelD77 = src("src/components/reservations/EditReservationPanel.tsx");
+assert.ok(/disabled=\{method !== "credit_card"\}/.test(editPanelD77),
+  "edit-panel card entry activates only for the credit-card method");
+assert.ok(/if \(method !== "credit_card"\) setCc\(EMPTY_CARD\)/.test(editPanelD77),
+  "edit panel clears the unsaved draft when the method leaves credit card");
+assert.ok(/bw-ccbox-off/.test(src("src/components/reservations/CardFields.tsx")),
+  "the deactivated card area renders visibly grey/disabled");
 
 // StoredCardBox: live charge visible-but-disabled + no-provider text; the
 // external-payment recorder is confirmation-gated

@@ -729,6 +729,19 @@ select.bw-fld {
   margin-top: 16px;
   background: #fcfdfe;
 }
+/* D77 §15 — card entry deactivated (payment method is not credit card):
+   grey, non-interactive, unfocusable; turns white/active on method change */
+.bw-ccbox-off {
+  background: #f1f3f8;
+  border-style: dashed;
+}
+.bw-ccbox-off .bw-cc-top {
+  color: var(--color-muted);
+}
+.bw-ccbox-off fieldset {
+  opacity: 0.55;
+  pointer-events: none;
+}
 .bw-cc-top {
   display: flex;
   align-items: center;

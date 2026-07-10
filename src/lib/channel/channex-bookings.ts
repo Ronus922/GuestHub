@@ -5,10 +5,11 @@
 // api-key never echoed).
 //
 // SCOPE: this client touches the booking-revision feed, single revisions,
-// single bookings (controlled recovery only) and the acknowledge endpoint.
-// It NEVER calls the secure PCI endpoint (/bookings/:id/pci or any /pci path),
-// never DELETE, and never mutates any Channex booking — the only POST is the
-// acknowledgement, which marks a revision as delivered and nothing else.
+// single bookings (controlled recovery only), the acknowledge endpoint, the
+// documented Booking.com Reporting operations (invalid card / cancel due
+// invalid card / no-show — D77 §I), the applications catalog/installation and
+// the Stripe tokenization endpoint (D77 §E). It NEVER calls the secure PCI
+// endpoint (/bookings/:id/pci or any /pci path) and never DELETEs.
 // An ambiguous ack result (timeout/network) is returned as-is and is NEVER
 // blindly retried here — the caller re-converges via the next feed pull.
 //
@@ -133,6 +134,151 @@ export async function acknowledgeBookingRevision(
   if ("ok" in res) return res;
   if (res.status !== 200 && res.status !== 201) return fail(mapErrorStatus(res.status), res.status);
   return { ok: true };
+}
+
+// ---- Booking.com Reporting API (D77 §I) ----
+// Documented property-side reporting operations. Single attempt each; the
+// SERVER action computes eligibility first and the provider stays the final
+// authority — its refusal comes back as a sanitized category, never a body.
+
+export async function reportInvalidCard(
+  opts: ReqOpts,
+  bookingId: string,
+): Promise<{ ok: true } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "POST",
+    path: `/bookings/${encodeURIComponent(bookingId)}/invalid_card`,
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200 && res.status !== 201) return fail(mapErrorStatus(res.status), res.status);
+  return { ok: true };
+}
+
+export async function cancelDueInvalidCard(
+  opts: ReqOpts,
+  bookingId: string,
+): Promise<{ ok: true } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "POST",
+    path: `/bookings/${encodeURIComponent(bookingId)}/cancel_due_invalid_card`,
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200 && res.status !== 201) return fail(mapErrorStatus(res.status), res.status);
+  return { ok: true };
+}
+
+export async function reportNoShow(
+  opts: ReqOpts,
+  bookingId: string,
+  waivedFees: boolean,
+): Promise<{ ok: true } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "POST",
+    path: `/bookings/${encodeURIComponent(bookingId)}/no_show`,
+    body: { no_show_report: { waived_fees: waivedFees } },
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200 && res.status !== 201) return fail(mapErrorStatus(res.status), res.status);
+  return { ok: true };
+}
+
+// ---- Applications API (D77 §E) ----
+
+export type InstalledApplication = { id: string; code: string | null };
+
+export async function listInstalledApplications(
+  opts: ReqOpts,
+): Promise<{ ok: true; applications: InstalledApplication[] } | ChannexApiFailure> {
+  const res = await channexRequest({ ...opts, method: "GET", path: "/applications/installed" });
+  if ("ok" in res) return res;
+  if (res.status !== 200) return fail(mapErrorStatus(res.status), res.status);
+  const rows = asObj(res.body)?.data;
+  if (!Array.isArray(rows)) return fail("bad_response", res.status);
+  const applications: InstalledApplication[] = [];
+  for (const row of rows) {
+    const o = asObj(row);
+    if (!o) continue;
+    const attrs = asObj(o.attributes);
+    applications.push({
+      id: asStr(o.id) ?? "",
+      code: attrs ? (asStr(attrs.application_code) ?? asStr(attrs.code)) : null,
+    });
+  }
+  return { ok: true, applications };
+}
+
+// Installs an application for the property — called ONLY from the explicit,
+// confirmed super_admin action (never on page load or deploy).
+export async function installApplication(
+  opts: ReqOpts,
+  applicationCode: string,
+  propertyId: string,
+): Promise<{ ok: true } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "POST",
+    path: "/applications/install",
+    body: { application_code: applicationCode, property_id: propertyId },
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200 && res.status !== 201) return fail(mapErrorStatus(res.status), res.status);
+  return { ok: true };
+}
+
+// ---- Stripe tokenization (D77 §E) ----
+// Exchanges the booking's guarantee for a Stripe payment-method reference in
+// the PROPERTY's connected Stripe account. The returned reference is handed to
+// the caller for storage in reservation_payment_methods ONLY — it is never
+// logged, never audited verbatim, and this function keeps no copy.
+export async function createStripePaymentMethod(
+  opts: ReqOpts,
+  bookingId: string,
+): Promise<{ ok: true; reference: string } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "POST",
+    path: `/bookings/${encodeURIComponent(bookingId)}/stripe_payment_method`,
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200 && res.status !== 201) return fail(mapErrorStatus(res.status), res.status);
+  const root = asObj(res.body);
+  const reference =
+    asStr(asObj(root?.data)?.token) ?? asStr(root?.token ?? null) ?? null;
+  if (!reference) return fail("bad_response", res.status);
+  return { ok: true, reference };
+}
+
+// List the property's registered webhooks — read-only diagnostics (D77 §23).
+export type ChannexWebhookRow = { id: string; callbackUrl: string | null; isActive: boolean };
+
+export async function listChannexWebhooks(
+  opts: ReqOpts,
+  propertyId: string,
+): Promise<{ ok: true; webhooks: ChannexWebhookRow[] } | ChannexApiFailure> {
+  const res = await channexRequest({
+    ...opts,
+    method: "GET",
+    path: `/webhooks?filter[property_id]=${encodeURIComponent(propertyId)}&pagination[limit]=100`,
+  });
+  if ("ok" in res) return res;
+  if (res.status !== 200) return fail(mapErrorStatus(res.status), res.status);
+  const rows = asObj(res.body)?.data;
+  if (!Array.isArray(rows)) return fail("bad_response", res.status);
+  const webhooks: ChannexWebhookRow[] = [];
+  for (const row of rows) {
+    const o = asObj(row);
+    if (!o) continue;
+    const attrs = asObj(o.attributes);
+    webhooks.push({
+      id: asStr(o.id) ?? "",
+      callbackUrl: attrs ? asStr(attrs.callback_url) : null,
+      isActive: attrs?.is_active === true,
+    });
+  }
+  return { ok: true, webhooks };
 }
 
 // ---- webhook registration (wake-up signal only) ----

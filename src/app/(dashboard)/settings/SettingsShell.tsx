@@ -9,7 +9,9 @@ import { CancellationSection } from "./CancellationSection";
 import { PaymentSection } from "./PaymentSection";
 import { MessagingSection } from "./MessagingSection";
 import { BusinessProfileSection } from "./BusinessProfileSection";
+import { WorkflowStatusSection } from "./WorkflowStatusSection";
 import type { BusinessProfileContext } from "./business-actions";
+import type { WorkflowStatusDef } from "./status-actions";
 import type {
   ExtraGuestView,
   CancellationPolicyView,
@@ -32,6 +34,7 @@ export function SettingsShell({
   paymentMethods,
   canManageMessaging,
   messaging,
+  workflowStatuses,
 }: {
   tenantName: string;
   businessProfile: BusinessProfileContext | null;
@@ -43,6 +46,7 @@ export function SettingsShell({
   paymentMethods: PaymentMethodRef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
+  workflowStatuses: WorkflowStatusDef[];
 }) {
   const [section, setSection] = useQueryState(
     "section",
@@ -99,6 +103,7 @@ export function SettingsShell({
             paymentMethods={paymentMethods}
             canManageMessaging={canManageMessaging}
             messaging={messaging}
+            workflowStatuses={workflowStatuses}
           />
         </div>
       </div>
@@ -144,6 +149,7 @@ function SectionBody({
   paymentMethods,
   canManageMessaging,
   messaging,
+  workflowStatuses,
 }: {
   section: SettingsSectionKey;
   businessProfile: BusinessProfileContext | null;
@@ -155,6 +161,7 @@ function SectionBody({
   paymentMethods: PaymentMethodRef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
+  workflowStatuses: WorkflowStatusDef[];
 }) {
   switch (section) {
     case "business":
@@ -163,6 +170,8 @@ function SectionBody({
       return <VatSection vatRate={vatRate} />;
     case "extra-guest":
       return <ExtraGuestSection value={extraGuest} currency={currency} vatRate={vatRate} />;
+    case "statuses":
+      return <WorkflowStatusSection initial={workflowStatuses} />;
     case "cancellation":
       return <CancellationSection policies={cancellationPolicies} />;
     case "payment":

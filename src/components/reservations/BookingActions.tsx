@@ -24,11 +24,14 @@ export function BookingToolbar({
   onWhatsApp,
   onPdf,
   onPrint,
+  onCancelReservation,
 }: {
   onEmail: () => void;
   onWhatsApp: () => void;
   onPdf: () => void;
   onPrint: () => void;
+  /** D77 §9 — top "בטל הזמנה" action; omitted when not permitted/cancelled */
+  onCancelReservation?: () => void;
 }) {
   const [overflow, setOverflow] = useState(false);
   // DOM order = RTL right→left: Email nearest the title, Print nearest the X.
@@ -37,6 +40,9 @@ export function BookingToolbar({
     { key: "whatsapp", icon: "whatsapp", label: "שליחת WhatsApp", onClick: onWhatsApp },
     { key: "pdf", icon: "download", label: "הורדת PDF", onClick: onPdf },
     { key: "print", icon: "printer", label: "הדפסת הזמנה", onClick: onPrint },
+    ...(onCancelReservation
+      ? [{ key: "cancel", icon: "circle-slash" as IconName, label: "בטל הזמנה", onClick: onCancelReservation }]
+      : []),
   ];
   return (
     <div className="bk-tb">

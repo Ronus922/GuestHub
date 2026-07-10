@@ -21,12 +21,16 @@ const MAX_BODY_BYTES = 256 * 1024;
 // store if the app ever runs multi-process inbound webhooks.
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = 120;
+// bounded: keys are attacker-supplied — an unauthenticated spray of random
+// tokens must not grow this map forever
+const MAX_TRACKED_KEYS = 5_000;
 const hits = new Map<string, { windowStart: number; count: number }>();
 
 function rateLimited(key: string): boolean {
   const now = Date.now();
   const h = hits.get(key);
   if (!h || now - h.windowStart > WINDOW_MS) {
+    if (hits.size >= MAX_TRACKED_KEYS) hits.clear();
     hits.set(key, { windowStart: now, count: 1 });
     return false;
   }
@@ -71,24 +75,35 @@ export async function POST(
   // dedupe by the provider event id when present, else by body hash
   const dedupKey = String(body.event_id ?? body.id ?? sha256Hex(raw));
 
-  // persist redacted (§Z) + dedupe + enqueue, then return quickly (§Y)
-  const inserted = await sql<{ id: string }[]>`
-    INSERT INTO guesthub.channel_webhook_events
-      (tenant_id, connection_id, event_type, dedup_key, payload, status)
-    VALUES (${conn.tenant_id}, ${conn.id}, ${eventType}, ${dedupKey},
-            ${sql.json(redactPayload(body) as never)}, 'enqueued')
-    ON CONFLICT (connection_id, dedup_key) DO NOTHING
-    RETURNING id`;
-  if (inserted.length === 0) {
-    return NextResponse.json({ ok: true, duplicate: true });
+  // Persist redacted (§Z) + dedupe + enqueue in ONE transaction (D77 §3):
+  // the event row and its pull job commit together, so a crash between them
+  // can no longer strand a deduped event with no job (Channex's retry would
+  // hit the dedup row and the booking would wait for the fallback poll).
+  // Priority 20 = ahead of routine polls (40) and drains (50) — a webhook is
+  // the live signal. The enqueue's pg_notify wakes the worker on commit.
+  try {
+    const duplicate = await sql.begin(async (tx) => {
+      const inserted = await tx<{ id: string }[]>`
+        INSERT INTO guesthub.channel_webhook_events
+          (tenant_id, connection_id, event_type, dedup_key, payload, status)
+        VALUES (${conn.tenant_id}, ${conn.id}, ${eventType}, ${dedupKey},
+                ${tx.json(redactPayload(body) as never)}, 'enqueued')
+        ON CONFLICT (connection_id, dedup_key) DO NOTHING
+        RETURNING id`;
+      if (inserted.length === 0) return true;
+      await enqueueChannelJob(tx, {
+        tenantId: conn.tenant_id,
+        connectionId: conn.id,
+        jobType: "pull_booking_revisions",
+        priority: 20,
+        idempotencyKey: `pull:${conn.id}:${dedupKey}`,
+      });
+      return false;
+    });
+    return NextResponse.json(duplicate ? { ok: true, duplicate: true } : { ok: true });
+  } catch (e) {
+    // sanitized 5xx → Channex retries; the tx rolled back atomically
+    console.error("[channel-webhook]", e instanceof Error ? e.message : e);
+    return NextResponse.json({ error: "temporary failure" }, { status: 503 });
   }
-
-  await enqueueChannelJob(sql, {
-    tenantId: conn.tenant_id,
-    connectionId: conn.id,
-    jobType: "pull_booking_revisions",
-    idempotencyKey: `pull:${conn.id}:${dedupKey}`,
-  });
-
-  return NextResponse.json({ ok: true });
 }

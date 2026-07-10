@@ -25,7 +25,7 @@ export default async function DashboardLayout({
     sql<{ category: string; key: string; label: string; color: string | null; id: string }[]>`
       SELECT id, category, key, label, color FROM guesthub.lookup_items
       WHERE tenant_id = ${actor.tenantId}
-        AND category IN ('payment_methods', 'booking_sources')
+        AND category IN ('payment_methods', 'booking_sources', 'workflow_statuses')
         AND is_active
       ORDER BY category, sort_order`,
     listBookableRatePlans(actor.tenantId),
@@ -41,6 +41,7 @@ export default async function DashboardLayout({
       newReservation={{
         bookingSources: lookups.filter((l) => l.category === "booking_sources"),
         paymentMethods: lookups.filter((l) => l.category === "payment_methods"),
+        workflowStatuses: lookups.filter((l) => l.category === "workflow_statuses"),
         ratePlans,
         vatRate,
         canSaveCard: hasPermission(actor, "payments.card_manage"),

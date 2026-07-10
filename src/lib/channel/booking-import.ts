@@ -25,6 +25,7 @@ import {
 } from "./booking-normalize";
 import { markAriDirty } from "./outbox";
 import { logChannelError } from "./queue";
+import { publishDomainEvent } from "@/lib/realtime/publish";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { nightsBetween, rangesOverlap } from "@/lib/dates";
@@ -244,6 +245,7 @@ type ExistingReservation = {
   primary_guest_id: string | null;
   check_in: string;
   check_out: string;
+  external_cancellation_requested_at: string | null;
 };
 
 async function lockExternalReservation(
@@ -252,7 +254,8 @@ async function lockExternalReservation(
   bookingId: string,
 ): Promise<{ existing: ExistingReservation | null; rrIds: string[]; oldRoomIds: string[] }> {
   const [existing] = await tx<ExistingReservation[]>`
-    SELECT id, status, primary_guest_id, check_in::text AS check_in, check_out::text AS check_out
+    SELECT id, status, primary_guest_id, check_in::text AS check_in, check_out::text AS check_out,
+           external_cancellation_requested_at::text AS external_cancellation_requested_at
     FROM guesthub.reservations
     WHERE tenant_id = ${conn.tenant_id}
       AND channel_connection_id = ${conn.id}
@@ -373,20 +376,27 @@ async function applyLiveRevision(
     reservationId = existing.id;
   } else {
     const number = await allocateReservationNumber(tx, conn.tenant_id);
+    // imported OTA reservations receive the tenant's default workflow status
+    // (D77 §C) — an operator tag only, never inventory or payment state
+    const [wf] = await tx<{ id: string }[]>`
+      SELECT id FROM guesthub.lookup_items
+      WHERE tenant_id = ${conn.tenant_id} AND category = 'workflow_statuses'
+        AND is_active AND (metadata->>'is_default') = 'true'`;
     const [created] = await tx<{ id: string }[]>`
       INSERT INTO guesthub.reservations
         (tenant_id, reservation_number, primary_guest_id, source_id, status,
          check_in, check_out, adults, children, infants,
          total_price, paid_amount, balance, currency, notes, created_by,
          channel_connection_id, external_booking_id, external_revision_id,
-         external_unique_id, ota_reservation_code, ota_name, external_booked_at)
+         external_unique_id, ota_reservation_code, ota_name, external_booked_at,
+         workflow_status_id)
       VALUES (${conn.tenant_id}, ${number}, ${guestId}, ${sourceId}, 'confirmed',
               ${agg.checkIn}, ${agg.checkOut},
               ${agg.adults}, ${agg.children}, ${agg.infants},
               ${total}, 0, ${total}, ${norm.currency ?? "ILS"}, ${norm.notes}, NULL,
               ${conn.id}, ${norm.bookingId}, ${norm.revisionId},
               ${norm.uniqueId}, ${norm.otaReservationCode}, ${norm.otaName},
-              ${norm.insertedAt})
+              ${norm.insertedAt}, ${wf?.id ?? null})
       RETURNING id`;
     reservationId = created.id;
   }
@@ -442,6 +452,23 @@ async function applyLiveRevision(
   const to = existing && existing.check_out > agg.checkOut ? existing.check_out : agg.checkOut;
   await markAriDirty(tx, { tenantId: conn.tenant_id, roomIds: dirtyRoomIds, dateFrom: from, dateTo: to });
 
+  // committed-only realtime (D77 §6): NOTIFY rides this transaction, so open
+  // calendars/lists learn about the booking the moment it durably exists
+  await publishDomainEvent(tx, conn.tenant_id, {
+    type: existing ? "reservation.modified" : "reservation.created",
+    reservationId,
+    roomIds: dirtyRoomIds,
+    dateFrom: from,
+    dateTo: to,
+    lifecycle: "confirmed",
+  });
+  await publishDomainEvent(tx, conn.tenant_id, {
+    type: "inventory.changed",
+    roomIds: dirtyRoomIds,
+    dateFrom: from,
+    dateTo: to,
+  });
+
   return reservationId;
 }
 
@@ -458,15 +485,41 @@ async function applyCancellation(
     return null;
   }
   if (existing.status !== "cancelled") {
+    // Canonical inbound cancellation (D77 §8): cancel-never-delete. The row
+    // keeps its rooms/price/identity for history; the status flip alone stops
+    // it blocking inventory. Who/when/why is recorded ON the row:
+    //  · a cancellation we requested (invalid card) → origin 'invalid_card'
+    //  · otherwise the channel's own revision      → origin 'ota_revision'
+    //  · external_cancellation_confirmed_at = when the channel's cancelled
+    //    revision landed (vs *_requested_at = when WE asked, 030)
+    const origin = existing.external_cancellation_requested_at ? "invalid_card" : "ota_revision";
     await tx`
       UPDATE guesthub.reservations SET
         status = 'cancelled',
-        external_revision_id = ${norm.revisionId}
+        external_revision_id = ${norm.revisionId},
+        cancelled_at = now(),
+        cancelled_by_type = 'ota',
+        cancellation_origin = ${origin},
+        external_cancellation_confirmed_at = now()
       WHERE id = ${existing.id} AND tenant_id = ${conn.tenant_id}`;
     // same release semantics as the local cancel action: the status change
     // frees the nights; republish those rooms/dates
     await markAriDirty(tx, {
       tenantId: conn.tenant_id,
+      roomIds: oldRoomIds,
+      dateFrom: existing.check_in,
+      dateTo: existing.check_out,
+    });
+    await publishDomainEvent(tx, conn.tenant_id, {
+      type: "reservation.cancelled",
+      reservationId: existing.id,
+      roomIds: oldRoomIds,
+      dateFrom: existing.check_in,
+      dateTo: existing.check_out,
+      lifecycle: "cancelled",
+    });
+    await publishDomainEvent(tx, conn.tenant_id, {
+      type: "inventory.changed",
       roomIds: oldRoomIds,
       dateFrom: existing.check_in,
       dateTo: existing.check_out,

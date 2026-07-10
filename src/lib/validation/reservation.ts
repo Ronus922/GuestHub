@@ -74,6 +74,8 @@ export const createReservationSchema = z.object({
   discountAmount: z.number().min(0).max(1_000_000).optional(),
   paidAmount: z.number().min(0).max(10_000_000).optional(),
   paymentMethod: z.string().trim().max(40).optional(),
+  // D77 §11 — optional explicit workflow status; omitted → tenant default
+  workflowStatusId: z.uuid().optional(),
 });
 
 export const updateReservationSchema = z.object({
