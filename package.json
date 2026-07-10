@@ -46,6 +46,7 @@
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
     "check:channex-ari": "node scripts/check-channex-ari.mjs",
     "check:channel-worker": "node scripts/check-channel-worker.mjs",
+    "check:inbound-bookings": "node scripts/check-inbound-bookings.mjs",
     "check:channex-credential": "node scripts/check-channex-credential.mjs",
     "check:channels-hydration": "node scripts/check-channels-hydration.mjs",
     "check:channels-fullsync-ui": "node scripts/check-channels-fullsync-ui.mjs",

@@ -14,8 +14,10 @@
 
 // Redaction (§Z): payment-ish fields are stripped BEFORE any payload is
 // persisted or logged. Applied to webhook bodies and booking revisions.
+// raw_message (D76) is the OTA's original message blob — it embeds masked
+// card text and duplicates the structured fields, so it is never stored.
 const SENSITIVE_KEY_RE =
-  /card|cvv|cvc|pan\b|security_code|guarantee|payment_info|credit/i;
+  /card|cvv|cvc|pan\b|security_code|guarantee|payment_info|credit|raw_message/i;
 
 export function redactPayload(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactPayload);
@@ -76,6 +78,17 @@ function parseChannelExpiry(
   const year = b < 100 ? 2000 + b : b;
   if (month < 1 || month > 12) return { month: null, year: null };
   return { month, year };
+}
+
+// A GENUINELY masked card value ("375516*****1144") → its trailing four
+// digits, for masked-metadata display (D76 §8). Returns null for anything that
+// could be an actual PAN (all digits) — a near-PAN is discarded, never stored.
+export function maskedCardLast4(value: string | null): string | null {
+  if (!value) return null;
+  const compact = value.replace(/\s/g, "");
+  if (/^\d+$/.test(compact)) return null; // not masked — never treat as display
+  const m = compact.match(/(\d{4})$/);
+  return m ? m[1] : null;
 }
 
 export function extractChannelCard(payload: unknown): ChannelCardData | null {

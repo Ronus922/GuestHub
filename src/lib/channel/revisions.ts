@@ -1,6 +1,6 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
-import { extractChannelCard, redactPayload } from "./payloads";
+import { extractChannelCard, maskedCardLast4, redactPayload } from "./payloads";
 import { encryptPan, CARD_KEY_VERSION, cardVaultConfigured } from "../card-vault";
 import { detectBrand, normalizePan, panValid } from "../card-rules";
 
@@ -48,36 +48,58 @@ type StagedCardMeta = {
   available_from: string | null;
   available_until: string | null;
   key_version: number;
+  // D76 §8 — true when the channel supplied only a MASKED guarantee (the normal
+  // Channex endpoint): no PAN exists anywhere, only display metadata below.
+  masked_only?: boolean;
+  masked_display?: string | null;
 };
 
 // Extract + encrypt ONLY the PAN from a raw payload (the CVV, if any, is
 // discarded — D52 §2). Returns the encrypted PAN and the non-sensitive meta, or
 // nulls when there is no usable card.
+//
+// D76 §8: the normal Channex endpoint supplies a MASKED guarantee
+// ("375516*****1144"). That is not a PAN and is never encrypted or placed in
+// any PAN field — instead the allowed metadata (brand, derived last4, expiry,
+// holder, virtual flag, masked display) is staged WITHOUT a ciphertext, so it
+// stays on the revision row only (attachStagedCard requires a ciphertext).
 function stageCard(rev: RevisionInput): {
   panEnc: string | null;
   meta: StagedCardMeta | null;
 } {
-  if (!cardVaultConfigured()) return { panEnc: null, meta: null };
   const card = extractChannelCard(rev.payload);
-  if (!card) return { panEnc: null, meta: null };
-  const pan = normalizePan(card.pan ?? "");
-  if (!panValid(pan) || card.expMonth === null || card.expYear === null) {
+  if (!card || card.expMonth === null || card.expYear === null) {
     return { panEnc: null, meta: null };
   }
+  const shared = {
+    holder_name: card.holderName,
+    exp_month: card.expMonth,
+    exp_year: card.expYear,
+    is_virtual: card.isVirtual,
+    source_channel: rev.otaName ?? null,
+    provider_reservation_ref: rev.otaReservationCode ?? null,
+    available_from: card.availableFrom,
+    available_until: card.availableUntil,
+    key_version: CARD_KEY_VERSION,
+  };
+  const pan = normalizePan(card.pan ?? "");
+  if (panValid(pan)) {
+    if (!cardVaultConfigured()) return { panEnc: null, meta: null };
+    return {
+      panEnc: encryptPan(pan),
+      meta: { ...shared, brand: card.brand ?? detectBrand(pan), last4: pan.slice(-4) },
+    };
+  }
+  const maskedLast4 = maskedCardLast4(card.pan);
+  if (!maskedLast4) return { panEnc: null, meta: null };
   return {
-    panEnc: encryptPan(pan),
+    panEnc: null,
     meta: {
-      holder_name: card.holderName,
-      brand: card.brand ?? detectBrand(pan),
-      last4: pan.slice(-4),
-      exp_month: card.expMonth,
-      exp_year: card.expYear,
-      is_virtual: card.isVirtual,
-      source_channel: rev.otaName ?? null,
-      provider_reservation_ref: rev.otaReservationCode ?? null,
-      available_from: card.availableFrom,
-      available_until: card.availableUntil,
-      key_version: CARD_KEY_VERSION,
+      ...shared,
+      brand: card.brand,
+      last4: maskedLast4,
+      masked_only: true,
+      masked_display: card.pan,
     },
   };
 }
@@ -172,6 +194,20 @@ async function attachStagedCard(
               last4: meta.last4,
             } as never)},
             ${`channel:${meta.source_channel ?? "unknown"}`})`;
+}
+
+// A transient import failure (DB error, crash mid-import): recorded visibly,
+// retried by the next pull — the revision stays unacknowledged upstream.
+export async function markRevisionFailed(
+  db: Sql | TransactionSql,
+  revisionId: string,
+  error: string,
+): Promise<void> {
+  await db`
+    UPDATE guesthub.channel_booking_revisions SET
+      import_status = 'failed', mapping_error = ${error},
+      attempts = attempts + 1
+    WHERE id = ${revisionId}`;
 }
 
 // Mark imported — call ONLY inside the transaction that created the local

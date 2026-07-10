@@ -10,12 +10,14 @@ import {
 } from "@/lib/channel/admin";
 import { getChannexRoomSyncContextAction } from "@/lib/channel/room-type-admin";
 import { getChannexRatePlanSyncContextAction } from "@/lib/channel/rate-plan-admin";
+import { getInboundStatusAction } from "@/lib/channel/inbound-admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
 import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
 import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
 import { AriSyncSection } from "./AriSyncSection";
+import { InboundBookingsSection } from "./InboundBookingsSection";
 
 export const dynamic = "force-dynamic";
 
@@ -118,12 +120,13 @@ export default async function ChannelsPage() {
 
   // Every one of these is a DB read. Loading /channels performs no Channex call
   // and creates nothing upstream.
-  const [res, channex, channexProperty, roomSync, ratePlanSync] = await Promise.all([
+  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound] = await Promise.all([
     getChannelStatusAction(),
     getChannexConnectionAction(),
     getChannexPropertyContextAction(),
     getChannexRoomSyncContextAction(),
     getChannexRatePlanSyncContextAction(),
+    getInboundStatusAction(),
   ]);
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
@@ -180,6 +183,10 @@ export default async function ChannelsPage() {
       {channexConnectionId && ariStatus && (
         <AriSyncSection connectionId={channexConnectionId} initial={ariStatus} />
       )}
+
+      {/* Inbound OTA bookings — status + manual pull (D76). The pull is a durable
+          worker job; nothing here imports in the request. */}
+      {inbound.success && <InboundBookingsSection initial={inbound.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
