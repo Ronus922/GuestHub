@@ -3,6 +3,7 @@ import Link from "next/link";
 import { getActor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import {
+  getAriSyncStatusAction,
   getChannelStatusAction,
   getChannexConnectionAction,
   getChannexPropertyContextAction,
@@ -14,6 +15,7 @@ import { ChannexStagingSection } from "./ChannexStagingSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
 import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
 import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
+import { AriSyncSection } from "./AriSyncSection";
 
 export const dynamic = "force-dynamic";
 
@@ -124,6 +126,14 @@ export default async function ChannelsPage() {
     getChannexRatePlanSyncContextAction(),
   ]);
 
+  // ARI status hangs off the one Channex connection this tenant has (the row is
+  // UNIQUE per tenant+provider+environment). Still a pure DB read.
+  const channexConnectionId = res.success
+    ? (res.data as ChannelStatus).connections.find((c) => c.provider === "channex")?.id ?? null
+    : null;
+  const ari = channexConnectionId ? await getAriSyncStatusAction(channexConnectionId) : null;
+  const ariStatus = ari?.success ? ari.data ?? null : null;
+
   return (
     <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
       {/* Header */}
@@ -140,12 +150,16 @@ export default async function ChannelsPage() {
         <div className="text-sm leading-relaxed text-text2">
           מסך זה <strong>מציג ומאבחן</strong> את מצב הסנכרון מול ערוצי ההפצה — סטטוס חיבור,
           שלמות המיפוי, תקינות התור והשגיאות האחרונות. הוא <strong>אינו עורך התעריפים</strong>;
-          עריכת מחירים וזמינות נעשית ברשת התעריפים{" "}
+          מחירים, הגבלות וזמינות נקבעים אך ורק ב&quot;עדכון קבוצתי&quot; שברשת התעריפים{" "}
           <Link href="/rates" className="font-bold text-primary hover:underline">
             /rates
+          </Link>{" "}
+          וב
+          <Link href="/rate-plans" className="font-bold text-primary hover:underline">
+            /rate-plans
           </Link>
-          . חיבור Channex (Staging), מיפוי הנכס וסנכרון החדרים הפיזיים זמינים בכרטיסים למטה;
-          סנכרון זמינות ותעריפים (ARI) יופעל בשלב הבא.
+          , ומשם מסונכרנים לערוץ אוטומטית ברקע. הסנכרון המלא הראשוני מופעל ידנית מכרטיס
+          &quot;סנכרון ARI&quot; שלמטה.
         </div>
       </div>
 
@@ -160,6 +174,12 @@ export default async function ChannelsPage() {
 
       {/* (Local Rate Plan × mapped room) → Channex Rate Plan synchronization (D65) */}
       {ratePlanSync.success && <ChannexRatePlansSection initial={ratePlanSync.data!} />}
+
+      {/* ARI status + THE Full Sync control (D68). Replaces the disabled
+          "סנכרון מלא · בקרוב" placeholder. Reconcile stays out of scope. */}
+      {channexConnectionId && ariStatus && (
+        <AriSyncSection connectionId={channexConnectionId} initial={ariStatus} />
+      )}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
@@ -322,24 +342,6 @@ function StatusView({ data }: { data: ChannelStatus }) {
         )}
       </section>
 
-      {/* Phase 4B affordances — rendered disabled, wired to nothing */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-ink">פעולות ניהול</h2>
-        <div className="flex flex-wrap gap-2">
-          {["סנכרון מלא", "התאמה מחדש (reconcile)"].map((label) => (
-            <button
-              key={label}
-              type="button"
-              disabled
-              aria-disabled="true"
-              className="flex cursor-not-allowed items-center gap-2 rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-faint opacity-70"
-            >
-              {label}
-              <span className="rounded-full bg-hover px-2 py-0.5 text-[11px] font-bold text-muted">בקרוב</span>
-            </button>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }

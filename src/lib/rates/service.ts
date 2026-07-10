@@ -88,11 +88,12 @@ export async function writeRateCells(
 
   const planIds = [...new Set(cells.map((c) => c.pricingPlanId))];
   const plans = await tx<
-    { id: string; sellable_unit_id: string; room_type_id: string | null }[]
+    { id: string; sellable_unit_id: string; room_type_id: string | null; room_id: string | null }[]
   >`
-    SELECT p.id, p.sellable_unit_id, su.room_type_id
+    SELECT p.id, p.sellable_unit_id, su.room_type_id, sur.room_id
     FROM guesthub.pricing_plans p
     JOIN guesthub.sellable_units su ON su.id = p.sellable_unit_id
+    LEFT JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = su.id
     WHERE p.tenant_id = ${tenantId} AND p.id = ANY(${planIds}::uuid[])`;
   const planMeta = new Map(plans.map((p) => [p.id, p]));
   for (const c of cells) {
@@ -161,15 +162,19 @@ export async function writeRateCells(
       closed_to_departure = EXCLUDED.closed_to_departure,
       stop_sell = EXCLUDED.stop_sell`;
 
-  // mark the outbox: rates + restrictions, per touched room-type, over the span.
+  // Mark the outbox: rates + restrictions for every touched ROOM, over the span.
+  // These rows are the sellable unit's BASE plan, from which every derived Rate
+  // Plan is computed — so the plan scope is NULL ("all channel-visible plans of
+  // this room"), not one plan. Availability is untouched: a price or restriction
+  // never changes physical inventory (§7).
   // markAriDirty is a no-op unless an active outbound connection exists.
   const dates = cells.map((c) => c.date).sort();
   const dateFrom = dates[0];
   const dateTo = addDays(dates[dates.length - 1], 1); // exclusive
-  const roomTypeIds = [...new Set(plans.map((p) => p.room_type_id))];
+  const roomIds = [...new Set(plans.map((p) => p.room_id))];
   await markAriDirty(tx, {
     tenantId,
-    roomTypeIds,
+    roomIds,
     dateFrom,
     dateTo,
     kinds: ["rates", "restrictions"],

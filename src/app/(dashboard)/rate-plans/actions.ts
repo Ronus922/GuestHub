@@ -1,10 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { TransactionSql } from "postgres";
 import { sql } from "@/lib/db";
 import { AuthorizationError, getActor, requirePermission } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
-import { isRateDateWritable, todayInTz } from "@/lib/dates";
+import { markAriDirty, expandPlanFamily, roomsForPlans } from "@/lib/channel/outbox";
+import { ARI_HORIZON_DAYS } from "@/lib/channel/ranges";
+import { addDays, isRateDateWritable, todayInTz } from "@/lib/dates";
 import { calculateReservationPrice } from "@/lib/pricing/engine";
 import type { PricingQuoteResult } from "@/lib/pricing/types";
 import { getRatePlanDetail, listPlanOverrides, type PlanOverrideRow, type RatePlanDetail } from "@/lib/rate-plans/service";
@@ -38,6 +41,49 @@ function errorResult(e: unknown, tag: string): { success: false; error: string }
   if (mapped) return { success: false, error: mapped };
   console.error(`[rate-plans:${tag}]`, e);
   return { success: false, error: "אירעה שגיאה בלתי צפויה" };
+}
+
+// ---------------------------------------------------------------
+// Channel outbox (D68). A Rate Plan change re-prices real (room × plan)
+// combinations that Channex already sells, so every mutation below marks its
+// OWN combinations dirty — never the whole property, never a Full Sync.
+//
+// The affected plan set is the plan PLUS its transitive children: a derived
+// plan's nightly price is computed FROM its parent's resolved price, so editing
+// a parent silently re-prices every descendant (expandPlanFamily).
+//
+// The affected room set is taken from the plans' active unit assignments. On an
+// edit that CHANGES assignments, the caller passes the rooms observed before the
+// write as well — a room dropped from a plan must be republished (stop_sell),
+// not just forgotten.
+//
+// The horizon is the published ARI window; a plan rule has no natural end date.
+// This performs no HTTP call and never blocks the save (the PM2 channel worker
+// drains the ranges out of band). It is a no-op until the operator's first
+// successful Full Sync activates the connection.
+// ---------------------------------------------------------------
+async function markPlansDirty(
+  tx: TransactionSql,
+  tenantId: string,
+  planIds: string[],
+  extraRoomIds: string[] = [],
+): Promise<void> {
+  const family = await expandPlanFamily(tx, tenantId, planIds);
+  if (family.length === 0) return;
+  const roomIds = [...new Set([...(await roomsForPlans(tx, tenantId, family)), ...extraRoomIds])];
+  if (roomIds.length === 0) return;
+
+  const [t] = await tx<{ timezone: string | null }[]>`
+    SELECT timezone FROM guesthub.tenants WHERE id = ${tenantId}`;
+  const today = todayInTz(t?.timezone || "Asia/Jerusalem");
+  await markAriDirty(tx, {
+    tenantId,
+    roomIds,
+    ratePlanIds: family,
+    dateFrom: today,
+    dateTo: addDays(today, ARI_HORIZON_DAYS),
+    kinds: ["rates", "restrictions"],
+  });
 }
 
 // ---- create / update (one shared wizard payload) ----
@@ -151,6 +197,12 @@ export async function saveRatePlanAction(raw: unknown): Promise<ActionResult & {
         planId = created.id;
       }
 
+      // rooms this plan family reaches BEFORE the assignment rewrite — a room
+      // dropped from the plan below must still be republished (stop_sell)
+      const roomsBefore = p.id
+        ? await roomsForPlans(tx, actor!.tenantId, await expandPlanFamily(tx, actor!.tenantId, [planId]))
+        : [];
+
       // assignments: upsert the desired set; deactivate (never delete) the rest
       for (const a of p.assignments) {
         await tx`
@@ -186,6 +238,10 @@ export async function saveRatePlanAction(raw: unknown): Promise<ActionResult & {
           is_active: p.isActive, assignments: p.assignments.length,
         },
       }, tx);
+
+      // percentage/derivation, restrictions, validity, activation, channel
+      // visibility and assignment changes all land here → one dirty hook
+      await markPlansDirty(tx, actor!.tenantId, [planId], roomsBefore);
       return planId;
     });
 
@@ -301,6 +357,11 @@ export async function archiveRatePlanAction(raw: unknown): Promise<ActionResult>
         entityType: "rate_plan", entityId: id, action: archived ? "archive" : "restore",
         before, after: { is_archived: archived },
       }, tx);
+
+      // Archiving/deactivating withdraws the plan from sale. Its Channex Rate
+      // Plan still exists and would keep selling the last prices we published,
+      // so the withdrawal must be pushed as stop_sell — the projection emits it.
+      await markPlansDirty(tx, actor!.tenantId, [id]);
     });
 
     revalidatePath("/rate-plans");
@@ -419,13 +480,29 @@ export async function savePlanOverridesAction(raw: unknown): Promise<ActionResul
             AND sellable_unit_id = ${r.sellableUnitId} AND date = ${r.date}`;
       }
 
-      // plan-overlay rows are not part of the base ARI the channel outbox syncs
-      // (Phase 4B maps plans separately) — no markAriDirty here on purpose.
       await writeAudit(actor!, {
         entityType: "rate_plan", entityId: o.planId, action: "daily_override",
         before: null,
         after: { upserts: o.upserts, removals: o.removals },
       }, tx);
+
+      // Exact-date overlay rows carry their own units and dates, so this hook is
+      // precise: only the touched rooms, only the touched date span, only this
+      // plan family. (D68 — previously this write reached Channex not at all.)
+      if (touched.length > 0) {
+        const rooms = await tx<{ room_id: string }[]>`
+          SELECT room_id FROM guesthub.sellable_unit_rooms
+          WHERE tenant_id = ${actor!.tenantId} AND sellable_unit_id = ANY(${unitIds}::uuid[])`;
+        const dates = touched.map((t) => t.date).sort();
+        await markAriDirty(tx, {
+          tenantId: actor!.tenantId,
+          roomIds: rooms.map((r) => r.room_id),
+          ratePlanIds: await expandPlanFamily(tx, actor!.tenantId, [o.planId]),
+          dateFrom: dates[0],
+          dateTo: addDays(dates[dates.length - 1], 1), // exclusive
+          kinds: ["rates", "restrictions"],
+        });
+      }
     });
 
     revalidatePath("/rate-plans");

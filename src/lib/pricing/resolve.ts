@@ -148,6 +148,58 @@ export function resolveNightPrice(input: {
   };
 }
 
+// ---- THE nightly price for one (plan chain, unit, date) ----
+// Walks the parent chain root-first, feeding each level's resolved price into
+// the next, exactly as the price precedence in the header describes. The ONE
+// implementation: engine.ts (quotes, reservations, the simulator) and the
+// Channex ARI projection both call this — a channel can never resolve a price
+// by a different rule than a booking does.
+//
+// `chain` is requested-plan-first / root-last (as resolveParentChain returns).
+// An EMPTY chain is the explicit base-ARI layer: no tenant-level plan applies
+// and the unit's base room-night price IS the price.
+//
+// `directParentPrice` is the resolved value of the requested plan's immediate
+// parent (chain[1]) — null when the requested plan is itself the root.
+export function resolveChainNightPrice(input: {
+  chain: EnginePlan[];
+  date: DateOnly;
+  basePrice: number | null;
+  basePriceSource: "base_plan_rate" | "room_type_base_price" | null;
+  overlayFor: (planId: string) => Map<string, PlanRateRow> | undefined;
+  assignmentFor: (planId: string) => EngineAssignment | undefined;
+}): { resolution: NightPriceResolution; directParentPrice: number | null } {
+  if (input.chain.length === 0) {
+    return {
+      resolution: resolveNightPrice({
+        kind: "base", overridePrice: null, parentResolved: null,
+        planAdjustment: null, assignmentAdjustment: null,
+        basePrice: input.basePrice, basePriceSource: input.basePriceSource,
+      }),
+      directParentPrice: null,
+    };
+  }
+
+  let parentResolved: number | null = null;
+  let directParentPrice: number | null = null;
+  let resolution!: NightPriceResolution;
+  for (let i = input.chain.length - 1; i >= 0; i--) {
+    const level = input.chain[i];
+    if (i === 0) directParentPrice = parentResolved; // chain[1]'s resolved value
+    resolution = resolveNightPrice({
+      kind: level.planKind,
+      overridePrice: input.overlayFor(level.id)?.get(input.date)?.price ?? null,
+      parentResolved,
+      planAdjustment: level.adjustmentValue,
+      assignmentAdjustment: input.assignmentFor(level.id)?.adjustmentValue ?? null,
+      basePrice: input.basePrice,
+      basePriceSource: input.basePriceSource,
+    });
+    parentResolved = resolution.price;
+  }
+  return { resolution, directParentPrice };
+}
+
 // ---- restriction overlay merge (§10/§24): the base room-night state applies to
 // EVERY plan (a plan can only tighten it, never open what the room closed);
 // per-(plan,unit,date) rows layer plan-specific restrictions on top. An overlay

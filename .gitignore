@@ -45,3 +45,6 @@ next-env.d.ts
 
 # room image uploads (runtime data, not source)
 /public/uploads
+
+# channel worker build output (npm postbuild → tsconfig.worker.json)
+/dist/

@@ -29,7 +29,7 @@
     "check:calendar": "node scripts/check-calendar.mjs",
     "check:cards": "node scripts/check-cards.mjs",
     "check:payments": "node scripts/check-payments.mjs",
-    "check:channel-card-ingest": "node --env-file=.env.local scripts/check-channel-card-ingest.mjs",
+    "check:channel-card-ingest": "node scripts/check-channel-card-ingest.mjs",
     "check:messaging": "node scripts/check-messaging.mjs",
     "check:channex-connection": "node scripts/check-channex-connection.mjs",
     "check:channex-properties": "node scripts/check-channex-properties.mjs",
@@ -39,7 +39,12 @@
     "guard:deploy": "node scripts/production-deploy-guard.mjs",
     "check:channex-room-types": "node scripts/check-channex-room-types.mjs",
     "check:channex-rate-plans": "node scripts/check-channex-rate-plans.mjs",
-    "check:su-lifecycle": "node scripts/check-su-lifecycle.mjs"
+    "check:su-lifecycle": "node scripts/check-su-lifecycle.mjs",
+    "postbuild": "tsc -p tsconfig.worker.json",
+    "build:worker": "tsc -p tsconfig.worker.json",
+    "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
+    "check:channex-ari": "node scripts/check-channex-ari.mjs",
+    "check:channel-worker": "node scripts/check-channel-worker.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

@@ -18,7 +18,16 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // channel-worker build output (npm postbuild → tsconfig.worker.json)
+      "dist/**",
     ],
+  },
+  {
+    // The PM2 worker entry point and its stub are CommonJS by necessity: they
+    // install a require-time module resolver before loading the compiled tree,
+    // which an ESM entry cannot do. `require()` is the correct construct here.
+    files: ["scripts/channel-worker.cjs", "scripts/server-only-stub.cjs", "ecosystem.config.cjs"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
   },
 ];
 

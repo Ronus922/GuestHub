@@ -57,20 +57,10 @@ const isBlocking = (status: string) =>
 
 type StayInput = ExistingRoomStayInput; // superset of the create stay (rrId optional)
 
-type RoomMeta = { id: string; room_type_id: string | null; base_price: number };
-
-async function loadRoomMeta(
-  db: TransactionSql,
-  tenantId: string,
-  roomIds: string[],
-): Promise<Map<string, RoomMeta>> {
-  const rows = await db<RoomMeta[]>`
-    SELECT r.id, r.room_type_id, COALESCE(rt.base_price, 0)::float8 AS base_price
-    FROM guesthub.rooms r
-    LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
-    WHERE r.tenant_id = ${tenantId} AND r.id = ANY(${roomIds}::uuid[])`;
-  return new Map(rows.map((r) => [r.id, r]));
-}
+// loadRoomMeta() lived here only to translate a room into its room_type for the
+// channel outbox. D68 addresses the outbox by PHYSICAL ROOM, so the translation
+// — and the room_types read behind it — is gone. Every call site already held
+// the room ids it needed.
 
 // The same room may not be requested twice for overlapping nights inside one
 // reservation (the DB check excludes the reservation's own rows on edit, so
@@ -261,11 +251,11 @@ export async function createReservationAction(
         after: { number, status: input.status, rooms: priced.length, total },
       }, tx);
 
+      // a blocking reservation consumes physical inventory → availability dirty
       if (isBlocking(input.status)) {
-        const meta = await loadRoomMeta(tx, actor.tenantId, priced.map((s) => s.roomId));
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomTypeIds: priced.map((s) => meta.get(s.roomId)?.room_type_id ?? null),
+          roomIds: priced.map((s) => s.roomId),
           dateFrom: agg.checkIn,
           dateTo: agg.checkOut,
         });
@@ -498,18 +488,19 @@ export async function updateReservationAction(
         after: { status: input.status, check_in: agg.checkIn, check_out: agg.checkOut, rooms: priced.length, total },
       }, tx);
 
-      // dirty when inventory consumption changed on either side
+      // Dirty when inventory consumption changed on either side — including a
+      // status flip into or out of a blocking status (a cancel/restore). Both
+      // the OLD and the NEW room/date ranges are marked: the released nights
+      // must be re-published as available, not just the newly-taken ones. The
+      // span covers both sides (a superset is always safe — the projection
+      // recomputes canonical state for every date it covers).
       if (wasBlocking || nowBlocking) {
-        const meta = await loadRoomMeta(tx, actor.tenantId, allRoomIds);
         const dates = [
           existing.check_in, existing.check_out, agg.checkIn, agg.checkOut,
         ].sort();
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomTypeIds: [
-            ...oldRows.map((r) => r.room_type_id),
-            ...priced.map((s) => meta.get(s.roomId)?.room_type_id ?? null),
-          ],
+          roomIds: [...oldRows.map((r) => r.room_id), ...priced.map((s) => s.roomId)],
           dateFrom: dates[0],
           dateTo: dates[dates.length - 1],
         });
@@ -551,14 +542,14 @@ export async function cancelReservationAction(id: string): Promise<ActionResult>
         after: { status: "cancelled" },
       }, tx);
 
+      // the cancelled stay releases its nights → republish those rooms/dates
       if (isBlocking(res.status)) {
-        const types = await tx<{ room_type_id: string | null }[]>`
-          SELECT r.room_type_id FROM guesthub.reservation_rooms rr
-          JOIN guesthub.rooms r ON r.id = rr.room_id
+        const rooms = await tx<{ room_id: string | null }[]>`
+          SELECT rr.room_id FROM guesthub.reservation_rooms rr
           WHERE rr.reservation_id = ${id} AND rr.tenant_id = ${actor.tenantId}`;
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomTypeIds: types.map((t) => t.room_type_id),
+          roomIds: rooms.map((r) => r.room_id),
           dateFrom: res.check_in,
           dateTo: res.check_out,
         });
@@ -682,12 +673,12 @@ export async function rescheduleReservationRoomAction(raw: {
         after: { room_id: s.roomId, check_in: s.checkIn, check_out: s.checkOut },
       }, tx);
 
+      // a move/resize frees the OLD room/dates and takes the NEW ones
       if (blocking) {
-        const meta = await loadRoomMeta(tx, actor.tenantId, lockIds);
         const dates = [rr.check_in, rr.check_out, s.checkIn, s.checkOut].sort();
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomTypeIds: [rr.old_room_type, meta.get(s.roomId)?.room_type_id ?? null],
+          roomIds: [rr.room_id, s.roomId],
           dateFrom: dates[0],
           dateTo: dates[dates.length - 1],
         });
