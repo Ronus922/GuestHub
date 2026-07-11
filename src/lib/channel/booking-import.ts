@@ -25,6 +25,7 @@ import {
 } from "./booking-normalize";
 import { markAriDirty } from "./outbox";
 import { logChannelError } from "./queue";
+import { getChannexRatePlan } from "./channex-rate-plans";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
@@ -133,15 +134,25 @@ async function resolveStays(
         WHERE connection_id = ${conn.id}
           AND channex_rate_plan_id = ${room.channexRatePlanId}
           AND status = 'mapped'`;
-      if (!ratePlan) {
+      // canonical miss → verified inbound alias (adopted by
+      // reconcileInboundRatePlans after a live UUID-chain check). The alias
+      // carries the SAME room guard: an alias for another room never imports.
+      const [alias] = ratePlan
+        ? [ratePlan]
+        : await db<{ local_rate_plan_id: string | null; room_id: string }[]>`
+            SELECT local_rate_plan_id, room_id
+            FROM guesthub.channel_inbound_rate_plan_aliases
+            WHERE connection_id = ${conn.id}
+              AND channex_rate_plan_id = ${room.channexRatePlanId}`;
+      if (!alias) {
         throw new QuarantineError(
           `תוכנית תעריף של הערוץ ללא מיפוי מקומי (Rate Plan ${room.channexRatePlanId.slice(0, 8)}…)`,
         );
       }
-      if (ratePlan.room_id !== mapping.room_id) {
+      if (alias.room_id !== mapping.room_id) {
         throw new QuarantineError("מיפוי תוכנית התעריף אינו תואם את חדר ההזמנה");
       }
-      localRatePlanId = ratePlan.local_rate_plan_id;
+      localRatePlanId = alias.local_rate_plan_id;
     }
     stays.push({
       roomId: mapping.room_id,
@@ -168,6 +179,103 @@ async function resolveStays(
     }
   }
   return stays;
+}
+
+// ---------------------------------------------------------------
+// verified inbound alias adoption (root cause of BDC-6784772338)
+// ---------------------------------------------------------------
+// The OWNER's channel mapping in the Channex UI can point BDC rates at
+// rate-plan objects GuestHub never created (UI-made copies, possibly deleted
+// upstream afterwards). Bookings then arrive with an unknown rate_plan UUID
+// and quarantine. Before importing, adopt such a UUID as an inbound ALIAS —
+// but ONLY on hard evidence, fetched live from Channex with this connection's
+// key:
+//   1. GET /rate_plans/{id} answers 200 (the key owns/sees the plan);
+//   2. the plan's property === the connection's property;
+//   3. the plan's room_type equals the BOOKING room's room_type AND resolves
+//      through channel_room_mappings to exactly one physical room.
+// local plan association is OPTIONAL extra: only when the verified title
+// matches exactly ONE canonical mapping of the SAME room (title is never used
+// to pick the room — only to disambiguate the plan kind inside a UUID-proven
+// room); otherwise it stays NULL and the import still proceeds (the price is
+// the channel's, D76).
+// Canonical channel_room_rate_mappings rows are NEVER touched here — they are
+// outbound/ARI-critical. Failures are swallowed: the revision simply stays
+// quarantined and the next pull retries.
+export async function reconcileInboundRatePlans(
+  db: Sql,
+  conn: InboundConnection,
+  rooms: NormalizedRoom[],
+): Promise<number> {
+  let adopted = 0;
+  const seen = new Set<string>();
+  for (const room of rooms) {
+    const rpId = room.channexRatePlanId;
+    if (!rpId || seen.has(rpId)) continue;
+    seen.add(rpId);
+    try {
+      const [known] = await db<{ one: number }[]>`
+        SELECT 1 AS one FROM guesthub.channel_room_rate_mappings
+        WHERE connection_id = ${conn.id} AND channex_rate_plan_id = ${rpId}
+          AND status = 'mapped'
+        UNION ALL
+        SELECT 1 FROM guesthub.channel_inbound_rate_plan_aliases
+        WHERE connection_id = ${conn.id} AND channex_rate_plan_id = ${rpId}
+        LIMIT 1`;
+      if (known) continue;
+
+      // live verification — single attempt; transient failure = no adoption
+      const res = await getChannexRatePlan({ ...inboundCreds(conn), id: rpId });
+      if (!res.ok) continue;
+      const { ratePlan } = res;
+      if (ratePlan.propertyId !== conn.channex_property_id) continue; // foreign property — never adopt
+      if (!ratePlan.roomTypeId || ratePlan.roomTypeId !== room.channexRoomTypeId) continue;
+
+      const roomRows = await db<{ room_id: string }[]>`
+        SELECT room_id FROM guesthub.channel_room_mappings
+        WHERE connection_id = ${conn.id}
+          AND channex_room_type_id = ${ratePlan.roomTypeId}
+          AND status = 'mapped'`;
+      if (roomRows.length !== 1) continue; // ambiguous/unmapped room — never adopt
+
+      // optional plan-kind disambiguation INSIDE the proven room
+      const titled = ratePlan.title
+        ? await db<{ local_rate_plan_id: string }[]>`
+            SELECT local_rate_plan_id FROM guesthub.channel_room_rate_mappings
+            WHERE connection_id = ${conn.id} AND room_id = ${roomRows[0].room_id}
+              AND status = 'mapped' AND channex_title = ${ratePlan.title}`
+        : [];
+      const localPlanId = titled.length === 1 ? titled[0].local_rate_plan_id : null;
+
+      const inserted = await db<{ id: string }[]>`
+        INSERT INTO guesthub.channel_inbound_rate_plan_aliases
+          (tenant_id, connection_id, channex_rate_plan_id, room_id, local_rate_plan_id,
+           channex_property_id, channex_room_type_id, channex_title)
+        VALUES (${conn.tenant_id}, ${conn.id}, ${rpId}, ${roomRows[0].room_id}, ${localPlanId},
+                ${ratePlan.propertyId}, ${ratePlan.roomTypeId}, ${ratePlan.title})
+        ON CONFLICT (connection_id, channex_rate_plan_id) DO NOTHING
+        RETURNING id`;
+      if (inserted.length > 0) {
+        adopted += 1;
+        await db`
+          INSERT INTO guesthub.audit_logs
+            (tenant_id, user_id, entity_type, entity_id, action, after_data)
+          VALUES (${conn.tenant_id}, NULL, 'channel_rate_plan_alias', ${inserted[0].id},
+                  'adopt_verified',
+                  ${db.json({
+                    channex_rate_plan_id: rpId,
+                    room_id: roomRows[0].room_id,
+                    local_rate_plan_id: localPlanId,
+                    channex_property_id: ratePlan.propertyId,
+                    channex_room_type_id: ratePlan.roomTypeId,
+                    channex_title: ratePlan.title,
+                  })})`;
+      }
+    } catch {
+      // adoption is best-effort; the revision stays quarantined and retries
+    }
+  }
+  return adopted;
 }
 
 // ---------------------------------------------------------------
@@ -578,6 +686,13 @@ export async function importRevisionRow(
       context: { revision_id: rev.provider_revision_id },
     });
     return { status: "quarantined", reason };
+  }
+
+  // self-heal BEFORE the import transaction (network stays outside the tx):
+  // adopt any unknown-but-verifiable rate-plan UUID as an inbound alias, so a
+  // channel remapped in the Channex UI stops quarantining valid bookings.
+  if (norm.value.kind !== "cancelled") {
+    await reconcileInboundRatePlans(db, conn, norm.value.rooms);
   }
 
   try {
