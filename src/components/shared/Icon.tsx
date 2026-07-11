@@ -97,6 +97,7 @@ import {
   Download,
   MessageCircle,
   Send,
+  Save,
   type LucideIcon,
 } from "lucide-react";
 
@@ -205,6 +206,7 @@ const ICONS = {
   download: Download,
   whatsapp: MessageCircle,
   send: Send,
+  save: Save,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

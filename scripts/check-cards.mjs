@@ -186,7 +186,10 @@ const cardFields = src("src/components/reservations/CardFields.tsx");
 assert.ok(!/saveReservationCardAction/.test(cardFields),
   "the card form never calls save directly (panels do)");
 assert.ok(!/formatCvv|maskedCvv|\.cvv\b/.test(cardFields), "the entry form no longer collects or renders a CVV");
-assert.ok(/maskedPan/.test(cardFields), "the saved card renders a masked PAN by default");
+// D86 — masking now lives in the pure view model (asserted at runtime below);
+// the component must render the resolved view and never a raw PAN of its own
+assert.ok(/resolveCardView\(/.test(cardFields),
+  "the one card section renders the canonical view model");
 assert.ok(/revealReservationCardAction/.test(cardFields), "full details require the explicit reveal action");
 assert.ok(/הצגת פרטי אשראי/.test(cardFields) && /הסתרת פרטי אשראי/.test(cardFields),
   "explicit show/hide of the full card details");
@@ -330,5 +333,100 @@ assert.ok(/number: formatCardNumber\(e\.target\.value\)/.test(cardFields),
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
   assert.ok(/onChange={setCc}/.test(s), `${name}: card draft uses the state setter directly (functional-update capable)`);
 }
+
+// ---- ONE canonical card view model (D86) ----
+// Stored card, masked channel guarantee, manual entry and the empty state all
+// resolve into the SAME field set. Assert the precedence, the masking and the
+// "never fabricate a missing value" rule at runtime, not by regex.
+{
+  const EMPTY_DRAFT = { holder: "", number: "", exp: "", idNum: "", billingNotes: "" };
+  const DRAFT = { holder: "משה כהן", number: "4111 1111 1111 1111", exp: "05/30", idNum: "123456789", billingNotes: "חיוב בצ׳ק-אין" };
+  const STORED = {
+    brand: "visa", last4: "4242", expMonth: 8, expYear: 2031, holderName: "רונן מ",
+    source: "back_office", sourceChannel: null, isVirtual: false, availableUntil: null,
+    billingNotes: null,
+  };
+  const CHANNEL = {
+    brand: "visa", last4: "1111", expMonth: 2, expYear: 2029, holderName: "דני לוי",
+    maskedDisplay: null, isVirtual: false, availableFrom: null, availableUntil: null,
+  };
+
+  // precedence: stored card outranks the channel guarantee
+  const both = rules.resolveCardView({ stored: STORED, channel: CHANNEL, draft: EMPTY_DRAFT });
+  assert.equal(both.origin, "stored", "a vaulted card outranks the masked channel guarantee");
+  assert.equal(both.editable, false, "a stored card renders read-only in the canonical fields");
+  assert.equal(both.number, "•••• •••• •••• 4242", "the stored PAN is MASKED by default");
+  assert.equal(both.exp, "08/31", "expiry renders MM/YY — the format the manual field uses");
+  assert.equal(both.idNumber, "", "the holder ID is not present until an authorized reveal");
+
+  // an authorized reveal swaps the plaintext into the SAME fields
+  const revealed = rules.resolveCardView({
+    stored: STORED, draft: EMPTY_DRAFT,
+    revealed: { pan: "4242424242424242", holderName: "רונן מ", holderIdNumber: "123456789", expMonth: 8, expYear: 2031 },
+  });
+  assert.equal(revealed.number, "4242 4242 4242 4242", "reveal shows the full PAN in the number field");
+  assert.equal(revealed.idNumber, "123456789", "reveal fills the ID field");
+  assert.equal(revealed.editable, false, "a revealed card is still not an editable form");
+
+  // channel guarantee → the canonical fields, with the REAL source (never back-office)
+  const ch = rules.resolveCardView({
+    channel: CHANNEL, channelName: "Booking.com", stateLabel: "כרטיס ממוסך בלבד", draft: EMPTY_DRAFT,
+  });
+  assert.equal(ch.origin, "channel");
+  assert.equal(ch.holder, "דני לוי", "the imported cardholder fills שם בעל הכרטיס");
+  assert.equal(ch.number, "•••• •••• •••• 1111", "the imported last4 fills מספר כרטיס, masked");
+  assert.equal(ch.exp, "02/29", "the imported expiry fills תוקף");
+  assert.ok(/Booking\.com/.test(ch.sourceLabel), "מקור פרטי הכרטיס names the REAL origin");
+  assert.ok(!/back_office|משרד/.test(ch.sourceLabel), "an imported card is never labelled back-office");
+  assert.equal(ch.idNumber, "", "no channel supplies a cardholder ID — the field stays empty");
+  assert.ok(/התקבלו מ־Booking\.com/.test(ch.helper), "an honest origin line, inside the same section");
+  assert.equal(ch.brandLabel, "Visa", "a channel brand CODE (VI) displays as the brand name");
+  const amex = rules.resolveCardView({ channel: { ...CHANNEL, brand: "AX" }, draft: EMPTY_DRAFT });
+  assert.equal(amex.brandLabel, "American Express", "AX → American Express");
+  const unknownBrand = rules.resolveCardView({ channel: { ...CHANNEL, brand: "ZZ" }, draft: EMPTY_DRAFT });
+  assert.equal(unknownBrand.brandLabel, "ZZ", "an unknown brand code shows verbatim — never a wrong brand");
+
+  // partial channel data: only brand + last4 → the rest stays EMPTY, never invented
+  const partial = rules.resolveCardView({
+    channel: { ...CHANNEL, holderName: null, expMonth: null, expYear: null },
+    channelName: "Booking.com", draft: EMPTY_DRAFT,
+  });
+  assert.equal(partial.number, "•••• •••• •••• 1111", "the masked number still renders");
+  assert.equal(partial.holder, "", "a missing cardholder stays empty");
+  assert.equal(partial.exp, "", "a missing expiry stays empty — never fabricated");
+  assert.ok(/חלקית/.test(partial.helper), "partial imported data says so honestly");
+  assert.ok(!/\d{13,}/.test(partial.number.replace(/\D/g, "")),
+    "masked fragments are never padded into a full card number");
+
+  // manual opt-in wins over both, and the empty state is the editable draft
+  const manual = rules.resolveCardView({ stored: STORED, channel: CHANNEL, draft: DRAFT, manualEntry: true });
+  assert.equal(manual.origin, "manual");
+  assert.equal(manual.editable, true, "manual entry is the ONLY editable mode");
+  assert.equal(manual.number, DRAFT.number, "the manual draft owns its own value");
+  assert.equal(manual.sourceLabel, "", "the editable mode shows the source <select>, not a label");
+  const empty = rules.resolveCardView({ draft: EMPTY_DRAFT });
+  assert.equal(empty.origin, "empty");
+  assert.equal(empty.editable, true, "the empty state is the normal entry form");
+  assert.equal(empty.number, "", "nothing is invented out of nothing");
+
+  // the view model never carries a CVV, in any mode (D52 §2)
+  for (const v of [both, revealed, ch, partial, manual, empty]) {
+    assert.ok(!Object.keys(v).some((k) => /cvv/i.test(k)), "no CVV anywhere in the card view model");
+  }
+}
+
+// exactly ONE credit-card interface: the editor must not re-grow a second one
+assert.ok(!/StoredCardBox/.test(editPanel) && !/StoredCardBox/.test(cardFields),
+  "the separate stored-card box is gone — one card section only (D86)");
+assert.ok((editPanel.match(/<CardFields/g) ?? []).length === 1,
+  "the editor renders the card section exactly once");
+assert.ok(!/כרטיס ערבות/.test(editPanel),
+  "the duplicate OTA card summary (brand/last4/expiry/holder) no longer exists");
+// the card BOX class belongs to the card section alone — non-card metadata uses
+// .bw-metabox, so a second card interface cannot re-grow by reusing the styling
+assert.ok(!/bw-ccbox/.test(editPanel),
+  "the editor never hand-rolls a card box — only <CardFields> owns .bw-ccbox");
+assert.ok((cardFields.match(/className={`bw-ccbox/g) ?? []).length === 1,
+  "CardFields renders exactly one .bw-ccbox");
 
 console.log("check-cards: all card/VAT security and validation rules hold ✔");

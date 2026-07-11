@@ -356,6 +356,12 @@ export async function updateReservationAction(
       if (!existing) throw new DomainError("הזמנה לא נמצאה");
       if (existing.status === "cancelled") throw new DomainError("הזמנה מבוטלת — לא ניתן לערוך");
 
+      // Omitted status (the ordinary editor save) keeps the STORED lifecycle —
+      // read FOR UPDATE in this same transaction, so it can never overwrite a
+      // concurrent change with stale client data. Only the explicit
+      // check-in/check-out quick actions send a status.
+      const nextStatus = input.status ?? existing.status;
+
       const oldRows = await tx<
         { id: string; room_id: string | null; check_in: string; check_out: string;
           adults: number; children: number; infants: number; room_type_id: string | null;
@@ -415,7 +421,7 @@ export async function updateReservationAction(
       }
 
       const wasBlocking = isBlocking(existing.status);
-      const nowBlocking = isBlocking(input.status);
+      const nowBlocking = isBlocking(nextStatus);
       // starting to consume inventory (e.g. draft → confirmed) must re-prove
       // availability for ALL stays, even untouched ones
       if (!wasBlocking && nowBlocking) skipChecksForRr.clear();
@@ -522,7 +528,7 @@ export async function updateReservationAction(
         UPDATE guesthub.reservations SET
           primary_guest_id = ${guestId},
           source_id = ${input.sourceId ?? null},
-          status = ${input.status},
+          status = ${nextStatus},
           check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
           adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
           discount_amount = ${discount},
@@ -557,7 +563,7 @@ export async function updateReservationAction(
         entityId: input.id,
         action: "update",
         before: { status: existing.status, check_in: existing.check_in, check_out: existing.check_out, rooms: oldRows.length },
-        after: { status: input.status, check_in: agg.checkIn, check_out: agg.checkOut, rooms: priced.length, total },
+        after: { status: nextStatus, check_in: agg.checkIn, check_out: agg.checkOut, rooms: priced.length, total },
       }, tx);
 
       // Dirty when inventory consumption changed on either side — including a
