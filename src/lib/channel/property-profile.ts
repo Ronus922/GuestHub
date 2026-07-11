@@ -40,7 +40,8 @@ export type ChannexProfileOverrides = {
 };
 
 export type ChannexProfile = {
-  title: string;
+  /** null = no canonical Business Profile name and no explicit override — property creation is blocked */
+  title: string | null;
   currency: string;
   timezone: string;
   country: string | null;
@@ -68,20 +69,27 @@ function cleanNum(v: unknown): number | null {
   return null;
 }
 
+// Shown when a new external property cannot be named from the canonical
+// Business Profile — creation is blocked BEFORE any Channex request.
+export const MISSING_PROPERTY_NAME_MSG =
+  "לא ניתן ליצור נכס ב-Channex לפני השלמת שם הנכס או שם העסק בהגדרות העסק.";
+
 // Merge canonical identity + overrides into the resolved profile. Canonical
-// currency/timezone always win; title defaults to "<name> (Staging)" but an
-// override title is honored; integration-only fields come solely from overrides.
-// The default title base prefers the CANONICAL Business Profile name when
-// supplied; the internal tenants.name label is only the pre-profile last
-// resort (an external property still needs some title at create time).
+// currency/timezone always win; an explicit operator override title is
+// honored; otherwise the title derives ONLY from the canonical Business
+// Profile name (propertyName ?? businessName, passed as canonicalName).
+// The internal tenants.name label, actor.tenantName, the tenant slug and any
+// hardcoded fallback are NEVER used — with no canonical name the title is
+// null and property creation is blocked (MISSING_PROPERTY_NAME_MSG).
 export function resolveChannexProfile(
   tenant: TenantIdentity,
   overrides: ChannexProfileOverrides | null | undefined,
   canonicalName?: string | null,
 ): ChannexProfile {
   const o = overrides ?? {};
+  const canonical = cleanStr(canonicalName);
   return {
-    title: cleanStr(o.title) ?? `${cleanStr(canonicalName) ?? tenant.name} (Staging)`,
+    title: cleanStr(o.title) ?? (canonical ? `${canonical} (Staging)` : null),
     currency: tenant.currency,
     timezone: tenant.timezone,
     country: cleanStr(o.country),

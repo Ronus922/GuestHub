@@ -55,6 +55,13 @@ export const guestInputSchema = z.object({
   language: z.string().trim().max(30).optional(),
 });
 
+// שעת הגעה משוערת — "HH:MM"; null = explicitly none, undefined = untouched
+export const expectedArrivalTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "שעת הגעה לא תקינה")
+  .nullable()
+  .optional();
+
 // Reservation statuses reachable through create/edit. Cancelling goes only
 // through cancelReservationAction (reservations.cancel).
 export const EDITABLE_STATUSES = [
@@ -71,6 +78,8 @@ export const createReservationSchema = z.object({
   status: z.enum(["draft", "confirmed"]),
   rooms: z.array(roomStaySchema).min(1, "נדרש חדר אחד לפחות").max(10),
   notes: z.string().trim().max(2000).optional(),
+  // שעת הגעה משוערת — dedicated field (D80), never folded into notes
+  expectedArrivalTime: expectedArrivalTimeSchema,
   discountAmount: z.number().min(0).max(1_000_000).optional(),
   paidAmount: z.number().min(0).max(10_000_000).optional(),
   paymentMethod: z.string().trim().max(40).optional(),
@@ -85,6 +94,8 @@ export const updateReservationSchema = z.object({
   status: z.enum(EDITABLE_STATUSES),
   rooms: z.array(existingRoomStaySchema).min(1, "נדרש חדר אחד לפחות").max(10),
   notes: z.string().trim().max(2000).optional(),
+  // null clears the value; undefined (omitted) keeps the stored one
+  expectedArrivalTime: expectedArrivalTimeSchema,
   discountAmount: z.number().min(0).max(1_000_000).optional(),
   additionalPayment: z.number().min(0).max(10_000_000).optional(),
   paymentMethod: z.string().trim().max(40).optional(),

@@ -31,13 +31,28 @@ const mkRes = (status, body) => ({ status, json: async () => body });
 // ============================================================
 const tenant = { tenantId: "t1", name: "מגדל הים", currency: "ILS", timezone: "Asia/Jerusalem" };
 
+// D80 §1: tenants.name is NEVER a title source. With no canonical Business
+// Profile name and no explicit override the title is null and creation is
+// blocked (canCreate=false + MISSING_PROPERTY_NAME_MSG in the action).
 const p0 = prof.resolveChannexProfile(tenant, null);
 assert.equal(p0.currency, "ILS", "currency reused from canonical tenant");
 assert.equal(p0.timezone, "Asia/Jerusalem", "timezone reused from canonical tenant");
-assert.equal(p0.title, "מגדל הים (Staging)", "title defaults from canonical name + Staging");
+assert.equal(p0.title, null, "no canonical name → title null, tenants.name NEVER used");
 assert.equal(p0.country, null, "missing country is NOT fabricated");
 assert.equal(p0.city, null, "missing city is NOT fabricated");
 assert.equal(p0.propertyType, "apartment", "property_type defaults to apartment");
+assert.equal(prof.computeReadiness(p0).canCreate, false, "no canonical name → property creation blocked");
+assert.ok(
+  typeof prof.MISSING_PROPERTY_NAME_MSG === "string" &&
+    prof.MISSING_PROPERTY_NAME_MSG.includes("שם הנכס או שם העסק"),
+  "blocking message names the missing Business Profile fields",
+);
+
+const pCanon = prof.resolveChannexProfile(tenant, null, "מלון הדקל");
+assert.equal(pCanon.title, "מלון הדקל (Staging)", "canonical Business Profile propertyName/businessName drives the title");
+assert.ok(!pCanon.title.includes(tenant.name), "internal tenants.name label never leaks into the title");
+const pBlank = prof.resolveChannexProfile(tenant, null, "   ");
+assert.equal(pBlank.title, null, "blank canonical name is treated as missing, never replaced by tenants.name");
 
 const p1 = prof.resolveChannexProfile(tenant, {
   title: "Sea Tower - GuestHub Staging",
@@ -59,17 +74,17 @@ assert.equal(p2.timezone, "Asia/Jerusalem", "override cannot overwrite canonical
 // ============================================================
 // readiness
 // ============================================================
-const r0 = prof.computeReadiness(p0);
-assert.equal(r0.canCreate, true, "title+currency present → can create");
+const r0 = prof.computeReadiness(pCanon);
+assert.equal(r0.canCreate, true, "canonical title+currency present → can create");
 assert.equal(r0.liveReady, false, "missing contact/address → not live-ready");
 const rFull = prof.computeReadiness(
   prof.resolveChannexProfile(tenant, {
     country: "IL", city: "Tel Aviv", address: "Rothschild 1", zipCode: "6688101",
     email: "info@example.com", phone: "+972500000000", latitude: 32, longitude: 34,
-  }),
+  }, "מלון הדקל"),
 );
 assert.equal(rFull.liveReady, true, "all live fields present → live-ready");
-assert.equal(prof.computeReadiness({ ...p0, title: "", currency: "" }).canCreate, false, "no title/currency → cannot create");
+assert.equal(prof.computeReadiness({ ...pCanon, title: "", currency: "" }).canCreate, false, "no title/currency → cannot create");
 
 // ============================================================
 // create payload (§6)
@@ -88,7 +103,8 @@ assert.equal(payload.allow_availability_autoupdate_on_cancellation, false);
 assert.equal(payload.country, "il");
 assert.equal(payload.latitude, "32.08", "latitude serialized as string");
 assert.ok(!("email" in payload), "blank/absent optional field is omitted, not sent empty");
-const payloadMin = prof.buildCreatePropertyPayload(p0).property;
+const payloadMin = prof.buildCreatePropertyPayload(pCanon).property;
+assert.equal(payloadMin.title, "מלון הדקל (Staging)", "minimal payload titled from the canonical name only");
 assert.ok(!("country" in payloadMin) && !("city" in payloadMin), "absent optional fields omitted from minimal payload");
 
 // ============================================================
@@ -227,5 +243,10 @@ for (const forbidden of ["/room_types", "/rate_plans", "/webhooks", "/bookings",
   assert.ok(!src.includes(forbidden), `properties client must not reference ${forbidden}`);
 }
 assert.ok(src.includes("/properties"), "properties client targets /properties");
+
+// D80 §1 source guard — the profile's title expression must never read the
+// internal tenants.name label (only the canonical name / explicit override).
+const profileSrc = readFileSync("src/lib/channel/property-profile.ts", "utf8");
+assert.ok(!/title:.*tenant\.name/.test(profileSrc), "resolved title never derives from tenant.name");
 
 console.log("check-channex-properties: all assertions passed ✓");

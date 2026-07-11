@@ -684,6 +684,89 @@ try {
   assert.equal(g2rooms[0].rate_plan_id, A.planId, "local plan attached via in-room title disambiguation");
   ok("in-room title disambiguation attaches the canonical local plan (never across rooms)");
 
+  // ---- 17. OTA number + expected arrival time + notes independence (D80) ----
+  // arrival_hour lands in the DEDICATED expected_arrival_time column; notes
+  // stay verbatim (digits inside notes are NEVER mined as a PIN/arrival time);
+  // GuestHub's own reservation_number stays separate from the OTA code.
+  upstream.revisions.push({
+    id: "rev-arr-1", acked: false,
+    attributes: mkRevision({
+      id: "rev-arr-1", booking_id: "book-arr", unique_id: "BDC-ARR-1",
+      ota_reservation_code: "6784999111",
+      arrival_hour: "14:30",
+      notes: "אורח מגיע ברכב, קוד דלת 1234 נשאר בהערות",
+      customer: {
+        name: "דוד", surname: "גואטה", mail: "d@example.com", phone: "+972520000001",
+        country: "IL", language: "he", address: "David Elazar 10", city: "Haifa", zip: "3508107",
+      },
+      arrival_date: "2027-01-05", departure_date: "2027-01-06",
+      room: { checkin_date: "2027-01-05", checkout_date: "2027-01-06",
+              days: { "2027-01-05": "263.72" } },
+    }),
+  });
+  let s17 = await runInboundPull(sql, A.conn);
+  assert.equal(s17.imported, 1, `first arr import failed: ${JSON.stringify(s17)}`);
+  let arrRes = await bookingRes(A.conn.id, "book-arr");
+  assert.equal(String(arrRes.expected_arrival_time), "14:30:00", "arrival_hour → dedicated expected_arrival_time");
+  assert.equal(arrRes.notes, "אורח מגיע ברכב, קוד דלת 1234 נשאר בהערות", "guest notes verbatim — nothing appended/extracted");
+  assert.equal(arrRes.ota_reservation_code, "6784999111", "OTA reservation number stored");
+  assert.notEqual(arrRes.reservation_number, arrRes.ota_reservation_code, "GuestHub number stays separate from the OTA code");
+  assert.match(arrRes.reservation_number, /^\d+$/, "internal GuestHub number still allocated locally");
+  const [arrGuest] = await sql`
+    SELECT city, address FROM guesthub.guests WHERE id = ${arrRes.primary_guest_id}`;
+  assert.equal(arrGuest.city, "Haifa", "guest city imported");
+  assert.ok(arrGuest.address.includes("David Elazar 10"), "guest address imported");
+  ok("NEW → OTA code stored separately; arrival time in its own field; notes untouched; guest address/city kept");
+
+  // modified revision with a NEW arrival hour updates the same reservation
+  upstream.revisions.push({
+    id: "rev-arr-2", acked: false,
+    attributes: mkRevision({
+      id: "rev-arr-2", status: "modified", booking_id: "book-arr", unique_id: "BDC-ARR-1",
+      ota_reservation_code: "6784999111", arrival_hour: "16:00",
+      notes: "אורח מגיע ברכב, קוד דלת 1234 נשאר בהערות",
+      arrival_date: "2027-01-05", departure_date: "2027-01-06",
+      room: { checkin_date: "2027-01-05", checkout_date: "2027-01-06",
+              days: { "2027-01-05": "263.72" } },
+    }),
+  });
+  const resBefore17 = await resCount(A.tenantId);
+  s17 = await runInboundPull(sql, A.conn);
+  assert.equal(s17.imported, 1);
+  assert.equal(await resCount(A.tenantId), resBefore17, "modification never duplicates the reservation");
+  arrRes = await bookingRes(A.conn.id, "book-arr");
+  assert.equal(String(arrRes.expected_arrival_time), "16:00:00", "modified arrival_hour updates the field");
+  ok("MODIFIED with new arrival_hour → same reservation, arrival time updated");
+
+  // a later revision OMITTING arrival_hour must NOT erase the stored value
+  const noHour = mkRevision({
+    id: "rev-arr-3", status: "modified", booking_id: "book-arr", unique_id: "BDC-ARR-1",
+    ota_reservation_code: "6784999111",
+    notes: "הערה עודכנה — עדיין בלי שעת הגעה",
+    arrival_date: "2027-01-05", departure_date: "2027-01-06",
+    room: { checkin_date: "2027-01-05", checkout_date: "2027-01-06",
+            days: { "2027-01-05": "263.72" } },
+  });
+  delete noHour.arrival_hour;
+  upstream.revisions.push({ id: "rev-arr-3", acked: false, attributes: noHour });
+  s17 = await runInboundPull(sql, A.conn);
+  assert.equal(s17.imported, 1);
+  arrRes = await bookingRes(A.conn.id, "book-arr");
+  assert.equal(String(arrRes.expected_arrival_time), "16:00:00", "omitted arrival_hour never erases the stored value");
+  assert.equal(arrRes.notes, "הערה עודכנה — עדיין בלי שעת הגעה", "notes update independently of arrival time");
+  ok("omitted arrival_hour preserves the stored value; notes stay independent");
+
+  // pure normalization honesty: malformed hour dropped; no PIN is fabricated
+  const { normalizeBookingRevision } = req(join(out, "lib/channel/booking-normalize.js"));
+  const badHour = normalizeBookingRevision(mkRevision({ id: "x", arrival_hour: "25:99" }));
+  assert.equal(badHour.ok, true);
+  assert.equal(badHour.value.arrivalHour, null, "malformed arrival_hour dropped, never guessed");
+  const normed = normalizeBookingRevision(mkRevision({ id: "y", notes: "PIN 9876 in notes" }));
+  assert.ok(!("pin" in normed.value) && !("secret" in normed.value),
+    "no PIN/secret field is fabricated — Channex supplies no dedicated field");
+  assert.equal(normed.value.notes, "PIN 9876 in notes", "digits in notes stay in notes");
+  ok("no dedicated channel PIN field → none invented; malformed hours dropped");
+
   console.log(`\nall ${n} inbound-booking checks passed`);
 } finally {
   try {

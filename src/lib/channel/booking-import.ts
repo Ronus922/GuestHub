@@ -315,21 +315,28 @@ async function upsertChannelGuest(
   customer: NormalizedRevision["customer"],
 ): Promise<string> {
   const fullName = `${customer.firstName} ${customer.lastName}`.trim();
+  // zip has no dedicated guests column — folded into the address line, never invented
+  const address = [customer.address, customer.zip].filter(Boolean).join(", ") || null;
   if (existingGuestId) {
     await tx`
       UPDATE guesthub.guests SET
         first_name = ${customer.firstName}, last_name = ${customer.lastName},
         full_name = ${fullName},
         phone = COALESCE(${customer.phone}, phone),
-        email = COALESCE(${customer.email}, email)
+        email = COALESCE(${customer.email}, email),
+        address = COALESCE(${address}, address),
+        city = COALESCE(${customer.city}, city),
+        country = COALESCE(${customer.country}, country)
       WHERE id = ${existingGuestId} AND tenant_id = ${tenantId}`;
     return existingGuestId;
   }
   const [created] = await tx<{ id: string }[]>`
     INSERT INTO guesthub.guests
-      (tenant_id, first_name, last_name, full_name, phone, email, country, language)
+      (tenant_id, first_name, last_name, full_name, phone, email, country, language,
+       address, city)
     VALUES (${tenantId}, ${customer.firstName}, ${customer.lastName}, ${fullName},
-            ${customer.phone}, ${customer.email}, ${customer.country}, ${customer.language})
+            ${customer.phone}, ${customer.email}, ${customer.country}, ${customer.language},
+            ${address}, ${customer.city})
     RETURNING id`;
   return created.id;
 }
@@ -473,6 +480,7 @@ async function applyLiveRevision(
         adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
         total_price = ${total}, currency = ${norm.currency ?? "ILS"},
         notes = ${norm.notes},
+        expected_arrival_time = COALESCE(${norm.arrivalHour}, expected_arrival_time),
         external_revision_id = ${norm.revisionId},
         external_unique_id = COALESCE(${norm.uniqueId}, external_unique_id),
         ota_reservation_code = COALESCE(${norm.otaReservationCode}, ota_reservation_code),
@@ -494,14 +502,16 @@ async function applyLiveRevision(
       INSERT INTO guesthub.reservations
         (tenant_id, reservation_number, primary_guest_id, source_id, status,
          check_in, check_out, adults, children, infants,
-         total_price, paid_amount, balance, currency, notes, created_by,
+         total_price, paid_amount, balance, currency, notes, expected_arrival_time,
+         created_by,
          channel_connection_id, external_booking_id, external_revision_id,
          external_unique_id, ota_reservation_code, ota_name, external_booked_at,
          workflow_status_id)
       VALUES (${conn.tenant_id}, ${number}, ${guestId}, ${sourceId}, 'confirmed',
               ${agg.checkIn}, ${agg.checkOut},
               ${agg.adults}, ${agg.children}, ${agg.infants},
-              ${total}, 0, ${total}, ${norm.currency ?? "ILS"}, ${norm.notes}, NULL,
+              ${total}, 0, ${total}, ${norm.currency ?? "ILS"}, ${norm.notes},
+              ${norm.arrivalHour}, NULL,
               ${conn.id}, ${norm.bookingId}, ${norm.revisionId},
               ${norm.uniqueId}, ${norm.otaReservationCode}, ${norm.otaName},
               ${norm.insertedAt}, ${wf?.id ?? null})
@@ -550,6 +560,8 @@ async function applyLiveRevision(
       currency: norm.currency,
       payment_collect: norm.paymentCollect,
       payment_type: norm.paymentType,
+      arrival_hour: norm.arrivalHour,
+      ota_commission: norm.otaCommission,
     },
     norm.otaName,
   );

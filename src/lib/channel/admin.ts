@@ -29,6 +29,7 @@ import { buildChannexUpdatePayload, diffChannexUpdate, type ChannexFieldChange }
 import {
   resolveChannexProfile,
   computeReadiness,
+  MISSING_PROPERTY_NAME_MSG,
   buildCreatePropertyPayload,
   sortRoomsForPreview,
   type ChannexProfile,
@@ -1041,11 +1042,18 @@ export async function createChannexPropertyAction(): Promise<Result<{ propertyId
       return { success: false, error: "כבר קיים מיפוי נכס Channex לעסק זה" };
 
     const createBusiness = await getBusinessProfile(actor.tenantId);
+    // A NEW external property is named ONLY from the canonical Business
+    // Profile (propertyName ?? businessName). No tenants.name / tenantName /
+    // slug / hardcoded fallback — both missing blocks creation BEFORE any
+    // Channex request. The existing mapped property is never renamed here.
+    if (!createBusiness?.propertyName && !createBusiness?.businessName)
+      return { success: false, error: MISSING_PROPERTY_NAME_MSG };
     const profile = resolveChannexProfile(
       tctx.identity,
       tctx.overrides,
       createBusiness?.propertyName ?? createBusiness?.businessName,
     );
+    if (!profile.title) return { success: false, error: MISSING_PROPERTY_NAME_MSG };
     if (!computeReadiness(profile).canCreate)
       return { success: false, error: "חסרים שדות חובה ליצירת נכס (שם ומטבע)" };
 
