@@ -71,7 +71,9 @@ function StayCard({
         </div>
         <div className="ch-cell">
           <span className="ch-cl">חדר</span>
-          <span className={`ch-cv ${changed?.room ? "chg" : ""}`}>{roomLabel}</span>
+          <span className={`ch-cv ${changed?.room ? "chg" : ""}`} title={roomLabel}>
+            {roomLabel}
+          </span>
         </div>
       </div>
       {children}
