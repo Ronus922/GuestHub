@@ -96,6 +96,7 @@ const upstream = {
   ackCalls: [],
   feedFail: false,
   ackFail: false,
+  ratePlans: {}, // id -> { title, propertyId, roomTypeId } (verified-adoption source)
 };
 globalThis.fetch = async (url) => {
   const u = new URL(String(url));
@@ -125,6 +126,23 @@ globalThis.fetch = async (url) => {
     const row = upstream.revisions.find((r) => r.id === revMatch[1]);
     if (!row) return json(404, { errors: {} });
     return json(200, { data: { id: row.id, type: "booking_revision", attributes: row.attributes } });
+  }
+  // single rate-plan GET — the verified-adoption lookup (JSON:API relationships)
+  const rpMatch = path.match(/\/rate_plans\/([^/]+)$/);
+  if (rpMatch) {
+    const rp = upstream.ratePlans[decodeURIComponent(rpMatch[1])];
+    if (!rp) return json(404, { errors: {} });
+    return json(200, {
+      data: {
+        id: decodeURIComponent(rpMatch[1]),
+        type: "rate_plan",
+        attributes: { title: rp.title, currency: "GBP" },
+        relationships: {
+          property: { data: { id: rp.propertyId, type: "property" } },
+          room_type: { data: { id: rp.roomTypeId, type: "room_type" } },
+        },
+      },
+    });
   }
   throw new Error(`fake channex: unexpected path ${path}`);
 };
@@ -555,6 +573,116 @@ try {
       GROUP BY channel_connection_id, external_booking_id HAVING COUNT(*) > 1) d`;
   assert.equal(dupCheck.c, 0, "no external booking maps to two reservations");
   ok("repeated worker execution creates no duplicate reservation (DB-unique external identity)");
+
+  // ---- 16. unknown external Rate Plan: quarantine → verified adoption → import ----
+  // (regression for BDC-6784772338: the owner's channel mapping in the Channex
+  //  UI referenced a rate-plan UUID GuestHub never created)
+  const ackCallsBefore = () => upstream.ackCalls.filter((x) => x === "rev-ghost-1").length;
+  upstream.revisions.push({
+    id: "rev-ghost-1", acked: false,
+    attributes: mkRevision({
+      id: "rev-ghost-1", booking_id: "book-ghost", unique_id: "BDC-GHOST-1",
+      ota_reservation_code: "999777",
+      arrival_date: "2026-11-10", departure_date: "2026-11-12",
+      room: { room_type_id: "crt-2", rate_plan_id: "crp-ghost",
+              checkin_date: "2026-11-10", checkout_date: "2026-11-12",
+              days: { "2026-11-10": "130", "2026-11-11": "133.72" } },
+    }),
+  });
+  // (a) plan unknown locally AND upstream GET 404s → quarantined, never acked
+  let s16 = await runInboundPull(sql, A.conn);
+  assert.equal(s16.quarantined, 1);
+  let [ghostRev] = await sql`
+    SELECT import_status, ack_status, mapping_error FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ghost-1'`;
+  assert.equal(ghostRev.import_status, "quarantined");
+  assert.equal(ghostRev.ack_status, "unacknowledged");
+  assert.ok(ghostRev.mapping_error.includes("ללא מיפוי מקומי"), "exact quarantine reason recorded");
+  assert.equal(await bookingRes(A.conn.id, "book-ghost"), null, "nothing imported");
+  assert.equal(ackCallsBefore(), 0, "no ack while quarantined");
+  ok("unknown external rate plan quarantines first (no upstream evidence yet), never acked");
+
+  // (b) upstream serves the plan but under a FOREIGN property → still refused
+  upstream.ratePlans["crp-ghost"] = { title: "תוכנית זרה", propertyId: "prop-B", roomTypeId: "crt-2" };
+  s16 = await runInboundPull(sql, A.conn);
+  assert.equal(s16.quarantined, 1);
+  const aliasForeign = await sql`
+    SELECT * FROM guesthub.channel_inbound_rate_plan_aliases WHERE connection_id = ${A.conn.id}`;
+  assert.equal(aliasForeign.length, 0, "foreign-property plan is never adopted");
+  assert.equal(ackCallsBefore(), 0);
+  ok("ownership check — a rate plan of another property is never adopted");
+
+  // (c) upstream now proves the UUID chain (our property + the booking's room
+  //     type) → adopted as alias, imported to the mapped physical room, acked
+  //     ONLY after the committed import
+  upstream.ratePlans["crp-ghost"] = { title: "עותק ממופה בערוץ", propertyId: "prop-A", roomTypeId: "crt-2" };
+  s16 = await runInboundPull(sql, A.conn);
+  assert.equal(s16.imported, 1);
+  const ghost = await bookingRes(A.conn.id, "book-ghost");
+  assert.ok(ghost, "reservation imported after reconciliation");
+  const ghostRooms = await sql`
+    SELECT room_id, check_in, check_out, rate_plan_id FROM guesthub.reservation_rooms
+    WHERE reservation_id = ${ghost.id}`;
+  assert.equal(ghostRooms.length, 1);
+  assert.equal(ghostRooms[0].room_id, A.room2Id, "allocated to the UUID-proven physical room");
+  assert.equal(d10(ghostRooms[0].check_in), "2026-11-10");
+  assert.equal(d10(ghostRooms[0].check_out), "2026-11-12");
+  assert.equal(ghostRooms[0].rate_plan_id, null, "no local plan claimed without evidence");
+  const [alias] = await sql`
+    SELECT * FROM guesthub.channel_inbound_rate_plan_aliases
+    WHERE connection_id = ${A.conn.id} AND channex_rate_plan_id = 'crp-ghost'`;
+  assert.ok(alias, "alias adopted");
+  assert.equal(alias.room_id, A.room2Id);
+  assert.equal(alias.local_rate_plan_id, null);
+  assert.equal(alias.channex_property_id, "prop-A");
+  assert.equal(alias.channex_room_type_id, "crt-2");
+  [ghostRev] = await sql`
+    SELECT import_status, ack_status FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ghost-1'`;
+  assert.equal(ghostRev.import_status, "imported");
+  assert.equal(ghostRev.ack_status, "acknowledged");
+  assert.equal(ackCallsBefore(), 1, "acked exactly once, only after commit");
+  ok("verified adoption — exact UUID alias imports the booking to the right room and acks after commit");
+
+  // (d) idempotent retry: repeated pulls re-import nothing, adopt nothing new
+  const aliasCount = () =>
+    sql`SELECT COUNT(*)::int AS c FROM guesthub.channel_inbound_rate_plan_aliases
+        WHERE connection_id = ${A.conn.id}`.then((r) => r[0].c);
+  const cBefore = await aliasCount();
+  const resBefore16 = await resCount(A.tenantId);
+  await runInboundPull(sql, A.conn);
+  await runInboundPull(sql, A.conn);
+  assert.equal(await resCount(A.tenantId), resBefore16);
+  assert.equal(await aliasCount(), cBefore);
+  assert.equal(ackCallsBefore(), 1, "no further acks");
+  ok("idempotent retry — repeated pulls create zero duplicate reservations/aliases/acks");
+
+  // (e) title-disambiguated local plan INSIDE a UUID-proven room: when the
+  //     verified plan's title equals exactly one canonical mapping of that
+  //     room, the alias carries its local plan; the reservation records it
+  await sql`
+    UPDATE guesthub.channel_room_rate_mappings
+    SET channex_title = 'תוכנית בדיקה A' WHERE connection_id = ${A.conn.id} AND room_id = ${A.roomId}`;
+  upstream.ratePlans["crp-ghost-2"] = { title: "תוכנית בדיקה A", propertyId: "prop-A", roomTypeId: "crt-1" };
+  upstream.revisions.push({
+    id: "rev-ghost-2", acked: false,
+    attributes: mkRevision({
+      id: "rev-ghost-2", booking_id: "book-ghost-2", unique_id: "BDC-GHOST-2",
+      ota_reservation_code: "999778",
+      arrival_date: "2026-11-20", departure_date: "2026-11-21",
+      room: { room_type_id: "crt-1", rate_plan_id: "crp-ghost-2",
+              checkin_date: "2026-11-20", checkout_date: "2026-11-21",
+              days: { "2026-11-20": "263.72" } },
+    }),
+  });
+  s16 = await runInboundPull(sql, A.conn);
+  assert.equal(s16.imported, 1);
+  const ghost2 = await bookingRes(A.conn.id, "book-ghost-2");
+  const g2rooms = await sql`
+    SELECT room_id, rate_plan_id FROM guesthub.reservation_rooms WHERE reservation_id = ${ghost2.id}`;
+  assert.equal(g2rooms[0].room_id, A.roomId);
+  assert.equal(g2rooms[0].rate_plan_id, A.planId, "local plan attached via in-room title disambiguation");
+  ok("in-room title disambiguation attaches the canonical local plan (never across rooms)");
 
   console.log(`\nall ${n} inbound-booking checks passed`);
 } finally {
