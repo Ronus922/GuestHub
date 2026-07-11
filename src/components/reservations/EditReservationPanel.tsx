@@ -87,6 +87,8 @@ export function EditReservationPanel({
   const [addPay, setAddPay] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
+  // שעת הגעה משוערת — dedicated field (D80), independent of notes; "" = none
+  const [arrivalTime, setArrivalTime] = useState("");
   // new-card entry values travel ONLY through the dedicated guarded save
   // action, then are cleared (see CardFields security note)
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
@@ -160,6 +162,7 @@ export function EditReservationPanel({
       setReplacingCard(false);
       setConfirmDiscard(false);
       setNotes(d.notes ?? "");
+      setArrivalTime(d.expected_arrival_time ?? "");
       snapshotRef.current = editSnapshot(
         {
           firstName: d.guest.first_name,
@@ -192,6 +195,7 @@ export function EditReservationPanel({
         0,
         "",
         d.notes ?? "",
+        d.expected_arrival_time ?? "",
         EMPTY_CARD,
       );
     });
@@ -211,7 +215,7 @@ export function EditReservationPanel({
 
   const dirty =
     detail !== null &&
-    editSnapshot(guest, sourceId, status, stays, discount, addPay, method, notes, cc) !==
+    editSnapshot(guest, sourceId, status, stays, discount, addPay, method, notes, arrivalTime, cc) !==
       snapshotRef.current;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -290,6 +294,7 @@ export function EditReservationPanel({
           guestPhone: s.guestPhone || undefined,
         })),
         notes: notes.trim() || undefined,
+        expectedArrivalTime: arrivalTime || null,
         discountAmount: discount,
         additionalPayment: addPay || undefined,
         paymentMethod: method || undefined,
@@ -812,6 +817,25 @@ export function EditReservationPanel({
                     גבייה ותשלום — הזמנת ערוץ
                   </div>
                   <div className="bw-grid2">
+                    {/* both numbers, separately (D80 §2): GuestHub's internal
+                        number is never replaced by the OTA's */}
+                    <Field label="מספר הזמנה ב-GuestHub">
+                      <b className="text-sm text-ink" dir="ltr" style={{ textAlign: "right" }}>
+                        #{detail.reservation_number}
+                      </b>
+                    </Field>
+                    <Field label={otaCodeLabel(detail.ota.otaName)}>
+                      <b className="text-sm text-ink" dir="ltr" style={{ textAlign: "right" }}>
+                        {detail.ota.otaReservationCode ?? "—"}
+                      </b>
+                    </Field>
+                    {/* honest PIN state (D80 §4): Channex supplies no dedicated
+                        Booking.com PIN/secret field — never mined from notes */}
+                    <Field label="קוד סודי מהערוץ">
+                      <b className="text-sm" style={{ color: "#6B7385" }}>
+                        לא התקבל קוד סודי מהערוץ
+                      </b>
+                    </Field>
                     <Field label="אמצעי תשלום">
                       <b className="text-sm text-ink">
                         {detail.collection.paymentType
@@ -851,6 +875,21 @@ export function EditReservationPanel({
                             </b>
                           </Field>
                         )}
+                        <Field label="סוג כרטיס">
+                          <b className="text-sm text-ink">
+                            {detail.collection.guarantee.isVirtual ? "כרטיס וירטואלי" : "כרטיס רגיל"}
+                          </b>
+                        </Field>
+                        {detail.collection.guarantee.isVirtual &&
+                          (detail.collection.guarantee.availableFrom ||
+                            detail.collection.guarantee.availableUntil) && (
+                            <Field label="חלון חיוב (כרטיס וירטואלי)">
+                              <b className="text-sm text-ink" dir="ltr" style={{ textAlign: "right" }}>
+                                {detail.collection.guarantee.availableFrom ?? "—"} →{" "}
+                                {detail.collection.guarantee.availableUntil ?? "—"}
+                              </b>
+                            </Field>
+                          )}
                       </>
                     )}
                     <Field label="מצב">
@@ -937,11 +976,24 @@ export function EditReservationPanel({
               )}
             </section>
 
-            {/* notes */}
+            {/* notes + expected arrival time — separate fields; the arrival
+                time is never folded into the notes text (D80 §6) */}
             <section className="bw-card">
               <CardTitle icon="documents" title="הערות להזמנה" />
+              <div className="bw-grid2 mb-4">
+                <Field label="שעת הגעה משוערת">
+                  <input
+                    type="time"
+                    className="bw-fld"
+                    dir="ltr"
+                    value={arrivalTime}
+                    disabled={!canEditNow}
+                    onChange={(e) => setArrivalTime(e.target.value)}
+                  />
+                </Field>
+              </div>
               <textarea className="bw-fld" value={notes} disabled={!canEditNow}
-                placeholder="בקשות מיוחדות, שעת הגעה…" onChange={(e) => setNotes(e.target.value)} />
+                placeholder="בקשות מיוחדות…" onChange={(e) => setNotes(e.target.value)} />
             </section>
           </div>
 
@@ -1083,6 +1135,15 @@ export function EditReservationPanel({
   );
 }
 
+// OTA-specific label for the channel's own reservation number (D80 §2)
+function otaCodeLabel(otaName: string | null): string {
+  const n = (otaName ?? "").toLowerCase();
+  if (n.includes("booking")) return "מספר הזמנה ב-Booking.com";
+  if (n.includes("airbnb")) return "מספר הזמנה ב-Airbnb";
+  if (n.includes("expedia")) return "מספר הזמנה ב-Expedia";
+  return "מספר הזמנה בערוץ (OTA)";
+}
+
 function fmtDate(iso: string): string {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 }
@@ -1142,10 +1203,11 @@ function editSnapshot(
   addPay: number,
   method: string,
   notes: string,
+  arrivalTime: string,
   cc: CardDraft,
 ): string {
   return JSON.stringify(
-    [guest, sourceId, status, stays, discount, addPay, method, notes, cc],
+    [guest, sourceId, status, stays, discount, addPay, method, notes, arrivalTime, cc],
     (k, v) => (k === "key" ? undefined : v),
   );
 }

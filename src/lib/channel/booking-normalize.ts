@@ -41,7 +41,11 @@ export type NormalizedRevision = {
   amount: number | null;
   arrivalDate: string;
   departureDate: string;
+  /** guest-stated expected arrival time "HH:MM" (Channex arrival_hour) — null when not supplied */
+  arrivalHour: string | null;
   insertedAt: string | null; // channel timestamp, ISO-ish
+  /** channel-reported OTA commission for the booking, where supplied */
+  otaCommission: number | null;
   customer: {
     firstName: string;
     lastName: string;
@@ -49,6 +53,9 @@ export type NormalizedRevision = {
     phone: string | null;
     country: string | null;
     language: string | null;
+    address: string | null;
+    city: string | null;
+    zip: string | null;
   };
   occupancy: { adults: number; children: number; infants: number };
   notes: string | null;
@@ -82,6 +89,13 @@ const count = (v: unknown): number => {
 const dateOnly = (v: unknown): string | null => {
   const s = str(v);
   return s && DATE_RE.test(s) ? s : null;
+};
+// arrival_hour arrives as "13:00" (occasionally with seconds) — anything else
+// is dropped, never guessed and never appended to notes.
+const hourOnly = (v: unknown): string | null => {
+  const s = str(v);
+  const m = s ? /^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/.exec(s) : null;
+  return m ? `${m[1]}:${m[2]}` : null;
 };
 
 function normalizeRoom(raw: unknown): NormalizedRoom | { error: string } {
@@ -161,7 +175,9 @@ export function normalizeBookingRevision(payload: unknown): NormalizeResult {
       amount: num(p.amount),
       arrivalDate: arrival,
       departureDate: departure,
+      arrivalHour: hourOnly(p.arrival_hour),
       insertedAt: str(p.inserted_at),
+      otaCommission: num(p.ota_commission),
       customer: {
         firstName: str(customer.name) ?? "אורח",
         lastName: str(customer.surname) ?? "",
@@ -169,6 +185,9 @@ export function normalizeBookingRevision(payload: unknown): NormalizeResult {
         phone: str(customer.phone),
         country: str(customer.country),
         language: str(customer.language),
+        address: str(customer.address),
+        city: str(customer.city),
+        zip: str(customer.zip),
       },
       occupancy: {
         adults: count(occ.adults),

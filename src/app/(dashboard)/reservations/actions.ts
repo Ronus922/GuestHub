@@ -237,12 +237,13 @@ export async function createReservationAction(
           (tenant_id, reservation_number, primary_guest_id, source_id, status,
            check_in, check_out, adults, children, infants,
            discount_amount, total_price, paid_amount, balance, currency,
-           notes, created_by, workflow_status_id)
+           notes, expected_arrival_time, created_by, workflow_status_id)
         VALUES (${actor.tenantId}, ${number}, ${guestId}, ${input.sourceId ?? null},
                 ${input.status}, ${agg.checkIn}, ${agg.checkOut},
                 ${agg.adults}, ${agg.children}, ${agg.infants},
                 ${discount}, ${total}, 0, ${total}, 'ILS',
-                ${input.notes || null}, ${actor.userId}, ${workflowStatusId})
+                ${input.notes || null}, ${input.expectedArrivalTime ?? null},
+                ${actor.userId}, ${workflowStatusId})
         RETURNING id`;
 
       for (const s of priced) {
@@ -511,7 +512,10 @@ export async function updateReservationAction(
           adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
           discount_amount = ${discount},
           total_price = ${total},
-          notes = ${input.notes || null}
+          notes = ${input.notes || null},
+          expected_arrival_time = CASE
+            WHEN ${input.expectedArrivalTime === undefined} THEN expected_arrival_time
+            ELSE ${input.expectedArrivalTime ?? null}::time END
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
 
       if (addPay > 0) {
@@ -1179,6 +1183,8 @@ export type ReservationDetail = {
   } | null;
   source_id: string | null;
   notes: string | null;
+  /** שעת הגעה משוערת "HH:MM" — dedicated field, independent of notes (D80) */
+  expected_arrival_time: string | null;
   discount_amount: number;
   extra_charges: number;
   total_price: number;
@@ -1244,7 +1250,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
     const [res] = await sql<
       {
         id: string; reservation_number: string; status: string; source_id: string | null;
-        notes: string | null; discount_amount: number; extra_charges: number;
+        notes: string | null; expected_arrival_time: string | null;
+        discount_amount: number; extra_charges: number;
         total_price: number; paid_amount: number; balance: number;
         created_at: string; updated_at: string;
         guest_id: string | null; g_first: string | null; g_last: string | null; g_full: string | null;
@@ -1266,6 +1273,7 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
       }[]
     >`
       SELECT res.id, res.reservation_number, res.status, res.source_id, res.notes,
+             to_char(res.expected_arrival_time, 'HH24:MI') AS expected_arrival_time,
              res.workflow_status_id, res.channel_connection_id,
              res.ota_name, res.ota_reservation_code,
              res.external_unique_id, res.external_booking_id,
@@ -1392,6 +1400,7 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
             : null,
         source_id: res.source_id,
         notes: res.notes,
+        expected_arrival_time: res.expected_arrival_time,
         discount_amount: res.discount_amount,
         extra_charges: res.extra_charges,
         total_price: res.total_price,

@@ -65,11 +65,12 @@ function formSnapshot(
   paid: number,
   method: string,
   notes: string,
+  arrivalTime: string,
   asDraft: boolean,
   cc: CardDraft,
 ): string {
   return JSON.stringify(
-    [guest, sourceId, stays, discount, paid, method, notes, asDraft, cc],
+    [guest, sourceId, stays, discount, paid, method, notes, arrivalTime, asDraft, cc],
     (k, v) => (k === "key" ? undefined : v),
   );
 }
@@ -107,6 +108,8 @@ export function BookingPanel({
   const [paid, setPaid] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
+  // שעת הגעה משוערת — dedicated field (D80), never folded into notes
+  const [arrivalTime, setArrivalTime] = useState("");
   // "ממתין לאישור" chip → the reservation is created as a DRAFT (a status
   // the create action already supports); everything else creates confirmed
   const [asDraft, setAsDraft] = useState(false);
@@ -157,12 +160,12 @@ export function BookingPanel({
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
-    snapshotRef.current = formSnapshot(EMPTY_GUEST, initialSource, initialStays, 0, 0, "", "", false, EMPTY_CARD);
+    snapshotRef.current = formSnapshot(EMPTY_GUEST, initialSource, initialStays, 0, 0, "", "", "", false, EMPTY_CARD);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const dirty =
-    formSnapshot(guest, sourceId, stays, discount, paid, method, notes, asDraft, cc) !==
+    formSnapshot(guest, sourceId, stays, discount, paid, method, notes, arrivalTime, asDraft, cc) !==
     snapshotRef.current;
 
   // Escape / X / overlay click route here — unsaved changes get an explicit
@@ -257,6 +260,7 @@ export function BookingPanel({
           guestPhone: s.guestPhone || undefined,
         })),
         notes: notes.trim() || undefined,
+        expectedArrivalTime: arrivalTime || null,
         discountAmount: discount || undefined,
         paidAmount: paid || undefined,
         paymentMethod: method || undefined,
@@ -830,11 +834,21 @@ export function BookingPanel({
                   );
                 })}
               </div>
+              <div className="bw-fg mt-4">
+                <span className="bw-lbl">שעת הגעה משוערת</span>
+                <input
+                  type="time"
+                  className="bw-fld"
+                  dir="ltr"
+                  value={arrivalTime}
+                  onChange={(e) => setArrivalTime(e.target.value)}
+                />
+              </div>
               <div className="bw-fg full mt-4">
                 <span className="bw-lbl">הערות להזמנה</span>
                 <textarea
                   className="bw-fld"
-                  placeholder="בקשות מיוחדות, שעת הגעה…"
+                  placeholder="בקשות מיוחדות…"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                 />
