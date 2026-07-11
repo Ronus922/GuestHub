@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
-import { readableTextColor } from "@/lib/colors";
+import { statusTintPalette } from "@/lib/colors";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type {
@@ -490,12 +490,13 @@ function ReservationRow({
             </small>
           </span>
         ) : row.workflow_label ? (
+          /* D77.1 — the same tint family the calendar pill wears */
           <span
             className="rl-wf"
-            style={{
-              background: row.workflow_color ?? "#64748B",
-              color: readableTextColor(row.workflow_color ?? "#64748B"),
-            }}
+            style={(() => {
+              const t = statusTintPalette(row.workflow_color);
+              return { background: t.bg, borderColor: t.bd, color: t.tx };
+            })()}
           >
             {row.workflow_label}
           </span>

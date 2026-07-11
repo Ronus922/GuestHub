@@ -19,6 +19,7 @@ import {
   type PaymentState,
   type RateRow,
 } from "@/lib/inventory-rules";
+import { statusTintPalette } from "@/lib/colors";
 import {
   barGeometry,
   canDragCard,
@@ -70,8 +71,19 @@ export const PAY_STYLE: Record<PaymentState, { bg: string; bd: string; tx: strin
 // Departed stays use the reference's neutral gray family (רון פרידמן card).
 const PAST_STYLE = { bg: "#EAEEF4", bd: "#AEBACB", tx: "#3C4A5E" };
 
-export function stayPalette(stay: Pick<CalendarStay, "status" | "payment">) {
-  return stay.status === "checked_out" ? PAST_STYLE : PAY_STYLE[stay.payment];
+// D77.1 — the WHOLE pill wears the tenant's workflow-status color family
+// (soft tint bg, the color as border, readable derived text), exactly like
+// the reference pill families but for ANY tenant-configured hex. Departed
+// stays keep the canonical past-gray; stays without a workflow status fall
+// back to the payment palette. Hover/selected/drag reuse this same palette
+// (shadow/opacity-only CSS states), so the family survives every state.
+export function stayPalette(stay: Pick<CalendarStay, "status" | "payment" | "workflow_color">) {
+  if (stay.status === "checked_out") return PAST_STYLE;
+  if (stay.workflow_color) {
+    const t = statusTintPalette(stay.workflow_color);
+    return { bg: t.bg, bd: t.bd, tx: t.tx };
+  }
+  return PAY_STYLE[stay.payment];
 }
 
 type ContextMenu = { x: number; y: number; roomId: string; date: DateOnly };
@@ -1416,16 +1428,19 @@ const StayBar = memo(function StayBar({
       }}
     >
       {stay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
-      {/* workflow-status tag (D77): color comes from the tenant DEFINITION via
-          the read model — never a hardcoded status→color switch */}
-      {stay.workflow_color && (
-        <span
-          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/70"
-          style={{ background: stay.workflow_color }}
-          title={stay.workflow_label ?? undefined}
-          aria-label={stay.workflow_label ? `סטטוס: ${stay.workflow_label}` : undefined}
-        />
-      )}
+      {/* payment stays a compact indicator (D77.1) — it must never override
+          the workflow color that now paints the whole pill */}
+      {stay.status !== "checked_out" &&
+        (stay.payment === "unpaid" || stay.payment === "partial") && (
+          <span
+            className="cb-pay-ind"
+            style={{ color: PAY_STYLE[stay.payment].tx }}
+            title={stay.payment === "unpaid" ? "לא שולם" : "שולם חלקית"}
+            aria-label={stay.payment === "unpaid" ? "לא שולם" : "שולם חלקית"}
+          >
+            ₪
+          </span>
+        )}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={11} className="shrink-0 opacity-70" />}
       <span className="cb-bn">

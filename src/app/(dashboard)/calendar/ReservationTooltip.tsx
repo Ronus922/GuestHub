@@ -4,7 +4,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
 import { formatBalance } from "@/lib/inventory-rules";
-import { stayPalette } from "./CalendarGrid";
+import { statusTintPalette } from "@/lib/colors";
+import { PAY_STYLE } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
 // Reservation HOVER tooltip (reference rooms-calendar .pop / Tooltip.png) —
@@ -67,7 +68,9 @@ export function ReservationTooltip({
   if (!target) return null;
 
   const { stay, room } = target;
-  const pal = stayPalette(stay);
+  // the payment badge keeps PAYMENT colors (D77.1): the pill now wears the
+  // workflow family, and neither domain may repaint the other
+  const pal = PAY_STYLE[stay.payment];
   const nights = nightsBetween(stay.check_in, stay.check_out);
   const initials = stay.guest_name
     .split(/\s+/)
@@ -169,16 +172,25 @@ export function ReservationTooltip({
         )}
         {stay.workflow_label && stay.workflow_color && (
           <p className="cb-pl">
-            <span
-              className="mx-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ background: stay.workflow_color }}
-              aria-hidden
-            />
-            <span>סטטוס: {stay.workflow_label}</span>
+            <span>סטטוס:</span>
+            {/* full tinted chip (D77.1) — the same family the pill wears */}
+            <WorkflowChip color={stay.workflow_color} label={stay.workflow_label} />
           </p>
         )}
       </div>
       <p className="cb-pop-hint">לחצו על ההזמנה לעריכה · גררו להזזה</p>
     </div>
+  );
+}
+
+function WorkflowChip({ color, label }: { color: string; label: string }) {
+  const t = statusTintPalette(color);
+  return (
+    <span
+      className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold"
+      style={{ background: t.bg, borderColor: t.bd, color: t.tx }}
+    >
+      {label}
+    </span>
   );
 }
