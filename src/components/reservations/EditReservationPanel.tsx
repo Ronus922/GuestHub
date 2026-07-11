@@ -8,6 +8,7 @@ import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, formatBalance } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
+import { statusTintPalette } from "@/lib/colors";
 import {
   COLLECTION_LABEL,
   COLLECT_OWNER_LABEL,
@@ -613,33 +614,34 @@ export function EditReservationPanel({
                 </Field>
                 {workflowStatuses.length > 0 && (
                   <Field label="סטטוס טיפול">
-                    {/* immediate status-only save — never revalidates the stay (§11) */}
-                    <div className="bw-fld-wrap">
-                      <span
-                        className="bw-fi"
-                        style={{
-                          width: 10,
-                          height: 10,
-                          borderRadius: 999,
-                          background:
-                            workflowStatuses.find((w) => w.id === workflowStatusId)?.color ??
-                            "#9AA1B4",
-                        }}
-                      />
-                      <select
-                        className="bw-fld ic"
-                        value={workflowStatusId}
-                        disabled={!canEdit || workflowBusy}
-                        onChange={(e) => applyWorkflowStatus(e.target.value)}
-                      >
-                        {!workflowStatusId && <option value="">—</option>}
-                        {workflowStatuses.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {/* immediate status-only save — never revalidates the stay (§11).
+                        D77.1: the select itself wears the status color family
+                        (tint bg / color border / readable text) — same as the
+                        calendar pill; no tiny dot. */}
+                    <select
+                      className="bw-fld"
+                      style={(() => {
+                        const t = statusTintPalette(
+                          workflowStatuses.find((w) => w.id === workflowStatusId)?.color,
+                        );
+                        return {
+                          background: t.bg,
+                          borderColor: t.bd,
+                          color: t.tx,
+                          fontWeight: 700,
+                        };
+                      })()}
+                      value={workflowStatusId}
+                      disabled={!canEdit || workflowBusy}
+                      onChange={(e) => applyWorkflowStatus(e.target.value)}
+                    >
+                      {!workflowStatusId && <option value="">—</option>}
+                      {workflowStatuses.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.label}
+                        </option>
+                      ))}
+                    </select>
                   </Field>
                 )}
               </div>

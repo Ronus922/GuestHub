@@ -30,3 +30,42 @@ export const STATUS_PALETTE = [
   "#475569", // dark slate
   "#6B7385", // gray
 ] as const;
+
+// ---- status tint family (D77.1) ----
+// A tenant-configured status color drives a WHOLE pill: soft tinted
+// background, the color itself as border, and a text shade darkened until it
+// reads on the tint — matching the reference pill families
+// (ref/screens/GuesthubCalandr.png) for ANY hex the tenant picks.
+
+export type TintPalette = { bg: string; bd: string; tx: string };
+
+const NEUTRAL_TINT: TintPalette = { bg: "#EEF1F6", bd: "#9AA1B4", tx: "#1B2233" };
+
+export function statusTintPalette(hex: string | null | undefined): TintPalette {
+  if (!hex || !HEX_COLOR_RE.test(hex)) return NEUTRAL_TINT;
+  const ch = (i: number) => parseInt(hex.slice(i, i + 2), 16);
+  const toHex = (r: number, g: number, b: number) =>
+    "#" +
+    [r, g, b]
+      .map((v) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, "0"))
+      .join("")
+      .toUpperCase();
+  const srgb = (v: number) => {
+    const x = v / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  };
+  const luminance = (r: number, g: number, b: number) =>
+    0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);
+
+  const [r0, g0, b0] = [ch(1), ch(3), ch(5)];
+  // background: 90% toward white — the reference tint depth
+  const bg = toHex(r0 + (255 - r0) * 0.9, g0 + (255 - g0) * 0.9, b0 + (255 - b0) * 0.9);
+  // text: darken multiplicatively until deep enough to read on the tint
+  let [r, g, b] = [r0, g0, b0];
+  for (let i = 0; i < 6 && luminance(r, g, b) > 0.18; i++) {
+    r *= 0.82;
+    g *= 0.82;
+    b *= 0.82;
+  }
+  return { bg, bd: hex.toUpperCase(), tx: toHex(r, g, b) };
+}
