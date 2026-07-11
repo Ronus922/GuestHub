@@ -5,6 +5,7 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit } from "@/lib/audit";
 import { retryExternalChangeEmail } from "./external-changes";
+import { approveExternalChange, rejectExternalChange } from "./booking-import";
 
 // ============================================================
 // External change notifications — server actions for /channels (D82).
@@ -47,7 +48,8 @@ export type ExternalChangeView = {
   oldCheckOut: string;
   newCheckIn: string;
   newCheckOut: string;
-  applyStatus: "applied" | "conflict";
+  nightsDiff: number;
+  applyStatus: "applied" | "conflict" | "pending_approval" | "rejected" | "superseded";
   conflictDetail: string | null;
   status: "pending" | "reconciled";
   emailStatus: "pending" | "sending" | "sent" | "failed" | "skipped";
@@ -73,7 +75,7 @@ type ChangeRow = {
   old_check_out: string;
   new_check_in: string;
   new_check_out: string;
-  apply_status: "applied" | "conflict";
+  apply_status: "applied" | "conflict" | "pending_approval" | "rejected" | "superseded";
   conflict_detail: string | null;
   status: "pending" | "reconciled";
   email_status: "pending" | "sending" | "sent" | "failed" | "skipped";
@@ -81,6 +83,9 @@ type ChangeRow = {
   email_sent_at: Date | null;
   created_at: Date;
 };
+
+const MS_PER_NIGHT = 24 * 60 * 60 * 1000;
+const nightsOf = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / MS_PER_NIGHT);
 
 function toView(r: ChangeRow): ExternalChangeView {
   return {
@@ -93,6 +98,7 @@ function toView(r: ChangeRow): ExternalChangeView {
     oldCheckOut: r.old_check_out,
     newCheckIn: r.new_check_in,
     newCheckOut: r.new_check_out,
+    nightsDiff: nightsOf(r.new_check_in, r.new_check_out) - nightsOf(r.old_check_in, r.old_check_out),
     applyStatus: r.apply_status,
     conflictDetail: r.conflict_detail,
     status: r.status,
@@ -137,6 +143,48 @@ export async function getExternalChangesAction(): Promise<Result<ExternalChanges
         opsRecipient: tenant?.recipient ?? null,
       },
     };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// APPROVE a held external date change (037): applies the revision atomically
+// server-side (availability re-validated, own rows excluded); on conflict the
+// transaction aborts and the request stays pending. Calendar refreshes via the
+// committed NOTIFY. Never messages the OTA.
+export async function approveExternalChangeAction(input: { id: string }): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    const result = await approveExternalChange(sql, actor.tenantId, input.id, actor.userId);
+    if (!result.ok) return { success: false, error: result.error };
+    await writeAudit(actor, {
+      entityType: "channel_external_change",
+      entityId: input.id,
+      action: "external_change_approve",
+      after: { apply_status: "applied", reservation_id: result.reservationId },
+    });
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// REJECT a held external date change: the local dates stay; the exact revision
+// is marked rejected (terminal — duplicate delivery can never recreate it).
+// This is a LOCAL decision only: nothing is sent to the OTA, and the channel
+// still regards its own modification as effective.
+export async function rejectExternalChangeAction(input: { id: string }): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    const result = await rejectExternalChange(sql, actor.tenantId, input.id, actor.userId);
+    if (!result.ok) return { success: false, error: result.error };
+    await writeAudit(actor, {
+      entityType: "channel_external_change",
+      entityId: input.id,
+      action: "external_change_reject",
+      after: { apply_status: "rejected", reservation_id: result.reservationId },
+    });
+    return { success: true };
   } catch (e) {
     return failFrom(e);
   }

@@ -32,7 +32,7 @@ export type ExternalDateChange = {
   newCheckIn: string;
   newCheckOut: string;
   roomLabels: string[];
-  applyStatus: "applied" | "conflict";
+  applyStatus: "applied" | "conflict" | "pending_approval";
   conflictDetail?: string | null;
 };
 
@@ -83,7 +83,7 @@ type PendingEmailRow = {
   new_check_in: string;
   new_check_out: string;
   room_labels: string[];
-  apply_status: "applied" | "conflict";
+  apply_status: "applied" | "conflict" | "pending_approval";
   conflict_detail: string | null;
   created_at: Date;
 };
@@ -109,7 +109,9 @@ function emailBody(row: PendingEmailRow, guestName: string | null): string {
   const applied =
     row.apply_status === "applied"
       ? "השינוי הוחל בלוח השנה — התאריכים החדשים כבר תופסים את החדר."
-      : `השינוי לא הוחל — התנגשות זמינות: ${row.conflict_detail ?? "התנגשות"}. הלוח עדיין מציג את התאריכים הקודמים.`;
+      : row.apply_status === "pending_approval"
+        ? "השינוי ממתין לאישורכם במסך הערוצים — הלוח ממשיך להציג את התאריכים הקודמים עד להחלטה."
+        : `השינוי לא הוחל — התנגשות זמינות: ${row.conflict_detail ?? "התנגשות"}. הלוח עדיין מציג את התאריכים הקודמים.`;
   const nightsDiff = nightsOf(row.new_check_in, row.new_check_out) - nightsOf(row.old_check_in, row.old_check_out);
   const nightsLine =
     nightsDiff === 0

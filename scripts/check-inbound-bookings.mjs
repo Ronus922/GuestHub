@@ -85,7 +85,10 @@ Module._resolveFilename = function (request, ...rest) {
 
 const { sql } = req(join(out, "lib/db.js"));
 const { encryptSecret } = req(join(out, "lib/channel/crypto.js"));
-const { runInboundPull, importRevisionRow, loadInboundConnections } = req(join(out, "lib/channel/booking-import.js"));
+const {
+  runInboundPull, importRevisionRow, loadInboundConnections,
+  approveExternalChange, rejectExternalChange,
+} = req(join(out, "lib/channel/booking-import.js"));
 const { persistBookingRevision, markRevisionAcknowledged } = req(join(out, "lib/channel/revisions.js"));
 const { decryptPan } = req(join(out, "lib/card-vault.js"));
 const workerMod = req(join(out, "lib/channel/worker.js"));
@@ -251,6 +254,15 @@ const bookingRes = (connId, bookingId) =>
       WHERE channel_connection_id = ${connId} AND external_booking_id = ${bookingId}`.then((r) => r[0] ?? null);
 const availability = (T, roomId, from, to) =>
   sql`SELECT * FROM guesthub.check_room_availability(${T}, ARRAY[${roomId}]::uuid[], ${from}, ${to})`;
+// the pending review row for a held external change (037)
+const reviewFor = (connId, revId) =>
+  sql`SELECT * FROM guesthub.channel_external_changes
+      WHERE connection_id = ${connId} AND provider_revision_id = ${revId}`.then((r) => r[0] ?? null);
+const approveRev = async (T, connId, revId) => {
+  const review = await reviewFor(connId, revId);
+  assert.ok(review, `no review row for ${revId}`);
+  return approveExternalChange(sql, T, review.id, null);
+};
 
 let A, B;
 try {
@@ -452,8 +464,30 @@ try {
     room: { room_type_id: "crt-2", rate_plan_id: null, checkin_date: "2026-08-12", checkout_date: "2026-08-14", days: { "2026-08-12": "200", "2026-08-13": "200" }, amount: "400.00", occupancy: { adults: 3, children: 1, infants: 0 } },
   }) });
   s = await runInboundPull(sql, A.conn);
-  assert.equal(s.imported, 1);
-  const modified = await bookingRes(A.conn.id, "book-1");
+  assert.equal(s.held, 1, `date/room modification must be HELD for approval: ${JSON.stringify(s)}`);
+  // BEFORE approval: nothing applied — reservation, rooms and calendar keep the old stay
+  let modified = await bookingRes(A.conn.id, "book-1");
+  assert.equal(d10(modified.check_in), "2026-08-10", "calendar keeps the old dates before approval");
+  assert.equal(d10(modified.check_out), "2026-08-11");
+  assert.equal(Number(modified.total_price), 263.72, "amount untouched before approval");
+  const stillOld = await availability(A.tenantId, A.roomId, "2026-08-10", "2026-08-11");
+  assert.equal(stillOld.length, 1, "old range still occupied before approval");
+  const modReview = await reviewFor(A.conn.id, "rev-mod-1");
+  assert.ok(modReview, "one pending review created");
+  assert.equal(modReview.apply_status, "pending_approval");
+  assert.equal(d10(modReview.old_check_in), "2026-08-10");
+  assert.equal(d10(modReview.new_check_in), "2026-08-12");
+  assert.equal(d10(modReview.new_check_out), "2026-08-14");
+  // the held revision is durably ours (revision + review) — acked upstream
+  assert.ok(upstream.ackCalls.includes("rev-mod-1"), "held revision acked after commit");
+  const [heldRev] = await sql`
+    SELECT import_status FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mod-1'`;
+  assert.equal(heldRev.import_status, "awaiting_approval");
+  // APPROVE → the whole revision applies atomically
+  const modDecision = await approveRev(A.tenantId, A.conn.id, "rev-mod-1");
+  assert.equal(modDecision.ok, true, `approve failed: ${JSON.stringify(modDecision)}`);
+  modified = await bookingRes(A.conn.id, "book-1");
   assert.equal(modified.id, created.id, "same reservation updated — never a second one");
   assert.equal(d10(modified.check_in), "2026-08-12");
   assert.equal(d10(modified.check_out), "2026-08-14");
@@ -465,12 +499,16 @@ try {
   assert.equal(rrMod.length, 1);
   assert.equal(rrMod[0].room_id, A.room2Id, "moved to the newly mapped physical room");
   const freed = await availability(A.tenantId, A.roomId, "2026-08-10", "2026-08-11");
-  assert.equal(freed.length, 0, "old room/dates released");
+  assert.equal(freed.length, 0, "old room/dates released after approval");
   const consumed = await availability(A.tenantId, A.room2Id, "2026-08-12", "2026-08-14");
-  assert.equal(consumed.length, 1, "new room/dates consumed");
+  assert.equal(consumed.length, 1, "new room/dates consumed after approval");
+  const [modReviewAfter] = await sql`
+    SELECT apply_status, decided_at FROM guesthub.channel_external_changes WHERE id = ${modReview.id}`;
+  assert.equal(modReviewAfter.apply_status, "applied");
+  assert.ok(modReviewAfter.decided_at, "decision timestamp recorded");
   // book-1 + book-2 + local L-9001 + rescued book-4 — and NOT a second book-1
   assert.equal(await resCount(A.tenantId), 4);
-  ok("MODIFIED → same reservation; room/dates/occupancy/amount updated; old stay released, new consumed");
+  ok("MODIFIED (dates+room) → HELD pending review, old stay untouched; APPROVAL applies atomically, old released, new consumed");
 
   // ---- 10. CANCELLED cancels the SAME reservation and releases the room ----
   upstream.revisions.push({ id: "rev-cancel-1", acked: false, attributes: mkRevision({
@@ -845,71 +883,186 @@ try {
 
   upstream.revisions.push({ id: "rev-ec-2", acked: false, attributes: mkRevision({
     id: "rev-ec-2", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
-    ota_reservation_code: "777000111",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T10:00:00",
     arrival_date: "2027-03-15", departure_date: "2027-03-18", amount: "450",
     room: { checkin_date: "2027-03-15", checkout_date: "2027-03-18", days: {}, amount: "450" },
   }) });
   sEC = await runInboundPull(sql, A.conn);
-  assert.equal(sEC.imported, 1);
-  const ecRes = await bookingRes(A.conn.id, "book-ec");
-  assert.equal(d10(ecRes.check_in), "2027-03-15", "reservation moved to the OTA's new dates");
-  assert.equal(d10(ecRes.check_out), "2027-03-18");
-  const ecRR = await sql`
+  assert.equal(sEC.held, 1, `both-dates modification must be HELD: ${JSON.stringify(sEC)}`);
+  // BEFORE approval: reservation, rooms and calendar all keep the old stay
+  let ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecRes.check_in), "2027-03-10", "reservation keeps old dates before approval");
+  assert.equal(d10(ecRes.check_out), "2027-03-12");
+  let ecRR = await sql`
     SELECT check_in, check_out FROM guesthub.reservation_rooms WHERE reservation_id = ${ecRes.id}`;
-  assert.equal(ecRR.length, 1);
-  assert.equal(d10(ecRR[0].check_in), "2027-03-15", "reservation_rooms moved atomically with the reservation");
-  assert.equal(d10(ecRR[0].check_out), "2027-03-18");
-  const [ecRow] = await sql`
-    SELECT * FROM guesthub.channel_external_changes
-    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-2'`;
-  assert.ok(ecRow, "external date change recorded");
-  assert.equal(ecRow.apply_status, "applied");
-  assert.equal(ecRow.status, "pending", "unresolved until an operator reconciles");
+  assert.equal(d10(ecRR[0].check_in), "2027-03-10", "reservation_rooms keep old dates before approval");
+  assert.equal((await availability(A.tenantId, A.roomId, "2027-03-10", "2027-03-12")).length, 1,
+    "calendar still occupies the OLD range before approval");
+  assert.equal((await availability(A.tenantId, A.roomId, "2027-03-15", "2027-03-18")).length, 0,
+    "proposed range NOT occupied before approval");
+  const ecRow = await reviewFor(A.conn.id, "rev-ec-2");
+  assert.ok(ecRow, "ONE pending review created");
+  assert.equal(ecRow.apply_status, "pending_approval");
+  assert.equal(ecRow.status, "pending", "visible after refresh — persisted, not client state");
   assert.equal(d10(ecRow.old_check_in), "2027-03-10");
   assert.equal(d10(ecRow.old_check_out), "2027-03-12");
   assert.equal(d10(ecRow.new_check_in), "2027-03-15");
   assert.equal(d10(ecRow.new_check_out), "2027-03-18");
   assert.equal(ecRow.ota_reservation_code, "777000111");
-  assert.ok(ecRow.reservation_number, "GuestHub reservation number on the notification");
+  assert.ok(ecRow.reservation_number, "GuestHub reservation number on the review");
   assert.ok(ecRow.room_labels.length > 0, "affected room recorded");
   assert.equal(ecRow.email_status, "skipped", "no recipient configured → email honestly skipped, not faked");
-  ok("MODIFIED with changed dates → applied + reservation_rooms atomic + ONE pending notification (old/new dates, room, numbers)");
+  ok("MODIFIED (both dates) → ONE persisted pending review (old/new dates, numbers, room); nothing applied");
 
-  // redelivery of the SAME revision: no duplicate reservation, no second
-  // notification, no email state change
+  // duplicate webhook delivery while the review is pending: no second review,
+  // no mutation, no email re-arm
   upstream.revisions.find((r) => r.id === "rev-ec-2").acked = false;
   sEC = await runInboundPull(sql, A.conn);
-  assert.equal(sEC.alreadyImported, 1, "redelivered revision recognized, not re-imported");
-  assert.equal(await ecCountFor("rev-ec-2"), 1, "redelivery never duplicates the notification");
-  const [ecRow2] = await sql`
-    SELECT email_status FROM guesthub.channel_external_changes
-    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-2'`;
-  assert.equal(ecRow2.email_status, "skipped", "redelivery never re-arms the email");
-  ok("redelivered modification → zero duplicates: one reservation, one notification, one email decision");
+  assert.equal(sEC.held, 1, "redelivered held revision recognized as held, nothing recreated");
+  assert.equal(await ecCountFor("rev-ec-2"), 1, "redelivery never duplicates the review");
+  ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecRes.check_in), "2027-03-10", "still untouched");
+  assert.equal((await reviewFor(A.conn.id, "rev-ec-2")).email_status, "skipped", "redelivery never re-arms the email");
+  ok("duplicate delivery while pending → one review, zero mutations");
+
+  // APPROVE: server-side transaction applies reservation + rooms + calendar
+  const ecDecision = await approveExternalChange(sql, A.tenantId, ecRow.id, null);
+  assert.equal(ecDecision.ok, true, `approve failed: ${JSON.stringify(ecDecision)}`);
+  ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecRes.check_in), "2027-03-15", "approval applies the new dates");
+  assert.equal(d10(ecRes.check_out), "2027-03-18");
+  ecRR = await sql`
+    SELECT check_in, check_out FROM guesthub.reservation_rooms WHERE reservation_id = ${ecRes.id}`;
+  assert.equal(ecRR.length, 1);
+  assert.equal(d10(ecRR[0].check_in), "2027-03-15", "reservation_rooms updated atomically on approval");
+  assert.equal((await availability(A.tenantId, A.roomId, "2027-03-10", "2027-03-12")).length, 0,
+    "old calendar range released immediately after approval");
+  assert.equal((await availability(A.tenantId, A.roomId, "2027-03-15", "2027-03-18")).length, 1,
+    "new calendar range occupied immediately after approval");
+  const ecApplied = await reviewFor(A.conn.id, "rev-ec-2");
+  assert.equal(ecApplied.apply_status, "applied");
+  assert.ok(ecApplied.decided_at, "approval user/timestamp recorded");
+  const [ecAudit] = await sql`
+    SELECT after_data FROM guesthub.audit_logs
+    WHERE tenant_id = ${A.tenantId} AND action = 'external_change_approved'
+    ORDER BY created_at DESC LIMIT 1`;
+  assert.equal(ecAudit.after_data.old_check_in, "2027-03-10", "audit holds the old dates");
+  assert.equal(ecAudit.after_data.new_check_in, "2027-03-15", "audit holds the new dates");
+  ok("APPROVAL → transactional: dates + reservation_rooms + calendar + audit(old/new), decision recorded");
+
+  // reprocessing the SAME revision after approval is idempotent
+  upstream.revisions.find((r) => r.id === "rev-ec-2").acked = false;
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.alreadyImported, 1, "approved revision reprocessed → already, no second mutation");
+  assert.equal(await ecCountFor("rev-ec-2"), 1);
+  assert.equal((await bookingRes(A.conn.id, "book-ec")).external_revision_id, "rev-ec-2");
+  // approving an already-decided review is refused
+  const ecAgain = await approveExternalChange(sql, A.tenantId, ecRow.id, null);
+  assert.equal(ecAgain.ok, false, "double-approve refused");
+  ok("reprocessing after approval → idempotent; double-approve refused");
+
+  // changed CHECK-IN only → one review; REJECTION preserves the dates and the
+  // exact revision is terminally rejected
+  upstream.revisions.push({ id: "rev-ec-ci", acked: false, attributes: mkRevision({
+    id: "rev-ec-ci", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T11:00:00",
+    arrival_date: "2027-03-16", departure_date: "2027-03-18", amount: "450",
+    room: { checkin_date: "2027-03-16", checkout_date: "2027-03-18", days: {}, amount: "450" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.held, 1, "check-in-only change creates a review");
+  const ciReview = await reviewFor(A.conn.id, "rev-ec-ci");
+  assert.equal(d10(ciReview.new_check_in), "2027-03-16");
+  assert.equal(d10(ciReview.new_check_out), "2027-03-18", "check-out unchanged in the proposal");
+  const ciDecision = await rejectExternalChange(sql, A.tenantId, ciReview.id, null);
+  assert.equal(ciDecision.ok, true);
+  ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecRes.check_in), "2027-03-15", "rejection preserves the current dates");
+  const [ciRev] = await sql`
+    SELECT import_status FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-ci'`;
+  assert.equal(ciRev.import_status, "rejected", "the exact revision is marked rejected");
+  const ciAfter = await reviewFor(A.conn.id, "rev-ec-ci");
+  assert.equal(ciAfter.apply_status, "rejected");
+  assert.ok(ciAfter.decided_at, "rejection timestamp recorded");
+  // duplicate delivery of the REJECTED revision recreates nothing
+  upstream.revisions.find((r) => r.id === "rev-ec-ci").acked = false;
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(await ecCountFor("rev-ec-ci"), 1, "rejected revision redelivered → no new review");
+  assert.equal(d10((await bookingRes(A.conn.id, "book-ec")).check_in), "2027-03-15", "still rejected, still unchanged");
+  // approving a rejected review is refused
+  assert.equal((await approveExternalChange(sql, A.tenantId, ciReview.id, null)).ok, false);
+  ok("check-in-only → review; REJECTION keeps dates, marks the revision rejected, survives redelivery");
+
+  // changed CHECK-OUT only → one review (then rejected to keep state stable)
+  upstream.revisions.push({ id: "rev-ec-co", acked: false, attributes: mkRevision({
+    id: "rev-ec-co", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T12:00:00",
+    arrival_date: "2027-03-15", departure_date: "2027-03-19", amount: "600",
+    room: { checkin_date: "2027-03-15", checkout_date: "2027-03-19", days: {}, amount: "600" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.held, 1, "check-out-only change creates a review");
+  const coReview = await reviewFor(A.conn.id, "rev-ec-co");
+  assert.equal(d10(coReview.new_check_in), "2027-03-15", "check-in unchanged in the proposal");
+  assert.equal(d10(coReview.new_check_out), "2027-03-19");
+  assert.equal((await rejectExternalChange(sql, A.tenantId, coReview.id, null)).ok, true);
+  ok("check-out-only → review created and shown correctly");
+
+  // an OLDER revision (by channel timestamp) can never overwrite the newer
+  // approved state — processed as stale, no review, no mutation
+  upstream.revisions.push({ id: "rev-ec-old", acked: false, attributes: mkRevision({
+    id: "rev-ec-old", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111", inserted_at: "2026-12-31T09:00:00",
+    arrival_date: "2027-03-11", departure_date: "2027-03-13", amount: "300",
+    room: { checkin_date: "2027-03-11", checkout_date: "2027-03-13", days: {}, amount: "300" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.imported, 1, "stale revision processed (recorded), never held");
+  assert.equal(await ecCountFor("rev-ec-old"), 0, "no review for an out-of-order older revision");
+  ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecRes.check_in), "2027-03-15", "older revision cannot overwrite the approved dates");
+  assert.equal(ecRes.external_revision_id, "rev-ec-2", "applied revision pointer untouched");
+  ok("older revision after a newer approved one → stale no-op: no review, no overwrite");
+
+  // arrival-hour-only modification (same dates) → NO review, applied directly
+  upstream.revisions.push({ id: "rev-ec-hour", acked: false, attributes: mkRevision({
+    id: "rev-ec-hour", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T13:00:00", arrival_hour: "17:45",
+    arrival_date: "2027-03-15", departure_date: "2027-03-18", amount: "450",
+    room: { checkin_date: "2027-03-15", checkout_date: "2027-03-18", days: {}, amount: "450" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.imported, 1, "hour-only change imports directly");
+  assert.equal(await ecCountFor("rev-ec-hour"), 0, "no date review for an arrival-hour-only change");
+  ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(String(ecRes.expected_arrival_time), "17:45:00", "metadata-only change applied");
+  assert.equal(d10(ecRes.check_in), "2027-03-15", "dates untouched");
+  ok("arrival-hour-only modification → no review, metadata applied normally");
 
   // recipient configured but no mail provider → terminal 'failed' with an
-  // honest reason; the notification row itself still exists and is pending
+  // honest reason; the review itself still exists and is pending
   await sql`
     UPDATE guesthub.tenants
     SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ops_notification_email}', '"ops@example.com"'::jsonb)
     WHERE id = ${A.tenantId}`;
   upstream.revisions.push({ id: "rev-ec-3", acked: false, attributes: mkRevision({
     id: "rev-ec-3", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
-    ota_reservation_code: "777000111",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T14:00:00",
     arrival_date: "2027-03-25", departure_date: "2027-03-27", amount: "450",
     room: { checkin_date: "2027-03-25", checkout_date: "2027-03-27", days: {}, amount: "450" },
   }) });
   sEC = await runInboundPull(sql, A.conn);
-  assert.equal(sEC.imported, 1);
+  assert.equal(sEC.held, 1);
   const [ecRow3] = await sql`
     SELECT email_status, email_detail FROM guesthub.channel_external_changes
     WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-3'`;
   assert.equal(ecRow3.email_status, "failed");
   assert.ok(ecRow3.email_detail.includes("Gmail"), "honest provider-not-configured reason");
-  ok("recipient set but Gmail unconfigured → email honestly 'failed', never silently dropped");
+  ok("recipient set but Gmail unconfigured → review email honestly 'failed', never silently dropped");
 
-  // a modification that CONFLICTS locally: quarantined, calendar untouched,
-  // and the OTA's proposed dates are still visible as an unresolved change
+  // a NEWER pending proposal supersedes the earlier undecided one — at most
+  // ONE pending review per reservation, history retained
   const [blocker] = await sql`
     INSERT INTO guesthub.reservations
       (tenant_id, reservation_number, status, check_in, check_out, total_price, balance)
@@ -919,27 +1072,35 @@ try {
     INSERT INTO guesthub.reservation_rooms
       (tenant_id, reservation_id, room_id, check_in, check_out, adults, rate_per_night, price_total)
     VALUES (${A.tenantId}, ${blocker.id}, ${A.roomId}, '2027-04-01', '2027-04-03', 2, 250, 500)`;
-  upstream.ackCalls.length = 0;
   upstream.revisions.push({ id: "rev-ec-4", acked: false, attributes: mkRevision({
     id: "rev-ec-4", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
-    ota_reservation_code: "777000111",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T15:00:00",
     arrival_date: "2027-04-02", departure_date: "2027-04-04", amount: "450",
     room: { checkin_date: "2027-04-02", checkout_date: "2027-04-04", days: {}, amount: "450" },
   }) });
   sEC = await runInboundPull(sql, A.conn);
-  assert.equal(sEC.quarantined, 1);
-  assert.ok(!upstream.ackCalls.includes("rev-ec-4"), "conflicting modification never acked");
+  assert.equal(sEC.held, 1, "a CONFLICTING proposal is still a reviewable request");
+  const ec3Superseded = await reviewFor(A.conn.id, "rev-ec-3");
+  assert.equal(ec3Superseded.apply_status, "superseded", "earlier undecided proposal superseded by the newer one");
+  assert.equal((await approveExternalChange(sql, A.tenantId, ec3Superseded.id, null)).ok, false,
+    "a superseded review can no longer be approved");
+  const conflictRow = await reviewFor(A.conn.id, "rev-ec-4");
+  assert.equal(conflictRow.apply_status, "pending_approval");
+  assert.equal(d10(conflictRow.old_check_in), "2027-03-15", "current dates shown");
+  assert.equal(d10(conflictRow.new_check_in), "2027-04-02", "the OTA's proposed dates never silently ignored");
+  // APPROVAL of the conflicting range is BLOCKED — clear reason, zero partial
+  // changes, review stays pending for manual handling
+  const conflictDecision = await approveExternalChange(sql, A.tenantId, conflictRow.id, null);
+  assert.equal(conflictDecision.ok, false, "conflicting approval blocked");
+  assert.ok(conflictDecision.error.includes("התנגשות"), "clear Hebrew conflict reason");
   const ecAfterConflict = await bookingRes(A.conn.id, "book-ec");
-  assert.equal(d10(ecAfterConflict.check_in), "2027-03-25", "conflict → calendar keeps the previous dates");
-  const [conflictRow] = await sql`
-    SELECT * FROM guesthub.channel_external_changes
-    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-4'`;
-  assert.ok(conflictRow, "conflicting external change still visible — the OTA dates are never silently ignored");
-  assert.equal(conflictRow.apply_status, "conflict");
-  assert.equal(d10(conflictRow.old_check_in), "2027-03-25");
-  assert.equal(d10(conflictRow.new_check_in), "2027-04-02");
-  assert.ok(conflictRow.conflict_detail.includes("התנגשות"), "visible conflict reason on the notification");
-  ok("conflicting MODIFIED → quarantined + visible unresolved change with the OTA's proposed dates");
+  assert.equal(d10(ecAfterConflict.check_in), "2027-03-15", "no partial change — dates untouched");
+  const rrAfterConflict = await sql`
+    SELECT check_in FROM guesthub.reservation_rooms WHERE reservation_id = ${ecAfterConflict.id}`;
+  assert.equal(d10(rrAfterConflict[0].check_in), "2027-03-15", "reservation_rooms untouched");
+  assert.equal((await reviewFor(A.conn.id, "rev-ec-4")).apply_status, "pending_approval",
+    "review remains pending for manual handling");
+  ok("conflicting proposal → held review; approval BLOCKED with a clear reason, zero partial changes");
 
   // ---- 20. normalize-failure is PERSISTED quarantine, never silent loss ----
   // (the staging feed stops serving a revision after ~30 minutes — an
@@ -1003,9 +1164,24 @@ try {
               policies: "LATER, DIFFERENT terms — must NOT replace the at-booking snapshot." } },
   }) });
   sMix = await runInboundPull(sql, A.conn);
-  assert.equal(sMix.imported, 1);
+  assert.equal(sMix.held, 1, "mixed date+metadata revision is HELD");
+  // ATOMIC CHOICE (documented): while the review is pending, NOTHING from the
+  // revision applies — not the dates, not the metadata, not the card
   mixRes = await bookingRes(A.conn.id, "book-mix");
-  assert.equal(d10(mixRes.check_in), "2027-06-05", "mixed revision: dates applied");
+  assert.equal(d10(mixRes.check_in), "2027-06-01", "dates untouched while pending");
+  assert.equal(String(mixRes.expected_arrival_time), "15:00:00", "metadata untouched while pending");
+  const [mixGuestPending] = await sql`SELECT phone FROM guesthub.guests WHERE id = ${mixRes.primary_guest_id}`;
+  assert.equal(mixGuestPending.phone, "+972520000000", "guest metadata untouched while pending");
+  const mixChanges = await sql`
+    SELECT * FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-2'`;
+  assert.equal(mixChanges.length, 1, "exactly ONE review for the mixed revision");
+  assert.equal(mixChanges[0].apply_status, "pending_approval");
+  assert.notEqual(mixChanges[0].email_status, "pending", "one email decision was made");
+  // APPROVE → the whole revision applies atomically
+  assert.equal((await approveExternalChange(sql, A.tenantId, mixChanges[0].id, null)).ok, true);
+  mixRes = await bookingRes(A.conn.id, "book-mix");
+  assert.equal(d10(mixRes.check_in), "2027-06-05", "mixed revision: dates applied on approval");
   assert.equal(d10(mixRes.check_out), "2027-06-08");
   const mixRR = await sql`
     SELECT check_in, check_out FROM guesthub.reservation_rooms WHERE reservation_id = ${mixRes.id}`;
@@ -1019,14 +1195,8 @@ try {
   assert.equal(Number(mixRes.paid_amount), 0, "payment ledger untouched by the modification");
   assert.equal(await paymentsOf(mixRes.id), 0, "no payment row fabricated");
   const [mixGuest] = await sql`SELECT phone FROM guesthub.guests WHERE id = ${mixRes.primary_guest_id}`;
-  assert.equal(mixGuest.phone, "+972521111111", "guest metadata updated by the same revision");
-  const mixChanges = await sql`
-    SELECT * FROM guesthub.channel_external_changes
-    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-2'`;
-  assert.equal(mixChanges.length, 1, "exactly ONE external-change record for the mixed revision");
-  assert.equal(mixChanges[0].apply_status, "applied");
-  assert.notEqual(mixChanges[0].email_status, "pending", "one email decision was made");
-  ok("MIXED modified revision → dates atomic + arrival/provenance + snapshot immutable + card safe + ledger untouched + ONE notification");
+  assert.equal(mixGuest.phone, "+972521111111", "guest metadata applied by the same approval");
+  ok("MIXED revision → held all-or-nothing; APPROVAL applies dates+metadata atomically, snapshot immutable, ledger untouched");
 
   // a later terms-less, hour-less revision erases nothing
   const mixBare = mkRevision({
@@ -1066,26 +1236,30 @@ try {
     room: { checkin_date: "2027-06-10", checkout_date: "2027-06-12", days: {}, amount: "900" },
   }) });
   sMix = await runInboundPull(sql, A.conn);
-  assert.ok(sMix.quarantined >= 1, "conflicting mixed revision quarantined");
-  assert.ok(!upstream.ackCalls.includes("rev-mix-4"), "never acked — stays retryable upstream");
+  assert.equal(sMix.held, 1, "conflicting mixed proposal is still a reviewable request");
   mixRes = await bookingRes(A.conn.id, "book-mix");
-  assert.equal(d10(mixRes.check_in), "2027-06-05", "conflict → dates untouched");
-  assert.equal(String(mixRes.expected_arrival_time), "18:00:00", "conflict → arrival hour untouched (no partial metadata)");
+  assert.equal(d10(mixRes.check_in), "2027-06-05", "held → dates untouched");
+  assert.equal(String(mixRes.expected_arrival_time), "18:00:00", "held → arrival hour untouched (no partial metadata)");
   const [mixGuest2] = await sql`SELECT phone FROM guesthub.guests WHERE id = ${mixRes.primary_guest_id}`;
   // rev-mix-3 (default customer) last set the phone; the point is the
   // CONFLICTING revision's phone was never applied — all-or-nothing
-  assert.notEqual(mixGuest2.phone, "+972529999999", "conflict → guest metadata untouched (all-or-nothing)");
+  assert.notEqual(mixGuest2.phone, "+972529999999", "held → guest metadata untouched (all-or-nothing)");
   assert.equal(mixGuest2.phone, "+972520000000", "pre-conflict value preserved");
-  const [mixConflictRow] = await sql`
-    SELECT apply_status, new_check_in::text AS nci FROM guesthub.channel_external_changes
-    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-4'`;
-  assert.equal(mixConflictRow?.apply_status, "conflict", "conflict visible with the OTA's proposed dates");
-  assert.equal(mixConflictRow?.nci, "2027-06-10");
+  const mixConflictRow = await reviewFor(A.conn.id, "rev-mix-4");
+  assert.equal(mixConflictRow?.apply_status, "pending_approval", "visible review with the OTA's proposed dates");
+  assert.equal(d10(mixConflictRow?.new_check_in), "2027-06-10");
+  // approval of the conflicting mixed proposal is BLOCKED — nothing partial
+  const mixDecision = await approveExternalChange(sql, A.tenantId, mixConflictRow.id, null);
+  assert.equal(mixDecision.ok, false, "conflicting mixed approval blocked");
+  assert.ok(mixDecision.error.includes("התנגשות"), "clear Hebrew conflict reason");
+  mixRes = await bookingRes(A.conn.id, "book-mix");
+  assert.equal(d10(mixRes.check_in), "2027-06-05", "blocked approval → dates still untouched");
+  assert.equal(String(mixRes.expected_arrival_time), "18:00:00", "blocked approval → metadata still untouched");
   const [mixQRow] = await sql`
     SELECT import_status FROM guesthub.channel_booking_revisions
     WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-4'`;
-  assert.equal(mixQRow.import_status, "quarantined", "full inbound revision persisted");
-  ok("conflicting MIXED revision → all-or-nothing: no dates, no metadata; persisted quarantine + visible conflict");
+  assert.equal(mixQRow.import_status, "awaiting_approval", "full inbound revision persisted, still pending");
+  ok("conflicting MIXED proposal → held all-or-nothing; approval blocked, zero partial changes, review stays pending");
 
   // ---- 22. email retry (D83): failed/skipped are retryable; sent is final ----
   // configure a REAL (fake-upstream) Gmail provider through the platform's own
@@ -1152,12 +1326,12 @@ try {
   // with the provider configured, a NEW external change emails automatically
   upstream.revisions.push({ id: "rev-ec-5", acked: false, attributes: mkRevision({
     id: "rev-ec-5", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
-    ota_reservation_code: "777000111",
+    ota_reservation_code: "777000111", inserted_at: "2027-01-01T16:00:00",
     arrival_date: "2027-04-20", departure_date: "2027-04-22", amount: "450",
     room: { checkin_date: "2027-04-20", checkout_date: "2027-04-22", days: {}, amount: "450" },
   }) });
   sEC = await runInboundPull(sql, A.conn);
-  assert.equal(sEC.imported, 1);
+  assert.equal(sEC.held, 1, "new proposal held for approval");
   const [ec5Row] = await sql`
     SELECT email_status FROM guesthub.channel_external_changes
     WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-5'`;
