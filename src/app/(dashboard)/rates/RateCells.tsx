@@ -121,17 +121,49 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
   );
 }
 
-// Read-only physical + derived breakdown tooltip for a hovered price cell.
+// Read-only physical + derived breakdown tooltip for a hovered price cell —
+// styled to the reference .rm window (tonnage.png / Calendar messages.html):
+// brand header (unit · date), divided rows, full-width sale-state band.
 export function CellTip({ x, y, unit, cell }: { x: number; y: number; unit: RateGridUnit; cell: RateCellState }) {
-  const left = Math.min(x + 14, (typeof window !== "undefined" ? window.innerWidth : 9999) - 250);
+  const left = Math.min(x + 14, (typeof window !== "undefined" ? window.innerWidth : 9999) - 266);
   return (
     <div className="rg-tip" style={{ left, top: y + 16 }}>
-      <div className="rg-tip-t">{unit.code} · {cell.date}</div>
-      <div>מחיר: <b>₪{Math.round(cell.effectivePrice)}</b> {cell.priceSource === "inherited" ? "(בסיס)" : "(מוגדר)"}</div>
-      <div>זמינות פיזית: <b>{cell.availability}</b> מתוך {cell.sellableRooms}/{cell.totalRooms}</div>
-      {cell.occupiedRooms > 0 && <div>תפוסים: {cell.occupiedRooms}</div>}
-      {cell.closedRooms > 0 && <div>חסומים פיזית: {cell.closedRooms}</div>}
-      <div className={cell.sellable ? "rg-tip-ok" : "rg-tip-no"}>{cell.sellable ? "✓ " : "✕ "}{SELL_REASON_TEXT[cell.sellReason]}</div>
+      <div className="rg-tip-h">
+        <span className="rg-tip-t">{unit.code}</span>
+        <span className="rg-tip-dt">{cell.date}</span>
+      </div>
+      <div className="rg-tip-rows">
+        <div className="rg-tip-row">
+          <span className="k">מחיר</span>
+          <span className="v">
+            ₪{Math.round(cell.effectivePrice).toLocaleString()}{" "}
+            <small>{cell.priceSource === "inherited" ? "(בסיס)" : "(מוגדר)"}</small>
+          </span>
+        </div>
+        <div className="rg-tip-row">
+          <span className="k">זמינות פיזית</span>
+          <span className="v">
+            {cell.availability} מתוך {cell.sellableRooms}
+            {cell.totalRooms !== cell.sellableRooms ? `/${cell.totalRooms}` : ""}
+          </span>
+        </div>
+        {cell.occupiedRooms > 0 && (
+          <div className="rg-tip-row">
+            <span className="k">תפוסים</span>
+            <span className="v">{cell.occupiedRooms}</span>
+          </div>
+        )}
+        {cell.closedRooms > 0 && (
+          <div className="rg-tip-row">
+            <span className="k">חסומים פיזית</span>
+            <span className="v">{cell.closedRooms}</span>
+          </div>
+        )}
+      </div>
+      <div className={`rg-tip-f ${cell.sellable ? "op" : "cl"}`}>
+        <Icon name={cell.sellable ? "check" : "circle-slash"} size={13} />
+        {SELL_REASON_TEXT[cell.sellReason]}
+      </div>
     </div>
   );
 }
