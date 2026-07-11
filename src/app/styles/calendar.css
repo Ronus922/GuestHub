@@ -1058,6 +1058,186 @@
   background: #fdf0f0;
 }
 
+/* ---------- drag/resize confirm — "שינוי שהייה" (Change of stay.png,
+   ref/html/Calendar messages.html .ch) ---------- */
+.ch {
+  position: relative;
+  width: min(92vw, 430px);
+  background: #fff;
+  border-radius: 16px;
+  box-shadow:
+    0 2px 6px rgba(16, 24, 40, 0.06),
+    0 18px 44px rgba(16, 24, 40, 0.16);
+  direction: rtl;
+}
+.ch-hd {
+  background: var(--color-primary);
+  padding: 16px 20px 14px;
+  border-radius: 16px 16px 0 0;
+}
+.ch-t {
+  font-size: 21px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.15;
+}
+.ch-s {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  margin-top: 3px;
+}
+.ch-body {
+  padding: 16px 16px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ch-card {
+  border-radius: 12px;
+  padding: 13px 15px;
+  background: #f4f5f9;
+  border: 1px solid #edf0f5;
+}
+.ch-card.aft {
+  background: var(--color-primary-050);
+  border-color: #dfe5fb;
+}
+.ch-cr {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 11px;
+}
+.ch-tag {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+.ch-n {
+  margin-inline-start: auto;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--color-ink);
+}
+.ch-card.aft .ch-n {
+  color: var(--color-primary);
+}
+.ch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+.ch-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ch-cl {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-faint);
+}
+.ch-cv {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--color-ink);
+  direction: ltr;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ch-cv.chg {
+  color: var(--color-primary);
+}
+.ch-arrow {
+  display: flex;
+  justify-content: center;
+  margin: -4px 0;
+  color: var(--color-faint);
+}
+.ch-money {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid #dfe5fb;
+  font-size: 13px;
+  font-weight: 700;
+}
+.ch-money .lbl {
+  color: var(--color-muted);
+  font-weight: 600;
+}
+.ch-money .old {
+  color: var(--color-faint);
+  text-decoration: line-through;
+  direction: ltr;
+}
+.ch-money .new {
+  color: var(--color-ink);
+  font-weight: 800;
+  direction: ltr;
+}
+.ch-money .diff {
+  margin-inline-start: auto;
+  font-weight: 800;
+  direction: ltr;
+}
+.ch-money .diff.up {
+  color: #b4231f;
+}
+.ch-money .diff.down {
+  color: #1f7a3d;
+}
+.ch-ft {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 16px 16px;
+}
+.ch-btn {
+  height: 44px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 12px;
+  background: var(--color-primary);
+  color: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(37, 64, 200, 0.22);
+}
+.ch-btn:hover:not(:disabled) {
+  background: #1c2e9a;
+}
+.ch-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+  box-shadow: none;
+}
+.ch-btng {
+  height: 44px;
+  padding: 0 17px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: #4b5266;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ch-btng:hover:not(:disabled) {
+  background: #f2f4f8;
+}
+
 /* ---------- hint ---------- */
 .cb-hint {
   font-size: 11.5px;

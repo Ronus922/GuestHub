@@ -6,11 +6,13 @@ import { previewRescheduleAction } from "@/app/(dashboard)/reservations/actions"
 import type { RescheduleOp } from "@/lib/calendar-interactions";
 import type { DateOnly } from "@/lib/dates";
 
-// Floating RTL confirmation for a drag/resize of an EXISTING reservation (§2/§3).
-// Nothing is persisted until "אישור"; "דחייה", Escape and outside-click all
-// reject and restore the original pill (the grid never mutated it). The
-// proposed reservation total is fetched pre-commit via previewRescheduleAction
-// (no writes); the commit re-validates on the server.
+// Floating RTL confirmation for a drag/resize of an EXISTING reservation (§2/§3),
+// styled 1:1 to ref/screens/Change of stay.png (ref/html/Calendar messages.html
+// .ch window): brand header, before/after cards with a 3-column grid, changed
+// values highlighted, primary "אישור שינוי". Behavior unchanged (D43): nothing
+// is persisted until אישור; ביטול, Escape and outside-click all reject and
+// restore the original pill. The proposed total is fetched pre-commit via
+// previewRescheduleAction (no writes); the commit re-validates on the server.
 
 const OP_LABEL: Record<RescheduleOp, string> = {
   room: "שינוי חדר",
@@ -31,15 +33,48 @@ export type MoveProposal = {
   after: { roomLabel: string; checkIn: DateOnly; checkOut: DateOnly; nights: number };
 };
 
-function Row({ label, from, to }: { label: string; from: string; to: string }) {
+const dmy = (d: DateOnly) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+
+function StayCard({
+  tag,
+  aft,
+  nights,
+  checkIn,
+  checkOut,
+  roomLabel,
+  changed,
+  children,
+}: {
+  tag: string;
+  aft?: boolean;
+  nights: number;
+  checkIn: DateOnly;
+  checkOut: DateOnly;
+  roomLabel: string;
+  changed?: { ci: boolean; co: boolean; room: boolean };
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3 py-1 text-sm">
-      <span className="text-muted">{label}</span>
-      <span className="flex items-center gap-2 font-semibold" dir="ltr">
-        <span className="text-muted line-through">{from}</span>
-        <Icon name="chevron-left" size={14} />
-        <span className="text-ink">{to}</span>
-      </span>
+    <div className={`ch-card ${aft ? "aft" : ""}`}>
+      <div className="ch-cr">
+        <span className="ch-tag">{tag}</span>
+        <span className="ch-n">{nights} לילות</span>
+      </div>
+      <div className="ch-grid">
+        <div className="ch-cell">
+          <span className="ch-cl">כניסה</span>
+          <span className={`ch-cv ${changed?.ci ? "chg" : ""}`}>{dmy(checkIn)}</span>
+        </div>
+        <div className="ch-cell">
+          <span className="ch-cl">יציאה</span>
+          <span className={`ch-cv ${changed?.co ? "chg" : ""}`}>{dmy(checkOut)}</span>
+        </div>
+        <div className="ch-cell">
+          <span className="ch-cl">חדר</span>
+          <span className={`ch-cv ${changed?.room ? "chg" : ""}`}>{roomLabel}</span>
+        </div>
+      </div>
+      {children}
     </div>
   );
 }
@@ -90,11 +125,6 @@ export function MoveConfirmDialog({
   }, [proposal.rrId, proposal.targetRoomId, after.checkIn, after.checkOut, startPrice]);
 
   const money = (n: number) => `${currency}${Math.round(n).toLocaleString()}`;
-  const roomChanged = before.roomLabel !== after.roomLabel;
-  const ciChanged = before.checkIn !== after.checkIn;
-  const coChanged = before.checkOut !== after.checkOut;
-  const nightsChanged = before.nights !== after.nights;
-  const nightsDelta = after.nights - before.nights;
   const priceDiff = proposedTotal === null ? null : proposedTotal - before.total;
 
   return (
@@ -107,72 +137,72 @@ export function MoveConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-label={OP_LABEL[op]}
-        className="w-[min(92vw,26rem)] rounded-2xl border border-black/10 bg-white p-5 shadow-2xl"
+        className="ch"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center gap-2 text-base font-extrabold text-ink">
-          <Icon name="calendar" size={18} />
-          {OP_LABEL[op]}
-        </div>
-
-        <div className="mb-1 flex items-center justify-between text-sm">
-          <span className="text-muted">אורח</span>
-          <span className="font-semibold text-ink">{proposal.guestName}</span>
-        </div>
-        <div className="mb-2 flex items-center justify-between text-sm">
-          <span className="text-muted">מספר הזמנה</span>
-          <span className="font-semibold text-ink" dir="ltr">#{proposal.reservationNumber}</span>
-        </div>
-
-        <div className="my-2 border-t border-black/5" />
-
-        {roomChanged && <Row label="חדר" from={before.roomLabel} to={after.roomLabel} />}
-        {ciChanged && <Row label="כניסה" from={before.checkIn} to={after.checkIn} />}
-        {coChanged && <Row label="יציאה" from={before.checkOut} to={after.checkOut} />}
-        {nightsChanged && (
-          <Row
-            label="לילות"
-            from={String(before.nights)}
-            to={`${after.nights} (${nightsDelta > 0 ? "+" : ""}${nightsDelta})`}
-          />
-        )}
-
-        <div className="my-2 border-t border-black/5" />
-
-        <div className="flex items-center justify-between py-1 text-sm">
-          <span className="text-muted">סה״כ הזמנה</span>
-          <span className="flex items-center gap-2 font-semibold" dir="ltr">
-            <span className="text-muted line-through">{money(before.total)}</span>
-            <Icon name="chevron-left" size={14} />
-            {loadingPrice || proposedTotal === null ? (
-              <span className="text-muted">{priceError ?? "מחשב…"}</span>
-            ) : (
-              <span className="text-ink">{money(proposedTotal)}</span>
-            )}
-          </span>
-        </div>
-        {priceDiff !== null && priceDiff !== 0 && (
-          <div className="flex items-center justify-between pb-1 text-sm">
-            <span className="text-muted">הפרש מחיר</span>
-            <span className={`font-bold ${priceDiff > 0 ? "text-red-600" : "text-emerald-600"}`} dir="ltr">
-              {priceDiff > 0 ? "+" : ""}
-              {money(priceDiff)}
-            </span>
+        <div className="ch-hd">
+          <div className="ch-t">{OP_LABEL[op]}</div>
+          <div className="ch-s">
+            {proposal.guestName} · הזמנה #{proposal.reservationNumber}
           </div>
-        )}
+        </div>
 
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button type="button" className="bw-btn bw-btn-ghost" onClick={onReject} disabled={committing}>
-            דחייה
+        <div className="ch-body">
+          <StayCard
+            tag="לפני"
+            nights={before.nights}
+            checkIn={before.checkIn}
+            checkOut={before.checkOut}
+            roomLabel={before.roomLabel}
+          />
+          <div className="ch-arrow">
+            <Icon name="arrow-up" size={18} />
+          </div>
+          <StayCard
+            tag="אחרי"
+            aft
+            nights={after.nights}
+            checkIn={after.checkIn}
+            checkOut={after.checkOut}
+            roomLabel={after.roomLabel}
+            changed={{
+              ci: before.checkIn !== after.checkIn,
+              co: before.checkOut !== after.checkOut,
+              room: before.roomLabel !== after.roomLabel,
+            }}
+          >
+            {/* proposed total — pre-commit preview, never persisted here */}
+            <div className="ch-money">
+              <span className="lbl">סה״כ הזמנה</span>
+              <span className="old">{money(before.total)}</span>
+              {loadingPrice || proposedTotal === null ? (
+                <span className="new">{priceError ?? "מחשב…"}</span>
+              ) : (
+                <span className="new">{money(proposedTotal)}</span>
+              )}
+              {priceDiff !== null && priceDiff !== 0 && (
+                <span className={`diff ${priceDiff > 0 ? "up" : "down"}`}>
+                  {priceDiff > 0 ? "+" : ""}
+                  {money(priceDiff)}
+                </span>
+              )}
+            </div>
+          </StayCard>
+        </div>
+
+        <div className="ch-ft">
+          <span className="flex-1" />
+          <button type="button" className="ch-btng" onClick={onReject} disabled={committing}>
+            ביטול
           </button>
           <button
             type="button"
-            className="bw-btn bw-btn-o"
+            className="ch-btn"
             onClick={onConfirm}
             disabled={committing || Boolean(priceError)}
           >
-            <Icon name="check" size={15} />
-            {committing ? "מעדכן…" : "אישור"}
+            <Icon name="check-circle" size={17} />
+            {committing ? "מעדכן…" : "אישור שינוי"}
           </button>
         </div>
       </div>
