@@ -891,8 +891,12 @@ export async function getChannexPropertyContextAction(): Promise<Result<ChannexP
       loadChannexRow(actor.tenantId),
     ]);
 
-    const profile = resolveChannexProfile(ctx.identity, ctx.overrides);
     const business = await getBusinessProfile(actor.tenantId);
+    const profile = resolveChannexProfile(
+      ctx.identity,
+      ctx.overrides,
+      business?.propertyName ?? business?.businessName,
+    );
     return {
       success: true,
       data: {
@@ -1036,7 +1040,12 @@ export async function createChannexPropertyAction(): Promise<Result<{ propertyId
     if ((await loadPropertyMappingRow(actor.tenantId))?.channex_property_id)
       return { success: false, error: "כבר קיים מיפוי נכס Channex לעסק זה" };
 
-    const profile = resolveChannexProfile(tctx.identity, tctx.overrides);
+    const createBusiness = await getBusinessProfile(actor.tenantId);
+    const profile = resolveChannexProfile(
+      tctx.identity,
+      tctx.overrides,
+      createBusiness?.propertyName ?? createBusiness?.businessName,
+    );
     if (!computeReadiness(profile).canCreate)
       return { success: false, error: "חסרים שדות חובה ליצירת נכס (שם ומטבע)" };
 

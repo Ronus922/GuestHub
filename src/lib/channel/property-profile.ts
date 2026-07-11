@@ -71,13 +71,17 @@ function cleanNum(v: unknown): number | null {
 // Merge canonical identity + overrides into the resolved profile. Canonical
 // currency/timezone always win; title defaults to "<name> (Staging)" but an
 // override title is honored; integration-only fields come solely from overrides.
+// The default title base prefers the CANONICAL Business Profile name when
+// supplied; the internal tenants.name label is only the pre-profile last
+// resort (an external property still needs some title at create time).
 export function resolveChannexProfile(
   tenant: TenantIdentity,
   overrides: ChannexProfileOverrides | null | undefined,
+  canonicalName?: string | null,
 ): ChannexProfile {
   const o = overrides ?? {};
   return {
-    title: cleanStr(o.title) ?? `${tenant.name} (Staging)`,
+    title: cleanStr(o.title) ?? `${cleanStr(canonicalName) ?? tenant.name} (Staging)`,
     currency: tenant.currency,
     timezone: tenant.timezone,
     country: cleanStr(o.country),
