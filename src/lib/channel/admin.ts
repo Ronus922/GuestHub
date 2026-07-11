@@ -778,7 +778,9 @@ export type ChannexPropertyMappingView = {
 export type ChannexPropertyContextView = {
   secretsKeyConfigured: boolean;
   apiKeyConfigured: boolean;
-  tenant: { tenantId: string; name: string; currency: string; timezone: string };
+  // client payload: canonical currency/timezone only — the internal tenant
+  // label (tenants.name) stays server-side and never crosses to the browser
+  tenant: { tenantId: string; currency: string; timezone: string };
   profile: ChannexProfile;
   overrides: ChannexProfileOverrides; // to prefill the profile editor — no secrets
   readiness: Readiness;
@@ -901,7 +903,11 @@ export async function getChannexPropertyContextAction(): Promise<Result<ChannexP
         },
         secretsKeyConfigured: channelSecretsConfigured(),
         apiKeyConfigured: !!keyRow?.api_key_ciphertext,
-        tenant: ctx.identity,
+        tenant: {
+          tenantId: ctx.identity.tenantId,
+          currency: ctx.identity.currency,
+          timezone: ctx.identity.timezone,
+        },
         profile,
         overrides: ctx.overrides,
         readiness: computeReadiness(profile),
