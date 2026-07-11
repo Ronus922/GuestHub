@@ -27,6 +27,10 @@ import {
 import { calculateReservationPrice } from "@/lib/pricing/engine";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { loadCollectionView, type CollectionView } from "@/lib/payments/collection";
+import {
+  resolveCancellationSnapshot,
+  type CancellationPolicySnapshot,
+} from "@/lib/commercial/policy-snapshot";
 import { markAriDirty } from "@/lib/channel/outbox";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import {
@@ -232,17 +236,28 @@ export async function createReservationAction(
       } else {
         workflowStatusId = await defaultWorkflowStatusId(tx, actor.tenantId);
       }
+      // at-booking cancellation terms (034): the selected rate plan's assigned
+      // Settings template → tenant default template → NULL. Multi-room
+      // reservations snapshot the first stay's plan.
+      const cancellationSnapshot = await resolveCancellationSnapshot(
+        tx,
+        actor.tenantId,
+        priced[0]?.ratePlanId ?? null,
+      );
       const [res] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.reservations
           (tenant_id, reservation_number, primary_guest_id, source_id, status,
            check_in, check_out, adults, children, infants,
            discount_amount, total_price, paid_amount, balance, currency,
-           notes, expected_arrival_time, created_by, workflow_status_id)
+           notes, expected_arrival_time, expected_arrival_time_source,
+           cancellation_policy_snapshot, created_by, workflow_status_id)
         VALUES (${actor.tenantId}, ${number}, ${guestId}, ${input.sourceId ?? null},
                 ${input.status}, ${agg.checkIn}, ${agg.checkOut},
                 ${agg.adults}, ${agg.children}, ${agg.infants},
                 ${discount}, ${total}, 0, ${total}, 'ILS',
                 ${input.notes || null}, ${input.expectedArrivalTime ?? null},
+                ${input.expectedArrivalTime ? "manual" : null},
+                ${cancellationSnapshot === null ? null : tx.json(cancellationSnapshot as never)},
                 ${actor.userId}, ${workflowStatusId})
         RETURNING id`;
 
@@ -341,6 +356,12 @@ export async function updateReservationAction(
       if (!existing) throw new DomainError("הזמנה לא נמצאה");
       if (existing.status === "cancelled") throw new DomainError("הזמנה מבוטלת — לא ניתן לערוך");
 
+      // Omitted status (the ordinary editor save) keeps the STORED lifecycle —
+      // read FOR UPDATE in this same transaction, so it can never overwrite a
+      // concurrent change with stale client data. Only the explicit
+      // check-in/check-out quick actions send a status.
+      const nextStatus = input.status ?? existing.status;
+
       const oldRows = await tx<
         { id: string; room_id: string | null; check_in: string; check_out: string;
           adults: number; children: number; infants: number; room_type_id: string | null;
@@ -400,7 +421,7 @@ export async function updateReservationAction(
       }
 
       const wasBlocking = isBlocking(existing.status);
-      const nowBlocking = isBlocking(input.status);
+      const nowBlocking = isBlocking(nextStatus);
       // starting to consume inventory (e.g. draft → confirmed) must re-prove
       // availability for ALL stays, even untouched ones
       if (!wasBlocking && nowBlocking) skipChecksForRr.clear();
@@ -507,7 +528,7 @@ export async function updateReservationAction(
         UPDATE guesthub.reservations SET
           primary_guest_id = ${guestId},
           source_id = ${input.sourceId ?? null},
-          status = ${input.status},
+          status = ${nextStatus},
           check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
           adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
           discount_amount = ${discount},
@@ -515,7 +536,16 @@ export async function updateReservationAction(
           notes = ${input.notes || null},
           expected_arrival_time = CASE
             WHEN ${input.expectedArrivalTime === undefined} THEN expected_arrival_time
-            ELSE ${input.expectedArrivalTime ?? null}::time END
+            ELSE ${input.expectedArrivalTime ?? null}::time END,
+          -- provenance (034): only an ACTUAL change flips the source to
+          -- 'manual' — resaving the panel with the OTA-supplied value intact
+          -- must not relabel it (SET expressions read the OLD row values)
+          expected_arrival_time_source = CASE
+            WHEN ${input.expectedArrivalTime === undefined} THEN expected_arrival_time_source
+            WHEN ${input.expectedArrivalTime ?? null}::time IS NOT DISTINCT FROM expected_arrival_time
+              THEN expected_arrival_time_source
+            WHEN ${input.expectedArrivalTime ?? null}::time IS NULL THEN NULL
+            ELSE 'manual' END
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
 
       if (addPay > 0) {
@@ -533,7 +563,7 @@ export async function updateReservationAction(
         entityId: input.id,
         action: "update",
         before: { status: existing.status, check_in: existing.check_in, check_out: existing.check_out, rooms: oldRows.length },
-        after: { status: input.status, check_in: agg.checkIn, check_out: agg.checkOut, rooms: priced.length, total },
+        after: { status: nextStatus, check_in: agg.checkIn, check_out: agg.checkOut, rooms: priced.length, total },
       }, tx);
 
       // Dirty when inventory consumption changed on either side — including a
@@ -1185,6 +1215,12 @@ export type ReservationDetail = {
   notes: string | null;
   /** שעת הגעה משוערת "HH:MM" — dedicated field, independent of notes (D80) */
   expected_arrival_time: string | null;
+  /** provenance of expected_arrival_time (034): OTA import vs operator edit;
+   *  null = unknown (legacy rows) — never guessed */
+  expected_arrival_time_source: "ota" | "manual" | null;
+  /** immutable at-booking cancellation terms (034) — the reservation displays
+   *  this snapshot, never the live Settings template */
+  cancellation_policy: CancellationPolicySnapshot | null;
   discount_amount: number;
   extra_charges: number;
   total_price: number;
@@ -1251,6 +1287,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
       {
         id: string; reservation_number: string; status: string; source_id: string | null;
         notes: string | null; expected_arrival_time: string | null;
+        expected_arrival_time_source: "ota" | "manual" | null;
+        cancellation_policy_snapshot: CancellationPolicySnapshot | null;
         discount_amount: number; extra_charges: number;
         total_price: number; paid_amount: number; balance: number;
         created_at: string; updated_at: string;
@@ -1274,6 +1312,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
     >`
       SELECT res.id, res.reservation_number, res.status, res.source_id, res.notes,
              to_char(res.expected_arrival_time, 'HH24:MI') AS expected_arrival_time,
+             res.expected_arrival_time_source,
+             res.cancellation_policy_snapshot,
              res.workflow_status_id, res.channel_connection_id,
              res.ota_name, res.ota_reservation_code,
              res.external_unique_id, res.external_booking_id,
@@ -1401,6 +1441,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         source_id: res.source_id,
         notes: res.notes,
         expected_arrival_time: res.expected_arrival_time,
+        expected_arrival_time_source: res.expected_arrival_time_source,
+        cancellation_policy: res.cancellation_policy_snapshot,
         discount_amount: res.discount_amount,
         extra_charges: res.extra_charges,
         total_price: res.total_price,

@@ -141,6 +141,78 @@ Slides in from the inline-start (left in RTL) with fade, `1.2s ease-in-out`; 55%
 `bg-black/65`; header bar in Primary, `--shadow-pop`. Use for every form / detail / wizard.
 **No centered modals.**
 
+**V2 chrome is OPT-IN per panel** via the SidePanel `v2` prop (today: EditReservationPanel only) —
+it stamps `.bw-v2` on the panel root for the scoped token overrides; every panel that does not opt
+in keeps the original shell (18px title, `px-6 py-4` header, 44px close, `p-4` footer) untouched.
+V2 shell header: title `22px/800 tracking -0.3px`, subtitle `14px/500 white/82`;
+header padding `16px 26px`; action cluster = 40×40 `rounded-[11px] bg-white/12` icon buttons,
+then a `1px × 26px white/28` divider, then the close X (hover: **white bg / #DC2626 text**).
+V2 footer: `border-t border-line bg-surface`, padding `14px 26px`, shadow `0 -4px 16px rgba(16,24,40,.04)`.
+
+### Edit Booking SidePanel V2 _(the canonical reservation editor — `EditReservationPanel`)_
+Approved reference: `ref/screens/edit-booking-modal-V2.png` + `ref/html/edit-booking-modal-V2.html`.
+Implemented-state evidence (rendered comparison captures):
+`ref/screens/edit-booking-modal-V2-implemented-1920.png` / `…-1280.png` / `…-mobile.png`.
+The editor is the ONE canonical panel (opened from calendar, reservations list, guests) — a visual
+refactor must never fork the form state, save path, or server actions.
+
+- **Shell**: `v2` + `widthClassName="w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"`, body
+  `#F1F3F8 p-0`, no title icon. Header chips: `.bw-hd-num` (# chip, white/16) + `.bw-st-badge`
+  (lifecycle pill, `statusTintPalette` bg/tx + raw-color dot). The V2 form-token sizes
+  (`.bw-fld` 15px, `.bw-lbl` 14px, select chevron, 18px card-box titles, 320px sidebar, …) live
+  under the `.bw-v2` scope in `booking-window.css` — base `.bw-*` values are the wizard's and
+  must not be edited to achieve editor-only visuals.
+- **Layout**: one scroll region (`.bw-main`) — main column (cards, gap 18px) + sticky 320px sidebar
+  (gap 14px, hidden `max-lg`). Cards: white, radius 16, padding `22px 24px`, border `#E4E8F0`.
+- **Card headers** (`.bw-card-h`): 18px/800 + 34px icon square (`--color-primary-050`); sidebar
+  mini-cards use 16px + 30px square (inline override). A dirty section shows the `.bw-chg`
+  "שונה" chip (amber), pushed to the end by `.bw-sp`.
+- **Form**: labels `.bw-lbl` 14px/700 `#3A4257` + red `*` only on genuinely validated fields;
+  fields `.bw-fld` 46px, bg `#F1F3F8`, radius 12, 15px, focus = white bg + Primary border
+  (use `background-color`, never the `background` shorthand — selects carry a chevron
+  `background-image`); icon fields `.bw-fld.ic` with `.bw-fi` at inset-start 13px.
+  Grids `.bw-grid2/.bw-grid3`, gap `16px 18px`, `.full` spans.
+- **Payment area order**: price lines (real room label `חדר {number} · {type}`) → VAT (display) →
+  total (24px Primary) → `.bw-paychip` state chips (DISPLAY of ledger-derived `paymentState`;
+  actionable chips may only edit the additional-payment draft) → method/addPay/discount grid →
+  channel collection box (`.bw-metabox`, OTA only) → THE card section (`.bw-ccbox`) → `.bw-bal`
+  balance boxes (bg `#F8F9FC`, label 13px muted, value 20px/800; credit teal, due red) →
+  payments history.
+- **Credit card — ONE section, always (D86)**: `.bw-ccbox` renders **at most once per panel** and is
+  owned solely by `CardFields`. A stored (vaulted) card, a masked channel guarantee, a manually
+  keyed card and the empty state all display through the **same six canonical fields** —
+  `שם בעל הכרטיס` · `מספר כרטיס` · `תוקף` · `תעודת זהות (לא חובה)` · `מקור פרטי הכרטיס` ·
+  `הערות חיוב (לא חובה)`. Which values fill them is decided by the pure `resolveCardView()`
+  (`src/lib/card-rules.ts`), precedence **manual opt-in > stored > channel guarantee > empty**.
+  - Read-only sources use the same inputs with `readOnly` + `.bw-fld.bw-ro` — **never** `disabled`
+    and never a second box. `.bw-ccbox-off` (grey/dashed) is reserved for *manual entry* while the
+    payment method is not credit card; a populated read-only field must never look empty.
+  - `מספר כרטיס` shows the masked PAN (`•••• •••• •••• 1111`); an authorized reveal swaps the
+    plaintext **in place** in the same field. Missing values stay **empty** — a masked fragment is
+    never padded into a full number, and no digit is ever invented.
+  - `מקור פרטי הכרטיס` states the REAL origin (`ערוץ חיצוני · Booking.com`), never a hardcoded
+    back-office; in editable mode it becomes the `MANUAL_CARD_SOURCES` select.
+  - Brand, virtual-card tag (`.bw-cc-tag`), availability window and the honest collection state are
+    **subordinate** metadata — title suffix + one `.bw-cc-status` line inside the same section. They
+    must never restate holder/number/expiry.
+  - **Non-card** metadata (OTA reservation code, who collects, payment type, collection state) lives
+    in `.bw-metabox` — the same container geometry under a *different class*, so a second card
+    interface cannot re-grow by reusing the card styling.
+  - No CVV field exists, in any mode. Reveal/charge/record-payment/replace/remove keep their existing
+    permissions (`canRevealCard` / `canSaveCard` / `canChargeCard`) and audited server actions.
+- **Notes**: enlarged textarea `min-h-[184px]` (~2× standard 92px) — do not shrink back;
+  expected-arrival-time is a separate dedicated field with its honest source line.
+- **Sidebar**: summary card (`.bw-sum`, header strip 18px, ends at the total row) → quick-actions
+  card (`.bw-qa-btn` 46px/15px, real actions only) → activity timeline (`.bw-log` dot+line,
+  icon per action type).
+- **Footer**: danger "בטל הזמנה" at start → spacer → `.bw-dirty` chip when dirty →
+  ghost "סגור" → primary "שמור שינויים" (save icon). Dirty close shows the inline
+  discard-confirm strip; toolbar actions are save-first guarded.
+- **Retired**: the manual "סטטוס שהות" lifecycle select is hidden product-wide and must not
+  return; lifecycle changes flow only through check-in/out quick actions and cancellation.
+- **Rule**: visual changes must not create parallel business logic; reference fields with no real
+  product logic behind them (e.g. board-basis select) are NOT rendered as decoration.
+
 ### Badges / status pills _(spec: status palette above)_
 Small pill `rounded-full px-2 py-0.5 text-xs`, using a status row's `bg`+`bd`+`tx`. On table/calendar
 rows prefer the `border-r-4` status bar over a pill.
@@ -165,3 +237,14 @@ Nav-item states:
 RTL-first (`<html dir="rtl">`), logical CSS properties (`start`/`end`, `ms`/`me`, `ps`/`pe`) — never
 hard-coded left/right. Mobile-first responsive. `globals.css` is import-only; all CSS in
 `app/styles/`. Every screen ships loading / empty / error / hover / focus / active states.
+
+### Calendar room order (D86)
+Rooms ascend by the **numeric value of the room number** (`926 → 1000 → 1006 → … → 1424`), never by
+string order and never grouped by area/building. `room_number` is a `text` column, so both Postgres
+and JS default to a lexicographic sort — the canonical comparator `compareRoomNumber` /
+`sortRoomsByNumber` (`src/lib/rooms/sort.ts`) is applied **once**, in the calendar data loader
+(`src/app/(dashboard)/calendar/data.ts`). Non-numeric legacy room numbers sort after every numeric
+one, naturally. The sticky room column, the grid body, closures, prices and drag targets all iterate
+that single ordered array (one `RoomRow` per room), and week / 3-week / month share the loader — so
+ordering is never re-derived per view or per cell. Ordering is a **visual key only**: room ids,
+reservations, availability and channel mappings are untouched.

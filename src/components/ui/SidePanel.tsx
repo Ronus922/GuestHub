@@ -27,6 +27,7 @@ export function SidePanel({
   band,
   bodyClassName,
   widthClassName,
+  v2 = false,
   children,
   footer,
 }: {
@@ -39,7 +40,7 @@ export function SidePanel({
   // square, badge is a chip rendered next to the title block
   avatar?: React.ReactNode;
   badge?: React.ReactNode;
-  // raw chips (e.g. reservation # + status, .bw-hd-chip) rendered after the title
+  // raw chips (e.g. reservation # + status, .bw-hd-num / .bw-st-badge) rendered after the title
   headerChips?: React.ReactNode;
   // compact icon-buttons in the LEFT header cluster, before the built-in close X
   // (e.g. the booking action toolbar: email / whatsapp / pdf / print). RTL DOM
@@ -54,6 +55,12 @@ export function SidePanel({
   bodyClassName?: string;
   // panel width override (default 55% desktop / full mobile; e.g. rooms drawer = 60vw)
   widthClassName?: string;
+  /** V2 chrome (edit-booking-modal-V2 reference) — opt-in per panel: 22px/800
+   *  title, 26px header/footer padding, 40px header actions + divider,
+   *  white-on-red close hover, footer shadow, and the `.bw-v2` CSS scope for
+   *  the V2 form-token overrides. Panels that don't opt in keep the original
+   *  shell untouched. */
+  v2?: boolean;
   children: React.ReactNode;
   footer?: React.ReactNode;
 }) {
@@ -126,9 +133,13 @@ export function SidePanel({
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
-            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[55%]"} flex-col overflow-hidden rounded-tr-[0.65rem] rounded-br-[0.65rem] bg-white/90 shadow-pop outline-none backdrop-blur-md max-sm:w-full`}
+            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[55%]"} flex-col overflow-hidden rounded-tr-[0.65rem] rounded-br-[0.65rem] bg-white/90 shadow-pop outline-none backdrop-blur-md max-sm:w-full${v2 ? " bw-v2" : ""}`}
           >
-            <header className="flex shrink-0 items-center justify-between gap-3 bg-primary px-6 py-4 text-white">
+            <header
+              className={`flex shrink-0 items-center justify-between bg-primary py-4 text-white ${
+                v2 ? "gap-4 px-[26px]" : "gap-3 px-6"
+              }`}
+            >
               <div className="flex min-w-0 items-center gap-3">
                 {avatar ??
                   (icon ? (
@@ -137,12 +148,29 @@ export function SidePanel({
                     </span>
                   ) : null)}
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-lg font-bold">{title}</h2>
+                  {/* V2 header hierarchy: 22px/800 title, chips inline after it */}
+                  <div className={`flex flex-wrap items-center ${v2 ? "gap-2.5" : "gap-2"}`}>
+                    <h2
+                      className={
+                        v2
+                          ? "truncate text-[22px] font-extrabold tracking-[-0.3px]"
+                          : "truncate text-lg font-bold"
+                      }
+                    >
+                      {title}
+                    </h2>
                     {headerChips}
                   </div>
                   {subtitle ? (
-                    <p className="truncate text-sm text-white/80">{subtitle}</p>
+                    <p
+                      className={
+                        v2
+                          ? "mt-1 truncate text-sm font-medium text-white/[.82]"
+                          : "truncate text-sm text-white/80"
+                      }
+                    >
+                      {subtitle}
+                    </p>
                   ) : null}
                 </div>
                 {badge ? (
@@ -151,15 +179,23 @@ export function SidePanel({
                   </span>
                 ) : null}
               </div>
-              {/* left header cluster: action toolbar (RTL: right→left) + close X */}
+              {/* left header cluster: action toolbar (RTL: right→left) + close X.
+                  V2 only: thin divider before the X, close hovers white-on-red. */}
               <div className="flex shrink-0 items-center gap-1.5">
                 {headerActions}
+                {v2 && headerActions ? (
+                  <span aria-hidden className="mx-[3px] h-[26px] w-px shrink-0 self-center bg-white/[.28]" />
+                ) : null}
                 <button
                   type="button"
                   onClick={onClose}
                   aria-label="סגירה"
-                  title="סגירה"
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white/90 transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                  title="סגירת החלון"
+                  className={
+                    v2
+                      ? "grid h-10 w-10 shrink-0 place-items-center rounded-[11px] bg-white/[.12] text-white transition-colors hover:bg-white hover:text-[#DC2626] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                      : "grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white/90 transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                  }
                 >
                   <Icon name="close" size={20} />
                 </button>
@@ -173,7 +209,11 @@ export function SidePanel({
             </div>
 
             {footer ? (
-              <footer className="shrink-0 border-t border-line bg-surface p-4">
+              <footer
+                className={`shrink-0 border-t border-line bg-surface ${
+                  v2 ? "px-[26px] py-3.5 shadow-[0_-4px_16px_rgba(16,24,40,0.04)]" : "p-4"
+                }`}
+              >
                 {footer}
               </footer>
             ) : null}

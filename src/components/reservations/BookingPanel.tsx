@@ -685,7 +685,7 @@ export function BookingPanel({
                 <div className="bw-chips-row">
                   <PayChip
                     kind="pc-unpaid"
-                    label="לא שולם"
+                    label="ממתין לתשלום"
                     on={!asDraft && payState === "unpaid"}
                     onClick={() => {
                       setAsDraft(false);
@@ -835,7 +835,7 @@ export function BookingPanel({
                 })}
               </div>
               <div className="bw-fg mt-4">
-                <span className="bw-lbl">שעת הגעה משוערת</span>
+                <span className="bw-lbl">{"שעת צ'ק-אין צפויה"}</span>
                 <input
                   type="time"
                   className="bw-fld"
@@ -939,20 +939,46 @@ export function BookingPanel({
   );
 }
 
-export function CardTitle({ icon, title }: { icon: Parameters<typeof Icon>[0]["name"]; title: string }) {
+export function CardTitle({
+  icon,
+  title,
+  chip,
+}: {
+  icon: Parameters<typeof Icon>[0]["name"];
+  title: string;
+  /** trailing chip pushed to the card-title end (V2 .chg — e.g. "שונה") */
+  chip?: React.ReactNode;
+}) {
   return (
     <div className="bw-card-h">
       <span className="bw-hi">
         <Icon name={icon} size={17} />
       </span>
       {title}
+      {chip ? (
+        <>
+          <span className="bw-sp" />
+          {chip}
+        </>
+      ) : null}
     </div>
   );
 }
 
-export function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+export function Field({
+  label,
+  required,
+  full,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  /** span the whole form grid (V2 .fg.full) */
+  full?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <label className="bw-fg">
+    <label className={`bw-fg${full ? " full" : ""}`}>
       <span className="bw-lbl">
         {label} {required && <span className="bw-req">*</span>}
       </span>
@@ -990,7 +1016,7 @@ function PayChip({
 // orange / paid green / overpaid teal = fully paid + customer credit, D52 §7).
 export function PaymentBadge({ state }: { state: PaymentState }) {
   const map = {
-    unpaid: { label: "לא שולם", bg: "#FDECEC", bd: "#F4B9B9", tx: "#B4231F", dot: "#DC2626" },
+    unpaid: { label: "ממתין לתשלום", bg: "#FDECEC", bd: "#F4B9B9", tx: "#B4231F", dot: "#DC2626" },
     partial: { label: "שולם חלקית", bg: "#FDF2E1", bd: "#EBC078", tx: "#B4670A", dot: "#EA9314" },
     paid: { label: "שולם מלא", bg: "#E7F6EC", bd: "#AADDB7", tx: "#15803D", dot: "#16A34A" },
     overpaid: { label: "שולם ביתר", bg: "#DCF1F4", bd: "#8FD3DC", tx: "#0B6E7A", dot: "#0E8A99" },

@@ -135,8 +135,8 @@ export function StayEditor({
         <span className="bw-rc-ttl">חדר {index + 1}</span>
         {onRemove && (
           <button type="button" onClick={onRemove} className="bw-rc-rm">
-            <Icon name="trash" size={15} />
-            הסרה
+            <Icon name="trash" size={16} />
+            הסר
           </button>
         )}
       </div>
@@ -188,19 +188,23 @@ export function StayEditor({
       </div>
 
       {selected && !changing ? (
+        /* V2 .roomsel — room number bold-brand first, type after, swap = outline button */
         <div className="bw-rc-room">
           <span className="bw-rc-ric">
-            <Icon name="rooms" size={20} />
+            <Icon name="rooms" size={22} />
           </span>
-          <div className="min-w-0">
-            <p className="bw-rc-rn">
-              {selected.room_type_name ?? selected.name ?? ""} · חדר {selected.room_number}
+          <div className="bw-rc-info">
+            <p className="bw-rc-rn truncate">
+              <b>חדר {selected.room_number}</b>
+              {selected.room_type_name || selected.name
+                ? ` · ${selected.room_type_name ?? selected.name}`
+                : ""}
             </p>
-            <p className="bw-rc-rs">₪{selected.avg_price}/לילה</p>
+            <p className="bw-rc-rs truncate">₪{selected.avg_price} / לילה</p>
           </div>
           {!disabled && (
-            <button type="button" className="bw-swap" onClick={() => setChanging(true)}>
-              <Icon name="refresh" size={15} />
+            <button type="button" className="bw-btn bw-btn-o" onClick={() => setChanging(true)}>
+              <Icon name="refresh" size={16} />
               החלף חדר
             </button>
           )}

@@ -3,17 +3,17 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { Icon } from "@/components/shared/Icon";
+import { Icon, type IconName } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, formatBalance } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
+import { describeCancellationTier } from "@/lib/commercial/cancellation";
 import { statusTintPalette } from "@/lib/colors";
 import {
   COLLECTION_LABEL,
   COLLECT_OWNER_LABEL,
   PAYMENT_TYPE_LABEL,
-  cardBrandLabel,
 } from "@/lib/payments/collection-labels";
 import { useRealtimeEvent } from "@/components/providers/RealtimeProvider";
 import {
@@ -29,13 +29,7 @@ import {
 } from "@/app/(dashboard)/reservations/card-actions";
 import { EDITABLE_STATUSES } from "@/lib/validation/reservation";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
-import {
-  CardFields,
-  EMPTY_CARD,
-  StoredCardBox,
-  cardDraftState,
-  type CardDraft,
-} from "./CardFields";
+import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
 import { PaymentBadge, CardTitle, Field } from "./BookingPanel";
 import { BookingToolbar, MessageComposer } from "./BookingActions";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
@@ -81,7 +75,6 @@ export function EditReservationPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [guest, setGuest] = useState({ firstName: "", lastName: "", phone: "", email: "", idNumber: "" });
   const [sourceId, setSourceId] = useState("");
-  const [status, setStatus] = useState<string>("confirmed");
   const [stays, setStays] = useState<StayDraft[]>([]);
   const [discount, setDiscount] = useState(0);
   const [addPay, setAddPay] = useState(0);
@@ -93,6 +86,9 @@ export function EditReservationPanel({
   // action, then are cleared (see CardFields security note)
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
   const [cardMeta, setCardMeta] = useState<ReservationDetail["card"]>(null);
+  // ONE manual-entry flag (D86): a stored card and an imported channel guarantee
+  // both render read-only in the canonical fields until the operator explicitly
+  // chooses to key a card in ("החלף כרטיס" / "הזנת כרטיס ידנית במקום").
   const [replacingCard, setReplacingCard] = useState(false);
   const [cardBusy, startCardBusy] = useTransition();
   const [saving, startSaving] = useTransition();
@@ -103,7 +99,11 @@ export function EditReservationPanel({
   const [workflowStatusId, setWorkflowStatusId] = useState<string>("");
   const [workflowBusy, startWorkflowBusy] = useTransition();
   const snapshotRef = useRef("");
+  // section-level snapshots for the V2 "שונה" chips (guest card / stays card)
+  const guestSnapRef = useRef("");
+  const staysSnapRef = useRef("");
   const staysRef = useRef<HTMLElement | null>(null);
+  const addPayRef = useRef<HTMLInputElement | null>(null);
   const staleToastRef = useRef(false);
   // in-panel message composer (email | whatsapp) — a full-panel overlay; the
   // booking stays mounted underneath (no navigation, scroll preserved)
@@ -127,33 +127,35 @@ export function EditReservationPanel({
       const d = res.data;
       setDetail(d);
       setWorkflowStatusId(d.workflow_status_id ?? "");
-      setGuest({
+      const loadedGuest = {
         firstName: d.guest.first_name,
         lastName: d.guest.last_name,
         phone: d.guest.phone ?? "",
         email: d.guest.email ?? "",
         idNumber: d.guest.id_number ?? "",
-      });
+      };
+      setGuest(loadedGuest);
       setSourceId(d.source_id ?? "");
-      setStatus(d.status);
-      setStays(
-        d.rooms.map((r) => ({
-          key: newStayKey(),
-          rrId: r.rrId,
-          roomId: r.roomId,
-          checkIn: r.checkIn,
-          checkOut: r.checkOut,
-          adults: r.adults,
-          children: r.children,
-          infants: r.infants,
-          ratePerNight: r.ratePerNight,
-          isManualRate: r.isManualRate,
-          ratePlanId: r.ratePlanId,
-          guestFirstName: r.guestFirstName ?? undefined,
-          guestLastName: r.guestLastName ?? undefined,
-          guestPhone: r.guestPhone ?? undefined,
-        })),
-      );
+      // ONE mapping feeds both the live state and every snapshot — the dirty
+      // fingerprint can never drift from the form (falsely-"dirty" openings
+      // would trip the toolbar's save-first guard).
+      const loadedStays: StayDraft[] = d.rooms.map((r) => ({
+        key: newStayKey(),
+        rrId: r.rrId,
+        roomId: r.roomId,
+        checkIn: r.checkIn,
+        checkOut: r.checkOut,
+        adults: r.adults,
+        children: r.children,
+        infants: r.infants,
+        ratePerNight: r.ratePerNight,
+        isManualRate: r.isManualRate,
+        ratePlanId: r.ratePlanId,
+        guestFirstName: r.guestFirstName ?? undefined,
+        guestLastName: r.guestLastName ?? undefined,
+        guestPhone: r.guestPhone ?? undefined,
+      }));
+      setStays(loadedStays);
       setDiscount(d.discount_amount);
       setAddPay(0);
       setMethod("");
@@ -164,33 +166,9 @@ export function EditReservationPanel({
       setNotes(d.notes ?? "");
       setArrivalTime(d.expected_arrival_time ?? "");
       snapshotRef.current = editSnapshot(
-        {
-          firstName: d.guest.first_name,
-          lastName: d.guest.last_name,
-          phone: d.guest.phone ?? "",
-          email: d.guest.email ?? "",
-          idNumber: d.guest.id_number ?? "",
-        },
+        loadedGuest,
         d.source_id ?? "",
-        d.status,
-        d.rooms.map((r) => ({
-          rrId: r.rrId,
-          roomId: r.roomId,
-          checkIn: r.checkIn,
-          checkOut: r.checkOut,
-          adults: r.adults,
-          children: r.children,
-          infants: r.infants,
-          ratePerNight: r.ratePerNight,
-          // must mirror the live `stays` mapping above exactly (same fields, same
-          // order) or the dirty fingerprint never matches → every booking opens
-          // falsely "dirty", which the toolbar's save-first guard then blocks.
-          isManualRate: r.isManualRate,
-          ratePlanId: r.ratePlanId,
-          guestFirstName: r.guestFirstName ?? undefined,
-          guestLastName: r.guestLastName ?? undefined,
-          guestPhone: r.guestPhone ?? undefined,
-        })),
+        loadedStays,
         d.discount_amount,
         0,
         "",
@@ -198,6 +176,8 @@ export function EditReservationPanel({
         d.expected_arrival_time ?? "",
         EMPTY_CARD,
       );
+      guestSnapRef.current = JSON.stringify([loadedGuest, d.source_id ?? ""]);
+      staysSnapRef.current = JSON.stringify(loadedStays, dropStayKey);
     });
   }, []);
 
@@ -215,10 +195,15 @@ export function EditReservationPanel({
 
   const dirty =
     detail !== null &&
-    editSnapshot(guest, sourceId, status, stays, discount, addPay, method, notes, arrivalTime, cc) !==
+    editSnapshot(guest, sourceId, stays, discount, addPay, method, notes, arrivalTime, cc) !==
       snapshotRef.current;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  // per-section "שונה" chips (V2) — display only, never gate anything
+  const guestDirty =
+    detail !== null && JSON.stringify([guest, sourceId]) !== guestSnapRef.current;
+  const stayDirty =
+    detail !== null && JSON.stringify(stays, dropStayKey) !== staysSnapRef.current;
 
   // Live updates (D77 §6): when THIS reservation changes elsewhere (another
   // tab, an OTA revision, the worker) — reload a clean panel; a dirty editor
@@ -262,7 +247,9 @@ export function EditReservationPanel({
   const paidAfter = (detail?.paid_amount ?? 0) + addPay;
 
   // statusOverride serves the quick actions (e.g. בצע צ׳ק-אין) — same
-  // validated action, same payload, just an explicit status
+  // validated action, same payload, just an explicit status. An ordinary
+  // save sends NO status at all: the retired "סטטוס שהות" select was the
+  // only manual writer, so the server keeps the stored lifecycle value.
   const save = (statusOverride?: (typeof EDITABLE_STATUSES)[number]) =>
     startSaving(async () => {
       if (!detail) return;
@@ -276,7 +263,7 @@ export function EditReservationPanel({
           idNumber: guest.idNumber.trim() || undefined,
         },
         sourceId: sourceId || null,
-        status: statusOverride ?? (status as (typeof EDITABLE_STATUSES)[number]),
+        status: statusOverride,
         rooms: stays.map((s) => ({
           rrId: s.rrId,
           roomId: s.roomId,
@@ -397,6 +384,18 @@ export function EditReservationPanel({
   const statusMeta = detail ? statusItems.find((s) => s.key === detail.status) : null;
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "—";
   const payState = paymentState(total, paidAfter);
+
+  // The masked channel guarantee imported with an OTA booking (D86). It is NOT a
+  // second card: it feeds the SAME canonical fields as a stored/manual card,
+  // through resolveCardView inside the one card section. Only the stored card
+  // outranks it.
+  const guarantee = !cardMeta && detail?.ota ? detail.collection.guarantee : null;
+  // the card section is shown whenever there is something to show — a read-only
+  // viewer or a cancelled reservation still sees the imported details; the empty
+  // entry form appears only for an operator who may actually save a card
+  const showCardSection = Boolean(cardMeta || guarantee || (canSaveCard && canEditNow));
+  // a card may be keyed in only with the permission, on a live reservation
+  const canManageCard = canSaveCard && canEditNow;
   // canonical balance (D52 §7/§9): NOT floored — a negative balance is shown as a
   // customer credit, never as a zero balance. Formatted here, computed centrally.
   const bal = formatBalance(total, paidAfter);
@@ -407,8 +406,11 @@ export function EditReservationPanel({
       open={open}
       onClose={requestClose}
       title="עריכת הזמנה"
-      icon="edit"
-      bodyClassName="bg-[#eef0f5] p-0"
+      /* V2 shell (this editor ONLY): opt-in chrome + .bw-v2 token scope,
+         60% width (900–1200px), flat #F1F3F8 body, no title icon */
+      v2
+      widthClassName="w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
+      bodyClassName="bg-[#F1F3F8] p-0"
       subtitle={
         detail
           ? `נוצרה ${fmtDate(detail.created_at)}${
@@ -456,10 +458,17 @@ export function EditReservationPanel({
       headerChips={
         detail ? (
           <>
-            <span className="bw-hd-chip" dir="ltr">
+            <span className="bw-hd-num" dir="ltr">
               #{detail.reservation_number}
             </span>
-            <span className="bw-hd-chip">
+            {/* V2 .st-badge — the status color family (tint bg / readable text) */}
+            <span
+              className="bw-st-badge"
+              style={(() => {
+                const t = statusTintPalette(statusMeta?.color);
+                return { background: t.bg, color: t.tx };
+              })()}
+            >
               <span className="bw-d" style={{ background: statusMeta?.color ?? "#6B7385" }} />
               {statusMeta?.label ?? detail.status}
             </span>
@@ -485,13 +494,19 @@ export function EditReservationPanel({
             <div className="flex items-center gap-3">
               {canCancel && detail.status !== "cancelled" ? (
                 <button type="button" className="bw-btn bw-btn-danger" onClick={() => setCancelOpen(true)}>
-                  <Icon name="circle-slash" size={15} />
+                  <Icon name="circle-slash" size={16} />
                   בטל הזמנה
                 </button>
               ) : (
                 <span />
               )}
               <span className="flex-1" />
+              {dirty && (
+                <span className="bw-dirty">
+                  <Icon name="warning" size={16} />
+                  יש שינויים שלא נשמרו
+                </span>
+              )}
               <button type="button" className="bw-btn bw-btn-ghost" onClick={requestClose}>
                 סגור
               </button>
@@ -502,7 +517,7 @@ export function EditReservationPanel({
                   disabled={saving || !staysValid}
                   onClick={() => save()}
                 >
-                  <Icon name="check" size={16} />
+                  <Icon name="save" size={16} />
                   {saving ? "שומר…" : "שמור שינויים"}
                 </button>
               )}
@@ -572,9 +587,23 @@ export function EditReservationPanel({
                 </p>
               </section>
             )}
-            {/* guest */}
+            {/* guest. "סטטוס שהות" (the manual lifecycle select) is RETIRED —
+                hidden product-wide and never editable; the lifecycle itself
+                still changes only through the validated quick actions
+                (check-in/out) and the cancellation flow. */}
             <section className="bw-card">
-              <CardTitle icon="user" title="פרטי אורח" />
+              <CardTitle
+                icon="employees"
+                title="פרטי אורח"
+                chip={
+                  guestDirty ? (
+                    <span className="bw-chg">
+                      <Icon name="edit" size={13} />
+                      שונה
+                    </span>
+                  ) : undefined
+                }
+              />
               <div className="bw-grid2">
                 <Field label="שם פרטי" required>
                   <input className="bw-fld" value={guest.firstName} disabled={!canEditNow}
@@ -598,17 +627,6 @@ export function EditReservationPanel({
                       onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
                   </div>
                 </Field>
-                {/* lifecycle (מחזור חיים) — renamed "סטטוס שהות" (D77.2): the
-                    operator-configurable workflow tag below owns "סטטוס הזמנה" */}
-                <Field label="סטטוס שהות">
-                  <select className="bw-fld" value={status} disabled={!canEditNow} onChange={(e) => setStatus(e.target.value)}>
-                    {EDITABLE_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {statusItems.find((x) => x.key === s)?.label ?? s}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
                 <Field label="מקור הזמנה">
                   <select className="bw-fld" value={sourceId} disabled={!canEditNow} onChange={(e) => setSourceId(e.target.value)}>
                     <option value="">—</option>
@@ -620,11 +638,12 @@ export function EditReservationPanel({
                   </select>
                 </Field>
                 {workflowStatuses.length > 0 && (
-                  <Field label="סטטוס הזמנה">
+                  <Field label="סטטוס הזמנה" full>
                     {/* immediate status-only save — never revalidates the stay (§11).
                         D77.1: the select itself wears the status color family
                         (tint bg / color border / readable text) — same as the
-                        calendar pill; no tiny dot. */}
+                        calendar pill; no tiny dot. backgroundColor (not the
+                        background shorthand) keeps the V2 chevron image alive. */}
                     <select
                       className="bw-fld"
                       style={(() => {
@@ -632,7 +651,7 @@ export function EditReservationPanel({
                           workflowStatuses.find((w) => w.id === workflowStatusId)?.color,
                         );
                         return {
-                          background: t.bg,
+                          backgroundColor: t.bg,
                           borderColor: t.bd,
                           color: t.tx,
                           fontWeight: 700,
@@ -656,7 +675,18 @@ export function EditReservationPanel({
 
             {/* stays */}
             <section ref={staysRef} className="bw-card">
-              <CardTitle icon="rooms" title="שהות וחדרים" />
+              <CardTitle
+                icon="rooms"
+                title="שהות וחדרים"
+                chip={
+                  stayDirty ? (
+                    <span className="bw-chg">
+                      <Icon name="edit" size={13} />
+                      שונה
+                    </span>
+                  ) : undefined
+                }
+              />
               <div className="flex flex-col gap-4">
                 {stays.map((s, i) => (
                   <StayEditor
@@ -705,10 +735,18 @@ export function EditReservationPanel({
               {stays.map((s, i) => {
                 const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
                 const line = (s.ratePerNight ?? 0) * nights;
+                // V2 line label: real room number + type when the stay still
+                // points at its loaded room; a swapped/new room falls back to
+                // the ordinal (the parent doesn't hold the rooms lookup)
+                const loadedRoom = s.rrId ? detail.rooms.find((r) => r.rrId === s.rrId) : undefined;
+                const lineLabel =
+                  loadedRoom && loadedRoom.roomId === s.roomId
+                    ? `חדר ${loadedRoom.roomLabel}${loadedRoom.roomTypeName ? ` · ${loadedRoom.roomTypeName}` : ""}`
+                    : `חדר ${i + 1}`;
                 return (
                   <div key={s.key} className="bw-price-line">
                     <div>
-                      <b>חדר {i + 1}</b>
+                      <b>{lineLabel}</b>
                       <div className="bw-plr">
                         {ratePlans.length > 0 && canEditNow && (
                           /* changing the plan re-prices server-side on save */
@@ -768,53 +806,80 @@ export function EditReservationPanel({
                 </span>
               </div>
 
-              <div className="bw-grid3 mt-5">
-                <div className="bw-tile">
-                  <p className="bw-tl">סה״כ</p>
-                  <p className="bw-tv" dir="ltr">₪{Math.round(total).toLocaleString()}</p>
-                </div>
-                <div className="bw-tile">
-                  <p className="bw-tl">שולם</p>
-                  <p className="bw-tv" style={{ color: "#15803D" }} dir="ltr">₪{Math.round(paidAfter).toLocaleString()}</p>
-                </div>
-                <div className="bw-tile">
-                  <p className="bw-tl">{bal.kind === "credit" ? "זיכוי ללקוח" : "יתרה לתשלום"}</p>
-                  <p className="bw-tv" style={{ color: BAL_COLOR[bal.kind] }} dir="ltr">
-                    {bal.kind === "credit" ? "-" : ""}₪{Math.round(bal.amount).toLocaleString()}
-                  </p>
-                </div>
+              {/* payment-state chips (V2 .paychip) — a DISPLAY of the derived
+                  ledger state (paymentState). The actionable chips edit only
+                  the additional-payment DRAFT (a real field); recorded ledger
+                  payments are never reduced from here. */}
+              <div className="bw-chips-row" style={{ marginTop: 18 }}>
+                <button
+                  type="button"
+                  className={`bw-paychip pc-unpaid ${payState === "unpaid" ? "on" : ""}`}
+                  disabled={!canEditNow || (detail.paid_amount ?? 0) > 0}
+                  title={
+                    (detail.paid_amount ?? 0) > 0
+                      ? "תשלומים שנרשמו ביומן התשלומים אינם ניתנים לביטול מכאן"
+                      : undefined
+                  }
+                  onClick={() => setAddPay(0)}
+                >
+                  <span className="bw-d" />
+                  לא שולם
+                </button>
+                <button
+                  type="button"
+                  className={`bw-paychip pc-partial ${payState === "partial" ? "on" : ""}`}
+                  disabled={!canEditNow}
+                  onClick={() => addPayRef.current?.focus()}
+                >
+                  <span className="bw-d" />
+                  שולם חלקית
+                </button>
+                <button
+                  type="button"
+                  className={`bw-paychip pc-paid ${payState === "paid" ? "on" : ""}`}
+                  disabled={!canEditNow}
+                  onClick={() => setAddPay(Math.max(0, Math.round(total - (detail.paid_amount ?? 0))))}
+                >
+                  <span className="bw-d" />
+                  שולם מלא
+                </button>
+                {payState === "overpaid" && (
+                  <button type="button" className="bw-paychip pc-over on" disabled>
+                    <span className="bw-d" />
+                    שולם ביתר
+                  </button>
+                )}
               </div>
 
               {canEditNow && (
-                <>
-                  <div className="bw-grid3 mt-5">
-                    <Field label="הנחה (₪)">
-                      <input type="number" min={0} className="bw-fld" value={discount || ""}
-                        placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
-                    </Field>
-                    <Field label="תשלום נוסף (₪)">
-                      <input type="number" min={0} className="bw-fld" value={addPay || ""}
-                        placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
-                    </Field>
-                    <Field label="אמצעי תשלום">
-                      <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
-                        <option value="">בחירה…</option>
-                        {paymentMethods.map((m) => (
-                          <option key={m.id} value={m.key}>{m.label}</option>
-                        ))}
-                      </select>
-                    </Field>
-                  </div>
-                </>
+                <div className="bw-grid3 mt-4">
+                  <Field label="אמצעי תשלום">
+                    <select className="bw-fld" value={method} onChange={(e) => setMethod(e.target.value)}>
+                      <option value="">בחירה…</option>
+                      {paymentMethods.map((m) => (
+                        <option key={m.id} value={m.key}>{m.label}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="תשלום נוסף (₪)">
+                    <input ref={addPayRef} type="number" min={0} className="bw-fld" value={addPay || ""}
+                      placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                  <Field label="הנחה (₪)">
+                    <input type="number" min={0} className="bw-fld" value={discount || ""}
+                      placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
+                  </Field>
+                </div>
               )}
-              {/* ---- payment collection (D77 §13/§14): who collects, method,
-                   masked OTA guarantee (read-only display, never chargeable,
-                   never converted into editable card fields) ---- */}
+              {/* ---- channel collection metadata (D77 §13/§14, D86): who
+                   collects, which method, the channel's own reservation code.
+                   NO card data lives here — brand/number/expiry/holder belong to
+                   the one card section below, and nowhere else. ---- */}
               {detail.ota && (
-                <div className="bw-ccbox">
+                <div className="bw-metabox">
                   <div className="bw-cc-top">
-                    <Icon name="credit-card" size={19} />
-                    גבייה ותשלום — הזמנת ערוץ
+                    <Icon name="finance" size={19} />
+                    גבייה מהערוץ
                   </div>
                   <div className="bw-grid2">
                     {/* both numbers, separately (D80 §2): GuestHub's internal
@@ -852,46 +917,6 @@ export function EditReservationPanel({
                           : "—"}
                       </b>
                     </Field>
-                    {detail.collection.guarantee && (
-                      <>
-                        <Field label="כרטיס ערבות">
-                          <b className="text-sm text-ink" dir="ltr" style={{ textAlign: "right" }}>
-                            {cardBrandLabel(detail.collection.guarantee.brand)} ••••{" "}
-                            {detail.collection.guarantee.last4 ?? "—"}
-                          </b>
-                        </Field>
-                        <Field label="תוקף">
-                          <b className="text-sm text-ink" dir="ltr" style={{ textAlign: "right" }}>
-                            {detail.collection.guarantee.expMonth != null &&
-                            detail.collection.guarantee.expYear != null
-                              ? `${String(detail.collection.guarantee.expMonth).padStart(2, "0")}/${detail.collection.guarantee.expYear}`
-                              : "—"}
-                          </b>
-                        </Field>
-                        {detail.collection.guarantee.holderName && (
-                          <Field label="בעל הכרטיס">
-                            <b className="text-sm text-ink">
-                              {detail.collection.guarantee.holderName}
-                            </b>
-                          </Field>
-                        )}
-                        <Field label="סוג כרטיס">
-                          <b className="text-sm text-ink">
-                            {detail.collection.guarantee.isVirtual ? "כרטיס וירטואלי" : "כרטיס רגיל"}
-                          </b>
-                        </Field>
-                        {detail.collection.guarantee.isVirtual &&
-                          (detail.collection.guarantee.availableFrom ||
-                            detail.collection.guarantee.availableUntil) && (
-                            <Field label="חלון חיוב (כרטיס וירטואלי)">
-                              <b className="text-sm text-ink" dir="ltr" style={{ textAlign: "right" }}>
-                                {detail.collection.guarantee.availableFrom ?? "—"} →{" "}
-                                {detail.collection.guarantee.availableUntil ?? "—"}
-                              </b>
-                            </Field>
-                          )}
-                      </>
-                    )}
                     <Field label="מצב">
                       <b className="text-sm text-ink">
                         {COLLECTION_LABEL[detail.collection.state]}
@@ -903,64 +928,86 @@ export function EditReservationPanel({
                   </div>
                 </div>
               )}
-              {/* ---- stored card (D41): masked by default; entry/replace
-                   through the dedicated guarded save action only ---- */}
-              {cardMeta && !replacingCard && (
-                <StoredCardBox
-                  card={cardMeta}
-                  canReveal={canRevealCard}
-                  canManage={canSaveCard && canEditNow}
-                  canCharge={canChargeCard}
-                  canRecordPayment={canChargeCard && canEditNow}
-                  chargeAmount={Math.max(0, total - paidAfter)}
-                  reservationId={detail.id}
-                  onReplace={() => setReplacingCard(true)}
-                  onDelete={deleteCard}
-                  onPaymentRecorded={(p) =>
-                    setDetail((d) =>
-                      d
-                        ? { ...d, paid_amount: p.paid, balance: p.balance, payments: [p.payment, ...d.payments] }
-                        : d,
-                    )
-                  }
-                  deleting={cardBusy}
-                />
-              )}
-              {canSaveCard && canEditNow && (replacingCard || !cardMeta) && (
+              {/* ---- THE credit-card section (D86) — one interface for every
+                   source: the vaulted card (masked, audited reveal), the masked
+                   channel guarantee, manual entry, or the empty state. §15 —
+                   manual entry activates only when the payment method is credit
+                   card; switching away destroys the unsaved draft. ---- */}
+              {showCardSection && (
                 <>
-                  {/* §15 — entry activates only when the payment method is
-                       credit card; switching away destroys the unsaved draft */}
                   <CardFields
                     value={cc}
                     onChange={setCc}
                     chargeAmount={Math.max(0, total - paidAfter)}
                     disabled={method !== "credit_card"}
+                    stored={cardMeta}
+                    channel={guarantee}
+                    channelName={
+                      otaDisplayName(detail.ota?.otaName ?? null) ?? detail.ota?.otaName ?? null
+                    }
+                    stateLabel={detail.ota ? COLLECTION_LABEL[detail.collection.state] : null}
+                    manualEntry={replacingCard}
+                    onToggleManual={
+                      canManageCard
+                        ? (manual) => {
+                            setReplacingCard(manual);
+                            if (!manual) setCc(EMPTY_CARD);
+                          }
+                        : undefined
+                    }
+                    canReveal={canRevealCard}
+                    canManage={canManageCard}
+                    canCharge={canChargeCard}
+                    canRecordPayment={canChargeCard && canEditNow}
+                    reservationId={detail.id}
+                    onDelete={deleteCard}
+                    onPaymentRecorded={(p) =>
+                      setDetail((d) =>
+                        d
+                          ? { ...d, paid_amount: p.paid, balance: p.balance, payments: [p.payment, ...d.payments] }
+                          : d,
+                      )
+                    }
+                    deleting={cardBusy}
                   />
-                  <div className="mt-3 flex items-center gap-3">
-                    <button
-                      type="button"
-                      className="bw-btn bw-btn-o"
-                      disabled={cardBusy || ccStateForSave !== "valid" || method !== "credit_card"}
-                      onClick={saveCard}
-                    >
-                      <Icon name="check" size={15} />
-                      {cardBusy ? "שומר…" : cardMeta ? "החלף כרטיס" : "שמור כרטיס"}
-                    </button>
-                    {replacingCard && (
+                  {/* the guarded save action — only reachable from the editable
+                      (manual-entry / empty) state of the same fields */}
+                  {canManageCard && (replacingCard || (!cardMeta && !guarantee)) && (
+                    <div className="mt-3 flex items-center gap-3">
                       <button
                         type="button"
-                        className="bw-btn bw-btn-ghost"
-                        onClick={() => {
-                          setReplacingCard(false);
-                          setCc(EMPTY_CARD);
-                        }}
+                        className="bw-btn bw-btn-o"
+                        disabled={cardBusy || ccStateForSave !== "valid" || method !== "credit_card"}
+                        onClick={saveCard}
                       >
-                        ביטול
+                        <Icon name="check" size={15} />
+                        {cardBusy ? "שומר…" : cardMeta ? "החלף כרטיס" : "שמור כרטיס"}
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </>
               )}
+              {/* balance boxes (V2 .balance/.bal-box) — canonical formatBalance:
+                  a negative balance shows as customer credit, never floored */}
+              <div className="bw-grid3" style={{ marginTop: 18, gap: 12 }}>
+                <div className="bw-bal">
+                  <p className="bw-bal-l">סה״כ</p>
+                  <p className="bw-bal-v" dir="ltr">₪{Math.round(total).toLocaleString()}</p>
+                </div>
+                <div className="bw-bal">
+                  <p className="bw-bal-l">שולם</p>
+                  <p className="bw-bal-v" style={{ color: "#15803D" }} dir="ltr">
+                    ₪{Math.round(paidAfter).toLocaleString()}
+                  </p>
+                </div>
+                <div className="bw-bal">
+                  <p className="bw-bal-l">{bal.kind === "credit" ? "זיכוי ללקוח" : "יתרה לתשלום"}</p>
+                  <p className="bw-bal-v" style={{ color: BAL_COLOR[bal.kind] }} dir="ltr">
+                    {bal.kind === "credit" ? "-" : ""}₪{Math.round(bal.amount).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
               {detail.payments.length > 0 && (
                 <ul className="mt-5 flex flex-col gap-2 border-t border-line pt-4">
                   {detail.payments.map((p) => (
@@ -976,12 +1023,22 @@ export function EditReservationPanel({
               )}
             </section>
 
+            {/* cancellation policy — the immutable AT-BOOKING snapshot (034).
+                Displayed from the reservation itself; a later edit to the
+                Settings template never changes what is shown here. */}
+            {detail.cancellation_policy && (
+              <section className="bw-card">
+                <CardTitle icon="documents" title="מדיניות ביטול (בעת ההזמנה)" />
+                <CancellationSnapshotView snap={detail.cancellation_policy} />
+              </section>
+            )}
+
             {/* notes + expected arrival time — separate fields; the arrival
                 time is never folded into the notes text (D80 §6) */}
             <section className="bw-card">
               <CardTitle icon="documents" title="הערות להזמנה" />
               <div className="bw-grid2 mb-4">
-                <Field label="שעת הגעה משוערת">
+                <Field label="שעת צ'ק-אין צפויה">
                   <input
                     type="time"
                     className="bw-fld"
@@ -990,9 +1047,18 @@ export function EditReservationPanel({
                     disabled={!canEditNow}
                     onChange={(e) => setArrivalTime(e.target.value)}
                   />
+                  {detail.expected_arrival_time_source && (
+                    <span className="bw-opt mt-1 block">
+                      {detail.expected_arrival_time_source === "ota"
+                        ? `התקבל מ-${detail.ota?.otaName ?? "הערוץ"}`
+                        : "עודכן ידנית"}
+                    </span>
+                  )}
                 </Field>
               </div>
-              <textarea className="bw-fld" value={notes} disabled={!canEditNow}
+              {/* enlarged notes — ~2× a standard multiline field, per the
+                  approved V2 layout; do not shrink back */}
+              <textarea className="bw-fld min-h-[184px]" value={notes} disabled={!canEditNow}
                 placeholder="בקשות מיוחדות…" onChange={(e) => setNotes(e.target.value)} />
             </section>
           </div>
@@ -1000,8 +1066,8 @@ export function EditReservationPanel({
           {/* ---- sidebar: summary + activity (reference) ---- */}
           <aside className="bw-col-side max-lg:hidden">
             <div className="bw-sum">
-              <div className="bw-sum-h">
-                <Icon name="reservations" size={18} className="text-primary" />
+              <div className="bw-sum-h" style={{ fontSize: 18 }}>
+                <Icon name="reservations" size={19} className="text-primary" />
                 סיכום הזמנה
               </div>
               <div className="bw-sum-b">
@@ -1053,78 +1119,82 @@ export function EditReservationPanel({
                   <span className="bw-l">סה״כ</span>
                   <span className="bw-v" dir="ltr">₪{Math.round(total).toLocaleString()}</span>
                 </div>
-                <div className="bw-sum-pay">
-                  <span>סטטוס תשלום</span>
-                  <PaymentBadge state={payState} />
-                </div>
               </div>
             </div>
 
-            {/* quick actions (reference פעולות מהירות) — only actions the
-                system truly supports: check-in via the same validated save
-                path, and jumping to the room editor. שלח אישור הזמנה is not
-                rendered (no messaging infra — D40). */}
+            {/* quick actions (V2 פעולות מהירות card) — only actions the system
+                truly supports: check-in/out via the same validated save path,
+                a real booking-confirmation send (the D53 composer), and
+                jumping to the room editor. */}
             {canEditNow && ["confirmed", "draft", "checked_in"].includes(detail.status) && (
-              <div className="bw-sum">
-                <div className="bw-sum-h">
-                  <Icon name="automations" size={17} className="text-primary" />
+              <div className="bw-card" style={{ padding: "16px 18px" }}>
+                <div className="bw-card-h" style={{ fontSize: 16, marginBottom: 13 }}>
+                  <span className="bw-hi" style={{ width: 30, height: 30 }}>
+                    <Icon name="automations" size={16} />
+                  </span>
                   פעולות מהירות
                 </div>
-                <div className="bw-sum-b">
-                  <div className="bw-qa">
-                    {detail.status === "checked_in" ? (
-                      /* same validated save path — check-out never touches payment */
-                      <button
-                        type="button"
-                        className="bw-qa-btn qg"
-                        disabled={saving || !staysValid}
-                        onClick={() => save("checked_out")}
-                      >
-                        <Icon name="logout" size={17} />
-                        בצע צ׳ק-אאוט
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className="bw-qa-btn qg"
-                        disabled={saving || !staysValid}
-                        onClick={() => save("checked_in")}
-                      >
-                        <Icon name="login" size={17} />
-                        בצע צ׳ק-אין
-                      </button>
-                    )}
+                <div className="bw-qa">
+                  {detail.status === "checked_in" ? (
+                    /* same validated save path — check-out never touches payment */
                     <button
                       type="button"
-                      className="bw-qa-btn"
-                      onClick={() => staysRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                      className="bw-qa-btn qg"
+                      disabled={saving || !staysValid}
+                      onClick={() => save("checked_out")}
                     >
-                      <Icon name="refresh" size={17} />
-                      העבר לחדר אחר
+                      <Icon name="logout" size={18} />
+                      בצע צ׳ק-אאוט
                     </button>
-                  </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="bw-qa-btn qg"
+                      disabled={saving || !staysValid}
+                      onClick={() => save("checked_in")}
+                    >
+                      <Icon name="login" size={18} />
+                      בצע צ׳ק-אין
+                    </button>
+                  )}
+                  {/* the reference's "שלח אישור הזמנה" action is deliberately
+                      NOT rendered here — this pass is a visual refactor; the
+                      header toolbar already owns the real messaging actions */}
+                  <button
+                    type="button"
+                    className="bw-qa-btn"
+                    onClick={() => staysRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  >
+                    <Icon name="refresh" size={18} />
+                    העבר לחדר אחר
+                  </button>
                 </div>
               </div>
             )}
 
             {detail.activity.length > 0 && (
-              <div className="bw-sum">
-                <div className="bw-sum-h">
-                  <Icon name="refresh" size={17} className="text-primary" />
+              <div className="bw-card" style={{ padding: "16px 18px" }}>
+                <div className="bw-card-h" style={{ fontSize: 16, marginBottom: 13 }}>
+                  <span className="bw-hi" style={{ width: 30, height: 30 }}>
+                    <Icon name="attendance" size={16} />
+                  </span>
                   יומן פעילות
                 </div>
-                <div className="bw-sum-b">
-                  <div className="bw-act">
-                    {detail.activity.map((a, i) => (
-                      <div key={i} className="bw-act-row">
-                        <span className="bw-act-t">
-                          {ACTIVITY_LABEL[a.action] ?? a.action}
-                          {a.user_name ? ` · ${a.user_name}` : ""}
-                        </span>
-                        <span className="bw-act-d">{a.created_at.slice(0, 16).replace("T", " ")}</span>
+                <div className="bw-log">
+                  {detail.activity.map((a, i) => (
+                    <div key={i} className="bw-log-i">
+                      <span className="bw-log-d">
+                        <Icon name={ACTIVITY_ICON[a.action] ?? "edit"} size={11} />
+                      </span>
+                      <div className="min-w-0">
+                        <div className="bw-log-t">{ACTIVITY_LABEL[a.action] ?? a.action}</div>
+                        <div className="bw-log-s">
+                          <span dir="ltr">{a.created_at.slice(0, 16).replace("T", " ")}</span>
+                          {a.user_name ? ` · ${a.user_name}` : " · מערכת"}
+                        </div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -1135,13 +1205,81 @@ export function EditReservationPanel({
   );
 }
 
+// The reservation's at-booking cancellation terms (034) — pure display of the
+// stored snapshot. Template sources show the copied title + tiers; the OTA
+// source shows the imported text/penalties verbatim. Never re-reads Settings.
+function CancellationSnapshotView({
+  snap,
+}: {
+  snap: NonNullable<ReservationDetail["cancellation_policy"]>;
+}) {
+  const sourceLine =
+    snap.source === "ota"
+      ? `התקבל מ-${snap.ota?.ota_name ?? "הערוץ"} יחד עם ההזמנה`
+      : snap.source === "rate_plan"
+        ? "מתבנית המדיניות של תוכנית המחיר שנבחרה"
+        : "תבנית ברירת המחדל של הנכס";
+  return (
+    <div className="flex flex-col gap-2">
+      {snap.policy && (
+        <>
+          <b className="text-sm text-ink">{snap.policy.public_title}</b>
+          {snap.policy.guest_description && (
+            <p className="text-sm text-muted">{snap.policy.guest_description}</p>
+          )}
+          {snap.policy.tiers.length > 0 && (
+            <ul className="flex flex-col gap-1 text-sm text-ink">
+              {snap.policy.tiers.map((t, i) => (
+                <li key={i}>· {describeCancellationTier(t)}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      {snap.ota && (
+        <>
+          {snap.ota.policies_text && (
+            <p className="whitespace-pre-wrap text-sm text-ink">{snap.ota.policies_text}</p>
+          )}
+          {snap.ota.cancel_penalties.length > 0 && (
+            <ul className="flex flex-col gap-1 text-sm text-ink">
+              {snap.ota.cancel_penalties.map((p, i) => (
+                <li key={i}>
+                  · {p.from ? `החל מ-${fmtDate(p.from)}` : "בכל שלב"}: דמי ביטול{" "}
+                  <b dir="ltr">
+                    {p.amount ?? "—"} {p.currency ?? ""}
+                  </b>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      <span className="bw-opt">
+        {sourceLine} · תועד בעת ההזמנה ({fmtDate(snap.captured_at)}) — עדכון עתידי של
+        התבניות בהגדרות לא ישנה הזמנה קיימת
+      </span>
+    </div>
+  );
+}
+
 // OTA-specific label for the channel's own reservation number (D80 §2)
-function otaCodeLabel(otaName: string | null): string {
+// The channel's stored name is a slug ("BookingCom"); staff read the brand. ONE
+// mapping serves both the OTA-number label and the card section's origin line.
+const OTA_DISPLAY_NAME: readonly (readonly [RegExp, string])[] = [
+  [/booking/, "Booking.com"],
+  [/airbnb/, "Airbnb"],
+  [/expedia/, "Expedia"],
+];
+
+function otaDisplayName(otaName: string | null): string | null {
   const n = (otaName ?? "").toLowerCase();
-  if (n.includes("booking")) return "מספר הזמנה ב-Booking.com";
-  if (n.includes("airbnb")) return "מספר הזמנה ב-Airbnb";
-  if (n.includes("expedia")) return "מספר הזמנה ב-Expedia";
-  return "מספר הזמנה בערוץ (OTA)";
+  return OTA_DISPLAY_NAME.find(([re]) => re.test(n))?.[1] ?? null;
+}
+
+function otaCodeLabel(otaName: string | null): string {
+  const name = otaDisplayName(otaName);
+  return name ? `מספר הזמנה ב-${name}` : "מספר הזמנה בערוץ (OTA)";
 }
 
 function fmtDate(iso: string): string {
@@ -1171,11 +1309,51 @@ const CANCEL_ORIGIN_LABEL: Record<string, string> = {
   system: "מערכת",
 };
 
+// timeline glyph per activity type (V2 יומן פעילות)
+const ACTIVITY_ICON: Record<string, IconName> = {
+  create: "plus",
+  update: "edit",
+  cancel: "circle-slash",
+  reschedule: "refresh",
+  channel_import_create: "channels",
+  channel_import_update: "channels",
+  channel_import_cancel: "circle-slash",
+  workflow_status_change: "check-circle",
+  ota_invalid_card_report: "warning",
+  ota_no_show_report: "warning",
+  ota_cancel_due_invalid_card: "circle-slash",
+  external_change_approve: "check",
+  external_change_reject: "circle-slash",
+  card_save: "credit-card",
+  card_replace: "credit-card",
+  card_reveal: "eye",
+  card_reveal_denied: "lock",
+  card_charge_attempt: "finance",
+  card_import_channel: "credit-card",
+  card_delete: "trash",
+  payment_external_record: "finance",
+  email_sent: "mail",
+  email_failed: "warning",
+  whatsapp_sent: "whatsapp",
+  whatsapp_failed: "warning",
+  pdf_generated: "download",
+  print: "printer",
+};
+
 const ACTIVITY_LABEL: Record<string, string> = {
   create: "ההזמנה נוצרה",
   update: "ההזמנה עודכנה",
   cancel: "ההזמנה בוטלה",
   reschedule: "חדר / תאריכים עודכנו",
+  channel_import_create: "ההזמנה התקבלה מהערוץ",
+  channel_import_update: "ההזמנה עודכנה מהערוץ",
+  channel_import_cancel: "ההזמנה בוטלה על ידי הערוץ",
+  workflow_status_change: "סטטוס ההזמנה עודכן",
+  ota_invalid_card_report: "דווח לערוץ על כרטיס לא תקין",
+  ota_no_show_report: "דווח לערוץ על אי-הגעה",
+  ota_cancel_due_invalid_card: "בקשת ביטול בגין כרטיס לא תקין",
+  external_change_approve: "אושר שינוי שהגיע מהערוץ",
+  external_change_reject: "נדחה שינוי שהגיע מהערוץ",
   card_save: "כרטיס אשראי נשמר",
   card_replace: "כרטיס אשראי הוחלף",
   card_reveal: "מספר כרטיס נחשף",
@@ -1193,11 +1371,16 @@ const ACTIVITY_LABEL: Record<string, string> = {
 };
 
 // dirty-state fingerprint of everything the user can edit (stay "key"
-// fields are random per load, so the replacer drops them)
+// fields are random per load, so the replacer drops them). The reservation
+// lifecycle status is deliberately NOT part of the fingerprint — the manual
+// "סטטוס שהות" field was retired (hidden product-wide); status changes flow
+// only through the validated quick actions (check-in/out) and cancellation.
+function dropStayKey(k: string, v: unknown): unknown {
+  return k === "key" ? undefined : v;
+}
 function editSnapshot(
   guest: { firstName: string; lastName: string; phone: string; email: string; idNumber: string },
   sourceId: string,
-  status: string,
   stays: (StayDraft | Omit<StayDraft, "key">)[],
   discount: number,
   addPay: number,
@@ -1207,7 +1390,7 @@ function editSnapshot(
   cc: CardDraft,
 ): string {
   return JSON.stringify(
-    [guest, sourceId, status, stays, discount, addPay, method, notes, arrivalTime, cc],
-    (k, v) => (k === "key" ? undefined : v),
+    [guest, sourceId, stays, discount, addPay, method, notes, arrivalTime, cc],
+    dropStayKey,
   );
 }

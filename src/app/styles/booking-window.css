@@ -9,22 +9,33 @@
 
 @layer components {
 
-.bw-hd-chip {
+/* header chips (V2 .hd-num / .st-badge) — reservation # + status pill,
+   rendered inside the SidePanel primary header next to the title */
+.bw-hd-num {
+  font-size: 15px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  padding: 4px 11px;
+  border-radius: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bw-st-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #fff;
-  color: var(--color-ink);
-  border-radius: 8px;
-  padding: 4px 10px;
-  font-size: 12.5px;
-  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
   white-space: nowrap;
 }
-.bw-hd-chip .bw-d {
-  width: 7px;
-  height: 7px;
+.bw-st-badge .bw-d {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
+  flex: none;
 }
 
 /* ---------- stepper band (wizard) ---------- */
@@ -167,6 +178,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: none;
+}
+.bw-card-h .bw-sp {
+  flex: 1;
+}
+/* section-dirty chip (V2 .chg) — "שונה" next to the card title */
+.bw-chg {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #b4670a;
+  background: #fdf2e1;
+  padding: 4px 10px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* ---------- form fields ---------- */
@@ -224,7 +251,7 @@
   color: #a7aebd;
 }
 .bw-fld:focus {
-  background: #fff;
+  background-color: #fff;
   border-color: var(--color-primary);
   box-shadow: none;
 }
@@ -240,6 +267,16 @@ textarea.bw-fld {
 }
 select.bw-fld {
   cursor: pointer;
+}
+/* imported (read-only) value shown inside a regular field — same geometry,
+   the .bw-readonly palette, no focus ring (nothing here is editable) */
+.bw-fld.bw-ro {
+  background: #eef1f6;
+  color: #3a4257;
+}
+.bw-fld.bw-ro:focus {
+  background: #eef1f6;
+  border-color: transparent;
 }
 .bw-search {
   height: 54px;
@@ -476,6 +513,25 @@ select.bw-fld {
   font-variant-numeric: tabular-nums;
 }
 
+/* balance boxes (V2 .bal-box) — סה״כ / שולם / יתרה in the edit panel */
+.bw-bal {
+  border: 1px solid #e4e8f0;
+  border-radius: 13px;
+  padding: 13px 15px;
+  background: #f8f9fc;
+}
+.bw-bal .bw-bal-l {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+.bw-bal .bw-bal-v {
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
+
 /* ---------- summary sidebar (.sum) ---------- */
 .bw-sum {
   background: #fff;
@@ -615,28 +671,58 @@ select.bw-fld {
   border-radius: 50%;
 }
 
-/* activity timeline (edit window sidebar) */
-.bw-act {
+/* activity timeline (V2 .log) — dot + connector line per entry */
+.bw-log {
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
-.bw-act-row {
+.bw-log-i {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12.5px;
+  gap: 11px;
+  position: relative;
+  padding-bottom: 16px;
 }
-.bw-act-t {
+.bw-log-i:last-child {
+  padding-bottom: 2px;
+}
+.bw-log-i::before {
+  content: "";
+  position: absolute;
+  top: 22px;
+  bottom: 0;
+  inset-inline-start: 9px;
+  width: 2px;
+  background: #eef1f6;
+}
+.bw-log-i:last-child::before {
+  display: none;
+}
+.bw-log-d {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary-050);
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1.5px #d8dff8;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  color: var(--color-primary);
+}
+.bw-log-t {
+  font-size: 13.5px;
   font-weight: 700;
   color: #2c3446;
+  line-height: 1.3;
 }
-.bw-act-d {
+.bw-log-s {
+  font-size: 12px;
   color: var(--color-faint);
   font-weight: 600;
-  white-space: nowrap;
-  direction: ltr;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- footer step label ---------- */
@@ -676,6 +762,9 @@ select.bw-fld {
   font-weight: 700;
   color: #4b5266;
   cursor: pointer;
+}
+.bw-paychip:disabled {
+  cursor: default;
 }
 .bw-paychip .bw-d {
   width: 9px;
@@ -720,9 +809,23 @@ select.bw-fld {
   background: var(--color-primary-050);
   color: var(--color-primary);
 }
+/* overpaid = customer credit (D52 §7) — teal family, edit panel only */
+.bw-paychip.pc-over .bw-d {
+  background: #0e8a99;
+}
+.bw-paychip.on.pc-over {
+  border-color: #0e8a99;
+  background: #dcf1f4;
+  color: #0b6e7a;
+}
 
-/* ---------- credit-card details block (reference .ccbox) ---------- */
-.bw-ccbox {
+/* ---------- credit-card details block (reference .ccbox) ----------
+   .bw-ccbox is THE credit-card section and appears at most once per panel
+   (D86). .bw-metabox is the same container geometry for NON-card metadata
+   (e.g. channel collection facts) — deliberately a different class so a
+   second card interface cannot re-grow by reusing the card box. */
+.bw-ccbox,
+.bw-metabox {
   border: 1.5px solid #e4e8f0;
   border-radius: 14px;
   padding: 18px 20px;
@@ -758,6 +861,38 @@ select.bw-fld {
   color: #9aa1b4;
   font-weight: 600;
   font-size: 12px;
+}
+/* D86 — subordinate card metadata INSIDE the one card section: the brand/virtual
+   tag beside the section title and the honest origin/collection status line under
+   the fields. Never a second presentation of holder/number/expiry. */
+.bw-cc-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fdf2e1;
+  color: #b4670a;
+  font-size: 12px;
+  font-weight: 700;
+}
+/* copy affordance for a REVEALED value — sits in the field's own label row, so a
+   revealed card stays inside the canonical fields instead of a separate box */
+.bw-cc-copy {
+  height: 22px;
+  padding: 0 6px;
+  margin-inline-start: 6px;
+  vertical-align: middle;
+}
+.bw-cc-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+.bw-cc-status svg {
+  flex: none;
+  color: var(--color-primary);
 }
 .bw-fld-wrap {
   position: relative;
@@ -816,26 +951,27 @@ select.bw-fld {
 .bw-qa {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
 }
 .bw-qa-btn {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 42px;
-  padding: 0 14px;
+  gap: 10px;
+  height: 46px;
+  padding: 0 15px;
   border: 1.5px solid #e4e8f0;
-  border-radius: 11px;
+  border-radius: 12px;
   background: #fff;
   font-family: inherit;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 700;
-  color: var(--color-ink);
+  color: #2c3446;
   cursor: pointer;
   text-align: start;
 }
 .bw-qa-btn:hover:not(:disabled) {
   background: #f5f7fb;
+  border-color: #c9d2e4;
 }
 .bw-qa-btn:disabled {
   opacity: 0.5;
@@ -853,16 +989,16 @@ select.bw-fld {
 .bw-rc-room {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 13px;
   margin-top: 14px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border: 1.5px solid #e4e8f0;
-  border-radius: 12px;
+  border-radius: 13px;
   background: #fff;
 }
 .bw-rc-ric {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: 11px;
   background: var(--color-primary-050);
   color: var(--color-primary);
@@ -871,34 +1007,119 @@ select.bw-fld {
   justify-content: center;
   flex: none;
 }
+.bw-rc-info {
+  flex: 1;
+  min-width: 0;
+}
 .bw-rc-rn {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--color-ink);
 }
-.bw-rc-rs {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-faint);
+.bw-rc-rn b {
+  color: var(--color-primary);
 }
-.bw-swap {
-  margin-inline-start: auto;
+.bw-rc-rs {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+
+/* footer state chips (V2 .dirty / .saved-ok) */
+.bw-dirty {
+  font-size: 13.5px;
+  color: #b4670a;
+  font-weight: 700;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 36px;
-  padding: 0 14px;
-  border: 1.5px solid #dfe5fb;
-  border-radius: 10px;
-  background: #fff;
-  color: var(--color-primary);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
 }
-.bw-swap:hover {
-  background: var(--color-primary-050);
+.bw-saved-ok {
+  font-size: 13.5px;
+  color: #15803d;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ============================================================
+   V2 token overrides — SCOPED to panels that opt into the V2 shell
+   (SidePanel `v2` prop stamps `.bw-v2` on the panel root; today that is
+   ONLY EditReservationPanel). Base `.bw-*` values above stay exactly as
+   the wizard and every other consumer always had them.
+   Source of truth: ref/html/edit-booking-modal-V2.html.
+   ============================================================ */
+.bw-v2 .bw-lbl {
+  font-size: 14px;
+}
+.bw-v2 .bw-fld {
+  font-size: 15px;
+}
+/* V2 custom select chevron (RTL: arrow on the left). Inline tint styles must
+   use background-COLOR — a background shorthand would wipe this arrow image. */
+.bw-v2 select.bw-fld {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%236B7385' stroke-width='2.4' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");
+  background-repeat: no-repeat;
+  background-position: left 13px center;
+}
+.bw-v2 .bw-fld-wrap .bw-fi {
+  inset-inline-start: 13px;
+  color: #9aa1b4;
+}
+.bw-v2 .bw-btn {
+  font-size: 15px;
+}
+.bw-v2 .bw-addroom {
+  font-size: 15px;
+}
+.bw-v2 .bw-price-line {
+  font-size: 15px;
+}
+.bw-v2 .bw-price-line .bw-plr {
+  font-size: 13.5px;
+}
+.bw-v2 .bw-readonly .bw-rn {
+  font-size: 13px;
+}
+.bw-v2 .bw-rc-badge {
+  font-size: 15px;
+}
+.bw-v2 .bw-rc-rm {
+  font-size: 14px;
+}
+.bw-v2 .bw-paychip {
+  font-size: 15px;
+}
+.bw-v2 .bw-cc-top {
+  font-size: 18px;
+}
+.bw-v2 .bw-opt {
+  font-size: 12.5px;
+}
+.bw-v2 .bw-col-side {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bw-v2 .bw-sum-gsrc {
+  font-size: 13px;
+}
+.bw-v2 .bw-sum-rt {
+  font-size: 15px;
+}
+.bw-v2 .bw-sum-rd {
+  font-size: 13px;
+}
+.bw-v2 .bw-sum-line {
+  font-size: 14px;
+}
+.bw-v2 .bw-sum-total .bw-v {
+  font-size: 24px;
 }
 
 } /* @layer components */
@@ -912,7 +1133,7 @@ select.bw-fld {
 .bk-tb { display: flex; align-items: center; }
 .bk-tb-inline { display: flex; align-items: center; gap: 6px; }
 .bk-tb-btn {
-  height: 42px; width: 42px; display: grid; place-items: center;
+  height: 40px; width: 40px; display: grid; place-items: center;
   border-radius: 11px; border: none; cursor: pointer;
   background: rgba(255, 255, 255, 0.12); color: #fff;
   transition: background 0.15s ease;

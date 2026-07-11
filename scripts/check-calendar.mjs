@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 const out = mkdtempSync(join(tmpdir(), "calendar-"));
 // commonjs so compiled inter-module imports resolve without extensions under plain node
 execSync(
-  `pnpm exec tsc src/lib/dates.ts src/lib/inventory-rules.ts src/lib/channel/ranges.ts src/lib/channel/payloads.ts src/lib/channel/ari-payloads.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
+  `pnpm exec tsc src/lib/dates.ts src/lib/inventory-rules.ts src/lib/rooms/sort.ts src/lib/channel/ranges.ts src/lib/channel/payloads.ts src/lib/channel/ari-payloads.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
   { stdio: "inherit" },
 );
 const require = createRequire(import.meta.url);
@@ -186,6 +186,59 @@ for (const f of ["src/lib/channel/ari-payloads.ts", "src/lib/channel/payloads.ts
   const src = readFileSync(f, "utf8");
   assert.ok(!/fetch\(|XMLHttpRequest|axios|http\.request|https\.request/.test(src), `${f} contains no network code`);
   assert.ok(!/^import /m.test(src), `${f} stays import-free (standalone-compilable)`);
+}
+
+// ---- canonical room ordering (D86) ----
+// The calendar orders rooms by ONE comparator; room_number is a text column, so
+// both Postgres and JS would otherwise sort "1006" before "926".
+{
+  const { compareRoomNumber, sortRoomsByNumber } = require(join(out, "rooms/sort.js"));
+
+  assert.equal(compareRoomNumber("100", "926") < 0, true, "100 before 926");
+  assert.equal(compareRoomNumber("926", "1006") < 0, true, "926 before 1006 (never string order)");
+  assert.equal(compareRoomNumber("1006", "926") > 0, true, "comparator is antisymmetric");
+  assert.equal(compareRoomNumber("100", "100"), 0, "equal numbers tie");
+
+  // the live room set, deliberately fed in the scrambled order the old
+  // area-grouped SQL produced (צפוני block, then דרומי block, then no-area)
+  const scrambled = ["1102", "1142", "1235", "1237", "1238", "1242", "1245", "1424", "1000", "1006", "1130", "1131", "1329", "926"];
+  assert.deepEqual(
+    sortRoomsByNumber(scrambled.map((room_number) => ({ room_number }))).map((r) => r.room_number),
+    ["926", "1000", "1006", "1102", "1130", "1131", "1142", "1235", "1237", "1238", "1242", "1245", "1329", "1424"],
+    "rooms ascend numerically regardless of area/insertion order",
+  );
+
+  // legacy non-numeric room numbers sort AFTER every numeric one (their relative
+  // order is the locale's natural order — asserted as a set, not an ICU tie-break)
+  const mixed = sortRoomsByNumber(
+    ["A12", "1006", "פנטהאוז", "926", "12B"].map((room_number) => ({ room_number })),
+  ).map((r) => r.room_number);
+  assert.deepEqual(mixed.slice(0, 2), ["926", "1006"], "numeric rooms come first, ascending");
+  assert.deepEqual(
+    [...mixed.slice(2)].sort(),
+    ["12B", "A12", "פנטהאוז"].sort(),
+    "every non-numeric room number lands after the numeric ones",
+  );
+
+  // equal numeric values keep input order (stable) — ids stay attached to rows
+  const dupes = [
+    { room_number: "101", id: "first" },
+    { room_number: "101", id: "second" },
+  ];
+  assert.deepEqual(sortRoomsByNumber(dupes).map((r) => r.id), ["first", "second"], "stable on ties");
+}
+
+// the calendar loader must not re-introduce an area-grouped/text ORDER BY
+{
+  const src = readFileSync("src/app/(dashboard)/calendar/data.ts", "utf8");
+  assert.ok(
+    /sortRoomsByNumber\(/.test(src),
+    "calendar loader orders rooms through the canonical comparator",
+  );
+  assert.ok(
+    !/ORDER BY a\.sort_order/.test(src),
+    "calendar rooms are no longer grouped by area sort_order",
+  );
 }
 
 console.log("check-calendar: all assertions passed");

@@ -1428,19 +1428,6 @@ const StayBar = memo(function StayBar({
       }}
     >
       {stay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
-      {/* payment stays a compact indicator (D77.1) — it must never override
-          the workflow color that now paints the whole pill */}
-      {stay.status !== "checked_out" &&
-        (stay.payment === "unpaid" || stay.payment === "partial") && (
-          <span
-            className="cb-pay-ind"
-            style={{ color: PAY_STYLE[stay.payment].tx }}
-            title={stay.payment === "unpaid" ? "לא שולם" : "שולם חלקית"}
-            aria-label={stay.payment === "unpaid" ? "לא שולם" : "שולם חלקית"}
-          >
-            ₪
-          </span>
-        )}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={11} className="shrink-0 opacity-70" />}
       <span className="cb-bn">

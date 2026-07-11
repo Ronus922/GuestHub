@@ -50,7 +50,7 @@ const VIEW_LABELS: Record<CalendarView, string> = {
 // Legend dot colors — extracted from the rendered reference legend row.
 const LEGEND: { key: PaymentState | "all"; label: string; dot: string }[] = [
   { key: "all", label: "הכל", dot: "#5B6478" },
-  { key: "unpaid", label: "לא שולם", dot: "#E5484D" },
+  { key: "unpaid", label: "ממתין לתשלום", dot: "#E5484D" },
   { key: "partial", label: "שולם חלקית", dot: "#48B865" },
   { key: "paid", label: "שולם מלא", dot: "#16A34A" },
   { key: "overpaid", label: "שולם ביתר", dot: "#0B6E7A" },
