@@ -1,0 +1,323 @@
+/* ============================================================
+   Settings → סטטוסי הזמנה (תפעוליים) — 1:1 port of
+   ref/html/OrderStatus.html (OrderStatus.png / AddOrderStatusValue.png).
+   Prefix: ws-. Buttons/inputs reuse the bw- primitives.
+   ============================================================ */
+
+.ws-card {
+  background: #fff;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  box-shadow: 0 6px 20px rgba(16, 24, 40, 0.03);
+  overflow: hidden;
+  min-width: 0;
+}
+.ws-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid #f1f3f7;
+}
+.ws-ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--color-primary-050);
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.ws-t {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  color: var(--color-ink);
+}
+.ws-d {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-muted);
+  margin-top: 2px;
+  line-height: 1.5;
+  max-width: 640px;
+}
+.ws-head .bw-btn {
+  white-space: nowrap;
+}
+
+/* ---- inline add/edit form (AddOrderStatusValue.png) ---- */
+.ws-form {
+  background: #fafbfe;
+  border-bottom: 1px solid #f1f3f7;
+  padding: 16px 22px 18px;
+}
+.ws-form-t {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-ink);
+  margin-bottom: 12px;
+}
+.ws-form-grid {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.ws-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ws-fld-l {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+.ws-fld-l b {
+  color: #d92d20;
+  margin-inline-start: 3px;
+}
+.ws-inp {
+  width: 260px;
+  max-width: 100%;
+}
+.ws-pal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 42px;
+}
+.ws-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.1);
+  flex: none;
+}
+.ws-swatch.on {
+  box-shadow:
+    0 0 0 2.5px #fff,
+    0 0 0 5px var(--color-primary);
+}
+.ws-hex {
+  width: 108px;
+}
+.ws-form-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* ---- statuses table (OrderStatus.png) ---- */
+.ws-scroll {
+  overflow-x: auto;
+}
+.ws-tbl {
+  min-width: 830px;
+}
+.ws-thead,
+.ws-trow {
+  display: grid;
+  grid-template-columns: 52px 96px minmax(180px, 1.3fr) 110px 96px 110px minmax(150px, 1fr);
+  align-items: center;
+  padding: 0 16px;
+}
+.ws-thead {
+  background: #f7f8fb;
+  border-bottom: 1px solid var(--color-line);
+  height: 44px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-muted);
+}
+.ws-trow {
+  min-height: 60px;
+  border-bottom: 1px solid #f1f3f7;
+}
+.ws-trow:last-of-type {
+  border-bottom: none;
+}
+.ws-trow:hover {
+  background: #f8f9fc;
+}
+.ws-trow.off .ws-pill,
+.ws-trow.off .ws-cnt {
+  opacity: 0.45;
+}
+.ws-thead .c,
+.ws-trow > .c {
+  justify-self: center;
+  text-align: center;
+}
+.ws-th-acts {
+  justify-self: end;
+}
+.ws-ord {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ws-ord button {
+  width: 22px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: #b7bece;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  padding: 0;
+}
+.ws-ord button:hover:not(:disabled) {
+  color: var(--color-primary);
+  background: var(--color-primary-050);
+}
+.ws-ord button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.ws-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 13px;
+  border-radius: 99px;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ws-cnt {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ws-cnt b {
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+/* toggle switch — knob travels start→end (RTL-aware) */
+.ws-sw {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 99px;
+  border: none;
+  cursor: pointer;
+  background: #c9cfdc;
+  transition: background 0.15s;
+  flex: none;
+  padding: 0;
+}
+.ws-sw.on {
+  background: var(--color-primary);
+}
+.ws-sw::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  inset-inline-start: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.25);
+  transition: transform 0.15s;
+}
+.ws-sw.on::after {
+  transform: translateX(-20px);
+}
+[dir="ltr"] .ws-sw.on::after {
+  transform: translateX(20px);
+}
+.ws-sw:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ws-star {
+  width: 34px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #c6cbd6;
+  padding: 0;
+}
+.ws-star:hover:not(:disabled) {
+  background: #f1f3f8;
+  color: #e8a200;
+}
+.ws-star.on {
+  color: #f0b400;
+}
+.ws-star.on svg {
+  fill: currentColor;
+}
+.ws-star:disabled:not(.on) {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ws-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.ws-ibtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1.5px solid var(--color-line);
+  background: #fff;
+  color: #8a92a6;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.ws-ibtn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.ws-ibtn.danger:hover:not(:disabled) {
+  border-color: #d92d20;
+  color: #d92d20;
+}
+.ws-ibtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ws-ft {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 13px 22px;
+  background: #fbfcfe;
+  border-top: 1px solid #f1f3f7;
+  color: var(--color-muted);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.ws-ft svg {
+  color: var(--color-faint);
+  flex: none;
+}

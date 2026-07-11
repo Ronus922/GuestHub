@@ -250,7 +250,7 @@ export function ReservationsScreen({
             </select>
           </div>
           <div className="rl-fld-g">
-            <span className="rl-flbl">סטטוס טיפול</span>
+            <span className="rl-flbl">סטטוס הזמנה</span>
             <select
               className="rl-fsel"
               value={filters.workflowId ?? ""}

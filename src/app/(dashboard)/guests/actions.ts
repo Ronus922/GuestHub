@@ -39,6 +39,10 @@ export type GuestProfile = {
     ota_name: string | null;
     cancelled_at: string | null;
     cancellation_origin: string | null;
+    /** tenant order-status tag (D77.2) — same configured color family as the
+     *  calendar pill / reservations list */
+    workflow_label: string | null;
+    workflow_color: string | null;
   }[];
   otaSources: string[];
   /** tenant-currency totals only — foreign-currency rows are counted, never
@@ -64,9 +68,11 @@ export async function getGuestProfileAction(id: string): Promise<ActionResult<Gu
              res.total_price::float8 AS total_price,
              res.paid_amount::float8 AS paid_amount,
              res.currency, src.label AS source_label, res.ota_name,
-             res.cancelled_at::text AS cancelled_at, res.cancellation_origin
+             res.cancelled_at::text AS cancelled_at, res.cancellation_origin,
+             wf.label AS workflow_label, wf.color AS workflow_color
       FROM guesthub.reservations res
       LEFT JOIN guesthub.lookup_items src ON src.id = res.source_id
+      LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
       WHERE res.primary_guest_id = ${id} AND res.tenant_id = ${actor.tenantId}
       ORDER BY res.check_in DESC
       LIMIT 100`;
