@@ -214,6 +214,10 @@ export async function getInboundStatusAction(): Promise<Result<InboundStatusView
       FROM guesthub.channel_dirty_ranges
       WHERE connection_id = ${conn.id} AND status = 'pending'`;
 
+    const [pendingChanges] = await sql<{ n: number }[]>`
+      SELECT COUNT(*)::int AS n FROM guesthub.channel_external_changes
+      WHERE connection_id = ${conn.id} AND status = 'pending'`;
+
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
     const workerOnline = worker?.online ?? false;
     const webhookEventsTotal = webhookStats?.total ?? 0;
@@ -227,6 +231,8 @@ export async function getInboundStatusAction(): Promise<Result<InboundStatusView
       alerts.push("קיימות רוויזיות מיובאות ללא אישור (ACK) ואין משיכה ממתינה");
     if ((counts?.quarantined ?? 0) > 0)
       alerts.push("רוויזיות בהסגר ממתינות לטיפול (מיפוי חדר / התנגשות)");
+    if ((pendingChanges?.n ?? 0) > 0)
+      alerts.push("שינויי תאריכים חיצוניים ממתינים לטיפול — ראו \"שינויים חיצוניים מהערוצים\"");
     if ((jobStats?.dead_letter ?? 0) > 0)
       alerts.push("קיימות משימות שנכשלו סופית (dead-letter) — בדקו ונסו שוב");
     if ((rangeStats?.oldest_pending_secs ?? 0) > 300)
