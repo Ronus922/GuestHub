@@ -11,6 +11,7 @@ import {
 import { getChannexRoomSyncContextAction } from "@/lib/channel/room-type-admin";
 import { getChannexRatePlanSyncContextAction } from "@/lib/channel/rate-plan-admin";
 import { getInboundStatusAction } from "@/lib/channel/inbound-admin";
+import { getExternalChangesAction } from "@/lib/channel/external-changes-admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
@@ -18,6 +19,7 @@ import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
 import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
 import { AriSyncSection } from "./AriSyncSection";
 import { InboundBookingsSection } from "./InboundBookingsSection";
+import { ExternalChangesSection } from "./ExternalChangesSection";
 
 export const dynamic = "force-dynamic";
 
@@ -120,14 +122,16 @@ export default async function ChannelsPage() {
 
   // Every one of these is a DB read. Loading /channels performs no Channex call
   // and creates nothing upstream.
-  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound] = await Promise.all([
-    getChannelStatusAction(),
-    getChannexConnectionAction(),
-    getChannexPropertyContextAction(),
-    getChannexRoomSyncContextAction(),
-    getChannexRatePlanSyncContextAction(),
-    getInboundStatusAction(),
-  ]);
+  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges] =
+    await Promise.all([
+      getChannelStatusAction(),
+      getChannexConnectionAction(),
+      getChannexPropertyContextAction(),
+      getChannexRoomSyncContextAction(),
+      getChannexRatePlanSyncContextAction(),
+      getInboundStatusAction(),
+      getExternalChangesAction(),
+    ]);
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
   // UNIQUE per tenant+provider+environment). Still a pure DB read.
@@ -187,6 +191,9 @@ export default async function ChannelsPage() {
       {/* Inbound OTA bookings — status + manual pull (D76). The pull is a durable
           worker job; nothing here imports in the request. */}
       {inbound.success && <InboundBookingsSection initial={inbound.data!} />}
+
+      {/* External date changes from the OTA — pending reconciliation + ops email (D82) */}
+      {externalChanges.success && <ExternalChangesSection initial={externalChanges.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
