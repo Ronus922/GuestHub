@@ -812,6 +812,147 @@ try {
   assert.equal(String(polRes.expected_arrival_time), "21:00:00", "arrival time itself also preserved");
   ok("OTA cancellation terms → at-booking snapshot (source 'ota'); never erased by later revisions");
 
+  // ---- 19. external date-change notifications (D82) ----
+  // a MODIFIED revision with changed dates → the reservation AND its
+  // reservation_rooms move atomically, and exactly ONE reconcilable
+  // notification exists per external revision — redelivery adds nothing.
+  upstream.revisions.push({ id: "rev-ec-1", acked: false, attributes: mkRevision({
+    id: "rev-ec-1", booking_id: "book-ec", unique_id: "BDC-EC-1", ota_reservation_code: "777000111",
+    arrival_date: "2027-03-10", departure_date: "2027-03-12",
+    room: { checkin_date: "2027-03-10", checkout_date: "2027-03-12", days: {}, amount: "300" },
+  }) });
+  let sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.imported, 1);
+  const ecCountFor = async (revId) => (await sql`
+    SELECT COUNT(*)::int AS c FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = ${revId}`)[0].c;
+  assert.equal(await ecCountFor("rev-ec-1"), 0, "a NEW booking creates no external-change notification");
+
+  upstream.revisions.push({ id: "rev-ec-2", acked: false, attributes: mkRevision({
+    id: "rev-ec-2", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111",
+    arrival_date: "2027-03-15", departure_date: "2027-03-18", amount: "450",
+    room: { checkin_date: "2027-03-15", checkout_date: "2027-03-18", days: {}, amount: "450" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.imported, 1);
+  const ecRes = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecRes.check_in), "2027-03-15", "reservation moved to the OTA's new dates");
+  assert.equal(d10(ecRes.check_out), "2027-03-18");
+  const ecRR = await sql`
+    SELECT check_in, check_out FROM guesthub.reservation_rooms WHERE reservation_id = ${ecRes.id}`;
+  assert.equal(ecRR.length, 1);
+  assert.equal(d10(ecRR[0].check_in), "2027-03-15", "reservation_rooms moved atomically with the reservation");
+  assert.equal(d10(ecRR[0].check_out), "2027-03-18");
+  const [ecRow] = await sql`
+    SELECT * FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-2'`;
+  assert.ok(ecRow, "external date change recorded");
+  assert.equal(ecRow.apply_status, "applied");
+  assert.equal(ecRow.status, "pending", "unresolved until an operator reconciles");
+  assert.equal(d10(ecRow.old_check_in), "2027-03-10");
+  assert.equal(d10(ecRow.old_check_out), "2027-03-12");
+  assert.equal(d10(ecRow.new_check_in), "2027-03-15");
+  assert.equal(d10(ecRow.new_check_out), "2027-03-18");
+  assert.equal(ecRow.ota_reservation_code, "777000111");
+  assert.ok(ecRow.reservation_number, "GuestHub reservation number on the notification");
+  assert.ok(ecRow.room_labels.length > 0, "affected room recorded");
+  assert.equal(ecRow.email_status, "skipped", "no recipient configured → email honestly skipped, not faked");
+  ok("MODIFIED with changed dates → applied + reservation_rooms atomic + ONE pending notification (old/new dates, room, numbers)");
+
+  // redelivery of the SAME revision: no duplicate reservation, no second
+  // notification, no email state change
+  upstream.revisions.find((r) => r.id === "rev-ec-2").acked = false;
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.alreadyImported, 1, "redelivered revision recognized, not re-imported");
+  assert.equal(await ecCountFor("rev-ec-2"), 1, "redelivery never duplicates the notification");
+  const [ecRow2] = await sql`
+    SELECT email_status FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-2'`;
+  assert.equal(ecRow2.email_status, "skipped", "redelivery never re-arms the email");
+  ok("redelivered modification → zero duplicates: one reservation, one notification, one email decision");
+
+  // recipient configured but no mail provider → terminal 'failed' with an
+  // honest reason; the notification row itself still exists and is pending
+  await sql`
+    UPDATE guesthub.tenants
+    SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{ops_notification_email}', '"ops@example.com"'::jsonb)
+    WHERE id = ${A.tenantId}`;
+  upstream.revisions.push({ id: "rev-ec-3", acked: false, attributes: mkRevision({
+    id: "rev-ec-3", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111",
+    arrival_date: "2027-03-25", departure_date: "2027-03-27", amount: "450",
+    room: { checkin_date: "2027-03-25", checkout_date: "2027-03-27", days: {}, amount: "450" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.imported, 1);
+  const [ecRow3] = await sql`
+    SELECT email_status, email_detail FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-3'`;
+  assert.equal(ecRow3.email_status, "failed");
+  assert.ok(ecRow3.email_detail.includes("Gmail"), "honest provider-not-configured reason");
+  ok("recipient set but Gmail unconfigured → email honestly 'failed', never silently dropped");
+
+  // a modification that CONFLICTS locally: quarantined, calendar untouched,
+  // and the OTA's proposed dates are still visible as an unresolved change
+  const [blocker] = await sql`
+    INSERT INTO guesthub.reservations
+      (tenant_id, reservation_number, status, check_in, check_out, total_price, balance)
+    VALUES (${A.tenantId}, 'L-9002', 'confirmed', '2027-04-01', '2027-04-03', 500, 500)
+    RETURNING id`;
+  await sql`
+    INSERT INTO guesthub.reservation_rooms
+      (tenant_id, reservation_id, room_id, check_in, check_out, adults, rate_per_night, price_total)
+    VALUES (${A.tenantId}, ${blocker.id}, ${A.roomId}, '2027-04-01', '2027-04-03', 2, 250, 500)`;
+  upstream.ackCalls.length = 0;
+  upstream.revisions.push({ id: "rev-ec-4", acked: false, attributes: mkRevision({
+    id: "rev-ec-4", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111",
+    arrival_date: "2027-04-02", departure_date: "2027-04-04", amount: "450",
+    room: { checkin_date: "2027-04-02", checkout_date: "2027-04-04", days: {}, amount: "450" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.quarantined, 1);
+  assert.ok(!upstream.ackCalls.includes("rev-ec-4"), "conflicting modification never acked");
+  const ecAfterConflict = await bookingRes(A.conn.id, "book-ec");
+  assert.equal(d10(ecAfterConflict.check_in), "2027-03-25", "conflict → calendar keeps the previous dates");
+  const [conflictRow] = await sql`
+    SELECT * FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-4'`;
+  assert.ok(conflictRow, "conflicting external change still visible — the OTA dates are never silently ignored");
+  assert.equal(conflictRow.apply_status, "conflict");
+  assert.equal(d10(conflictRow.old_check_in), "2027-03-25");
+  assert.equal(d10(conflictRow.new_check_in), "2027-04-02");
+  assert.ok(conflictRow.conflict_detail.includes("התנגשות"), "visible conflict reason on the notification");
+  ok("conflicting MODIFIED → quarantined + visible unresolved change with the OTA's proposed dates");
+
+  // ---- 20. normalize-failure is PERSISTED quarantine, never silent loss ----
+  // (the staging feed stops serving a revision after ~30 minutes — an
+  // unpersisted one would be gone for good; D82 root-cause fix)
+  upstream.ackCalls.length = 0;
+  const broken = mkRevision({
+    id: "rev-ec-broken", booking_id: "book-broken", unique_id: "BDC-BROKEN-1",
+    ota_reservation_code: "777000999",
+    room: { room_type_id: null, rate_plan_id: null, checkin_date: "2027-05-01", checkout_date: "2027-05-02", days: {}, amount: "100" },
+  });
+  upstream.revisions.push({ id: "rev-ec-broken", acked: false, attributes: broken });
+  sEC = await runInboundPull(sql, A.conn);
+  // rev-ec-4 legitimately remains in the feed (quarantined = never acked), so
+  // the summary counts it again — assert the broken revision itself instead
+  assert.ok(sEC.quarantined >= 1, "normalize failure counts as quarantine, not a dropped log line");
+  const [brokenRow] = await sql`
+    SELECT import_status, ack_status, mapping_error, ota_reservation_code
+    FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-broken'`;
+  assert.ok(brokenRow, "normalize-failed revision is PERSISTED — survives feed expiry");
+  assert.equal(brokenRow.import_status, "quarantined");
+  assert.equal(brokenRow.ack_status, "unacknowledged");
+  assert.ok(!upstream.ackCalls.includes("rev-ec-broken"), "never acknowledged upstream");
+  assert.ok(brokenRow.mapping_error.includes("Room Type"), "visible normalize reason");
+  assert.equal(brokenRow.ota_reservation_code, "777000999", "identity retained for recovery");
+  assert.equal(await bookingRes(A.conn.id, "book-broken"), null, "no half-imported reservation");
+  ok("normalize-failed revision → persisted visible quarantine (identity kept), never acked, never lost");
+
   console.log(`\nall ${n} inbound-booking checks passed`);
 } finally {
   try {

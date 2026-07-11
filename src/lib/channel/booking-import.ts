@@ -24,6 +24,11 @@ import {
   type NormalizedRoom,
 } from "./booking-normalize";
 import { markAriDirty } from "./outbox";
+import {
+  dispatchExternalChangeEmails,
+  recordExternalDateChange,
+  roomLabelsFor,
+} from "./external-changes";
 import { logChannelError } from "./queue";
 import { getChannexRatePlan } from "./channex-rate-plans";
 import { publishDomainEvent } from "@/lib/realtime/publish";
@@ -360,6 +365,7 @@ async function lookupSourceId(
 
 type ExistingReservation = {
   id: string;
+  reservation_number: string;
   status: string;
   primary_guest_id: string | null;
   check_in: string;
@@ -373,7 +379,8 @@ async function lockExternalReservation(
   bookingId: string,
 ): Promise<{ existing: ExistingReservation | null; rrIds: string[]; oldRoomIds: string[] }> {
   const [existing] = await tx<ExistingReservation[]>`
-    SELECT id, status, primary_guest_id, check_in::text AS check_in, check_out::text AS check_out,
+    SELECT id, reservation_number, status, primary_guest_id,
+           check_in::text AS check_in, check_out::text AS check_out,
            external_cancellation_requested_at::text AS external_cancellation_requested_at
     FROM guesthub.reservations
     WHERE tenant_id = ${conn.tenant_id}
@@ -389,6 +396,62 @@ async function lockExternalReservation(
     rrIds: rows.map((r) => r.id),
     oldRoomIds: rows.map((r) => r.room_id).filter((x): x is string => !!x),
   };
+}
+
+// A quarantined revision that targets an EXISTING reservation with different
+// dates is an unresolved external date change — recorded (idempotently, keyed
+// by the revision) so the operator sees the OTA's dates even though the
+// calendar still shows the old ones.
+async function recordConflictDateChange(
+  db: Sql,
+  conn: InboundConnection,
+  norm: NormalizedRevision,
+  conflictDetail: string,
+): Promise<void> {
+  const [existing] = await db<
+    { id: string; reservation_number: string; check_in: string; check_out: string }[]
+  >`
+    SELECT id, reservation_number, check_in::text AS check_in, check_out::text AS check_out
+    FROM guesthub.reservations
+    WHERE tenant_id = ${conn.tenant_id}
+      AND channel_connection_id = ${conn.id}
+      AND external_booking_id = ${norm.bookingId}`;
+  if (!existing) return; // a brand-new booking in conflict — quarantine alone covers it
+  const liveRooms = norm.rooms.filter((r) => !r.isCancelled);
+  const newCheckIn = liveRooms.reduce(
+    (m, r) => (r.checkinDate < m ? r.checkinDate : m),
+    norm.arrivalDate,
+  );
+  const newCheckOut = liveRooms.reduce(
+    (m, r) => (r.checkoutDate > m ? r.checkoutDate : m),
+    norm.departureDate,
+  );
+  if (existing.check_in === newCheckIn && existing.check_out === newCheckOut) return;
+  const roomRows = await db<{ room_id: string }[]>`
+    SELECT room_id FROM guesthub.reservation_rooms
+    WHERE reservation_id = ${existing.id} AND tenant_id = ${conn.tenant_id}
+      AND room_id IS NOT NULL`;
+  await recordExternalDateChange(db, {
+    tenantId: conn.tenant_id,
+    connectionId: conn.id,
+    providerRevisionId: norm.revisionId,
+    providerBookingId: norm.bookingId,
+    otaReservationCode: norm.otaReservationCode,
+    otaName: norm.otaName,
+    reservationId: existing.id,
+    reservationNumber: existing.reservation_number,
+    oldCheckIn: existing.check_in,
+    oldCheckOut: existing.check_out,
+    newCheckIn,
+    newCheckOut,
+    roomLabels: await roomLabelsFor(
+      db,
+      conn.tenant_id,
+      roomRows.map((r) => r.room_id),
+    ),
+    applyStatus: "conflict",
+    conflictDetail,
+  });
 }
 
 // Operator-advanced states survive a channel modification; everything else
@@ -586,6 +649,27 @@ async function applyLiveRevision(
     norm.otaName,
   );
 
+  // an external revision MOVED an existing stay → one reconcilable
+  // notification per revision, riding this transaction (exists iff durable)
+  if (existing && (existing.check_in !== agg.checkIn || existing.check_out !== agg.checkOut)) {
+    await recordExternalDateChange(tx, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      providerRevisionId: norm.revisionId,
+      providerBookingId: norm.bookingId,
+      otaReservationCode: norm.otaReservationCode,
+      otaName: norm.otaName,
+      reservationId: existing.id,
+      reservationNumber: existing.reservation_number,
+      oldCheckIn: existing.check_in,
+      oldCheckOut: existing.check_out,
+      newCheckIn: agg.checkIn,
+      newCheckOut: agg.checkOut,
+      roomLabels: await roomLabelsFor(tx, conn.tenant_id, roomIds),
+      applyStatus: "applied",
+    });
+  }
+
   // consumed (and, on modification, released) nights → outbound ARI stays true
   const dirtyRoomIds = [...new Set([...oldRoomIds, ...roomIds])];
   const from = existing && existing.check_in < agg.checkIn ? existing.check_in : agg.checkIn;
@@ -747,6 +831,17 @@ export async function importRevisionRow(
         message: e.message,
         context: { revision_id: rev.provider_revision_id, booking_id: rev.provider_booking_id },
       });
+      // a PARKED revision that moves an EXISTING stay must still be visible as
+      // an unresolved external change — the calendar keeps the old dates and
+      // the OTA already regards the new ones as confirmed. Best-effort: a
+      // failure here never masks the quarantine outcome.
+      if (norm.value.kind !== "cancelled") {
+        try {
+          await recordConflictDateChange(db, conn, norm.value, e.message);
+        } catch {
+          /* the quarantine row itself remains the durable record */
+        }
+      }
       return { status: "quarantined", reason: e.message };
     }
     const message = e instanceof Error ? e.message : "ייבוא הרוויזיה נכשל";
@@ -774,6 +869,29 @@ function kindOf(attributes: unknown): "new" | "modified" | "cancelled" | null {
   return status === "new" || status === "modified" || status === "cancelled" ? status : null;
 }
 
+// Best-effort identity of a revision whose full normalization FAILED — enough
+// to persist it visibly instead of losing it (the staging feed stops serving a
+// revision after ~30 minutes, so an unpersisted one is gone for good).
+function rawRevisionIdentity(attributes: unknown): {
+  bookingId: string | null;
+  uniqueId?: string;
+  otaReservationCode?: string;
+  otaName?: string;
+} {
+  const a =
+    attributes && typeof attributes === "object" && !Array.isArray(attributes)
+      ? (attributes as Record<string, unknown>)
+      : {};
+  const s = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
+  return {
+    bookingId: s(a.booking_id) ?? null,
+    uniqueId: s(a.unique_id),
+    otaReservationCode: s(a.ota_reservation_code),
+    otaName: s(a.ota_name),
+  };
+}
+
 async function processFeedRevision(
   db: Sql,
   conn: InboundConnection,
@@ -782,31 +900,38 @@ async function processFeedRevision(
   summary: InboundPullSummary,
 ): Promise<void> {
   const norm = normalizeBookingRevision(rev.attributes);
-  if (!norm.ok) {
+  const raw = norm.ok ? null : rawRevisionIdentity(rev.attributes);
+  if (!norm.ok && !raw?.bookingId) {
+    // no booking identity at all — nothing durable can be keyed to it
     summary.failed += 1;
-    summary.errors.push(norm.error);
+    summary.errors.push(norm.ok ? "" : norm.error);
     await logChannelError(db, {
       tenantId: conn.tenant_id,
       connectionId: conn.id,
       code: "inbound_normalize_failed",
-      message: norm.error,
+      message: norm.ok ? "" : norm.error,
       context: { revision_id: rev.id },
     });
     return;
   }
 
-  // persist idempotently (payload is redacted + card staged inside)
+  // persist idempotently (payload is redacted + card staged inside) — ALSO for
+  // a normalize-failed revision: importRevisionRow re-runs the same normalize
+  // and parks it as a VISIBLE quarantine instead of a silent log line. It is
+  // never acknowledged, so nothing is lost when the feed expires it.
   const persisted = await persistBookingRevision(db, {
     tenantId: conn.tenant_id,
     connectionId: conn.id,
-    providerBookingId: norm.value.bookingId,
+    providerBookingId: norm.ok ? norm.value.bookingId : raw!.bookingId!,
     providerRevisionId: rev.id,
-    uniqueId: norm.value.uniqueId ?? undefined,
-    systemId: norm.value.systemId ?? undefined,
-    otaReservationCode: norm.value.otaReservationCode ?? undefined,
-    otaName: norm.value.otaName ?? undefined,
-    revisionKind: kindOf(rev.attributes) ?? norm.value.kind,
-    rawStatus: norm.value.kind,
+    uniqueId: (norm.ok ? (norm.value.uniqueId ?? undefined) : raw!.uniqueId) ?? undefined,
+    systemId: norm.ok ? (norm.value.systemId ?? undefined) : undefined,
+    otaReservationCode:
+      (norm.ok ? (norm.value.otaReservationCode ?? undefined) : raw!.otaReservationCode) ??
+      undefined,
+    otaName: (norm.ok ? (norm.value.otaName ?? undefined) : raw!.otaName) ?? undefined,
+    revisionKind: kindOf(rev.attributes) ?? (norm.ok ? norm.value.kind : "new"),
+    rawStatus: norm.ok ? norm.value.kind : (kindOf(rev.attributes) ?? "new"),
     payload: rev.attributes,
   });
   const rowId = persisted.duplicate
@@ -924,6 +1049,15 @@ export async function runInboundPull(
   }
 
   await reacknowledgeImported(db, conn, creds, summary);
+
+  // ops emails for external date changes — strictly AFTER the import
+  // transactions committed, never inside one; terminal per-row statuses make
+  // redelivery a no-op. A mail failure never fails the pull.
+  try {
+    await dispatchExternalChangeEmails(db, conn.tenant_id);
+  } catch (e) {
+    summary.errors.push(e instanceof Error ? e.message : "שליחת התראות המייל נכשלה");
+  }
 
   if (summary.imported > 0) {
     await db`
