@@ -19,6 +19,9 @@ export type Actor = {
 };
 
 // Plain, JSON-serializable shape streamed to the client (Set → string[]).
+// Deliberately EXCLUDES the internal tenant label (tenants.name): the client
+// receives only the formatted canonical identity (propertyIdentity), so the
+// obsolete internal label can never leak into any client payload.
 export type ActorContext = {
   userId: string;
   tenantId: string;
@@ -27,7 +30,6 @@ export type ActorContext = {
   email: string | null;
   roleKey: string;
   roleName: string | null;
-  tenantName: string;
   permissions: string[];
 };
 
@@ -135,7 +137,6 @@ export function toActorContext(actor: Actor): ActorContext {
     email: actor.email,
     roleKey: actor.roleKey,
     roleName: actor.roleName,
-    tenantName: actor.tenantName,
     permissions: [...actor.permissions],
   };
 }

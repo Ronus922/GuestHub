@@ -273,6 +273,13 @@ const settingsShell = readFileSync("src/app/(dashboard)/settings/SettingsShell.t
 assert.ok(!settingsShell.includes("tenantName"), "settings shell has no tenantName prop");
 assert.ok(settingsShell.includes("propertyIdentity"), "settings shell renders the canonical identity line");
 assert.ok(!sidebar.includes("tenantName"), "sidebar never reads the internal tenant label");
+// the internal label must not even reach the CLIENT PAYLOAD: the streamed
+// ActorContext excludes it (only the formatted identity crosses to the client)
+const actorLib = readFileSync("src/lib/auth/actor.ts", "utf8");
+const actorCtxBlock = actorLib.slice(actorLib.indexOf("export type ActorContext"), actorLib.indexOf("AuthorizationError"));
+assert.ok(!actorCtxBlock.includes("tenantName"), "ActorContext (client payload) excludes the internal tenant label");
+const toCtxBlock = actorLib.slice(actorLib.indexOf("export function toActorContext"));
+assert.ok(!toCtxBlock.slice(0, 500).includes("tenantName"), "toActorContext never serializes the internal tenant label");
 // Settings header and Sidebar consume the SAME formatter output (one identity)
 assert.ok(layout.includes("formatPropertyIdentity") && settingsPage.includes("formatPropertyIdentity"),
   "settings and sidebar derive the identical canonical identity");
