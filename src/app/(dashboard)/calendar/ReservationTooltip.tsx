@@ -84,12 +84,12 @@ export function ReservationTooltip({
     paid: "שולם מלא",
     overpaid: "שולם ביתר",
     partial: "שולם חלקית",
-    unpaid: "לא שולם",
+    unpaid: "ממתין לתשלום",
   };
   const badge =
     stay.status === "draft"
       ? { label: statusLabel.get("draft") ?? "ממתין לאישור", tx: "#B4670A" }
-      : { label: PAY_LABEL[stay.payment] ?? "לא שולם", tx: pal.tx };
+      : { label: PAY_LABEL[stay.payment] ?? "ממתין לתשלום", tx: pal.tx };
   // canonical balance (D52 §7): NOT floored — a credit is shown as a credit,
   // never as a zero balance. Shared formatter, one semantics everywhere.
   const bal = formatBalance(stay.total_price, stay.paid_amount);

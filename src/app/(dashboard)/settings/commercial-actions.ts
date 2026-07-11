@@ -242,8 +242,10 @@ async function demoteDefaults(
 
 // Soft-archive a policy (§F "prevent deletion when referenced, or archive it
 // safely"). The default policy cannot be archived while default — a tenant must
-// always keep a default; reassign first. Reference checks against rate plans are
-// a no-op today (rate plans arrive later) and hook in here.
+// always keep a default; reassign first. A policy referenced by a live rate
+// plan cannot be archived either — the rate plan must be re-assigned first, so
+// the template→assignment link is never silently broken (reservations are
+// unaffected either way: they hold their own at-booking snapshot, 034).
 async function archivePolicy(kind: "cancellation" | "payment", rawId: unknown): Promise<ActionResult> {
   try {
     const actor = await getActor();
@@ -262,6 +264,20 @@ async function archivePolicy(kind: "cancellation" | "payment", rawId: unknown): 
       if (!row) return { success: false as const, error: "המדיניות לא נמצאה" };
       if (row.is_default)
         return { success: false as const, error: "לא ניתן למחוק מדיניות ברירת מחדל — קבע ברירת מחדל אחרת תחילה" };
+      const [ref] = kind === "cancellation"
+        ? await tx<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM guesthub.pricing_plans
+            WHERE tenant_id = ${actor.tenantId} AND cancellation_policy_id = ${rawId}
+              AND NOT is_archived`
+        : await tx<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM guesthub.pricing_plans
+            WHERE tenant_id = ${actor.tenantId} AND payment_policy_id = ${rawId}
+              AND NOT is_archived`;
+      if (ref && ref.n > 0)
+        return {
+          success: false as const,
+          error: `המדיניות משויכת ל-${ref.n} תוכניות מחיר — הסר את השיוך בתוכניות תחילה`,
+        };
       if (kind === "cancellation") {
         await tx`UPDATE guesthub.cancellation_policies SET is_archived = true, is_active = false, updated_by = ${actor.userId} WHERE id = ${rawId}`;
       } else {

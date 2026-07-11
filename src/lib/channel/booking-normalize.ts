@@ -27,6 +27,14 @@ export type NormalizedRoom = {
   isCancelled: boolean;
 };
 
+/** OTA cancellation terms as supplied inside rooms[].meta — preserved verbatim
+ *  (strings untouched) so the reservation snapshot is the channel's own
+ *  contract, never a re-interpretation. */
+export type OtaCancellationTerms = {
+  cancel_penalties: { from: string | null; amount: string | null; currency: string | null }[];
+  policies_text: string | null;
+};
+
 export type NormalizedRevision = {
   revisionId: string;
   bookingId: string;
@@ -62,6 +70,9 @@ export type NormalizedRevision = {
   paymentCollect: string | null; // "property" = hotel collect
   paymentType: string | null; // "credit_card" | ...
   rooms: NormalizedRoom[];
+  /** OTA cancellation terms (rooms[].meta.cancel_penalties / .policies) —
+   *  null when the channel supplied none */
+  cancellation: OtaCancellationTerms | null;
 };
 
 export type NormalizeResult =
@@ -126,6 +137,37 @@ function normalizeRoom(raw: unknown): NormalizedRoom | { error: string } {
     days,
     isCancelled: r.is_cancelled === true,
   };
+}
+
+// Cancellation terms ride inside each room's meta (Booking.com via Channex:
+// meta.cancel_penalties = structured schedule, meta.policies = verbatim text).
+// Values are kept verbatim (strings untouched, deduped across rooms) — the
+// snapshot must be the channel's own contract, never a re-interpretation.
+function extractCancellationTerms(rawRooms: unknown[]): OtaCancellationTerms | null {
+  const penalties: OtaCancellationTerms["cancel_penalties"] = [];
+  const seen = new Set<string>();
+  let policiesText: string | null = null;
+  for (const raw of rawRooms) {
+    const meta = obj(obj(raw)?.meta);
+    if (!meta) continue;
+    if (Array.isArray(meta.cancel_penalties)) {
+      for (const rawPenalty of meta.cancel_penalties) {
+        const p = obj(rawPenalty);
+        if (!p) continue;
+        const amount = str(p.amount) ?? (num(p.amount) !== null ? String(num(p.amount)) : null);
+        const entry = { from: str(p.from), amount, currency: str(p.currency) };
+        const key = JSON.stringify(entry);
+        if (!seen.has(key)) {
+          seen.add(key);
+          penalties.push(entry);
+        }
+      }
+    }
+    if (!policiesText) policiesText = str(meta.policies);
+  }
+  return penalties.length > 0 || policiesText
+    ? { cancel_penalties: penalties, policies_text: policiesText }
+    : null;
 }
 
 export function normalizeBookingRevision(payload: unknown): NormalizeResult {
@@ -198,6 +240,7 @@ export function normalizeBookingRevision(payload: unknown): NormalizeResult {
       paymentCollect: str(p.payment_collect),
       paymentType: str(p.payment_type),
       rooms,
+      cancellation: extractCancellationTerms(rawRooms),
     },
   };
 }

@@ -767,6 +767,51 @@ try {
   assert.equal(normed.value.notes, "PIN 9876 in notes", "digits in notes stay in notes");
   ok("no dedicated channel PIN field → none invented; malformed hours dropped");
 
+  // ---- 18. OTA cancellation terms → the at-booking snapshot (034) ----
+  // rooms[].meta.cancel_penalties / .policies are preserved VERBATIM as the
+  // reservation's cancellation_policy_snapshot (source 'ota'); arrival_hour
+  // provenance is recorded as 'ota'; a later revision without terms/hour never
+  // erases either (snapshot = the booking's own contract, not live state).
+  upstream.revisions.push({
+    id: "rev-pol-1", acked: false,
+    attributes: mkRevision({
+      id: "rev-pol-1", booking_id: "book-pol", unique_id: "BDC-POL-1",
+      arrival_hour: "21:00",
+      arrival_date: "2027-02-01", departure_date: "2027-02-02",
+      room: {
+        checkin_date: "2027-02-01", checkout_date: "2027-02-02",
+        days: { "2027-02-01": "263.72" },
+        meta: {
+          cancel_penalties: [{ from: "2027-01-27T00:00:00", amount: "263.72", currency: "GBP" }],
+          policies: "Cancellation Policy: The guest can cancel free of charge until 5 days before arrival.",
+        },
+      },
+    }),
+  });
+  let s18 = await runInboundPull(sql, A.conn);
+  assert.equal(s18.imported, 1, `policy import failed: ${JSON.stringify(s18)}`);
+  let polRes = await bookingRes(A.conn.id, "book-pol");
+  assert.equal(polRes.expected_arrival_time_source, "ota", "imported arrival_hour marks provenance 'ota'");
+  const snap = polRes.cancellation_policy_snapshot;
+  assert.ok(snap, "OTA terms captured as the at-booking cancellation snapshot");
+  assert.equal(snap.source, "ota", "snapshot source is the OTA contract");
+  assert.equal(snap.ota.cancel_penalties[0].amount, "263.72", "penalty schedule preserved verbatim");
+  assert.match(snap.ota.policies_text, /free of charge until 5 days/, "policy text preserved verbatim");
+  const noTerms = mkRevision({
+    id: "rev-pol-2", status: "modified", booking_id: "book-pol", unique_id: "BDC-POL-1",
+    arrival_date: "2027-02-01", departure_date: "2027-02-02",
+    room: { checkin_date: "2027-02-01", checkout_date: "2027-02-02", days: { "2027-02-01": "263.72" } },
+  });
+  delete noTerms.arrival_hour;
+  upstream.revisions.push({ id: "rev-pol-2", acked: false, attributes: noTerms });
+  s18 = await runInboundPull(sql, A.conn);
+  assert.equal(s18.imported, 1);
+  polRes = await bookingRes(A.conn.id, "book-pol");
+  assert.equal(polRes.cancellation_policy_snapshot?.source, "ota", "snapshot survives a terms-less modification");
+  assert.equal(polRes.expected_arrival_time_source, "ota", "arrival provenance survives an hour-less modification");
+  assert.equal(String(polRes.expected_arrival_time), "21:00:00", "arrival time itself also preserved");
+  ok("OTA cancellation terms → at-booking snapshot (source 'ota'); never erased by later revisions");
+
   console.log(`\nall ${n} inbound-booking checks passed`);
 } finally {
   try {

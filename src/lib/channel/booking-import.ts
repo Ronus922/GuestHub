@@ -29,6 +29,10 @@ import { getChannexRatePlan } from "./channex-rate-plans";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
+import {
+  otaCancellationSnapshot,
+  resolveCancellationSnapshot,
+} from "@/lib/commercial/policy-snapshot";
 import { nightsBetween, rangesOverlap } from "@/lib/dates";
 
 // ============================================================
@@ -481,6 +485,11 @@ async function applyLiveRevision(
         total_price = ${total}, currency = ${norm.currency ?? "ILS"},
         notes = ${norm.notes},
         expected_arrival_time = COALESCE(${norm.arrivalHour}, expected_arrival_time),
+        expected_arrival_time_source = CASE
+          WHEN ${norm.arrivalHour === null} THEN expected_arrival_time_source
+          ELSE 'ota' END,
+        cancellation_policy_snapshot = COALESCE(cancellation_policy_snapshot,
+          ${norm.cancellation ? tx.json(otaCancellationSnapshot(norm.cancellation, norm.otaName) as never) : null}),
         external_revision_id = ${norm.revisionId},
         external_unique_id = COALESCE(${norm.uniqueId}, external_unique_id),
         ota_reservation_code = COALESCE(${norm.otaReservationCode}, ota_reservation_code),
@@ -498,11 +507,19 @@ async function applyLiveRevision(
       SELECT id FROM guesthub.lookup_items
       WHERE tenant_id = ${conn.tenant_id} AND category = 'workflow_statuses'
         AND is_active AND (metadata->>'is_default') = 'true'`;
+    // at-booking cancellation terms (034): the OTA's own imported terms win;
+    // otherwise the mapped rate plan's template → tenant default template —
+    // the same resolver the manual path uses. Multi-room bookings snapshot the
+    // first stay's plan. NULL when nothing applies (nothing is fabricated).
+    const cancellationSnapshot = norm.cancellation
+      ? otaCancellationSnapshot(norm.cancellation, norm.otaName)
+      : await resolveCancellationSnapshot(tx, conn.tenant_id, stays[0]?.localRatePlanId ?? null);
     const [created] = await tx<{ id: string }[]>`
       INSERT INTO guesthub.reservations
         (tenant_id, reservation_number, primary_guest_id, source_id, status,
          check_in, check_out, adults, children, infants,
          total_price, paid_amount, balance, currency, notes, expected_arrival_time,
+         expected_arrival_time_source, cancellation_policy_snapshot,
          created_by,
          channel_connection_id, external_booking_id, external_revision_id,
          external_unique_id, ota_reservation_code, ota_name, external_booked_at,
@@ -511,7 +528,10 @@ async function applyLiveRevision(
               ${agg.checkIn}, ${agg.checkOut},
               ${agg.adults}, ${agg.children}, ${agg.infants},
               ${total}, 0, ${total}, ${norm.currency ?? "ILS"}, ${norm.notes},
-              ${norm.arrivalHour}, NULL,
+              ${norm.arrivalHour},
+              ${norm.arrivalHour ? "ota" : null},
+              ${cancellationSnapshot === null ? null : tx.json(cancellationSnapshot as never)},
+              NULL,
               ${conn.id}, ${norm.bookingId}, ${norm.revisionId},
               ${norm.uniqueId}, ${norm.otaReservationCode}, ${norm.otaName},
               ${norm.insertedAt}, ${wf?.id ?? null})

@@ -59,7 +59,7 @@ const LIFECYCLE_PILL: Record<string, { label: string; cls: string; icon: IconNam
 };
 
 const PAY_LABEL: Record<string, string> = {
-  unpaid: "לא שולם",
+  unpaid: "ממתין לתשלום",
   partial: "שולם חלקית",
   paid: "שולם מלא",
   overpaid: "שולם ביתר",
@@ -274,7 +274,7 @@ export function ReservationsScreen({
               }
             >
               <option value="">כל התשלומים</option>
-              <option value="unpaid">לא שולם</option>
+              <option value="unpaid">ממתין לתשלום</option>
               <option value="partial">שולם חלקית</option>
               <option value="paid">שולם מלא</option>
             </select>
