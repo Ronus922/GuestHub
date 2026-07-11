@@ -11,6 +11,7 @@ import { SettingsShell } from "./SettingsShell";
 import { getMessagingSettingsAction } from "./messaging-actions";
 import { listWorkflowStatusesAction } from "./status-actions";
 import { getBusinessProfileContextAction, type BusinessProfileContext } from "./business-actions";
+import { formatPropertyIdentity, IDENTITY_NOT_SET } from "@/lib/business/profile";
 import type { MessagingSettingsView } from "./types";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,11 @@ export default async function SettingsPage() {
 
   return (
     <SettingsShell
-      tenantName={actor.tenantName}
+      // the page-header identity is the CANONICAL Business Profile (same
+      // formatter as the sidebar) — the internal tenant label never renders
+      propertyIdentity={
+        businessProfile ? formatPropertyIdentity(businessProfile.profile) : IDENTITY_NOT_SET
+      }
       businessProfile={businessProfile}
       currency={currency}
       vatRate={vatRate}
