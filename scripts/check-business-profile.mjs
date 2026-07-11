@@ -245,4 +245,36 @@ assert.ok(!/^(const|let|var)\s+\w+\s*(:|=)\s*(new Map|\{\})/m.test(store), "no m
 assert.ok(section.includes("router.refresh()"), "save refreshes the router so the layout re-renders");
 assert.ok(/async function reload\(\)[\s\S]{0,400}router\.refresh\(\)/.test(section), "refresh happens on every save path (identity/logo/location funnel through reload)");
 
+// ============================================================
+// formatPropertyIdentity — the ONE dashboard identity line (settings header,
+// sidebar): canonical values only, " - " separator, honest not-set fallback.
+// The internal tenants.name label must never surface through it.
+// ============================================================
+const fpi = (propertyName, businessName, city) =>
+  p.formatPropertyIdentity({ propertyName, businessName, city });
+assert.equal(fpi("מגדל הים", "בית מלון הים", "חיפה"), "מגדל הים - חיפה", "property + city");
+assert.equal(fpi("מגדל הים", "בית מלון הים", null), "מגדל הים", "property without city — no dangling separator");
+assert.equal(fpi(null, "בית מלון הים", "חיפה"), "בית מלון הים - חיפה", "business + city when property absent");
+assert.equal(fpi(null, "בית מלון הים", null), "בית מלון הים", "business alone");
+assert.equal(fpi("  מגדל הים  ", null, "  חיפה  "), "מגדל הים - חיפה", "whitespace trimmed");
+assert.equal(fpi(null, null, null), p.IDENTITY_NOT_SET, "empty names → honest not-set line");
+assert.equal(fpi(null, null, "חיפה"), p.IDENTITY_NOT_SET, "bare city never rendered without a name");
+assert.equal(fpi("", "   ", "חיפה"), p.IDENTITY_NOT_SET, "blank strings behave as empty");
+assert.ok(!fpi("מגדל הים", null, "חיפה").includes(" · "), "no middle-dot separator");
+assert.ok(!fpi(null, null, null).includes("GuestHub"), "no application-name fallback");
+assert.ok(!fpi("מגדל הים", null, "חיפה").includes("(Staging)"), "no Channex staging suffix");
+
+// the settings page header renders THIS formatter — never actor.tenantName
+const settingsPage = readFileSync("src/app/(dashboard)/settings/page.tsx", "utf8");
+assert.ok(settingsPage.includes("formatPropertyIdentity"), "settings page uses the shared formatter");
+assert.ok(!settingsPage.includes("actor.tenantName"), "settings page never passes the internal tenant label");
+assert.ok(settingsPage.includes("IDENTITY_NOT_SET"), "settings page falls back to the honest not-set line");
+const settingsShell = readFileSync("src/app/(dashboard)/settings/SettingsShell.tsx", "utf8");
+assert.ok(!settingsShell.includes("tenantName"), "settings shell has no tenantName prop");
+assert.ok(settingsShell.includes("propertyIdentity"), "settings shell renders the canonical identity line");
+assert.ok(!sidebar.includes("tenantName"), "sidebar never reads the internal tenant label");
+// Settings header and Sidebar consume the SAME formatter output (one identity)
+assert.ok(layout.includes("formatPropertyIdentity") && settingsPage.includes("formatPropertyIdentity"),
+  "settings and sidebar derive the identical canonical identity");
+
 console.log("check-business-profile: all assertions passed ✓");

@@ -24,7 +24,7 @@ import type {
 // pane. The active section lives in ?section= so it is linkable and survives a
 // refresh. Data is loaded server-side (page.tsx) and passed down.
 export function SettingsShell({
-  tenantName,
+  propertyIdentity,
   businessProfile,
   currency,
   vatRate,
@@ -36,7 +36,9 @@ export function SettingsShell({
   messaging,
   workflowStatuses,
 }: {
-  tenantName: string;
+  /** canonical Business Profile identity line (formatPropertyIdentity) — never
+   *  the internal tenants.name label */
+  propertyIdentity: string;
   businessProfile: BusinessProfileContext | null;
   currency: string;
   vatRate: number;
@@ -64,7 +66,7 @@ export function SettingsShell({
       <div>
         <h1 className="text-2xl font-extrabold text-ink">הגדרות</h1>
         <p className="mt-1 text-sm font-semibold text-muted">
-          {tenantName} · ניהול ערכים, סטטוסים וברירות מחדל של המערכת
+          {propertyIdentity} — ניהול ערכים, סטטוסים וברירות מחדל של המערכת
         </p>
       </div>
 
