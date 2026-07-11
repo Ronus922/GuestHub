@@ -7,7 +7,8 @@ import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, formatBalance } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
-import { normalizePan, parseExpiry } from "@/lib/card-rules";
+import { CARD_SOURCE_LABEL, normalizePan, parseExpiry } from "@/lib/card-rules";
+import { describeCancellationTier } from "@/lib/commercial/cancellation";
 import { statusTintPalette } from "@/lib/colors";
 import {
   COLLECTION_LABEL,
@@ -35,6 +36,7 @@ import {
   StoredCardBox,
   cardDraftState,
   type CardDraft,
+  type ImportedCardDisplay,
 } from "./CardFields";
 import { PaymentBadge, CardTitle, Field } from "./BookingPanel";
 import { BookingToolbar, MessageComposer } from "./BookingActions";
@@ -94,6 +96,9 @@ export function EditReservationPanel({
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
   const [cardMeta, setCardMeta] = useState<ReservationDetail["card"]>(null);
   const [replacingCard, setReplacingCard] = useState(false);
+  // imported channel-card metadata fills the entry fields read-only; keying in
+  // a replacement card is an explicit operator choice (F)
+  const [manualCardEntry, setManualCardEntry] = useState(false);
   const [cardBusy, startCardBusy] = useTransition();
   const [saving, startSaving] = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -160,6 +165,7 @@ export function EditReservationPanel({
       setCc(EMPTY_CARD);
       setCardMeta(d.card);
       setReplacingCard(false);
+      setManualCardEntry(false);
       setConfirmDiscard(false);
       setNotes(d.notes ?? "");
       setArrivalTime(d.expected_arrival_time ?? "");
@@ -397,6 +403,26 @@ export function EditReservationPanel({
   const statusMeta = detail ? statusItems.find((s) => s.key === detail.status) : null;
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "—";
   const payState = paymentState(total, paidAfter);
+
+  // channel-imported card metadata → the existing entry fields, read-only (F).
+  // Applies only while no stored card exists; display-only strings, prepared
+  // here so CardFields stays dumb.
+  const guarantee = !cardMeta && detail?.ota ? detail.collection.guarantee : null;
+  const importedCardDisplay: ImportedCardDisplay | null =
+    guarantee && detail
+      ? {
+          holderName: guarantee.holderName,
+          brandLabel: guarantee.brand ? cardBrandLabel(guarantee.brand) : null,
+          last4: guarantee.last4,
+          exp:
+            guarantee.expMonth != null && guarantee.expYear != null
+              ? `${String(guarantee.expMonth).padStart(2, "0")}/${String(guarantee.expYear % 100).padStart(2, "0")}`
+              : null,
+          isVirtual: guarantee.isVirtual,
+          sourceLabel: `${CARD_SOURCE_LABEL.channel} · ${detail.ota?.otaName ?? "ערוץ"}`,
+          stateLabel: COLLECTION_LABEL[detail.collection.state],
+        }
+      : null;
   // canonical balance (D52 §7/§9): NOT floored — a negative balance is shown as a
   // customer credit, never as a zero balance. Formatted here, computed centrally.
   const bal = formatBalance(total, paidAfter);
@@ -929,36 +955,47 @@ export function EditReservationPanel({
               {canSaveCard && canEditNow && (replacingCard || !cardMeta) && (
                 <>
                   {/* §15 — entry activates only when the payment method is
-                       credit card; switching away destroys the unsaved draft */}
+                       credit card; switching away destroys the unsaved draft.
+                       Imported channel metadata fills these same fields
+                       read-only (F) until the operator explicitly switches to
+                       manual entry. */}
                   <CardFields
                     value={cc}
                     onChange={setCc}
                     chargeAmount={Math.max(0, total - paidAfter)}
                     disabled={method !== "credit_card"}
+                    imported={importedCardDisplay}
+                    manualEntry={manualCardEntry}
+                    onToggleManual={(manual) => {
+                      setManualCardEntry(manual);
+                      if (!manual) setCc(EMPTY_CARD);
+                    }}
                   />
-                  <div className="mt-3 flex items-center gap-3">
-                    <button
-                      type="button"
-                      className="bw-btn bw-btn-o"
-                      disabled={cardBusy || ccStateForSave !== "valid" || method !== "credit_card"}
-                      onClick={saveCard}
-                    >
-                      <Icon name="check" size={15} />
-                      {cardBusy ? "שומר…" : cardMeta ? "החלף כרטיס" : "שמור כרטיס"}
-                    </button>
-                    {replacingCard && (
+                  {(!importedCardDisplay || manualCardEntry) && (
+                    <div className="mt-3 flex items-center gap-3">
                       <button
                         type="button"
-                        className="bw-btn bw-btn-ghost"
-                        onClick={() => {
-                          setReplacingCard(false);
-                          setCc(EMPTY_CARD);
-                        }}
+                        className="bw-btn bw-btn-o"
+                        disabled={cardBusy || ccStateForSave !== "valid" || method !== "credit_card"}
+                        onClick={saveCard}
                       >
-                        ביטול
+                        <Icon name="check" size={15} />
+                        {cardBusy ? "שומר…" : cardMeta ? "החלף כרטיס" : "שמור כרטיס"}
                       </button>
-                    )}
-                  </div>
+                      {replacingCard && (
+                        <button
+                          type="button"
+                          className="bw-btn bw-btn-ghost"
+                          onClick={() => {
+                            setReplacingCard(false);
+                            setCc(EMPTY_CARD);
+                          }}
+                        >
+                          ביטול
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
               {detail.payments.length > 0 && (
@@ -976,12 +1013,22 @@ export function EditReservationPanel({
               )}
             </section>
 
+            {/* cancellation policy — the immutable AT-BOOKING snapshot (034).
+                Displayed from the reservation itself; a later edit to the
+                Settings template never changes what is shown here. */}
+            {detail.cancellation_policy && (
+              <section className="bw-card">
+                <CardTitle icon="documents" title="מדיניות ביטול (בעת ההזמנה)" />
+                <CancellationSnapshotView snap={detail.cancellation_policy} />
+              </section>
+            )}
+
             {/* notes + expected arrival time — separate fields; the arrival
                 time is never folded into the notes text (D80 §6) */}
             <section className="bw-card">
               <CardTitle icon="documents" title="הערות להזמנה" />
               <div className="bw-grid2 mb-4">
-                <Field label="שעת הגעה משוערת">
+                <Field label="שעת צ'ק-אין צפויה">
                   <input
                     type="time"
                     className="bw-fld"
@@ -990,6 +1037,13 @@ export function EditReservationPanel({
                     disabled={!canEditNow}
                     onChange={(e) => setArrivalTime(e.target.value)}
                   />
+                  {detail.expected_arrival_time_source && (
+                    <span className="bw-opt mt-1 block">
+                      {detail.expected_arrival_time_source === "ota"
+                        ? `התקבל מ-${detail.ota?.otaName ?? "הערוץ"}`
+                        : "עודכן ידנית"}
+                    </span>
+                  )}
                 </Field>
               </div>
               <textarea className="bw-fld" value={notes} disabled={!canEditNow}
@@ -1132,6 +1186,64 @@ export function EditReservationPanel({
         </div>
       )}
     </SidePanel>
+  );
+}
+
+// The reservation's at-booking cancellation terms (034) — pure display of the
+// stored snapshot. Template sources show the copied title + tiers; the OTA
+// source shows the imported text/penalties verbatim. Never re-reads Settings.
+function CancellationSnapshotView({
+  snap,
+}: {
+  snap: NonNullable<ReservationDetail["cancellation_policy"]>;
+}) {
+  const sourceLine =
+    snap.source === "ota"
+      ? `התקבל מ-${snap.ota?.ota_name ?? "הערוץ"} יחד עם ההזמנה`
+      : snap.source === "rate_plan"
+        ? "מתבנית המדיניות של תוכנית המחיר שנבחרה"
+        : "תבנית ברירת המחדל של הנכס";
+  return (
+    <div className="flex flex-col gap-2">
+      {snap.policy && (
+        <>
+          <b className="text-sm text-ink">{snap.policy.public_title}</b>
+          {snap.policy.guest_description && (
+            <p className="text-sm text-muted">{snap.policy.guest_description}</p>
+          )}
+          {snap.policy.tiers.length > 0 && (
+            <ul className="flex flex-col gap-1 text-sm text-ink">
+              {snap.policy.tiers.map((t, i) => (
+                <li key={i}>· {describeCancellationTier(t)}</li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      {snap.ota && (
+        <>
+          {snap.ota.policies_text && (
+            <p className="whitespace-pre-wrap text-sm text-ink">{snap.ota.policies_text}</p>
+          )}
+          {snap.ota.cancel_penalties.length > 0 && (
+            <ul className="flex flex-col gap-1 text-sm text-ink">
+              {snap.ota.cancel_penalties.map((p, i) => (
+                <li key={i}>
+                  · {p.from ? `החל מ-${fmtDate(p.from)}` : "בכל שלב"}: דמי ביטול{" "}
+                  <b dir="ltr">
+                    {p.amount ?? "—"} {p.currency ?? ""}
+                  </b>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      <span className="bw-opt">
+        {sourceLine} · תועד בעת ההזמנה ({fmtDate(snap.captured_at)}) — עדכון עתידי של
+        התבניות בהגדרות לא ישנה הזמנה קיימת
+      </span>
+    </div>
   );
 }
 

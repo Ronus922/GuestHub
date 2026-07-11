@@ -598,15 +598,6 @@
   text-overflow: ellipsis;
   min-width: 0;
 }
-/* D77.1 — compact payment indicator inside the workflow-colored pill:
-   payment keeps its own color but never repaints the pill */
-.cb-resbar .cb-pay-ind {
-  flex: none;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-}
-
 .cb-resbar .cb-bn,
 .cb-ghost .cb-bn {
   margin-inline-start: auto;

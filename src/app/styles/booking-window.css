@@ -241,6 +241,16 @@ textarea.bw-fld {
 select.bw-fld {
   cursor: pointer;
 }
+/* imported (read-only) value shown inside a regular field — same geometry,
+   the .bw-readonly palette, no focus ring (nothing here is editable) */
+.bw-fld.bw-ro {
+  background: #eef1f6;
+  color: #3a4257;
+}
+.bw-fld.bw-ro:focus {
+  background: #eef1f6;
+  border-color: transparent;
+}
 .bw-search {
   height: 54px;
   font-size: 15px;

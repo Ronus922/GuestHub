@@ -143,3 +143,45 @@ export function validateCancellationTiers(tiers: CancellationTier[]): Validation
 
   return { errors, warnings };
 }
+
+// ---- display ----------------------------------------------------------------
+// One-line Hebrew summary of a tier — used by the reservation panel to render
+// the AT-BOOKING policy snapshot (034). Pure formatting, no interpretation:
+// the stored tier values are shown as-is.
+
+const TRIGGER_LABEL: Record<CancellationTriggerType, string> = {
+  before_checkin: "לפני צ'ק-אין",
+  no_show: "אי-הגעה (No Show)",
+  after_checkin: "לאחר צ'ק-אין",
+  early_departure: "עזיבה מוקדמת",
+  partial_cancellation: "ביטול חלקי",
+};
+
+function windowLabel(t: CancellationTier): string {
+  if (t.trigger_type !== "before_checkin") return TRIGGER_LABEL[t.trigger_type];
+  const unit = t.time_unit ?? "hours";
+  const last = (n: number) =>
+    unit === "days" ? `ב-${n} הימים האחרונים לפני צ'ק-אין` : `ב-${n} השעות האחרונות לפני צ'ק-אין`;
+  const unitWord = unit === "days" ? "ימים" : "שעות";
+  const from = t.time_from ?? 0;
+  if (t.time_to == null)
+    return from > 0 ? `יותר מ-${from} ${unitWord} לפני צ'ק-אין` : "בכל שלב לפני צ'ק-אין";
+  return from > 0 ? `בין ${from} ל-${t.time_to} ${unitWord} לפני צ'ק-אין` : last(t.time_to);
+}
+
+export function describeCancellationTier(t: CancellationTier): string {
+  const fee = (() => {
+    switch (t.fee_type) {
+      case "free": return "ללא חיוב";
+      case "fixed": return `דמי ביטול ₪${t.fee_amount.toLocaleString()}`;
+      case "percentage": return `דמי ביטול ${t.fee_percent}%`;
+      case "first_night": return "חיוב לילה ראשון";
+      case "nights": return `חיוב ${t.fee_nights} לילות`;
+      case "full": return "חיוב מלא";
+      case "percentage_remaining": return `${t.fee_percent}% מהיתרה`;
+      case "higher_of": return `הגבוה מבין ₪${t.fee_amount.toLocaleString()} או ${t.fee_percent}%`;
+      case "lower_of": return `הנמוך מבין ₪${t.fee_amount.toLocaleString()} או ${t.fee_percent}%`;
+    }
+  })();
+  return `${windowLabel(t)} — ${fee}`;
+}

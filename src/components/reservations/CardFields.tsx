@@ -78,11 +78,27 @@ export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
   return ok ? "valid" : "invalid";
 }
 
+/** Channel-imported card metadata rendered inside the SAME entry fields, in a
+ *  read-only presentation (no second form). Display-only strings — the parent
+ *  prepares labels; missing values stay visibly unavailable, never fabricated. */
+export type ImportedCardDisplay = {
+  holderName: string | null;
+  brandLabel: string | null;
+  last4: string | null;
+  exp: string | null; // "MM/YY"
+  isVirtual: boolean;
+  sourceLabel: string; // e.g. "ערוץ חיצוני · Booking.com"
+  stateLabel: string; // honest collection state, e.g. "כרטיס ממוסך בלבד — אינו זמין כרגע לחיוב"
+};
+
 export function CardFields({
   value,
   onChange,
   chargeAmount,
   disabled = false,
+  imported = null,
+  manualEntry = false,
+  onToggleManual,
 }: {
   value: CardDraft;
   // functional updater (owners pass setCc): each field patches the PREVIOUS
@@ -94,6 +110,13 @@ export function CardFields({
    *  The OWNER also clears the draft on deactivation (unsaved sensitive state
    *  must not survive a method switch). */
   disabled?: boolean;
+  /** imported channel-card metadata — when present (and manualEntry is off)
+   *  the SAME fields render it read-only; PAN stays masked, CVV never exists,
+   *  nothing here can be saved or charged */
+  imported?: ImportedCardDisplay | null;
+  /** operator explicitly chose to key in a replacement card */
+  manualEntry?: boolean;
+  onToggleManual?: (manual: boolean) => void;
 }) {
   const digits = normalizePan(value.number);
   const numberBad = digits.length > 0 && !panValid(digits);
@@ -102,12 +125,97 @@ export function CardFields({
     value.exp.length > 0 && (exp === null || expiryInPast(exp.month, exp.year, new Date()));
   const idBad = value.idNum.length > 0 && !/^\d{5,9}$/.test(value.idNum);
 
+  // Imported channel-card metadata shown IN the existing fields — read-only.
+  // Only the details that actually arrived are displayed; the number is the
+  // masked representation (missing PAN digits are never reconstructed), no CVV
+  // exists, and nothing in this mode reaches validation, save or charge.
+  if (imported && !manualEntry) {
+    return (
+      <div className="bw-ccbox">
+        <div className="bw-cc-top">
+          <Icon name="credit-card" size={19} />
+          פרטי כרטיס אשראי
+          <span className="bw-opt">התקבל מהערוץ יחד עם ההזמנה</span>
+        </div>
+        <div className="bw-grid2">
+          <label className="bw-fg">
+            <span className="bw-lbl">שם בעל הכרטיס</span>
+            <input
+              className="bw-fld bw-ro"
+              readOnly
+              value={imported.holderName ?? ""}
+              placeholder="לא התקבל מהערוץ"
+            />
+          </label>
+          <label className="bw-fg">
+            <span className="bw-lbl">מספר כרטיס</span>
+            <div className="bw-fld-wrap">
+              <Icon name="credit-card" size={17} className="bw-fi" />
+              <input
+                className="bw-fld ic bw-ro"
+                dir="ltr"
+                readOnly
+                value={imported.last4 ? maskedPan(imported.last4) : ""}
+                placeholder="לא התקבל מהערוץ"
+              />
+            </div>
+          </label>
+        </div>
+        <div className="bw-grid2 mt-4">
+          <label className="bw-fg">
+            <span className="bw-lbl">תוקף</span>
+            <input
+              className="bw-fld bw-ro"
+              dir="ltr"
+              readOnly
+              value={imported.exp ?? ""}
+              placeholder="לא התקבל מהערוץ"
+            />
+          </label>
+          <label className="bw-fg">
+            <span className="bw-lbl">סוג כרטיס</span>
+            <input
+              className="bw-fld bw-ro"
+              readOnly
+              value={[imported.brandLabel, imported.isVirtual ? "כרטיס וירטואלי" : "כרטיס רגיל"]
+                .filter(Boolean)
+                .join(" · ")}
+            />
+          </label>
+        </div>
+        <label className="bw-fg mt-4 block">
+          <span className="bw-lbl">מקור פרטי הכרטיס</span>
+          <input className="bw-fld bw-ro" readOnly value={imported.sourceLabel} />
+        </label>
+        <div className="bw-cc-foot">
+          {onToggleManual && (
+            <button type="button" className="bw-btn bw-btn-o" onClick={() => onToggleManual(true)}>
+              <Icon name="credit-card" size={15} />
+              הזנת כרטיס ידנית במקום
+            </button>
+          )}
+          <span className="text-xs font-semibold text-muted">{imported.stateLabel}</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`bw-ccbox ${disabled ? "bw-ccbox-off" : ""}`}>
       <div className="bw-cc-top">
         <Icon name="credit-card" size={19} />
         פרטי כרטיס אשראי
       </div>
+      {imported && manualEntry && onToggleManual && (
+        <button
+          type="button"
+          className="bw-btn bw-btn-ghost mb-3"
+          onClick={() => onToggleManual(false)}
+        >
+          <Icon name="refresh" size={15} />
+          חזרה לפרטי הכרטיס שהתקבלו מהערוץ
+        </button>
+      )}
       {disabled && (
         <p className="mb-3 text-xs font-bold text-muted">
           בחרו אמצעי תשלום ״כרטיס אשראי״ כדי להפעיל את הזנת פרטי הכרטיס
@@ -194,11 +302,12 @@ export function CardFields({
         <span className="bw-lbl">
           הערות חיוב <span className="bw-opt">(לא חובה)</span>
         </span>
-        <input
+        <textarea
           className="bw-fld"
           placeholder="הערה לחיוב"
           autoComplete="off"
           maxLength={500}
+          rows={3}
           value={value.billingNotes}
           onChange={(e) => onChange((p) => ({ ...p, billingNotes: e.target.value }))}
         />
