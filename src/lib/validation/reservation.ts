@@ -91,7 +91,10 @@ export const updateReservationSchema = z.object({
   id: z.uuid(),
   guest: guestInputSchema,
   sourceId: z.uuid().nullable().optional(),
-  status: z.enum(EDITABLE_STATUSES),
+  // Optional since the manual "סטטוס שהות" select was retired (D85): an
+  // ordinary editor save OMITS status and the server keeps the stored value;
+  // only the explicit check-in/check-out quick actions send one.
+  status: z.enum(EDITABLE_STATUSES).optional(),
   rooms: z.array(existingRoomStaySchema).min(1, "נדרש חדר אחד לפחות").max(10),
   notes: z.string().trim().max(2000).optional(),
   // null clears the value; undefined (omitted) keeps the stored one

@@ -939,20 +939,46 @@ export function BookingPanel({
   );
 }
 
-export function CardTitle({ icon, title }: { icon: Parameters<typeof Icon>[0]["name"]; title: string }) {
+export function CardTitle({
+  icon,
+  title,
+  chip,
+}: {
+  icon: Parameters<typeof Icon>[0]["name"];
+  title: string;
+  /** trailing chip pushed to the card-title end (V2 .chg — e.g. "שונה") */
+  chip?: React.ReactNode;
+}) {
   return (
     <div className="bw-card-h">
       <span className="bw-hi">
         <Icon name={icon} size={17} />
       </span>
       {title}
+      {chip ? (
+        <>
+          <span className="bw-sp" />
+          {chip}
+        </>
+      ) : null}
     </div>
   );
 }
 
-export function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+export function Field({
+  label,
+  required,
+  full,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  /** span the whole form grid (V2 .fg.full) */
+  full?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <label className="bw-fg">
+    <label className={`bw-fg${full ? " full" : ""}`}>
       <span className="bw-lbl">
         {label} {required && <span className="bw-req">*</span>}
       </span>

@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import type { Actor } from "@/lib/auth/actor";
 import { addDays, todayInTz, type DateOnly } from "@/lib/dates";
 import { paymentState, type RateRow } from "@/lib/inventory-rules";
+import { sortRoomsByNumber } from "@/lib/rooms/sort";
 import type {
   CalendarClosure,
   CalendarData,
@@ -30,7 +31,13 @@ export async function getCalendarData(
     SELECT timezone, currency FROM guesthub.tenants WHERE id = ${tenantId}`;
   const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
 
-  const rooms = await sql<CalendarRoom[]>`
+  // Rooms are ordered ONCE, here, by the canonical numeric comparator (D86) —
+  // every calendar surface (sticky room column, grid body, closures, prices,
+  // drag targets) iterates this one array. The SQL ORDER BY only guarantees a
+  // deterministic input for the stable sort below; it is NOT the visual order.
+  // The old `a.sort_order NULLS LAST, r.room_number` grouped by area and then
+  // string-sorted a text column, which is what produced the scrambled order.
+  const roomRows = await sql<CalendarRoom[]>`
     SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
            r.room_type_id, rt.name AS room_type_name, a.name AS area_name,
            COALESCE(rt.base_price, 0)::float8 AS base_price,
@@ -39,7 +46,8 @@ export async function getCalendarData(
     LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
     LEFT JOIN guesthub.areas a ON a.id = r.area_id
     WHERE r.tenant_id = ${tenantId}
-    ORDER BY a.sort_order NULLS LAST, r.room_number`;
+    ORDER BY r.room_number, r.id`;
+  const rooms = sortRoomsByNumber(roomRows);
 
   // Every visible (non-cancelled) reservation-room intersecting the window.
   const stays = await sql<(Omit<CalendarStay, "payment"> & { total_price: number; paid_amount: number })[]>`
