@@ -19,7 +19,7 @@ export type CellTipTarget = {
   anchor: { x: number; top: number; bottom: number };
 };
 
-const TIP_W = 236;
+const TIP_W = 252;
 const DASH = "—";
 
 export function RateCellTooltip({
@@ -68,7 +68,7 @@ export function RateCellTooltip({
   return (
     <div
       ref={ref}
-      className="cb-rtip"
+      className={`cb-rtip ${closed ? "cl-card" : ""}`}
       role="tooltip"
       aria-label={`תעריף · חדר ${room.room_number} · ${formatFullDate(date)}`}
       data-place={pos?.place ?? "above"}
@@ -96,11 +96,11 @@ export function RateCellTooltip({
         </div>
         <div className="cb-rtip-row">
           <span className="cb-rtip-k">מינימום לילות</span>
-          <span className="cb-rtip-v">{minN != null ? minN : DASH}</span>
+          <span className={`cb-rtip-v ${minN == null ? "dash" : ""}`}>{minN != null ? minN : DASH}</span>
         </div>
         <div className="cb-rtip-row">
           <span className="cb-rtip-k">מקסימום לילות</span>
-          <span className="cb-rtip-v">{maxN != null ? maxN : DASH}</span>
+          <span className={`cb-rtip-v ${maxN == null ? "dash" : ""}`}>{maxN != null ? maxN : DASH}</span>
         </div>
         <div className="cb-rtip-row">
           <span className="cb-rtip-k">הגעה (CTA)</span>
