@@ -593,7 +593,9 @@ export function EditReservationPanel({
                       onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
                   </div>
                 </Field>
-                <Field label="סטטוס הזמנה">
+                {/* lifecycle (מחזור חיים) — renamed "סטטוס שהות" (D77.2): the
+                    operator-configurable workflow tag below owns "סטטוס הזמנה" */}
+                <Field label="סטטוס שהות">
                   <select className="bw-fld" value={status} disabled={!canEditNow} onChange={(e) => setStatus(e.target.value)}>
                     {EDITABLE_STATUSES.map((s) => (
                       <option key={s} value={s}>
@@ -613,7 +615,7 @@ export function EditReservationPanel({
                   </select>
                 </Field>
                 {workflowStatuses.length > 0 && (
-                  <Field label="סטטוס טיפול">
+                  <Field label="סטטוס הזמנה">
                     {/* immediate status-only save — never revalidates the stay (§11).
                         D77.1: the select itself wears the status color family
                         (tint bg / color border / readable text) — same as the

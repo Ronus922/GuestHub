@@ -8,6 +8,7 @@ import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
+import { statusTintPalette } from "@/lib/colors";
 import {
   createReservationAction,
   searchGuestsAction,
@@ -782,10 +783,19 @@ export function BookingPanel({
                   <div className="bw-fld flex items-center font-bold">{sourceLabel ?? "—"}</div>
                 </Field>
                 {workflowStatuses.length > 0 && (
-                  <Field label="סטטוס טיפול">
-                    {/* "" = the tenant's default status, applied server-side (§11) */}
+                  <Field label="סטטוס הזמנה">
+                    {/* "" = the tenant's default status, applied server-side (§11).
+                        A chosen status tints the select with its configured color
+                        family (D77.1) — same language as the calendar pill. */}
                     <select
                       className="bw-fld"
+                      style={(() => {
+                        if (!workflowStatusId) return undefined;
+                        const t = statusTintPalette(
+                          workflowStatuses.find((w) => w.id === workflowStatusId)?.color,
+                        );
+                        return { background: t.bg, borderColor: t.bd, color: t.tx, fontWeight: 700 };
+                      })()}
                       value={workflowStatusId}
                       onChange={(e) => setWorkflowStatusId(e.target.value)}
                     >

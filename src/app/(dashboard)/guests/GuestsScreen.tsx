@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
+import { statusTintPalette } from "@/lib/colors";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import { getGuestProfileAction, type GuestProfile } from "./actions";
@@ -323,6 +324,19 @@ export function GuestsScreen({
                         >
                           {RES_STATUS_LABEL[r.status] ?? r.status}
                         </span>
+                        {r.workflow_label && (
+                          /* order-status tag — the same configured tint family
+                             as the calendar pill / reservations list (D77.2) */
+                          <span
+                            className="rl-wf"
+                            style={(() => {
+                              const t = statusTintPalette(r.workflow_color);
+                              return { background: t.bg, borderColor: t.bd, color: t.tx };
+                            })()}
+                          >
+                            {r.workflow_label}
+                          </span>
+                        )}
                         <span className="flex-1" />
                         <b dir="ltr" className="text-sm text-ink">
                           {money(r.total_price, r.currency)}

@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
 import { HEX_COLOR_RE, STATUS_PALETTE, readableTextColor } from "@/lib/colors";
 import {
   createWorkflowStatusAction,
@@ -15,47 +14,16 @@ import {
   type WorkflowStatusDef,
 } from "./status-actions";
 
-// סטטוסי הזמנה (D77 §B2) — tenant workflow statuses: operator-facing tags that
-// never touch inventory or payment state. Colors come from the design palette
-// (or a validated hex); tag text color is DERIVED for WCAG readability.
+// סטטוסי הזמנה (D77 §B2, visuals D77.2) — tenant workflow statuses: operator
+// tags that never touch inventory or payment state. UI is a 1:1 port of
+// ref/html/OrderStatus.html (OrderStatus.png / AddOrderStatusValue.png) over
+// the EXISTING model/actions — same rules, same data, new presentation.
 
-function Tag({ label, color }: { label: string; color: string }) {
+function Pill({ label, color }: { label: string; color: string }) {
   return (
-    <span
-      className="rounded-full px-3 py-1 text-xs font-bold"
-      style={{ background: color, color: readableTextColor(color) }}
-    >
+    <span className="ws-pill" style={{ background: color, color: readableTextColor(color) }}>
       {label}
     </span>
-  );
-}
-
-function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
-  const custom = !STATUS_PALETTE.includes(value as (typeof STATUS_PALETTE)[number]);
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {STATUS_PALETTE.map((c) => (
-        <button
-          key={c}
-          type="button"
-          aria-label={`בחר צבע ${c}`}
-          aria-pressed={value === c}
-          onClick={() => onChange(c)}
-          className={`h-7 w-7 rounded-full border-2 transition ${
-            value === c ? "border-ink scale-110" : "border-transparent"
-          }`}
-          style={{ background: c }}
-        />
-      ))}
-      <input
-        className={`bw-fld !w-28 ${value && !HEX_COLOR_RE.test(value) ? "bad" : ""}`}
-        dir="ltr"
-        placeholder="#RRGGBB"
-        value={custom ? value : ""}
-        onChange={(e) => onChange(e.target.value.trim())}
-        aria-label="צבע מותאם (hex)"
-      />
-    </div>
   );
 }
 
@@ -102,155 +70,246 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
     });
 
   const valid = label.trim().length > 0 && label.trim().length <= 60 && HEX_COLOR_RE.test(color);
+  const customColor = !STATUS_PALETTE.includes(color as (typeof STATUS_PALETTE)[number]);
+  const activeCount = rows.filter((r) => r.isActive).length;
 
   return (
-    <section className="bw-card max-w-3xl">
-      <CardTitle icon="check" title="סטטוסי הזמנה (תפעוליים)" />
-      <p className="bw-hint mb-4">
-        תגית תפעולית לצוות — אינה משנה זמינות, מחזור חיים או מצב תשלום. סטטוס שבשימוש לא
-        ניתן למחיקה — רק להשבתה; סטטוס מושבת נשאר מוצג בהזמנות היסטוריות.
-      </p>
+    <section className="ws-card max-w-4xl">
+      <div className="ws-head">
+        <span className="ws-ico">
+          <Icon name="check-circle" size={20} />
+        </span>
+        <div>
+          <h3 className="ws-t">סטטוסי הזמנה (תפעוליים)</h3>
+          <p className="ws-d">
+            תגית תפעולית לצוות — אינה משנה זמינות, מחזור חיים או מצב תשלום. סטטוס שבשימוש לא
+            ניתן למחיקה; רק להשבתה.
+          </p>
+        </div>
+        <span className="flex-1" />
+        <button
+          type="button"
+          className="bw-btn bw-btn-primary"
+          disabled={pending || editing === "new"}
+          onClick={() => startEdit(null)}
+        >
+          <Icon name="plus" size={16} />
+          הוסף סטטוס
+        </button>
+      </div>
 
-      <ul className="flex flex-col divide-y divide-line">
-        {rows.map((row, i) => (
-          <li key={row.id} className="flex flex-wrap items-center gap-3 py-3">
-            <div className="flex flex-col gap-1">
-              <button
-                type="button"
-                className="text-muted disabled:opacity-30"
-                aria-label="העלה בסדר"
-                disabled={pending || i === 0}
-                onClick={() => move(i, -1)}
-              >
-                <Icon name="arrow-up" size={14} />
-              </button>
-              <button
-                type="button"
-                className="text-muted disabled:opacity-30"
-                aria-label="הורד בסדר"
-                disabled={pending || i === rows.length - 1}
-                onClick={() => move(i, 1)}
-              >
-                <Icon name="arrow-down" size={14} />
-              </button>
-            </div>
-            <Tag label={row.label} color={row.color} />
-            {row.isDefault && (
-              <span className="rounded bg-primary-050 px-2 py-0.5 text-xs font-bold text-primary">
-                ברירת מחדל
-              </span>
-            )}
-            {!row.isActive && (
-              <span className="rounded bg-hover px-2 py-0.5 text-xs font-bold text-muted">מושבת</span>
-            )}
-            <span className="text-xs text-muted">{row.usedCount} הזמנות</span>
-            <span className="flex-1" />
-            {!row.isDefault && row.isActive && (
-              <button
-                type="button"
-                className="bw-btn bw-btn-ghost"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () =>
-                    apply(await setDefaultWorkflowStatusAction({ id: row.id }), "ברירת המחדל עודכנה"),
-                  )
-                }
-              >
-                קבע כברירת מחדל
-              </button>
-            )}
-            <button type="button" className="bw-btn bw-btn-ghost" disabled={pending} onClick={() => startEdit(row)}>
-              <Icon name="edit" size={14} />
-              עריכה
-            </button>
-            {!row.isDefault && (
-              <button
-                type="button"
-                className="bw-btn bw-btn-ghost"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () =>
-                    apply(
-                      await setWorkflowStatusActiveAction({ id: row.id, isActive: !row.isActive }),
-                      row.isActive ? "הסטטוס הושבת" : "הסטטוס הופעל",
-                    ),
-                  )
-                }
-              >
-                {row.isActive ? "השבת" : "הפעל"}
-              </button>
-            )}
-            {row.usedCount === 0 && !row.isDefault && (
-              confirmDelete === row.id ? (
-                <span className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    className="bw-btn bw-btn-danger"
-                    disabled={pending}
-                    onClick={() =>
-                      startTransition(async () =>
-                        apply(await deleteWorkflowStatusAction({ id: row.id }), "הסטטוס נמחק"),
-                      )
-                    }
-                  >
-                    אישור מחיקה
-                  </button>
-                  <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setConfirmDelete(null)}>
-                    ביטול
-                  </button>
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className="bw-btn bw-btn-ghost text-status-danger"
-                  disabled={pending}
-                  onClick={() => setConfirmDelete(row.id)}
-                >
-                  <Icon name="trash" size={14} />
-                </button>
-              )
-            )}
-          </li>
-        ))}
-      </ul>
-
-      {editing ? (
-        <div className="mt-4 rounded-xl border border-line bg-surface p-4">
-          <div className="bw-grid2">
-            <Field label="שם הסטטוס" required>
+      {editing && (
+        <div className="ws-form">
+          <h4 className="ws-form-t">{editing === "new" ? "סטטוס חדש" : "עריכת סטטוס"}</h4>
+          <div className="ws-form-grid">
+            <div className="ws-fld">
+              <label className="ws-fld-l" htmlFor="ws-name">
+                שם הסטטוס<b>*</b>
+              </label>
               <input
-                className="bw-fld"
-                value={label}
+                id="ws-name"
+                className="bw-fld ws-inp"
+                placeholder="לדוגמה: ממתין לאישוש"
                 maxLength={60}
+                value={label}
                 onChange={(e) => setLabel(e.target.value)}
               />
-            </Field>
-            <Field label="תצוגה מקדימה">
-              <div className="flex h-[42px] items-center">
-                <Tag label={label.trim() || "סטטוס"} color={HEX_COLOR_RE.test(color) ? color : "#6B7385"} />
+            </div>
+            <div className="ws-fld">
+              <span className="ws-fld-l">צבע</span>
+              <div className="ws-pal">
+                {STATUS_PALETTE.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`ws-swatch ${color === c ? "on" : ""}`}
+                    style={{ background: c }}
+                    aria-label={`בחר צבע ${c}`}
+                    aria-pressed={color === c}
+                    title={c}
+                    onClick={() => setColor(c)}
+                  />
+                ))}
+                <input
+                  className={`bw-fld ws-hex ${color && !HEX_COLOR_RE.test(color) ? "bad" : ""}`}
+                  dir="ltr"
+                  placeholder="#RRGGBB"
+                  value={customColor ? color : ""}
+                  onChange={(e) => setColor(e.target.value.trim())}
+                  aria-label="צבע מותאם (hex)"
+                />
               </div>
-            </Field>
+            </div>
           </div>
-          <div className="mt-3">
-            <span className="bw-lbl mb-2 block">צבע</span>
-            <ColorPicker value={color} onChange={setColor} />
-          </div>
-          <div className="mt-4 flex items-center gap-2">
-            <button type="button" className="bw-btn bw-btn-primary" disabled={pending || !valid} onClick={save}>
-              <Icon name="check" size={15} />
-              {pending ? "שומר…" : "שמירה"}
+          <div className="ws-form-foot">
+            <button
+              type="button"
+              className="bw-btn bw-btn-primary"
+              disabled={pending || !valid}
+              onClick={save}
+            >
+              {pending ? "שומר…" : "שמור"}
             </button>
             <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setEditing(null)}>
               ביטול
             </button>
           </div>
         </div>
-      ) : (
-        <button type="button" className="bw-addroom mt-4" onClick={() => startEdit(null)}>
-          <Icon name="plus" size={16} />
-          הוסף סטטוס חדש
-        </button>
       )}
+
+      <div className="ws-scroll">
+        <div className="ws-tbl">
+          <div className="ws-thead">
+            <span className="c">סדר</span>
+            <span className="c">#</span>
+            <span>סטטוס</span>
+            <span>הזמנות</span>
+            <span className="c">פעיל</span>
+            <span className="c">ברירת מחדל</span>
+            <span className="ws-th-acts">פעולות</span>
+          </div>
+
+          {rows.map((row, i) => (
+            <div key={row.id} className={`ws-trow ${row.isActive ? "" : "off"}`}>
+              <span className="c">
+                <span className="ws-ord">
+                  <button
+                    type="button"
+                    aria-label="הזז למעלה"
+                    disabled={pending || i === 0}
+                    onClick={() => move(i, -1)}
+                  >
+                    <Icon name="arrow-up" size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="הזז למטה"
+                    disabled={pending || i === rows.length - 1}
+                    onClick={() => move(i, 1)}
+                  >
+                    <Icon name="arrow-down" size={14} />
+                  </button>
+                </span>
+              </span>
+              <span className="c ws-cnt">{i + 1}</span>
+              <span>
+                <Pill label={row.label} color={row.color} />
+              </span>
+              <span className="ws-cnt">
+                <b>{row.usedCount}</b> הזמנות
+              </span>
+              <span className="c">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={row.isActive}
+                  aria-label={`${row.label} — ${row.isActive ? "פעיל" : "מושבת"}`}
+                  className={`ws-sw ${row.isActive ? "on" : ""}`}
+                  disabled={pending || row.isDefault}
+                  title={
+                    row.isDefault
+                      ? "לא ניתן להשבית את ברירת המחדל"
+                      : row.isActive
+                        ? "השבת"
+                        : "הפעל"
+                  }
+                  onClick={() =>
+                    startTransition(async () =>
+                      apply(
+                        await setWorkflowStatusActiveAction({ id: row.id, isActive: !row.isActive }),
+                        row.isActive ? "הסטטוס הושבת" : "הסטטוס הופעל",
+                      ),
+                    )
+                  }
+                />
+              </span>
+              <span className="c">
+                <button
+                  type="button"
+                  className={`ws-star ${row.isDefault ? "on" : ""}`}
+                  disabled={pending || row.isDefault || !row.isActive}
+                  title={
+                    row.isDefault
+                      ? "ברירת המחדל"
+                      : !row.isActive
+                        ? "הפעל את הסטטוס לפני קביעתו כברירת מחדל"
+                        : "קבע כברירת מחדל"
+                  }
+                  aria-label={row.isDefault ? `${row.label} — ברירת מחדל` : `קבע את ${row.label} כברירת מחדל`}
+                  onClick={() =>
+                    startTransition(async () =>
+                      apply(await setDefaultWorkflowStatusAction({ id: row.id }), "ברירת המחדל עודכנה"),
+                    )
+                  }
+                >
+                  <Icon name="star" size={19} />
+                </button>
+              </span>
+              <span className="ws-acts">
+                {confirmDelete === row.id ? (
+                  <>
+                    <button
+                      type="button"
+                      className="bw-btn bw-btn-danger !h-[34px]"
+                      disabled={pending}
+                      onClick={() =>
+                        startTransition(async () =>
+                          apply(await deleteWorkflowStatusAction({ id: row.id }), "הסטטוס נמחק"),
+                        )
+                      }
+                    >
+                      אישור מחיקה
+                    </button>
+                    <button
+                      type="button"
+                      className="bw-btn bw-btn-ghost !h-[34px]"
+                      onClick={() => setConfirmDelete(null)}
+                    >
+                      ביטול
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="ws-ibtn"
+                      title="עריכה"
+                      aria-label={`עריכת ${row.label}`}
+                      disabled={pending}
+                      onClick={() => startEdit(row)}
+                    >
+                      <Icon name="edit" size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="ws-ibtn danger"
+                      title={
+                        row.usedCount > 0
+                          ? "סטטוס בשימוש — ניתן רק להשבית"
+                          : row.isDefault
+                            ? "לא ניתן למחוק את ברירת המחדל"
+                            : "מחיקה"
+                      }
+                      aria-label={`מחיקת ${row.label}`}
+                      disabled={pending || row.usedCount > 0 || row.isDefault}
+                      onClick={() => setConfirmDelete(row.id)}
+                    >
+                      <Icon name="trash" size={16} />
+                    </button>
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="ws-ft">
+        <Icon name="info" size={15} />
+        <span>
+          {rows.length} סטטוסים סה״כ · {activeCount} פעילים
+        </span>
+      </div>
     </section>
   );
 }
