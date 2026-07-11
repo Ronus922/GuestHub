@@ -976,7 +976,7 @@
 }
 .cb-rtip[data-place="below"]::after {
   top: -5px;
-  background: #2a44cb;
+  background: var(--color-primary);
 }
 .cb-rtip-h {
   display: flex;
@@ -984,7 +984,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 11px 14px;
-  background: linear-gradient(180deg, #2a44cb, #1c2e9a);
+  background: var(--color-primary);
   border-radius: 14px 14px 0 0;
 }
 .cb-rtip-t {
