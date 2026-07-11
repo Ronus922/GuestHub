@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import {
   getExternalChangesAction,
   reconcileExternalChangeAction,
+  retryExternalChangeEmailAction,
   setOpsRecipientAction,
   type ExternalChangesData,
   type ExternalChangeView,
@@ -20,18 +21,21 @@ type Msg = { tone: "ok" | "err"; text: string } | null;
 
 const EMAIL_LABEL: Record<ExternalChangeView["emailStatus"], string> = {
   pending: "מייל ממתין",
+  sending: "מייל בשליחה…",
   sent: "מייל נשלח",
-  failed: "שליחת מייל נכשלה",
-  skipped: "מייל לא נשלח — לא הוגדר נמען",
+  failed: "שליחת מייל נכשלה — ניתן לנסות שוב",
+  skipped: "מייל לא נשלח — חסרה הגדרה, ניתן לנסות שוב",
 };
 
 function ChangeCard({
   change,
   onReconcile,
+  onRetryEmail,
   busy,
 }: {
   change: ExternalChangeView;
   onReconcile?: (id: string) => void;
+  onRetryEmail?: (id: string) => void;
   busy: boolean;
 }) {
   const applied = change.applyStatus === "applied";
@@ -74,8 +78,22 @@ function ChangeCard({
           }`}
         >
           {EMAIL_LABEL[change.emailStatus]}
+          {change.emailStatus === "sent" && change.emailSentAtDisplay
+            ? ` · ${change.emailSentAtDisplay}`
+            : ""}
           {change.emailDetail ? ` · ${change.emailDetail}` : ""}
         </span>
+        {onRetryEmail && change.emailRetryable && (
+          <button
+            type="button"
+            onClick={() => onRetryEmail(change.id)}
+            disabled={busy}
+            aria-disabled={busy}
+            className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            נסה לשלוח שוב
+          </button>
+        )}
         {onReconcile && (
           <button
             type="button"
@@ -108,6 +126,23 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
     startTransition(async () => {
       const res = await reconcileExternalChangeAction({ id });
       setMsg(res.success ? { tone: "ok", text: "השינוי סומן כטופל" } : { tone: "err", text: res.error });
+      await reload();
+    });
+  }
+
+  function retryEmail(id: string) {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await retryExternalChangeEmailAction({ id });
+      if (res.success && res.data) {
+        setMsg(
+          res.data.emailStatus === "sent"
+            ? { tone: "ok", text: "המייל נשלח בהצלחה" }
+            : { tone: "err", text: res.data.detail ?? "השליחה לא הצליחה" },
+        );
+      } else if (!res.success) {
+        setMsg({ tone: "err", text: res.error });
+      }
       await reload();
     });
   }
@@ -173,7 +208,7 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
       ) : (
         <div className="flex flex-col gap-2">
           {data.pending.map((c) => (
-            <ChangeCard key={c.id} change={c} onReconcile={reconcile} busy={pending} />
+            <ChangeCard key={c.id} change={c} onReconcile={reconcile} onRetryEmail={retryEmail} busy={pending} />
           ))}
         </div>
       )}
@@ -185,7 +220,7 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
           </summary>
           <div className="mt-2 flex flex-col gap-2">
             {data.recentReconciled.map((c) => (
-              <ChangeCard key={c.id} change={c} busy={pending} />
+              <ChangeCard key={c.id} change={c} onRetryEmail={retryEmail} busy={pending} />
             ))}
           </div>
         </details>

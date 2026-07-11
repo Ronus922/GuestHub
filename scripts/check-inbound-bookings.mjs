@@ -97,8 +97,10 @@ const upstream = {
   feedFail: false,
   ackFail: false,
   ratePlans: {}, // id -> { title, propertyId, roomTypeId } (verified-adoption source)
+  gmailSends: 0, // every REAL send call to the fake Gmail API
+  gmailBodies: [], // decoded raw messages, for content assertions
 };
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, init) => {
   const u = new URL(String(url));
   const path = u.pathname;
   const json = (status, body) => ({ status, ok: status < 300, json: async () => body });
@@ -143,6 +145,19 @@ globalThis.fetch = async (url) => {
         },
       },
     });
+  }
+  // ---- fake Gmail (OAuth token + messages.send) for the email-retry checks ----
+  if (u.hostname === "oauth2.googleapis.com" && path === "/token") {
+    return json(200, { access_token: "fake-access-token" });
+  }
+  if (u.hostname === "gmail.googleapis.com" && path.endsWith("/messages/send")) {
+    upstream.gmailSends += 1;
+    const raw = JSON.parse(init?.body ?? "{}").raw ?? "";
+    // raw = url-safe base64 of a MIME message whose body part is base64 again
+    const mime = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const bodyPart = mime.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+    upstream.gmailBodies.push(Buffer.from(bodyPart, "base64").toString("utf8"));
+    return json(200, { id: `gm-msg-${upstream.gmailSends}`, threadId: "gm-thread-1" });
   }
   throw new Error(`fake channex: unexpected path ${path}`);
 };
@@ -952,6 +967,205 @@ try {
   assert.equal(brokenRow.ota_reservation_code, "777000999", "identity retained for recovery");
   assert.equal(await bookingRes(A.conn.id, "book-broken"), null, "no half-imported reservation");
   ok("normalize-failed revision → persisted visible quarantine (identity kept), never acked, never lost");
+
+  // ---- 21. MIXED modified revision: dates + arrival_hour + cancellation
+  // terms + masked card + guest metadata, all in ONE revision ----
+  upstream.revisions.push({ id: "rev-mix-1", acked: false, attributes: mkRevision({
+    id: "rev-mix-1", booking_id: "book-mix", unique_id: "BDC-MIX-1", ota_reservation_code: "888000111",
+    arrival_hour: "15:00",
+    arrival_date: "2027-06-01", departure_date: "2027-06-03",
+    room: { checkin_date: "2027-06-01", checkout_date: "2027-06-03", days: {}, amount: "600",
+      meta: { cancel_penalties: [{ from: "2027-05-25T00:00:00", amount: "600", currency: "GBP" }],
+              policies: "Free cancellation until 7 days before arrival." } },
+  }) });
+  let sMix = await runInboundPull(sql, A.conn);
+  assert.equal(sMix.imported, 1, `mix seed import failed: ${JSON.stringify(sMix)}`);
+  let mixRes = await bookingRes(A.conn.id, "book-mix");
+  const atBookingSnap = JSON.stringify(mixRes.cancellation_policy_snapshot);
+  assert.equal(mixRes.cancellation_policy_snapshot?.source, "ota");
+  const cardsOf = async (resId) => (await sql`
+    SELECT COUNT(*)::int AS c FROM guesthub.reservation_cards WHERE reservation_id = ${resId}`)[0].c;
+  const paymentsOf = async (resId) => (await sql`
+    SELECT COUNT(*)::int AS c FROM guesthub.payments WHERE reservation_id = ${resId}`)[0].c;
+
+  // the mixed modification: new dates AND new hour AND (different) terms AND a
+  // new masked card AND a changed guest phone — one revision
+  upstream.revisions.push({ id: "rev-mix-2", acked: false, attributes: mkRevision({
+    id: "rev-mix-2", status: "modified", booking_id: "book-mix", unique_id: "BDC-MIX-1",
+    ota_reservation_code: "888000111", arrival_hour: "18:00",
+    arrival_date: "2027-06-05", departure_date: "2027-06-08", amount: "900",
+    customer: { name: "Ronen", surname: "Meshulam", mail: "guest@example.com",
+                phone: "+972521111111", country: "IL", language: "en-us" },
+    guarantee: { card_number: "411111******1111", card_type: "VI", cardholder_name: "Ronen Meshulam",
+                 expiration_date: "01/2030", is_virtual: false, cvv: "***", token: null },
+    room: { checkin_date: "2027-06-05", checkout_date: "2027-06-08", days: {}, amount: "900",
+      meta: { cancel_penalties: [{ from: "2027-06-01T00:00:00", amount: "900", currency: "GBP" }],
+              policies: "LATER, DIFFERENT terms — must NOT replace the at-booking snapshot." } },
+  }) });
+  sMix = await runInboundPull(sql, A.conn);
+  assert.equal(sMix.imported, 1);
+  mixRes = await bookingRes(A.conn.id, "book-mix");
+  assert.equal(d10(mixRes.check_in), "2027-06-05", "mixed revision: dates applied");
+  assert.equal(d10(mixRes.check_out), "2027-06-08");
+  const mixRR = await sql`
+    SELECT check_in, check_out FROM guesthub.reservation_rooms WHERE reservation_id = ${mixRes.id}`;
+  assert.equal(mixRR.length, 1);
+  assert.equal(d10(mixRR[0].check_in), "2027-06-05", "reservation_rooms moved atomically");
+  assert.equal(String(mixRes.expected_arrival_time), "18:00:00", "mixed revision: arrival hour applied");
+  assert.equal(mixRes.expected_arrival_time_source, "ota", "arrival provenance stays 'ota'");
+  assert.equal(JSON.stringify(mixRes.cancellation_policy_snapshot), atBookingSnap,
+    "cancellation snapshot = the AT-BOOKING contract; a later revision's terms never replace it");
+  assert.equal(await cardsOf(mixRes.id), 0, "masked card stays metadata-only — never a chargeable card row");
+  assert.equal(Number(mixRes.paid_amount), 0, "payment ledger untouched by the modification");
+  assert.equal(await paymentsOf(mixRes.id), 0, "no payment row fabricated");
+  const [mixGuest] = await sql`SELECT phone FROM guesthub.guests WHERE id = ${mixRes.primary_guest_id}`;
+  assert.equal(mixGuest.phone, "+972521111111", "guest metadata updated by the same revision");
+  const mixChanges = await sql`
+    SELECT * FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-2'`;
+  assert.equal(mixChanges.length, 1, "exactly ONE external-change record for the mixed revision");
+  assert.equal(mixChanges[0].apply_status, "applied");
+  assert.notEqual(mixChanges[0].email_status, "pending", "one email decision was made");
+  ok("MIXED modified revision → dates atomic + arrival/provenance + snapshot immutable + card safe + ledger untouched + ONE notification");
+
+  // a later terms-less, hour-less revision erases nothing
+  const mixBare = mkRevision({
+    id: "rev-mix-3", status: "modified", booking_id: "book-mix", unique_id: "BDC-MIX-1",
+    ota_reservation_code: "888000111",
+    arrival_date: "2027-06-05", departure_date: "2027-06-08", amount: "900",
+    room: { checkin_date: "2027-06-05", checkout_date: "2027-06-08", days: {}, amount: "900" },
+  });
+  delete mixBare.arrival_hour;
+  upstream.revisions.push({ id: "rev-mix-3", acked: false, attributes: mixBare });
+  sMix = await runInboundPull(sql, A.conn);
+  assert.equal(sMix.imported, 1);
+  mixRes = await bookingRes(A.conn.id, "book-mix");
+  assert.equal(String(mixRes.expected_arrival_time), "18:00:00", "omitted hour never erases");
+  assert.equal(JSON.stringify(mixRes.cancellation_policy_snapshot), atBookingSnap, "omitted terms never erase");
+  assert.equal(await ecCountFor("rev-mix-3"), 0, "unchanged dates → no date-change notification");
+  ok("terms-less/hour-less follow-up erases nothing; unchanged dates create no notification");
+
+  // conflicting MIXED modification: NOTHING is applied — not the dates and not
+  // the metadata (all-or-nothing: applyLiveRevision never ran). The revision
+  // stays persisted + quarantined; the conflict is a visible unresolved change.
+  const [mixBlocker] = await sql`
+    INSERT INTO guesthub.reservations
+      (tenant_id, reservation_number, status, check_in, check_out, total_price, balance)
+    VALUES (${A.tenantId}, 'L-9003', 'confirmed', '2027-06-10', '2027-06-12', 500, 500)
+    RETURNING id`;
+  await sql`
+    INSERT INTO guesthub.reservation_rooms
+      (tenant_id, reservation_id, room_id, check_in, check_out, adults, rate_per_night, price_total)
+    VALUES (${A.tenantId}, ${mixBlocker.id}, ${A.roomId}, '2027-06-10', '2027-06-12', 2, 250, 500)`;
+  upstream.revisions.push({ id: "rev-mix-4", acked: false, attributes: mkRevision({
+    id: "rev-mix-4", status: "modified", booking_id: "book-mix", unique_id: "BDC-MIX-1",
+    ota_reservation_code: "888000111", arrival_hour: "20:00",
+    arrival_date: "2027-06-10", departure_date: "2027-06-12", amount: "900",
+    customer: { name: "Ronen", surname: "Meshulam", mail: "guest@example.com",
+                phone: "+972529999999", country: "IL", language: "en-us" },
+    room: { checkin_date: "2027-06-10", checkout_date: "2027-06-12", days: {}, amount: "900" },
+  }) });
+  sMix = await runInboundPull(sql, A.conn);
+  assert.ok(sMix.quarantined >= 1, "conflicting mixed revision quarantined");
+  assert.ok(!upstream.ackCalls.includes("rev-mix-4"), "never acked — stays retryable upstream");
+  mixRes = await bookingRes(A.conn.id, "book-mix");
+  assert.equal(d10(mixRes.check_in), "2027-06-05", "conflict → dates untouched");
+  assert.equal(String(mixRes.expected_arrival_time), "18:00:00", "conflict → arrival hour untouched (no partial metadata)");
+  const [mixGuest2] = await sql`SELECT phone FROM guesthub.guests WHERE id = ${mixRes.primary_guest_id}`;
+  // rev-mix-3 (default customer) last set the phone; the point is the
+  // CONFLICTING revision's phone was never applied — all-or-nothing
+  assert.notEqual(mixGuest2.phone, "+972529999999", "conflict → guest metadata untouched (all-or-nothing)");
+  assert.equal(mixGuest2.phone, "+972520000000", "pre-conflict value preserved");
+  const [mixConflictRow] = await sql`
+    SELECT apply_status, new_check_in::text AS nci FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-4'`;
+  assert.equal(mixConflictRow?.apply_status, "conflict", "conflict visible with the OTA's proposed dates");
+  assert.equal(mixConflictRow?.nci, "2027-06-10");
+  const [mixQRow] = await sql`
+    SELECT import_status FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-mix-4'`;
+  assert.equal(mixQRow.import_status, "quarantined", "full inbound revision persisted");
+  ok("conflicting MIXED revision → all-or-nothing: no dates, no metadata; persisted quarantine + visible conflict");
+
+  // ---- 22. email retry (D83): failed/skipped are retryable; sent is final ----
+  // configure a REAL (fake-upstream) Gmail provider through the platform's own
+  // encrypted-secrets path — exactly what the operator does in the UI
+  process.env.MESSAGING_SECRETS_ENCRYPTION_KEY = "inbound-check-messaging-key-not-production";
+  const { encryptSecretBag } = req(join(out, "lib/messaging/secrets.js"));
+  const { retryExternalChangeEmail } = req(join(out, "lib/channel/external-changes.js"));
+  await sql`
+    INSERT INTO guesthub.messaging_provider_connections
+      (tenant_id, provider, config, secret_ciphertext, status)
+    VALUES (${A.tenantId}, 'gmail',
+            ${sql.json({ mode: "oauth", senderEmail: "hotel@example.com", senderName: "GuestHub" })},
+            ${encryptSecretBag({ clientId: "cid", clientSecret: "cs", refreshToken: "rt" })},
+            'connected')`;
+
+  // rev-ec-3's email honestly FAILED (provider was missing) — retry now sends
+  const changeIdOf = async (revId) => (await sql`
+    SELECT id FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = ${revId}`)[0].id;
+  const ec3Id = await changeIdOf("rev-ec-3");
+  let retry = await retryExternalChangeEmail(sql, A.tenantId, ec3Id);
+  assert.equal(retry.ok, true, `retry failed: ${JSON.stringify(retry)}`);
+  assert.equal(retry.emailStatus, "sent");
+  assert.equal(upstream.gmailSends, 1, "exactly one real send");
+  const [ec3Row] = await sql`
+    SELECT email_status, outbound_message_id FROM guesthub.channel_external_changes WHERE id = ${ec3Id}`;
+  assert.equal(ec3Row.email_status, "sent");
+  const [om3] = await sql`
+    SELECT status, to_address, subject, provider_message_id, submitted_at
+    FROM guesthub.outbound_messages WHERE id = ${ec3Row.outbound_message_id}`;
+  assert.equal(om3.status, "sent");
+  assert.equal(om3.to_address, "ops@example.com", "recipient from the canonical tenant setting");
+  assert.match(om3.subject, /שינוי תאריכים התקבל מ-/, "required subject");
+  assert.ok(om3.provider_message_id, "provider message id recorded");
+  assert.ok(om3.submitted_at, "sent timestamp recorded");
+  const sentBody = upstream.gmailBodies[0];
+  assert.match(sentBody, /Ronen Meshulam/, "guest name in the email");
+  assert.ok(sentBody.includes("777000111"), "OTA number in the email");
+  ok("failed email → explicit retry sends ONE real email (recipient/subject/guest/ids verified)");
+
+  // 'sent' is final: a second retry is refused, nothing is sent again
+  retry = await retryExternalChangeEmail(sql, A.tenantId, ec3Id);
+  assert.equal(retry.ok, false, "retry of a sent email refused");
+  assert.match(retry.error, /כבר נשלח/);
+  assert.equal(upstream.gmailSends, 1, "no second logical email for the same revision");
+  // redelivery of the underlying revision cannot re-arm the email either
+  upstream.revisions.find((r) => r.id === "rev-ec-3").acked = false;
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(upstream.gmailSends, 1, "webhook redelivery never resends");
+  const [ec3After] = await sql`SELECT email_status FROM guesthub.channel_external_changes WHERE id = ${ec3Id}`;
+  assert.equal(ec3After.email_status, "sent");
+  ok("'sent' is terminal — retry refused, redelivery resends nothing");
+
+  // 'skipped' (missing configuration at the time) is retryable the same way
+  const ec2Id = await changeIdOf("rev-ec-2");
+  const [ec2Before] = await sql`SELECT email_status FROM guesthub.channel_external_changes WHERE id = ${ec2Id}`;
+  assert.equal(ec2Before.email_status, "skipped");
+  retry = await retryExternalChangeEmail(sql, A.tenantId, ec2Id);
+  assert.equal(retry.ok, true);
+  assert.equal(retry.emailStatus, "sent");
+  assert.equal(upstream.gmailSends, 2);
+  ok("'skipped because configuration was missing' → retryable; sends once after configuration");
+
+  // with the provider configured, a NEW external change emails automatically
+  upstream.revisions.push({ id: "rev-ec-5", acked: false, attributes: mkRevision({
+    id: "rev-ec-5", status: "modified", booking_id: "book-ec", unique_id: "BDC-EC-1",
+    ota_reservation_code: "777000111",
+    arrival_date: "2027-04-20", departure_date: "2027-04-22", amount: "450",
+    room: { checkin_date: "2027-04-20", checkout_date: "2027-04-22", days: {}, amount: "450" },
+  }) });
+  sEC = await runInboundPull(sql, A.conn);
+  assert.equal(sEC.imported, 1);
+  const [ec5Row] = await sql`
+    SELECT email_status FROM guesthub.channel_external_changes
+    WHERE connection_id = ${A.conn.id} AND provider_revision_id = 'rev-ec-5'`;
+  assert.equal(ec5Row.email_status, "sent", "configured provider → automatic dispatch sends");
+  assert.equal(upstream.gmailSends, 3);
+  const autoBody = upstream.gmailBodies[2];
+  assert.match(autoBody, /הפרש לילות/, "nights difference in the email");
+  ok("configured provider → the pipeline itself sends exactly one email per new change");
 
   console.log(`\nall ${n} inbound-booking checks passed`);
 } finally {

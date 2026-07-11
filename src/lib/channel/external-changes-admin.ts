@@ -4,6 +4,7 @@ import { sql } from "@/lib/db";
 import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit } from "@/lib/audit";
+import { retryExternalChangeEmail } from "./external-changes";
 
 // ============================================================
 // External change notifications — server actions for /channels (D82).
@@ -49,8 +50,10 @@ export type ExternalChangeView = {
   applyStatus: "applied" | "conflict";
   conflictDetail: string | null;
   status: "pending" | "reconciled";
-  emailStatus: "pending" | "sent" | "failed" | "skipped";
+  emailStatus: "pending" | "sending" | "sent" | "failed" | "skipped";
   emailDetail: string | null;
+  emailSentAtDisplay: string | null;
+  emailRetryable: boolean;
   receivedAtDisplay: string;
 };
 
@@ -73,8 +76,9 @@ type ChangeRow = {
   apply_status: "applied" | "conflict";
   conflict_detail: string | null;
   status: "pending" | "reconciled";
-  email_status: "pending" | "sent" | "failed" | "skipped";
+  email_status: "pending" | "sending" | "sent" | "failed" | "skipped";
   email_detail: string | null;
+  email_sent_at: Date | null;
   created_at: Date;
 };
 
@@ -94,27 +98,34 @@ function toView(r: ChangeRow): ExternalChangeView {
     status: r.status,
     emailStatus: r.email_status,
     emailDetail: r.email_detail,
+    emailSentAtDisplay: r.email_sent_at ? HE_DATE_TIME.format(r.email_sent_at) : null,
+    emailRetryable: r.email_status === "failed" || r.email_status === "skipped",
     receivedAtDisplay: HE_DATE_TIME.format(r.created_at),
   };
 }
 
 const CHANGE_COLUMNS = sql`
-  id, ota_reservation_code, ota_name, reservation_number, room_labels,
-  old_check_in::text AS old_check_in, old_check_out::text AS old_check_out,
-  new_check_in::text AS new_check_in, new_check_out::text AS new_check_out,
-  apply_status, conflict_detail, status, email_status, email_detail, created_at`;
+  c.id, c.ota_reservation_code, c.ota_name, c.reservation_number, c.room_labels,
+  c.old_check_in::text AS old_check_in, c.old_check_out::text AS old_check_out,
+  c.new_check_in::text AS new_check_in, c.new_check_out::text AS new_check_out,
+  c.apply_status, c.conflict_detail, c.status, c.email_status, c.email_detail,
+  om.submitted_at AS email_sent_at, c.created_at`;
+
+const CHANGE_FROM = sql`
+  guesthub.channel_external_changes c
+  LEFT JOIN guesthub.outbound_messages om ON om.id = c.outbound_message_id`;
 
 export async function getExternalChangesAction(): Promise<Result<ExternalChangesData>> {
   try {
     const actor = await requireChannelAdmin();
     const pending = await sql<ChangeRow[]>`
-      SELECT ${CHANGE_COLUMNS} FROM guesthub.channel_external_changes
-      WHERE tenant_id = ${actor.tenantId} AND status = 'pending'
-      ORDER BY created_at DESC LIMIT 50`;
+      SELECT ${CHANGE_COLUMNS} FROM ${CHANGE_FROM}
+      WHERE c.tenant_id = ${actor.tenantId} AND c.status = 'pending'
+      ORDER BY c.created_at DESC LIMIT 50`;
     const reconciled = await sql<ChangeRow[]>`
-      SELECT ${CHANGE_COLUMNS} FROM guesthub.channel_external_changes
-      WHERE tenant_id = ${actor.tenantId} AND status = 'reconciled'
-      ORDER BY reconciled_at DESC LIMIT 5`;
+      SELECT ${CHANGE_COLUMNS} FROM ${CHANGE_FROM}
+      WHERE c.tenant_id = ${actor.tenantId} AND c.status = 'reconciled'
+      ORDER BY c.reconciled_at DESC LIMIT 5`;
     const [tenant] = await sql<{ recipient: string | null }[]>`
       SELECT settings->>'ops_notification_email' AS recipient
       FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
@@ -153,6 +164,34 @@ export async function reconcileExternalChangeAction(input: {
       after: { status: "reconciled" },
     });
     return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// Explicit email retry (D83): allowed only for a failed / skipped email; the
+// claim inside retryExternalChangeEmail guarantees one revision can never end
+// up with two successful logical emails, even against the worker dispatcher.
+// Every retry attempt is audited with its prior and resulting state.
+export async function retryExternalChangeEmailAction(input: {
+  id: string;
+}): Promise<Result<{ emailStatus: "sent" | "failed" | "skipped"; detail: string | null }>> {
+  try {
+    const actor = await requireChannelAdmin();
+    const [before] = await sql<{ email_status: string; email_detail: string | null }[]>`
+      SELECT email_status, email_detail FROM guesthub.channel_external_changes
+      WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
+    if (!before) return { success: false, error: "ההתראה אינה קיימת" };
+    const result = await retryExternalChangeEmail(sql, actor.tenantId, input.id);
+    if (!result.ok) return { success: false, error: result.error };
+    await writeAudit(actor, {
+      entityType: "channel_external_change",
+      entityId: input.id,
+      action: "external_change_email_retry",
+      before: { email_status: before.email_status, email_detail: before.email_detail },
+      after: { email_status: result.emailStatus, email_detail: result.detail },
+    });
+    return { success: true, data: { emailStatus: result.emailStatus, detail: result.detail } };
   } catch (e) {
     return failFrom(e);
   }
