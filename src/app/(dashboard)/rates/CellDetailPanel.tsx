@@ -80,12 +80,13 @@ export function CellDetailPanel({
     >
       {/* Final sale state + every applicable reason */}
       <Box title="מצב מכירה סופי" icon="info">
-        <div className={`text-[14px] font-extrabold ${cell.sellable ? "text-[var(--color-status-success)]" : "text-[var(--color-status-danger)]"}`}>
-          {cell.sellable ? "✓ ניתן למכירה" : "✕ לא ניתן למכירה"}
+        <div className={`flex items-center gap-2 text-[14px] font-extrabold ${cell.sellable ? "text-status-success" : "text-status-danger"}`}>
+          <Icon name={cell.sellable ? "check" : "circle-slash"} size={17} />
+          {cell.sellable ? "ניתן למכירה" : "לא ניתן למכירה"}
         </div>
         <div className="flex flex-wrap gap-1.5 mt-2">
           {cell.reasonCodes.map((rc) => (
-            <span key={rc} className={`px-2 py-0.5 rounded-md text-[11.5px] font-bold ${rc === "SELLABLE" ? "bg-[var(--color-status-success-050)] text-[var(--color-status-success)]" : "bg-[#fbe9ee] text-[#a23b52]"}`}>
+            <span key={rc} className={`chip ${rc === "SELLABLE" ? "chip-paid" : "chip-unpaid"}`}>
               {SELL_REASON_TEXT[rc]}
             </span>
           ))}
@@ -113,12 +114,12 @@ export function CellDetailPanel({
                 text={`חסימה פיזית${c.reason ? ` · ${c.reason}` : ""} · ${c.startDate}→${c.endDate}`} label="ניהול חסימה" />
             ))}
             {cell.roomAdminState !== "available" && cell.roomAdminState !== "no_member" && (
-              <p className="text-[12px] font-bold text-[#a23b52] mt-1">
+              <p className="field-msg mt-1">
                 {cell.roomAdminState === "out_of_order" ? "החדר מושבת פיזית — יש להחזירו לפעילות בניהול חדרים." : "החדר אינו פעיל — יש להפעילו בניהול חדרים."}
               </p>
             )}
             {cell.roomAdminState === "no_member" && (
-              <p className="text-[12px] font-bold text-[#a23b52] mt-1">אין חדר משויך ליחידת המכירה — יש להשלים מיפוי.</p>
+              <p className="field-msg mt-1">אין חדר משויך ליחידת המכירה — יש להשלים מיפוי.</p>
             )}
           </div>
         )}
@@ -126,31 +127,48 @@ export function CellDetailPanel({
 
       {/* Axis B — commercial (editable via the canonical write path) */}
       <Box title="מצב מסחרי" icon="credit-card">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-[13px] font-bold text-[var(--color-muted)]">מכירה:</span>
-          <span className={`px-2 py-0.5 rounded-md text-[12px] font-extrabold ${cell.commercialOpen ? "bg-[var(--color-status-success-050)] text-[var(--color-status-success)]" : "bg-[#fbe9ee] text-[#a23b52]"}`}>
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="t-label">מכירה:</span>
+          <span className={`chip ${cell.commercialOpen ? "chip-paid" : "chip-unpaid"}`}>
+            <span className="dot" />
             {cell.commercialOpen ? "פתוח למכירה" : "סגור למכירה"}
           </span>
-          <span className="text-[12px] text-[var(--color-faint)]">
-            מחיר אפקטיבי ₪{Math.round(cell.effectivePrice)} {cell.priceSource === "inherited" ? `(בסיס ₪${Math.round(cell.inheritedRate)})` : "(מוגדר)"}
+          <span className="field-hint">
+            מחיר אפקטיבי <bdi className="ltr-num">₪{Math.round(cell.effectivePrice)}</bdi>{" "}
+            {cell.priceSource === "inherited" ? <>(בסיס <bdi className="ltr-num">₪{Math.round(cell.inheritedRate)}</bdi>)</> : "(מוגדר)"}
           </span>
         </div>
         {!editable ? (
-          <p className="text-[12.5px] font-bold text-[var(--color-faint)]">אין הרשאת עריכת תעריפים.</p>
+          <p className="field-hint">אין הרשאת עריכת תעריפים.</p>
         ) : !cell.activeRatePlan ? (
-          <p className="text-[12.5px] font-bold text-[#a23b52]">אין תוכנית תמחור פעילה ליחידה — יש להגדיר תוכנית בסיס.</p>
+          <p className="field-msg">אין תוכנית תמחור פעילה ליחידה — יש להגדיר תוכנית בסיס.</p>
         ) : !writable ? (
-          <p className="text-[12.5px] font-bold text-[var(--color-faint)]">תאריך שעבר — לא ניתן לעריכה מסחרית.</p>
+          <p className="field-hint">תאריך שעבר — לא ניתן לעריכה מסחרית.</p>
         ) : (
           <div className="flex flex-col gap-2.5">
             <div className="flex items-center gap-2">
-              <button disabled={busy} onClick={() => apply({ stopSell: false })} className="flex-1 h-10 rounded-xl bg-[var(--color-status-success-050)] text-[var(--color-status-success)] text-[13px] font-extrabold border-[1.5px] border-[#bfe6cd] disabled:opacity-50">פתוח למכירה</button>
-              <button disabled={busy} onClick={() => apply({ stopSell: true })} className="flex-1 h-10 rounded-xl bg-[#fbe9ee] text-[#a23b52] text-[13px] font-extrabold border-[1.5px] border-[#f0c9d3] disabled:opacity-50">סגור למכירה</button>
+              {/* the CURRENT state is signalled by aria-pressed + a check glyph (shape cue),
+                  never by colour alone (WCAG 1.4.1) */}
+              <button type="button" aria-pressed={cell.commercialOpen} disabled={busy} onClick={() => apply({ stopSell: false })} className={`btn btn-secondary flex-1 ${cell.commercialOpen ? "text-status-success" : ""}`}>
+                {cell.commercialOpen && <Icon name="check" size={20} />}
+                פתוח למכירה
+              </button>
+              <button type="button" aria-pressed={!cell.commercialOpen} disabled={busy} onClick={() => apply({ stopSell: true })} className={`btn btn-secondary flex-1 ${cell.commercialOpen ? "" : "text-status-danger"}`}>
+                {!cell.commercialOpen && <Icon name="check" size={20} />}
+                סגור למכירה
+              </button>
             </div>
-            <div className="flex items-center gap-2">
-              <input type="number" inputMode="numeric" value={priceInput} onChange={(e) => setPriceInput(e.target.value)} placeholder={`₪${Math.round(cell.effectivePrice)}`}
-                className="h-10 px-3 rounded-xl border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white flex-1 outline-none" />
-              <button disabled={busy} onClick={() => apply({ price: priceInput.trim() === "" ? null : Number(priceInput) })} className="h-10 px-4 rounded-xl bg-[var(--color-primary)] text-white text-[13px] font-extrabold disabled:opacity-50">שמור מחיר</button>
+            <div className="field">
+              <label className="field-label" htmlFor="rg-cell-price">מחיר ללילה</label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="rg-cell-price" type="number" inputMode="numeric" dir="ltr"
+                  value={priceInput} onChange={(e) => setPriceInput(e.target.value)}
+                  placeholder={`₪${Math.round(cell.effectivePrice)}`}
+                  className="field-input ltr-num flex-1"
+                />
+                <button type="button" disabled={busy} onClick={() => apply({ price: priceInput.trim() === "" ? null : Number(priceInput) })} className="btn btn-primary">שמור מחיר</button>
+              </div>
             </div>
             <Stepper label="מ׳ לילות בהגעה" value={cell.minStayArrival} disabled={busy} onSet={(v) => apply({ minStayArrival: v })} />
             <Stepper label="מינימום לילות בטווח" value={cell.minStayThrough} disabled={busy} onSet={(v) => apply({ minStayThrough: v })} />
@@ -170,7 +188,7 @@ export function CellDetailPanel({
           <Stat label="מיפוי ערוץ" value={cell.mappingValid ? "ממופה" : "לא ממופה"} />
           <Stat label="זמינות ליציאה" value={cell.outboundAvailability} />
         </Grid>
-        <p className="mt-2 text-[11.5px] font-medium text-[var(--color-faint)] leading-relaxed">
+        <p className="field-hint mt-2 leading-relaxed">
           ערכים מחושבים בלבד — לא נשלח דבר לערוץ בשלב זה. זמינות ליציאה נגזרת מהמלאי הפיזי בלבד;
           המגבלות ({r.stopSell ? "סגור" : "פתוח"}, CTA {r.closedToArrival ? "✓" : "—"}, CTD {r.closedToDeparture ? "✓" : "—"},
           מ׳ הגעה {num(r.minStayArrival)}, מ׳ טווח {num(r.minStayThrough)}, מקס {num(r.maxStay)}, ₪{Math.round(r.rate)}) נגזרות מה-ARI המסחרי.
@@ -182,12 +200,16 @@ export function CellDetailPanel({
 
 function Box({ title, icon, children }: { title: string; icon: Parameters<typeof Icon>[0]["name"]; children: React.ReactNode }) {
   return (
-    <section className="bg-white rounded-2xl border border-[#e8ebf2] p-4">
-      <div className="flex items-center gap-2 mb-2.5">
-        <span className="w-6 h-6 rounded-lg bg-[var(--color-primary-050)] text-[var(--color-primary)] flex items-center justify-center"><Icon name={icon} size={14} /></span>
-        <h3 className="text-[14px] font-extrabold text-[var(--color-ink)]">{title}</h3>
+    <section className="card">
+      {/* a real <h3> keeps the panel's document outline / screen-reader heading
+          navigation; it inherits .card-hd's 17px/800 (§6) */}
+      <div className="card-hd">
+        <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-primary-050 text-primary">
+          <Icon name={icon} size={13.5} />
+        </span>
+        <h3>{title}</h3>
       </div>
-      {children}
+      <div className="card-bd">{children}</div>
     </section>
   );
 }
@@ -196,18 +218,18 @@ function Grid({ children }: { children: React.ReactNode }) {
 }
 function Stat({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return (
-    <div className="bg-[#f7f9fc] rounded-xl p-2.5 text-center">
-      <div className={`text-[15px] font-extrabold tabular-nums ${strong ? "text-[var(--color-status-success)]" : "text-[var(--color-ink)]"}`}>{value}</div>
-      <div className="text-[11px] font-bold text-[var(--color-faint)]">{label}</div>
+    <div className="rounded-[12px] bg-field p-2.5 text-center">
+      <div className={`text-[15px] font-extrabold tabular-nums ${strong ? "text-status-success" : "text-ink"}`}>{value}</div>
+      <div className="t-label">{label}</div>
     </div>
   );
 }
 function LinkRow({ icon, href, text, label }: { icon: Parameters<typeof Icon>[0]["name"]; href: string; text: string; label: string }) {
   return (
-    <a href={href} className="flex items-center gap-2 px-3 py-2 rounded-lg border-[1.5px] border-[#e4e8f0] hover:bg-[#f5f7fb] text-[12.5px] font-bold text-[var(--color-ink)]">
-      <Icon name={icon} size={15} className="text-[var(--color-muted)]" />
+    <a href={href} className="flex items-center gap-2 rounded-[8px] border-[1.5px] border-line px-3 py-2 text-[12px] font-bold text-ink hover:bg-hover">
+      <Icon name={icon} size={17} className="text-muted" />
       <span className="flex-1 truncate">{text}</span>
-      <span className="text-[var(--color-primary)] flex-none">{label} ›</span>
+      <span className="flex-none text-primary">{label} ›</span>
     </a>
   );
 }
@@ -215,16 +237,21 @@ function Stepper({ label, value, disabled, onSet }: { label: string; value: numb
   const v = value ?? 0;
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[12.5px] font-bold text-[var(--color-muted)] flex-1">{label}</span>
-      <button disabled={disabled} onClick={() => onSet(v <= 1 ? null : v - 1)} className="w-8 h-8 rounded-lg border-[1.5px] border-[#e4e8f0] text-[var(--color-muted)] disabled:opacity-50"><Icon name="minus" size={14} /></button>
-      <span className="w-8 text-center text-[13px] font-extrabold tabular-nums">{value ?? "—"}</span>
-      <button disabled={disabled} onClick={() => onSet(v + 1)} className="w-8 h-8 rounded-lg border-[1.5px] border-[#e4e8f0] text-[var(--color-muted)] disabled:opacity-50"><Icon name="plus" size={14} /></button>
+      <span className="field-label flex-1">{label}</span>
+      {/* border-solid is REQUIRED: .icon-btn resets `border: none` (style), so the
+          width/colour utilities alone would never paint the outline */}
+      <button type="button" aria-label={`${label} — פחות`} disabled={disabled} onClick={() => onSet(v <= 1 ? null : v - 1)} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="minus" size={20} /></button>
+      <span className="w-8 text-center text-[13.5px] font-extrabold tabular-nums">{value ?? "—"}</span>
+      <button type="button" aria-label={`${label} — עוד`} disabled={disabled} onClick={() => onSet(v + 1)} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="plus" size={20} /></button>
     </div>
   );
 }
 function Toggle({ label, on, disabled, onToggle }: { label: string; on: boolean; disabled?: boolean; onToggle: () => void }) {
   return (
-    <button disabled={disabled} onClick={onToggle} className={`flex-1 h-10 rounded-xl text-[12.5px] font-extrabold border-[1.5px] disabled:opacity-50 ${on ? "bg-[#fbf1e0] text-[#b4670a] border-[#f0d9a8]" : "bg-white text-[var(--color-muted)] border-[#e4e8f0]"}`}>
+    <button
+      type="button" aria-pressed={on} disabled={disabled} onClick={onToggle}
+      className={`btn btn-secondary flex-1 ${on ? "text-status-warning" : ""}`}
+    >
       {label}: {on ? "פעיל" : "כבוי"}
     </button>
   );

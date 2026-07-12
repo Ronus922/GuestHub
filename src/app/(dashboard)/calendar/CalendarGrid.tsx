@@ -1,6 +1,15 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
@@ -20,6 +29,12 @@ import {
   type RateRow,
 } from "@/lib/inventory-rules";
 import { statusTintPalette } from "@/lib/colors";
+import {
+  NEUTRAL_STATUS,
+  paymentTriplet,
+  STATUS_COLORS,
+  type StatusTriplet,
+} from "@/lib/status-colors";
 import {
   barGeometry,
   canDragCard,
@@ -76,18 +91,22 @@ const GEOMETRY_VARS = {
   "--cb-month-h": `${MONTH_H}px`,
 } as React.CSSProperties;
 
-// Payment-state pill palettes — extracted from the rendered reference
-// (ref/html/rooms-calendar.html): bg / border / text per family.
-export const PAY_STYLE: Record<PaymentState, { bg: string; bd: string; tx: string }> = {
-  unpaid: { bg: "#FDEBEC", bd: "#EFA3A9", tx: "#B4232D" },
-  partial: { bg: "#EAF7EE", bd: "#93D3A5", tx: "#1F7A3D" },
-  paid: { bg: "#DFF2E7", bd: "#4FB47E", tx: "#0F6B3C" },
-  // overpaid = fully paid + a customer credit; a distinct teal so a credit reads
-  // apart from an exactly-settled stay (D52 §7).
-  overpaid: { bg: "#DCF1F4", bd: "#5FC2CE", tx: "#0B6E7A" },
+// Payment-state pill palettes — GUIDELINES §3.1. The triplets are NOT re-typed
+// here: they come from the one source (src/lib/status-colors.ts), so the pill,
+// the tooltip tag and the filter chip can never drift apart. `overpaid` wears
+// the approved purple ("ממתין להעברה") family — the old bespoke teal was not an
+// approved family and is gone (its LABEL and semantics are unchanged). §3.1 has
+// no "שולם ביתר" family of its own, so an approved one is borrowed; this
+// presentation-only mapping is flagged for OWNER SIGN-OFF (coordinator
+// decision: keep, do not invent a new colour family).
+export const PAY_STYLE: Record<PaymentState, StatusTriplet> = {
+  unpaid: paymentTriplet("unpaid"),
+  partial: paymentTriplet("partial"),
+  paid: paymentTriplet("paid"),
+  overpaid: paymentTriplet("overpaid"),
 };
-// Departed stays use the reference's neutral gray family (רון פרידמן card).
-const PAST_STYLE = { bg: "#EAEEF4", bd: "#AEBACB", tx: "#3C4A5E" };
+// Departed stays use the approved neutral ("הוחזר") family.
+const PAST_STYLE = NEUTRAL_STATUS;
 
 // D77.1 — the WHOLE pill wears the tenant's workflow-status color family
 // (soft tint bg, the color as border, readable derived text), exactly like
@@ -106,6 +125,31 @@ export function stayPalette(stay: Pick<CalendarStay, "status" | "payment" | "wor
 
 type ContextMenu = { x: number; y: number; roomId: string; date: DateOnly };
 type ClosurePopover = { x: number; y: number; id: string; label: string };
+
+// §8: a popover opens at the click point and is CLAMPED to the viewport with a
+// 12px margin. The box is the canonical `.popover` (316px), so only the height
+// needs measuring — positioned after render, like the hover tooltips. Physical
+// `left` on purpose: the card is direction:rtl, so a logical inset would mirror
+// the computed viewport-clamped position. In RTL the menu hangs its top-RIGHT
+// corner off the click point.
+function useClampedMenu(anchor: { x: number; y: number } | null) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<React.CSSProperties | null>(null);
+  useLayoutEffect(() => {
+    if (!anchor || !ref.current) {
+      setPos(null);
+      return;
+    }
+    const r = ref.current.getBoundingClientRect();
+    const left = Math.min(Math.max(anchor.x - r.width, 12), window.innerWidth - r.width - 12);
+    const top = Math.max(
+      Math.min(anchor.y + 4, window.innerHeight - r.height - 12),
+      12,
+    );
+    setPos({ top, left, visibility: "visible" });
+  }, [anchor]);
+  return { ref, style: pos ?? ({ top: 0, left: 0, visibility: "hidden" } as React.CSSProperties) };
+}
 
 // Live drag session — kept OUT of React state so pointer movement never
 // re-renders the grid; only the ghost node is mutated (rAF-throttled).
@@ -157,6 +201,8 @@ export function CalendarGrid({
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<ContextMenu | null>(null);
   const [closurePop, setClosurePop] = useState<ClosurePopover | null>(null);
+  const menuPop = useClampedMenu(menu);
+  const closureMenuPop = useClampedMenu(closurePop);
   // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
   // delay, kept alive while the pointer is inside the card or the tooltip
   const [tip, setTip] = useState<TooltipTarget | null>(null);
@@ -885,14 +931,12 @@ export function CalendarGrid({
   const selRoomId = tip?.stay.room_id ?? null;
 
   return (
-    <div className="cb-calcard">
+    <div className="card cb-calcard">
       {data.rooms.length === 0 ? (
-        <div className="grid h-64 place-items-center text-muted">
-          <div className="text-center">
-            <Icon name="rooms" size={32} className="mx-auto mb-2 text-faint" />
-            <p className="font-semibold">אין חדרים להצגה</p>
-            <p className="text-sm text-faint">הוסיפו חדרים כדי לראות את היומן</p>
-          </div>
+        <div className="empty-state">
+          <Icon name="rooms" size={24} className="text-faint" />
+          <p className="empty-t">אין חדרים להצגה</p>
+          <p className="empty-s">הוסיפו חדרים כדי לראות את היומן</p>
         </div>
       ) : (
         <div className="cb-calwrap thin-scroll" dir="rtl">
@@ -962,13 +1006,9 @@ export function CalendarGrid({
               <div className="cb-rrow">
                 <div className="cb-rlabel" style={{ width: ROOM_COL }}>
                   <div className="cb-rl1">
-                    <span className="cb-rnum" style={{ color: "#8A5207" }}>
-                      ללא שיוך
-                    </span>
+                    <span className="cb-rnum hold">ללא שיוך</span>
                   </div>
-                  <div className="cb-rl2" style={{ color: "#B4670A" }}>
-                    הזמנות חיצוניות ממתינות לחדר
-                  </div>
+                  <div className="cb-rl2 hold">הזמנות חיצוניות ממתינות לחדר</div>
                 </div>
                 <div className="cb-rstrip">
                   {dates.map((d) => {
@@ -986,12 +1026,16 @@ export function CalendarGrid({
                       <div
                         key={h.id}
                         className="cb-holdbar"
+                        // §3.1 "ממתין לאישור" — the approved triplet, not a local colour
                         style={{
                           insetInlineStart: `${geo.start * 100}%`,
                           width: `${geo.width * 100}%`,
+                          background: STATUS_COLORS.approval.bg,
+                          borderColor: STATUS_COLORS.approval.bd,
+                          color: STATUS_COLORS.approval.tx,
                         }}
                       >
-                        <Icon name="warning" size={13} />
+                        <Icon name="warning" size={13.5} />
                         <span className="cb-nm">
                           {h.guest_name ?? h.room_type_name} · {h.rooms_count} יח׳
                         </span>
@@ -1057,10 +1101,10 @@ export function CalendarGrid({
               >
                 {dragUi?.mode === "move" && dragStay ? (
                   <>
-                    {dragStay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
+                    {dragStay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
                     <span className="cb-nm">{dragStay.guest_name}</span>
                     <span className="cb-bn">
-                      <Icon name="moon" size={12} />
+                      <Icon name="moon" size={13.5} />
                       {nightsBetween(dragStay.check_in, dragStay.check_out)}
                     </span>
                   </>
@@ -1075,22 +1119,21 @@ export function CalendarGrid({
         </div>
       )}
 
-      {/* ===== empty-cell context menu (§G) ===== */}
+      {/* ===== empty-cell context menu (§G) — the canonical §8 popover,
+           clamped to the viewport; outside-click / Escape dismissal is handled
+           by the global listener above (the §8 transparent closing layer) ===== */}
       {menu && (
         <div
-          className="fixed z-50 min-w-[180px] overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop"
-          // physical left — a logical inset inside dir="rtl" would mirror it
-          style={{ top: menu.y + 4, left: Math.max(menu.x - 170, 8) }}
-          dir="rtl"
+          ref={menuPop.ref}
+          className="popover cb-menu"
+          style={menuPop.style}
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="border-b border-line px-4 py-2 text-[11px] font-semibold text-faint" dir="rtl">
-            {formatFullDate(menu.date)}
-          </p>
+          <p className="cb-menu-h">{formatFullDate(menu.date)}</p>
           {can.create && (
             <button
               type="button"
-              className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-ink hover:bg-hover"
+              className="cb-menu-it"
               onClick={() => {
                 onNewBooking({
                   roomId: menu.roomId,
@@ -1101,54 +1144,54 @@ export function CalendarGrid({
                 setMenu(null);
               }}
             >
-              <Icon name="calendar-plus" size={16} className="text-primary" />
+              <Icon name="calendar-plus" size={17} className="text-primary" />
               הזמנה חדשה
             </button>
           )}
           {can.close && (
             <button
               type="button"
-              className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-ink hover:bg-hover"
+              className="cb-menu-it"
               onClick={() => {
                 onNewClosure({ roomId: menu.roomId, startDate: menu.date, endDate: addDays(menu.date, 1) });
                 setMenu(null);
               }}
             >
-              <Icon name="circle-slash" size={16} className="text-[#3C4A5E]" />
+              <Icon name="circle-slash" size={17} className="text-muted" />
               סגור חדר
             </button>
           )}
           {/* deep-link to the commercial editor for this exact date (§3) —
               navigation only; the /rates page enforces its own permission */}
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 border-t border-line px-4 py-2.5 text-sm font-medium text-ink hover:bg-hover"
-            onClick={() => {
-              router.push(`/rates?from=${menu.date}`);
-              setMenu(null);
-            }}
-          >
-            <Icon name="credit-card" size={16} className="text-primary" />
-            פתיחת רשת התעריפים לתאריך זה
-          </button>
+          <div className="cb-menu-sep">
+            <button
+              type="button"
+              className="cb-menu-it"
+              onClick={() => {
+                router.push(`/rates?from=${menu.date}`);
+                setMenu(null);
+              }}
+            >
+              <Icon name="credit-card" size={17} className="text-primary" />
+              פתיחת רשת התעריפים לתאריך זה
+            </button>
+          </div>
         </div>
       )}
 
-      {/* ===== closure popover (delete) ===== */}
+      {/* ===== closure popover (delete) — same canonical §8 popover ===== */}
       {closurePop && (
         <div
-          className="fixed z-50 min-w-[220px] overflow-hidden rounded-xl border border-line bg-surface py-1 shadow-pop"
-          style={{ top: closurePop.y + 4, left: Math.max(closurePop.x - 200, 8) }}
-          dir="rtl"
+          ref={closureMenuPop.ref}
+          className="popover cb-menu"
+          style={closureMenuPop.style}
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="border-b border-line px-4 py-2 text-xs font-semibold text-muted">
-            {closurePop.label}
-          </p>
+          <p className="cb-menu-h">{closurePop.label}</p>
           {can.close ? (
             <button
               type="button"
-              className="flex w-full items-center gap-2 px-4 py-2.5 text-sm font-medium text-status-danger hover:bg-status-danger-050"
+              className="cb-menu-it danger"
               onClick={async () => {
                 const id = closurePop.id;
                 setClosurePop(null);
@@ -1157,11 +1200,11 @@ export function CalendarGrid({
                 else toast.error(res.error);
               }}
             >
-              <Icon name="trash" size={16} />
+              <Icon name="trash" size={17} />
               הסר חסימה
             </button>
           ) : (
-            <p className="px-4 py-2.5 text-xs text-faint">אין הרשאה להסרת חסימה</p>
+            <p className="cb-menu-note">אין הרשאה להסרת חסימה</p>
           )}
         </div>
       )}
@@ -1273,22 +1316,25 @@ const RoomRow = memo(function RoomRow({
     : occupiedNow
       ? "תפוס"
       : "פנוי";
-  const statusColor = !sellable ? "#94A3B8" : occupiedNow ? "#E5484D" : "#16A34A";
+  // the state colour is a §1 token, carried by a class (dot + word share it)
+  const statusTone = !sellable ? "off" : occupiedNow ? "busy" : "free";
 
   return (
     <div className="cb-rrow">
       {/* room info — sticky inline-start column */}
       <div className="cb-rlabel" style={{ width: ROOM_COL }}>
         <div className="cb-rl1">
-          <span className="cb-rnum">{room.room_number}</span>
+          <span className="cb-rnum ltr-num">{room.room_number}</span>
           <span className="cb-rtype">
             {room.room_type_name ?? room.name ?? "—"}
           </span>
         </div>
         <div className="cb-rl2">
           {room.floor ? <span>קומה {room.floor}</span> : <span>{room.area_name ?? ""}</span>}
-          <span className="cb-d" style={{ background: statusColor }} />
-          <span style={{ color: statusColor }}>{statusText}</span>
+          <span className={`cb-rst ${statusTone}`}>
+            <span className="cb-d" />
+            {statusText}
+          </span>
         </div>
       </div>
 
@@ -1321,21 +1367,19 @@ const RoomRow = memo(function RoomRow({
             >
               {sellable && (
                 <>
-                  <span className={`cb-pr ${closed ? "cx" : ""}`} dir="ltr">
+                  <span className={`cb-pr ltr-num ${closed ? "cx" : ""}`}>
                     ₪{Math.round(price)}
                   </span>
                   {closed ? (
-                    // commercial stop-sell — a hatch-free red chip, distinct
-                    // from the gray dashed physical .cb-blockbar and from pills
-                    <span className="cb-cx">
-                      <Icon name="circle-slash" size={10} />
-                      סגור
-                    </span>
+                    // commercial stop-sell — a dense-cell marker (§12.1), distinct
+                    // from the gray dashed physical .cb-blockbar and from pills.
+                    // A 28px .chip cannot fit a ~37px-wide day column.
+                    <span className="cb-cx">סגור</span>
                   ) : (
                     minN != null &&
                     minN >= 2 && (
                       <span className="cb-mn">
-                        <Icon name="moon" size={11} />
+                        <Icon name="moon" size={13.5} />
                         {minN}
                       </span>
                     )
@@ -1355,12 +1399,16 @@ const RoomRow = memo(function RoomRow({
               type="button"
               onClick={(e) => onClosureClick(e, c)}
               className="cb-blockbar"
+              // §3.1 neutral ("הוחזר") — the approved triplet, not a local colour
               style={{
                 insetInlineStart: `${geo.start * 100}%`,
                 width: `${geo.width * 100}%`,
+                background: NEUTRAL_STATUS.bg,
+                borderColor: NEUTRAL_STATUS.bd,
+                color: NEUTRAL_STATUS.tx,
               }}
             >
-              <Icon name="circle-slash" size={13} />
+              <Icon name="circle-slash" size={13.5} />
               <span className="cb-nm">{c.reason || "סגור"}</span>
             </button>
           );
@@ -1476,11 +1524,11 @@ const StayBar = memo(function StayBar({
         }
       }}
     >
-      {stay.is_vip && <Icon name="star" size={12} className="cb-vip" />}
+      {stay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
       <span className="cb-nm">{stay.guest_name}</span>
-      {stay.room_count > 1 && <Icon name="link" size={11} className="shrink-0 opacity-70" />}
+      {stay.room_count > 1 && <Icon name="link" size={13.5} className="shrink-0 opacity-70" />}
       <span className="cb-bn">
-        <Icon name="moon" size={12} />
+        <Icon name="moon" size={13.5} />
         {nights}
       </span>
 

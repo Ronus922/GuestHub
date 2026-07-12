@@ -36,12 +36,13 @@ function deriveStatus(v: ChannexConnectionView, testing: boolean): Status {
   return "configured";
 }
 
+// §3 — one chip anatomy; the tone comes from the §3.1 triplets only.
 const STATUS_META: Record<Status, { label: string; cls: string; icon: IconName }> = {
-  not_configured: { label: "לא מוגדר", cls: "bg-hover text-muted", icon: "info" },
-  configured: { label: "מוגדר — טרם נבדק", cls: "bg-status-warning-050 text-status-warning", icon: "info" },
-  testing: { label: "בודק…", cls: "bg-primary-050 text-primary", icon: "refresh" },
-  connected: { label: "מחובר", cls: "bg-status-success-050 text-status-success", icon: "shield-check" },
-  failed: { label: "החיבור נכשל", cls: "bg-status-danger-050 text-status-danger", icon: "warning" },
+  not_configured: { label: "לא מוגדר", cls: "chip-cancelled", icon: "info" },
+  configured: { label: "מוגדר — טרם נבדק", cls: "chip-approval", icon: "info" },
+  testing: { label: "בודק…", cls: "chip-transfer", icon: "refresh" },
+  connected: { label: "מחובר", cls: "chip-paid", icon: "shield-check" },
+  failed: { label: "החיבור נכשל", cls: "chip-failed", icon: "warning" },
 };
 
 export function ChannexStagingSection({ initial }: { initial: ChannexConnectionView }) {
@@ -110,104 +111,110 @@ export function ChannexStagingSection({ initial }: { initial: ChannexConnectionV
   }
 
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="card">
+      <div className="card-hd justify-between">
         <div className="flex items-center gap-2">
-          <h2 className="text-lg font-bold text-ink">חיבור Channex</h2>
-          <span className="rounded-full bg-status-warning-050 px-2 py-0.5 text-xs font-bold text-status-warning">
-            Staging
-          </span>
+          <span className="h4">חיבור Channex</span>
+          <span className="chip chip-approval">Staging</span>
         </div>
-        <span className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${meta.cls}`}>
-          <Icon name={meta.icon} size={14} />
+        <span className={`chip ${meta.cls}`}>
+          <Icon name={meta.icon} size={13.5} />
           {meta.label}
         </span>
       </div>
 
-      {/* Sandbox warning — this is NOT the live OTA link */}
-      <div className="flex items-start gap-2.5 rounded-xl border border-status-warning bg-status-warning-050 p-3">
-        <Icon name="warning" size={18} className="mt-0.5 shrink-0 text-status-warning" />
-        <p className="text-xs font-semibold leading-relaxed text-status-warning">
-          זהו חיבור לסביבת הבדיקות של Channex (Staging) בלבד. הוא <strong>אינו מחובר</strong> ל-Booking.com
-          או ל-Expedia האמיתיים, ואינו משפיע על מלאי, מחירים או הזמנות.
-        </p>
-      </div>
+      <div className="card-bd flex flex-col gap-4">
+        {/* Sandbox warning — this is NOT the live OTA link */}
+        <div className="flex items-start gap-2.5 rounded-xl border border-status-warning bg-status-warning-050 p-3">
+          <Icon name="warning" size={17} className="mt-0.5 shrink-0 text-status-warning" />
+          <p className="t-label leading-relaxed text-status-warning">
+            זהו חיבור לסביבת הבדיקות של Channex (Staging) בלבד. הוא <strong>אינו מחובר</strong> ל-Booking.com
+            או ל-Expedia האמיתיים, ואינו משפיע על מלאי, מחירים או הזמנות.
+          </p>
+        </div>
 
-      {!view.secretsKeyConfigured && (
-        <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
-          מפתח ההצפנה בשרת (CHANNEL_SECRETS_KEY) אינו מוגדר — לא ניתן לשמור מפתח API עד להגדרתו.
-        </p>
-      )}
+        {!view.secretsKeyConfigured && (
+          <p className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
+            מפתח ההצפנה בשרת (CHANNEL_SECRETS_KEY) אינו מוגדר — לא ניתן לשמור מפתח API עד להגדרתו.
+          </p>
+        )}
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-        <dt className="text-faint">כתובת בסיס</dt>
-        <dd className="truncate font-mono text-xs text-text2" title={view.baseUrl}>{view.baseUrl}</dd>
-        <dt className="text-faint">בדיקה מוצלחת אחרונה</dt>
-        <dd className="font-semibold text-text2">{fmt(view.lastTestOkAt)}</dd>
-        <dt className="text-faint">בדיקה כושלת אחרונה</dt>
-        <dd className="font-semibold text-text2">{fmt(view.lastTestFailedAt)}</dd>
-      </dl>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+          <dt className="t-label text-faint">כתובת בסיס</dt>
+          <dd className="t-secondary truncate text-text2" title={view.baseUrl}>
+            <bdi className="ltr-num font-mono">{view.baseUrl}</bdi>
+          </dd>
+          <dt className="t-label text-faint">בדיקה מוצלחת אחרונה</dt>
+          <dd className="t-secondary text-text2">
+            <bdi className="ltr-num">{fmt(view.lastTestOkAt)}</bdi>
+          </dd>
+          <dt className="t-label text-faint">בדיקה כושלת אחרונה</dt>
+          <dd className="t-secondary text-text2">
+            <bdi className="ltr-num">{fmt(view.lastTestFailedAt)}</bdi>
+          </dd>
+        </dl>
 
-      {status === "failed" && view.lastError && (
-        <p role="alert" className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
-          {view.lastError}
-        </p>
-      )}
+        {status === "failed" && view.lastError && (
+          <p role="alert" className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
+            {view.lastError}
+          </p>
+        )}
 
-      {/* The stored key: READ-ONLY TEXT. Never an input, never stars in a value,
-          never the key itself — only the safe stored api_key_hint. */}
-      <div className="flex flex-col gap-3">
-        <p className="text-sm font-semibold text-text2">
-          {view.configured ? (
-            <>
-              מפתח API מוגדר: <span dir="ltr" className="font-mono">{view.apiKeyHint}</span>
-            </>
+        {/* The stored key: READ-ONLY TEXT. Never an input, never stars in a value,
+            never the key itself — only the safe stored api_key_hint. */}
+        <div className="flex flex-col gap-3">
+          <p className="t-secondary text-text2">
+            {view.configured ? (
+              <>
+                מפתח API מוגדר: <bdi className="ltr-num font-mono">{view.apiKeyHint}</bdi>
+              </>
+            ) : (
+              "מפתח API לא הוגדר"
+            )}
+          </p>
+
+          {/* The replacement input does not exist in the DOM until this click. */}
+          {!replacing ? (
+            <div>
+              <button
+                type="button"
+                onClick={openReplace}
+                disabled={!view.secretsKeyConfigured || pending}
+                className="btn btn-secondary"
+              >
+                {view.configured ? "החלפת מפתח API" : "הגדרת מפתח API"}
+              </button>
+            </div>
           ) : (
-            "מפתח API לא הוגדר"
+            <ChannexKeyReplacementForm
+              key={mountId}
+              configured={view.configured}
+              disabled={!view.secretsKeyConfigured}
+              onCancel={closeReplace}
+              onSaved={onSaved}
+            />
           )}
-        </p>
+        </div>
 
-        {/* The replacement input does not exist in the DOM until this click. */}
-        {!replacing ? (
-          <div>
-            <button
-              type="button"
-              onClick={openReplace}
-              disabled={!view.secretsKeyConfigured || pending}
-              className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-bold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {view.configured ? "החלפת מפתח API" : "הגדרת מפתח API"}
-            </button>
-          </div>
-        ) : (
-          <ChannexKeyReplacementForm
-            key={mountId}
-            configured={view.configured}
-            disabled={!view.secretsKeyConfigured}
-            onCancel={closeReplace}
-            onSaved={onSaved}
-          />
-        )}
-      </div>
-
-      {/* Test connection */}
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={onTest}
-          disabled={!view.configured || pending}
-          className="flex items-center gap-2 rounded-xl border border-line bg-surface px-4 py-2 text-sm font-bold text-ink hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Icon name="refresh" size={16} />
-          בדיקת חיבור
-        </button>
-        {msg && (
-          <span
-            className={`text-sm font-semibold ${msg.tone === "ok" ? "text-status-success" : "text-status-danger"}`}
+        {/* Test connection */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onTest}
+            disabled={!view.configured || pending}
+            className="btn btn-secondary"
           >
-            {msg.text}
-          </span>
-        )}
+            <Icon name="refresh" size={20} />
+            בדיקת חיבור
+          </button>
+          {msg && (
+            <span
+              className={`t-secondary ${msg.tone === "ok" ? "text-status-success" : "text-status-danger"}`}
+            >
+              {msg.text}
+            </span>
+          )}
+        </div>
       </div>
     </section>
   );

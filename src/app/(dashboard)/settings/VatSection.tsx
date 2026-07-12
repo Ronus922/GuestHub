@@ -3,9 +3,9 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
 import { formatVatRate, parseVatRate, VAT_MAX, VAT_MIN } from "@/lib/vat";
 import { updateVatRateAction } from "./actions";
+import { Field, FormGrid, SettingsCard } from "./controls";
 
 // מע״מ ומיסים (D41): a display-only percentage stored in tenants.settings->vat_rate.
 // Totals stay VAT-inclusive; changing the rate never recalculates reservations.
@@ -24,36 +24,36 @@ export function VatSection({ vatRate }: { vatRate: number }) {
     });
 
   return (
-    <section className="bw-card max-w-xl">
-      <CardTitle icon="finance" title="הגדרות מע״מ" />
-      <div className="bw-grid2">
-        <Field label="שיעור מע״מ (%)" required>
-          <input
-            className={`bw-fld ${invalid ? "bad" : ""}`}
-            dir="ltr"
-            inputMode="decimal"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            aria-invalid={invalid}
-          />
-        </Field>
-        <div className="flex items-end">
-          <button
-            type="button"
-            className="bw-btn bw-btn-primary"
-            disabled={saving || invalid || !dirty}
-            onClick={save}
-          >
-            <Icon name="check" size={16} />
-            {saving ? "שומר…" : "שמירה"}
-          </button>
-        </div>
-      </div>
-      <p className="bw-hint">
-        {invalid
-          ? `ערך לא תקין — נדרש מספר בין ${VAT_MIN} ל־${VAT_MAX}, עד שתי ספרות אחרי הנקודה`
-          : "המחירים במערכת כוללים מע״מ; שינוי השיעור משנה את שורת התצוגה בהזמנות בלבד ואינו מחשב מחדש הזמנות קיימות."}
-      </p>
-    </section>
+    <div className="max-w-xl">
+      <SettingsCard icon="finance" title="הגדרות מע״מ">
+        <FormGrid>
+          <Field label="שיעור מע״מ (%)" required>
+            <input
+              className={`field-input ltr-num ${invalid ? "field-error" : ""}`}
+              inputMode="decimal"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              aria-invalid={invalid}
+            />
+          </Field>
+          <div className="flex items-end">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saving || invalid || !dirty}
+              onClick={save}
+            >
+              <Icon name="check" size={20} />
+              {saving ? "שומר…" : "שמירה"}
+            </button>
+          </div>
+        </FormGrid>
+        <p className={`mt-3 ${invalid ? "field-msg" : "field-hint"}`}>
+          {invalid
+            ? `ערך לא תקין — נדרש מספר בין ${VAT_MIN} ל־${VAT_MAX}, עד שתי ספרות אחרי הנקודה`
+            : "המחירים במערכת כוללים מע״מ; שינוי השיעור משנה את שורת התצוגה בהזמנות בלבד ואינו מחשב מחדש הזמנות קיימות."}
+        </p>
+      </SettingsCard>
+    </div>
   );
 }

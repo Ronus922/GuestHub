@@ -4,8 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
-import { Segmented, Switch } from "./controls";
+import { STATUS_COLORS } from "@/lib/status-colors";
+import { Field, FormGrid, Segmented, SettingsCard, Switch } from "./controls";
 import {
   saveGmailSettingsAction,
   saveGreenApiSettingsAction,
@@ -35,16 +35,23 @@ export function MessagingSection({ data }: { data: MessagingSettingsView }) {
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-xl font-extrabold text-ink">תקשורת והודעות</h2>
-        <p className="mt-1 text-sm font-semibold text-muted">
+        <h2 className="h2 text-ink">תקשורת והודעות</h2>
+        <p className="t-secondary mt-1">
           חיבור ספקי שליחת מייל ו-WhatsApp לשליחת אישורי הזמנה, קבלות ותזכורות לאורחים.
         </p>
       </div>
 
       {disabled && (
-        <div className="flex items-start gap-3 rounded-2xl border border-status-warning bg-status-warning-050 p-4">
-          <Icon name="warning" size={20} className="mt-0.5 shrink-0 text-status-warning" />
-          <p className="text-sm font-semibold text-ink">
+        <div
+          className="flex items-start gap-3 rounded-2xl border p-4"
+          style={{
+            background: STATUS_COLORS.approval.bg,
+            borderColor: STATUS_COLORS.approval.bd,
+            color: STATUS_COLORS.approval.tx,
+          }}
+        >
+          <Icon name="warning" size={20} className="mt-0.5 shrink-0" />
+          <p className="text-sm font-semibold">
             מפתח ההצפנה של הסודות אינו מוגדר בשרת (MESSAGING_SECRETS_ENCRYPTION_KEY). לא ניתן לשמור פרטי
             ספקים עד להגדרתו.
           </p>
@@ -59,16 +66,17 @@ export function MessagingSection({ data }: { data: MessagingSettingsView }) {
 
 // ---------- shared bits ----------
 
+// The ONE chip anatomy (§3), wearing an approved §3.1 triplet class.
 function StatusChip({ status }: { status: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    connected: { label: "מחובר", cls: "bg-status-success-050 text-status-success" },
-    error: { label: "שגיאת חיבור", cls: "bg-status-danger-050 text-status-danger" },
-    not_configured: { label: "לא מוגדר", cls: "bg-hover text-muted" },
+  const map: Record<string, { label: string; chip: string }> = {
+    connected: { label: "מחובר", chip: STATUS_COLORS.paid.chip },
+    error: { label: "שגיאת חיבור", chip: STATUS_COLORS.failed.chip },
+    not_configured: { label: "לא מוגדר", chip: STATUS_COLORS.cancelled.chip },
   };
   const s = map[status] ?? map.not_configured;
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${s.cls}`}>
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+    <span className={`chip shrink-0 ${s.chip}`}>
+      <span className="dot" />
       {s.label}
     </span>
   );
@@ -88,7 +96,7 @@ function PasswordField({
   return (
     <Field label={label}>
       <input
-        className="bw-fld"
+        className="field-input"
         type="password"
         dir="ltr"
         autoComplete="new-password"
@@ -124,14 +132,14 @@ function ReadOnlyUrl({
   return (
     <Field label={label}>
       <div className="flex items-center gap-2">
-        <input className="bw-fld min-w-0 flex-1" dir="ltr" value={url} readOnly />
+        <input className="field-input min-w-0 flex-1" dir="ltr" value={url} readOnly />
         <button
           type="button"
           aria-label="העתקת כתובת"
           onClick={copy}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-line text-text2 transition-colors hover:bg-hover"
+          className="icon-btn shrink-0 border border-line"
         >
-          <Icon name="copy" size={16} />
+          <Icon name="copy" size={20} />
         </button>
         {onRotate && (
           <button
@@ -140,9 +148,9 @@ function ReadOnlyUrl({
             title="רענון כתובת — יצירת אסימון חדש (ללא שינוי פרטי הספק)"
             onClick={onRotate}
             disabled={rotating}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-line text-text2 transition-colors hover:bg-hover disabled:opacity-50"
+            className="icon-btn shrink-0 border border-line"
           >
-            <Icon name="refresh" size={16} />
+            <Icon name="refresh" size={20} />
           </button>
         )}
       </div>
@@ -150,11 +158,13 @@ function ReadOnlyUrl({
   );
 }
 
-// Shown before the first save, when no token exists yet.
+// Shown before the first save, when no token exists yet. A static notice, NOT a
+// field — so it wears the canonical .field-hint (§5), never .field-input, and
+// only min-h keeps it aligned with the 44px control it stands in for.
 function WebhookHint({ label }: { label: string }) {
   return (
     <Field label={label}>
-      <p className="bw-fld flex items-center text-sm font-semibold text-muted">
+      <p className="field-hint flex min-h-11 items-center">
         כתובת ה-Webhook תיווצר לאחר שמירת החיבור.
       </p>
     </Field>
@@ -187,39 +197,39 @@ function ProviderActions({
     <div className="mt-4 flex flex-wrap items-center gap-2">
       <button
         type="button"
-        className="bw-btn bw-btn-primary"
+        className="btn btn-primary"
         disabled={disabled || anyBusy || saveDisabled}
         onClick={onSave}
       >
-        <Icon name="check" size={16} />
+        <Icon name="check" size={20} />
         {busy === "save" ? "שומר…" : "שמירת הגדרות"}
       </button>
       <button
         type="button"
-        className="bw-btn bw-btn-o"
+        className="btn btn-secondary"
         disabled={disabled || anyBusy || !configured}
         onClick={onTest}
       >
-        <Icon name="wifi" size={16} />
+        <Icon name="wifi" size={20} />
         {busy === "test" ? "בודק…" : "בדיקת חיבור"}
       </button>
       <button
         type="button"
-        className="bw-btn bw-btn-o"
+        className="btn btn-secondary"
         disabled={disabled || anyBusy || !configured}
         onClick={onSendTest}
       >
-        <Icon name="send" size={16} />
+        <Icon name="send" size={20} />
         {busy === "send" ? "שולח…" : "שליחת הודעת בדיקה"}
       </button>
       {configured && (
         <button
           type="button"
-          className="bw-btn bw-btn-danger ms-auto"
+          className="btn btn-danger ms-auto"
           disabled={disabled || anyBusy}
           onClick={onDisconnect}
         >
-          <Icon name="trash" size={16} />
+          <Icon name="trash" size={20} />
           {busy === "disconnect" ? "מנתק…" : "ניתוק"}
         </button>
       )}
@@ -333,12 +343,7 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
   };
 
   return (
-    <section className="bw-card">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <CardTitle icon="mail" title="הגדרות Gmail" />
-        <StatusChip status={view.status} />
-      </div>
-
+    <SettingsCard icon="mail" title="הגדרות Gmail" action={<StatusChip status={view.status} />}>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm font-bold text-text2">שיטת חיבור</span>
         <Segmented
@@ -354,7 +359,7 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
 
       {mode === "oauth" ? (
         <>
-          <div className="bw-grid2">
+          <FormGrid>
             <PasswordField label="Client ID" value={clientId} onChange={setClientId} hint={view.secretHints.clientId} />
             <PasswordField
               label="Client Secret"
@@ -363,33 +368,33 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
               hint={view.secretHints.clientSecret}
             />
             <Field label="כתובת מייל שולח" required>
-              <input className="bw-fld" dir="ltr" value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} />
+              <input className="field-input" dir="ltr" value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} />
             </Field>
             <Field label="שם תצוגה">
-              <input className="bw-fld" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
+              <input className="field-input" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
             </Field>
             <Field label="כתובת לתשובה (Reply-To)">
-              <input className="bw-fld" dir="ltr" value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
+              <input className="field-input" dir="ltr" value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
             </Field>
-          </div>
+          </FormGrid>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="bw-btn bw-btn-o"
+              className="btn btn-secondary"
               disabled={disabled}
               onClick={() => {
                 window.location.href = "/api/messaging/gmail/oauth";
               }}
             >
-              <Icon name="link" size={16} />
+              <Icon name="link" size={20} />
               התחבר לחשבון Gmail
             </button>
           </div>
         </>
       ) : (
-        <div className="bw-grid2">
+        <FormGrid>
           <Field label="כתובת Gmail" required>
-            <input className="bw-fld" dir="ltr" value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} />
+            <input className="field-input" dir="ltr" value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} />
           </Field>
           <PasswordField
             label="App Password"
@@ -398,11 +403,11 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
             hint={view.secretHints.appPassword}
           />
           <Field label="שרת SMTP">
-            <input className="bw-fld" dir="ltr" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
+            <input className="field-input" dir="ltr" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
           </Field>
           <Field label="פורט">
             <input
-              className="bw-fld"
+              className="field-input"
               dir="ltr"
               inputMode="numeric"
               value={smtpPort}
@@ -410,14 +415,14 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
             />
           </Field>
           <Field label="שם תצוגה">
-            <input className="bw-fld" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
+            <input className="field-input" value={senderName} onChange={(e) => setSenderName(e.target.value)} />
           </Field>
           <div className="flex items-end">
             <label className="flex items-center gap-2 text-sm text-ink">
               <Switch checked={smtpSecure} onChange={setSmtpSecure} label="TLS/SSL" /> חיבור מוצפן (TLS/SSL)
             </label>
           </div>
-        </div>
+        </FormGrid>
       )}
 
       <ProviderActions
@@ -429,7 +434,7 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
         onSendTest={sendTest}
         onDisconnect={disconnect}
       />
-    </section>
+    </SettingsCard>
   );
 }
 
@@ -456,8 +461,7 @@ function WhatsAppBlock({ data, disabled }: { data: MessagingSettingsView; disabl
   };
 
   return (
-    <section className="bw-card">
-      <CardTitle icon="whatsapp" title="WhatsApp" />
+    <SettingsCard icon="whatsapp" title="WhatsApp">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm font-bold text-text2">ספק פעיל</span>
         <Segmented
@@ -477,7 +481,7 @@ function WhatsAppBlock({ data, disabled }: { data: MessagingSettingsView; disabl
         <GreenApiCard view={data.greenApi} webhookBaseUrl={data.webhookBaseUrl} disabled={disabled} />
         <TwilioCard view={data.twilio} webhookBaseUrl={data.webhookBaseUrl} disabled={disabled} />
       </div>
-    </section>
+    </SettingsCard>
   );
 }
 
@@ -570,26 +574,26 @@ function GreenApiCard({
   return (
     <div className="rounded-2xl border border-line bg-surface p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <span className="text-base font-extrabold text-ink">GREEN-API</span>
+        <span className="h4">GREEN-API</span>
         <StatusChip status={view.status} />
       </div>
-      <div className="bw-grid2">
+      <FormGrid>
         <Field label="Instance ID" required>
-          <input className="bw-fld" dir="ltr" value={instanceId} onChange={(e) => setInstanceId(e.target.value)} />
+          <input className="field-input" dir="ltr" value={instanceId} onChange={(e) => setInstanceId(e.target.value)} />
         </Field>
         <PasswordField label="API Token" value={apiToken} onChange={setApiToken} hint={view.secretHints.apiToken} />
         <Field label="API Host">
-          <input className="bw-fld" dir="ltr" value={apiHost} onChange={(e) => setApiHost(e.target.value)} />
+          <input className="field-input" dir="ltr" value={apiHost} onChange={(e) => setApiHost(e.target.value)} />
         </Field>
         <Field label="מספר שולח">
-          <input className="bw-fld" dir="ltr" value={senderNumber} onChange={(e) => setSenderNumber(e.target.value)} />
+          <input className="field-input" dir="ltr" value={senderNumber} onChange={(e) => setSenderNumber(e.target.value)} />
         </Field>
         {view.webhookToken ? (
           <ReadOnlyUrl label="כתובת Webhook" url={webhookUrl} onRotate={rotate} rotating={busy === "rotate"} />
         ) : (
           <WebhookHint label="כתובת Webhook" />
         )}
-      </div>
+      </FormGrid>
       <ProviderActions
         disabled={disabled || pending}
         configured={view.configured}
@@ -702,18 +706,18 @@ function TwilioCard({
   return (
     <div className="rounded-2xl border border-line bg-surface p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <span className="text-base font-extrabold text-ink">Twilio</span>
+        <span className="h4">Twilio</span>
         <StatusChip status={view.status} />
       </div>
-      <div className="bw-grid2">
+      <FormGrid>
         <PasswordField label="Account SID" value={accountSid} onChange={setAccountSid} hint={view.secretHints.accountSid} />
         <PasswordField label="Auth Token" value={authToken} onChange={setAuthToken} hint={view.secretHints.authToken} />
         <Field label="מספר שולח WhatsApp" required>
-          <input className="bw-fld" dir="ltr" value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} />
+          <input className="field-input" dir="ltr" value={fromNumber} onChange={(e) => setFromNumber(e.target.value)} />
         </Field>
         <Field label="Messaging Service SID">
           <input
-            className="bw-fld"
+            className="field-input"
             dir="ltr"
             value={messagingServiceSid}
             onChange={(e) => setMessagingServiceSid(e.target.value)}
@@ -721,7 +725,7 @@ function TwilioCard({
         </Field>
         <Field label="Status Callback URL">
           <input
-            className="bw-fld"
+            className="field-input"
             dir="ltr"
             value={statusCallbackUrl}
             onChange={(e) => setStatusCallbackUrl(e.target.value)}
@@ -737,7 +741,7 @@ function TwilioCard({
         ) : (
           <WebhookHint label="כתובת Status Callback (מומלצת)" />
         )}
-      </div>
+      </FormGrid>
       <ProviderActions
         disabled={disabled || pending}
         configured={view.configured}

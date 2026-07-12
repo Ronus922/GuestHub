@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { Badge } from "@/components/ui/Badge";
 import { Segmented, Switch, ToggleRow } from "@/app/(dashboard)/settings/controls";
 import { F, QtyStep, Sec } from "@/app/(dashboard)/rooms/RoomWizard";
 import { applyPlanAdjustment, planFormulaLabel, type PlanKind } from "@/lib/pricing/resolve";
@@ -325,29 +324,14 @@ export function RatePlanWizard({
       bodyClassName="p-4"
       band={<StepsBar step={step} onStep={setStep} />}
       footer={
-        <div className="flex items-center gap-2.5">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-faint">
-            <Icon name="info" size={15} />
-            שלב {step} מתוך 3
-          </span>
-          <span className="flex-1" />
-          {step > 1 && (
-            <button
-              type="button"
-              className="btn btn-outline"
-              onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as Step)))}
-            >
-              חזרה
-              <Icon name="chevron-right" size={17} />
-            </button>
-          )}
-          <button type="button" className="btn btn-outline" onClick={onClose}>
-            ביטול
-          </button>
+        /* §7 — flat .dw-ft children (row-reverse): the FIRST DOM child (the
+           primary) lands on the LEFT edge, "ביטול" to its right; the step hint
+           is pushed to the far right with me-auto. No wrapper. */
+        <>
           {step < 3 ? (
             <button type="button" className="btn btn-primary" onClick={goNext}>
               הבא
-              <Icon name="chevron-left" size={17} />
+              <Icon name="chevron-left" size={20} />
             </button>
           ) : (
             <button
@@ -357,11 +341,28 @@ export function RatePlanWizard({
               title={!canSave ? "אין הרשאת שמירה" : undefined}
               onClick={save}
             >
-              <Icon name="check" size={17} />
+              <Icon name="check" size={20} />
               {saving ? "שומר…" : "שמירת התוכנית"}
             </button>
           )}
-        </div>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            ביטול
+          </button>
+          {step > 1 && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as Step)))}
+            >
+              חזרה
+              <Icon name="chevron-right" size={20} />
+            </button>
+          )}
+          <span className="field-hint me-auto inline-flex items-center gap-1.5">
+            <Icon name="info" size={17} />
+            שלב {step} מתוך 3
+          </span>
+        </>
       }
     >
       <div className="flex flex-col gap-3.5">
@@ -371,7 +372,7 @@ export function RatePlanWizard({
               <div className="rm-frow">
                 <F label="שם התוכנית" required>
                   <input
-                    className="rm-fld"
+                    className="field-input"
                     dir="auto"
                     placeholder="לדוגמה: תעריף גמיש עם ארוחת בוקר"
                     value={d.name}
@@ -380,19 +381,19 @@ export function RatePlanWizard({
                 </F>
                 <F label="קוד התוכנית" required>
                   <input
-                    className="rm-fld text-right"
+                    className="field-input text-right"
                     dir="ltr"
                     placeholder="FLEX-BB"
                     value={d.code}
                     onChange={(e) => set("code", e.target.value)}
                   />
-                  <span className="rm-hint">אותיות באנגלית, ספרות, מקף וקו תחתון בלבד</span>
+                  <span className="field-hint">אותיות באנגלית, ספרות, מקף וקו תחתון בלבד</span>
                 </F>
               </div>
               <div className="rm-frow">
                 <F label="שם ציבורי (מוצג לאורח)">
                   <input
-                    className="rm-fld"
+                    className="field-input"
                     dir="auto"
                     placeholder="ריק = שם התוכנית"
                     value={d.publicName}
@@ -404,7 +405,7 @@ export function RatePlanWizard({
               <div className="rm-frow">
                 <F label="תיאור פנימי">
                   <textarea
-                    className="rm-fld"
+                    className="field-input"
                     rows={2}
                     dir="auto"
                     maxLength={2000}
@@ -415,7 +416,7 @@ export function RatePlanWizard({
                 </F>
                 <F label="תיאור ציבורי">
                   <textarea
-                    className="rm-fld"
+                    className="field-input"
                     rows={2}
                     dir="auto"
                     maxLength={2000}
@@ -448,20 +449,20 @@ export function RatePlanWizard({
                 </F>
                 <F label="ארוחה כלולה">
                   <input
-                    className="rm-fld"
+                    className="field-input"
                     dir="auto"
                     maxLength={120}
                     placeholder="לדוגמה: ארוחת בוקר"
                     value={d.mealPlan}
                     onChange={(e) => set("mealPlan", e.target.value)}
                   />
-                  <span className="rm-hint">טקסט חופשי, אופציונלי</span>
+                  <span className="field-hint">טקסט חופשי, אופציונלי</span>
                 </F>
               </div>
               <div className="rm-frow">
                 <F label="מדיניות ביטול">
                   <select
-                    className="rm-fld"
+                    className="field-input"
                     value={d.cancellationPolicyId}
                     onChange={(e) => set("cancellationPolicyId", e.target.value)}
                   >
@@ -475,7 +476,7 @@ export function RatePlanWizard({
                 </F>
                 <F label="מדיניות תשלום">
                   <select
-                    className="rm-fld"
+                    className="field-input"
                     value={d.paymentPolicyId}
                     onChange={(e) => set("paymentPolicyId", e.target.value)}
                   >
@@ -492,7 +493,7 @@ export function RatePlanWizard({
                 <F label="בתוקף מתאריך">
                   <input
                     type="date"
-                    className="rm-fld"
+                    className="field-input"
                     dir="ltr"
                     value={d.validFrom}
                     onChange={(e) => set("validFrom", e.target.value)}
@@ -501,7 +502,7 @@ export function RatePlanWizard({
                 <F label="בתוקף עד תאריך">
                   <input
                     type="date"
-                    className="rm-fld"
+                    className="field-input"
                     dir="ltr"
                     value={d.validUntil}
                     onChange={(e) => set("validUntil", e.target.value)}
@@ -532,7 +533,7 @@ export function RatePlanWizard({
                 <div className="rm-frow">
                   <F label="תוכנית אב" required>
                     <select
-                      className="rm-fld"
+                      className="field-input"
                       value={d.parentPlanId}
                       onChange={(e) => set("parentPlanId", e.target.value)}
                     >
@@ -550,7 +551,7 @@ export function RatePlanWizard({
                   >
                     <div className="flex items-center gap-2">
                       <input
-                        className="rm-fld"
+                        className="field-input"
                         dir="ltr"
                         type="number"
                         step="0.01"
@@ -558,39 +559,39 @@ export function RatePlanWizard({
                         value={d.adjustment}
                         onChange={(e) => set("adjustment", e.target.value)}
                       />
-                      <span className="shrink-0 text-sm font-bold text-muted" dir="ltr">
+                      <span className="shrink-0 text-[14px] font-bold text-muted" dir="ltr">
                         {unitSign}
                       </span>
                     </div>
-                    <span className="rm-hint">ערך שלילי = הנחה · ערך חיובי = תוספת</span>
+                    <span className="field-hint">ערך שלילי = הנחה · ערך חיובי = תוספת</span>
                   </F>
                 </div>
               )}
               {derived && (
-                <div className="flex flex-col gap-2 rounded-xl border border-primary-100 bg-primary-050 p-4">
-                  <span className="inline-flex items-center gap-2 text-sm font-bold text-primary">
-                    <Icon name="calculator" size={16} />
+                <div className="flex flex-col gap-2 rounded-[12px] border border-primary-100 bg-primary-050 p-4">
+                  <span className="inline-flex items-center gap-2 text-[14px] font-bold text-primary">
+                    <Icon name="calculator" size={17} />
                     {formula}
                   </span>
                   {exampleResult != null ? (
-                    <span className="text-sm text-text2">
-                      מחיר בסיס לדוגמה: <strong dir="ltr">₪{EXAMPLE_BASE}</strong> ← מחיר בתוכנית:{" "}
-                      <strong dir="ltr">₪{exampleResult}</strong>
+                    <span className="text-[14px] text-muted">
+                      מחיר בסיס לדוגמה: <strong className="ltr-num">₪{EXAMPLE_BASE}</strong> ← מחיר בתוכנית:{" "}
+                      <strong className="ltr-num">₪{exampleResult}</strong>
                     </span>
                   ) : (
-                    <span className="text-sm text-muted">הזינו ערך התאמה לצפייה בדוגמה מחושבת</span>
+                    <span className="text-[14px] text-muted">הזינו ערך התאמה לצפייה בדוגמה מחושבת</span>
                   )}
                 </div>
               )}
               {d.planKind === "independent" && (
-                <p className="flex items-center gap-2 rounded-xl bg-hover p-4 text-sm text-text2">
-                  <Icon name="info" size={16} className="shrink-0" />
+                <p className="flex items-center gap-2 rounded-[12px] bg-hover p-4 text-[14px] text-muted">
+                  <Icon name="info" size={17} className="shrink-0" />
                   המחירים מוגדרים ידנית לכל חדר ותאריך בחריגות התאריך
                 </p>
               )}
               {d.planKind === "base" && (
-                <p className="flex items-center gap-2 rounded-xl bg-hover p-4 text-sm text-text2">
-                  <Icon name="info" size={16} className="shrink-0" />
+                <p className="flex items-center gap-2 rounded-[12px] bg-hover p-4 text-[14px] text-muted">
+                  <Icon name="info" size={17} className="shrink-0" />
                   {formula} — המחיר ללילה נלקח מתעריף הבסיס של כל חדר
                 </p>
               )}
@@ -613,10 +614,13 @@ export function RatePlanWizard({
                       onChange={(v) => set("allDays", v)}
                       label="כל הימים"
                     />
-                    <span className="text-sm font-medium text-text2">כל הימים</span>
+                    <span className="text-[14px] font-medium text-muted">כל הימים</span>
                   </span>
                   {!d.allDays && (
                     <span className="flex flex-wrap gap-2">
+                      {/* 44×44 bordered toggles (Iron Rule #6 touch target): a
+                          .chip.clickable rests transparent on this white card,
+                          leaving unselected days as bare letters with no box */}
                       {HEBREW_DAY_LETTERS.map((label, idx) => {
                         const on = d.days.includes(idx);
                         return (
@@ -626,7 +630,7 @@ export function RatePlanWizard({
                             aria-pressed={on}
                             aria-label={`יום ${label}`}
                             onClick={() => toggleDay(idx)}
-                            className={`grid h-11 w-11 place-items-center rounded-xl border text-sm font-semibold transition-colors ${
+                            className={`grid h-11 w-11 place-items-center rounded-xl border-[1.5px] text-[14px] font-semibold transition-colors ${
                               on
                                 ? "border-primary bg-primary-050 text-primary"
                                 : "border-line bg-surface text-muted hover:bg-hover"
@@ -679,10 +683,12 @@ export function RatePlanWizard({
           <>
             <Sec icon="rooms" title="שיוך חדרים" note={`${assignedCount} מתוך ${units.length} יחידות`}>
               <div className="flex items-center gap-2">
-                <button type="button" className="btn btn-filter" onClick={() => setAll(true)}>
+                {/* commands, not filters — §4 buttons (a .chip.clickable never
+                    enters `.on`, so it would render borderless muted text) */}
+                <button type="button" className="btn btn-secondary" onClick={() => setAll(true)}>
                   בחר הכל
                 </button>
-                <button type="button" className="btn btn-filter" onClick={() => setAll(false)}>
+                <button type="button" className="btn btn-secondary" onClick={() => setAll(false)}>
                   נקה בחירה
                 </button>
               </div>
@@ -694,7 +700,7 @@ export function RatePlanWizard({
                   return (
                     <div
                       key={u.sellable_unit_id}
-                      className={`flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 ${
+                      className={`flex flex-wrap items-center gap-3 rounded-[12px] border px-4 py-3 ${
                         a.on ? "border-primary-100 bg-primary-050/40" : "border-line bg-surface"
                       }`}
                     >
@@ -704,18 +710,18 @@ export function RatePlanWizard({
                         aria-checked={a.on}
                         aria-label={`שיוך ${label}`}
                         onClick={() => setUnit(u.sellable_unit_id, { on: !a.on })}
-                        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl transition-colors hover:bg-hover"
+                        className="icon-btn shrink-0"
                       >
                         <span
-                          className={`grid h-6 w-6 place-items-center rounded-md border transition-colors ${
+                          className={`grid h-6 w-6 place-items-center rounded-[7px] border transition-colors ${
                             a.on ? "border-primary bg-primary text-white" : "border-line bg-surface"
                           }`}
                         >
-                          {a.on && <Icon name="check" size={14} />}
+                          {a.on && <Icon name="check" size={13.5} />}
                         </span>
                       </button>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-ink">
+                        <p className="truncate text-[14px] font-semibold text-ink">
                           {u.room_number && (
                             <>
                               <span dir="ltr">{u.room_number}</span>
@@ -724,15 +730,15 @@ export function RatePlanWizard({
                           )}
                           {label}
                         </p>
-                        <p className="truncate text-xs text-muted">
+                        <p className="t-label truncate">
                           {u.room_type_name ?? "יחידת מכירה"}
                         </p>
                       </div>
-                      {st && <Badge tone="warning">{st}</Badge>}
+                      {st && <span className="chip chip-approval">{st}</span>}
                       {derived && a.on && (
                         <span className="flex items-center gap-1.5">
                           <input
-                            className="w-28 rounded-lg border border-line bg-field px-3 py-2 text-sm text-ink"
+                            className="field-input ltr-num w-28"
                             dir="ltr"
                             type="number"
                             step="0.01"
@@ -742,7 +748,7 @@ export function RatePlanWizard({
                             value={a.adj}
                             onChange={(e) => setUnit(u.sellable_unit_id, { adj: e.target.value })}
                           />
-                          <span className="text-xs font-bold text-muted" dir="ltr">
+                          <span className="text-[12px] font-bold text-muted" dir="ltr">
                             {unitSign}
                           </span>
                         </span>
@@ -750,7 +756,7 @@ export function RatePlanWizard({
                     </div>
                   );
                 })}
-                {units.length === 0 && <p className="rm-hint">אין יחידות מכירה מוגדרות בנכס.</p>}
+                {units.length === 0 && <p className="field-hint">אין יחידות מכירה מוגדרות בנכס.</p>}
               </div>
             </Sec>
 
@@ -798,9 +804,9 @@ function unitStatus(u: AssignableUnit): string | null {
 
 function SummaryRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-baseline gap-3 text-sm">
+    <div className="flex items-baseline gap-3 text-[14px]">
       <span className="w-28 shrink-0 font-medium text-faint">{label}</span>
-      <span className="min-w-0 text-text2">{value}</span>
+      <span className="min-w-0 text-muted">{value}</span>
     </div>
   );
 }
@@ -821,7 +827,7 @@ function StepsBar({ step, onStep }: { step: Step; onStep: (s: Step) => void }) {
             onClick={() => onStep(s.n)}
             className={`rm-stp${step === s.n ? " on" : step > s.n ? " done" : ""}`}
           >
-            <span className="rm-n">{step > s.n ? <Icon name="check" size={16} /> : s.n}</span>
+            <span className="rm-n">{step > s.n ? <Icon name="check" size={17} /> : s.n}</span>
             <span className="rm-l">{s.label}</span>
           </button>
           {i < steps.length - 1 && <span className={`rm-stln${step > s.n ? " done" : ""}`} />}

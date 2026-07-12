@@ -13,6 +13,7 @@ import {
   type DateOnly,
 } from "@/lib/dates";
 import type { PaymentState } from "@/lib/inventory-rules";
+import { paymentTriplet } from "@/lib/status-colors";
 import type { CalendarData, CalendarView } from "./types";
 import { VIEW_DAYS } from "./types";
 import { CalendarGrid } from "./CalendarGrid";
@@ -47,13 +48,15 @@ const VIEW_LABELS: Record<CalendarView, string> = {
   month: "30 יום",
 };
 
-// Legend dot colors — extracted from the rendered reference legend row.
-const LEGEND: { key: PaymentState | "all"; label: string; dot: string }[] = [
-  { key: "all", label: "הכל", dot: "#5B6478" },
-  { key: "unpaid", label: "ממתין לתשלום", dot: "#E5484D" },
-  { key: "partial", label: "שולם חלקית", dot: "#48B865" },
-  { key: "paid", label: "שולם מלא", dot: "#16A34A" },
-  { key: "overpaid", label: "שולם ביתר", dot: "#0B6E7A" },
+// The legend IS the payment filter, so every dot is the §3.1 dot of the state it
+// filters — read from the ONE source (status-colors.ts), never re-typed. "הכל"
+// has no state, so it wears the neutral dot (.cb-dot-all).
+const LEGEND: { key: PaymentState | "all"; label: string }[] = [
+  { key: "all", label: "הכל" },
+  { key: "unpaid", label: "ממתין לתשלום" },
+  { key: "partial", label: "שולם חלקית" },
+  { key: "paid", label: "שולם מלא" },
+  { key: "overpaid", label: "שולם ביתר" },
 ];
 
 export function CalendarScreen({
@@ -102,8 +105,10 @@ export function CalendarScreen({
     <div className="cb-screen flex h-full flex-col" dir="rtl">
       {/* ---- toolbar (reference .hd) ---- */}
       <div className="flex flex-wrap items-center gap-3 px-[26px] pt-[18px]">
-        <h1 className="cb-title">יומן חדרים</h1>
-        <span className="cb-count">{data.rooms.length} יחידות</span>
+        <h1 className="h1">יומן חדרים</h1>
+        <span className="chip chip-neutral">
+          <span className="ltr-num">{data.rooms.length}</span> יחידות
+        </span>
         <span className="flex-1" />
         <div className="cb-seg">
           {(Object.keys(VIEW_LABELS) as CalendarView[]).map((v) => (
@@ -120,11 +125,11 @@ export function CalendarScreen({
         <div className="cb-rangebox relative">
           <button
             type="button"
-            className="cb-nav"
+            className="icon-btn"
             aria-label="תקופה קודמת"
             onClick={() => navigate(addDays(data.from, -VIEW_DAYS[view]), view)}
           >
-            <Icon name="chevron-right" size={18} />
+            <Icon name="chevron-right" size={20} />
           </button>
           <RangeDatePicker
             from={data.from}
@@ -134,11 +139,11 @@ export function CalendarScreen({
           />
           <button
             type="button"
-            className="cb-nav"
+            className="icon-btn"
             aria-label="תקופה הבאה"
             onClick={() => navigate(addDays(data.from, VIEW_DAYS[view]), view)}
           >
-            <Icon name="chevron-left" size={18} />
+            <Icon name="chevron-left" size={20} />
           </button>
         </div>
         <button type="button" className="cb-todaybtn" onClick={() => navigate(data.today, view)}>
@@ -149,9 +154,9 @@ export function CalendarScreen({
       {/* ---- KPI row (all real DB data, §10.2) ---- */}
       <div className="grid grid-cols-2 gap-3 px-[26px] pt-[14px] xl:grid-cols-4">
         <KpiOccupancy pct={data.kpis.occupancyPct} delta={data.kpis.occupancyDeltaPct} />
-        <div className="cb-kpi">
-          <span className="cb-kpi-ic" style={{ background: "#E4F6EE", color: "#0B7355" }}>
-            <Icon name="users-round" size={21} />
+        <div className="card cb-kpi">
+          <span className="cb-kpi-ic k-ok">
+            <Icon name="users-round" size={20} />
           </span>
           <div className="min-w-0">
             <p className="cb-kpi-l">אורחים בבית</p>
@@ -164,18 +169,18 @@ export function CalendarScreen({
             </p>
           </div>
         </div>
-        <div className="cb-kpi">
-          <span className="cb-kpi-ic" style={{ background: "#FDF2E1", color: "#B4670A" }}>
-            <Icon name="login" size={21} />
+        <div className="card cb-kpi">
+          <span className="cb-kpi-ic k-warn">
+            <Icon name="login" size={20} />
           </span>
           <div className="min-w-0">
             <p className="cb-kpi-l">הגעות היום</p>
             <p className="cb-kpi-v">{data.kpis.arrivalsToday}</p>
           </div>
         </div>
-        <div className="cb-kpi">
-          <span className="cb-kpi-ic" style={{ background: "#F2ECFD", color: "#6B27D6" }}>
-            <Icon name="logout" size={21} />
+        <div className="card cb-kpi">
+          <span className="cb-kpi-ic k-info">
+            <Icon name="logout" size={20} />
           </span>
           <div className="min-w-0">
             <p className="cb-kpi-l">יציאות היום</p>
@@ -184,17 +189,21 @@ export function CalendarScreen({
         </div>
       </div>
 
-      {/* ---- payment legend / filter (reference .legrow) ---- */}
+      {/* ---- payment legend / filter — canonical .chip.clickable (§3) ---- */}
       <div className="flex flex-wrap items-center gap-1 px-[26px] pt-[10px]">
         {LEGEND.map((l) => (
           <button
             key={l.key}
             type="button"
             aria-pressed={paymentFilter === l.key}
-            className={`cb-leg ${paymentFilter === l.key ? "on" : ""}`}
+            className={`chip clickable ${paymentFilter === l.key ? "on" : ""}`}
             onClick={() => setPaymentFilter(l.key)}
           >
-            <span className="cb-d" style={{ background: l.dot }} />
+            {l.key === "all" ? (
+              <span className="dot cb-dot-all" />
+            ) : (
+              <span className="dot" style={{ background: paymentTriplet(l.key).dot }} />
+            )}
             {l.label}
           </button>
         ))}
@@ -303,7 +312,7 @@ function RangeDatePicker({
           <div className="cb-dpop-h">
             <button
               type="button"
-              className="cb-nav"
+              className="icon-btn"
               aria-label="חודש קודם"
               onClick={() => setMonth(monthStart(addDays(month, -1)))}
             >
@@ -312,7 +321,7 @@ function RangeDatePicker({
             <span className="cb-dpop-m">{hebrewMonthYear(month)}</span>
             <button
               type="button"
-              className="cb-nav"
+              className="icon-btn"
               aria-label="חודש הבא"
               onClick={() => setMonth(monthStart(addDays(month, 35)))}
             >
@@ -351,44 +360,26 @@ function monthStart(d: DateOnly): DateOnly {
   return `${d.slice(0, 8)}01`;
 }
 
-// Occupancy KPI — donut with the % inside + delta chip (reference .kpi).
+// Occupancy KPI — the ring is a token conic-gradient (no inline <svg>, §10) and
+// the delta is a canonical .chip wearing an approved §3.1 family.
 function KpiOccupancy({ pct, delta }: { pct: number; delta: number }) {
-  const r = 17;
-  const c = 2 * Math.PI * r;
   const up = delta >= 0;
   return (
-    <div className="cb-kpi">
-      <svg width="46" height="46" viewBox="0 0 46 46" className="shrink-0">
-        <circle cx="23" cy="23" r={r} fill="none" stroke="#E9EDF5" strokeWidth="6" />
-        <circle
-          cx="23"
-          cy="23"
-          r={r}
-          fill="none"
-          stroke="#2540C8"
-          strokeWidth="6"
-          strokeLinecap="round"
-          strokeDasharray={`${(Math.min(pct, 100) / 100) * c} ${c}`}
-          transform="rotate(-90 23 23)"
-        />
-        <text x="23" y="27" textAnchor="middle" fontSize="11" fontWeight="800" fill="#1B2233">
-          {pct}%
-        </text>
-      </svg>
+    <div className="card cb-kpi">
+      <span
+        className="cb-donut"
+        style={{ "--cb-pct": Math.min(Math.max(pct, 0), 100) } as React.CSSProperties}
+        aria-hidden
+      >
+        <span className="ltr-num">{pct}%</span>
+      </span>
       <div className="min-w-0">
         <p className="cb-kpi-l">תפוסה היום</p>
         <div className="flex items-center gap-2">
           <span className="cb-kpi-v">{pct}%</span>
-          <span
-            className="cb-kpi-delta"
-            style={
-              up
-                ? { background: "#E4F6EE", color: "#0B7355" }
-                : { background: "#FDECEC", color: "#B4231F" }
-            }
-          >
-            <Icon name={up ? "trending-up" : "trending-down"} size={13} />
-            <span dir="ltr">
+          <span className={`chip ${up ? "chip-paid" : "chip-unpaid"}`}>
+            <Icon name={up ? "trending-up" : "trending-down"} size={13.5} />
+            <span className="ltr-num">
               {up ? "+" : ""}
               {delta}%
             </span>{" "}

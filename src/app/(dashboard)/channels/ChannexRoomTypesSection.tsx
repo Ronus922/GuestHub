@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Icon } from "@/components/shared/Icon";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   getChannexRoomSyncContextAction,
   previewChannexRoomTypeSyncAction,
@@ -29,16 +30,17 @@ const fmtDt = (v: string | null) => (v ? dtFmt.format(new Date(v)) : "—");
 
 type Msg = { tone: "ok" | "err"; text: string } | null;
 
+// §3 — one chip anatomy; the tone is always one of the eight §3.1 triplets.
 const STATUS_META: Record<RowStatus, { label: string; cls: string }> = {
-  ready: { label: "מוכן", cls: "bg-primary-050 text-primary" },
-  validation_required: { label: "נדרש תיקון נתונים", cls: "bg-status-warning-050 text-status-warning" },
-  excluded_inactive: { label: "לא פעיל — לא יסונכרן", cls: "bg-hover text-muted" },
-  creating: { label: "ביצירה", cls: "bg-status-warning-050 text-status-warning" },
-  mapped: { label: "ממופה", cls: "bg-status-success-050 text-status-success" },
-  adopted: { label: "אומץ", cls: "bg-status-success-050 text-status-success" },
-  inaccessible: { label: "לא נגיש", cls: "bg-status-danger-050 text-status-danger" },
-  failed: { label: "נכשל", cls: "bg-status-danger-050 text-status-danger" },
-  reconciliation_required: { label: "נדרשת התאמה מחדש", cls: "bg-status-danger-050 text-status-danger" },
+  ready: { label: "מוכן", cls: "chip-transfer" },
+  validation_required: { label: "נדרש תיקון נתונים", cls: "chip-approval" },
+  excluded_inactive: { label: "לא פעיל — לא יסונכרן", cls: "chip-neutral" },
+  creating: { label: "ביצירה", cls: "chip-approval" },
+  mapped: { label: "ממופה", cls: "chip-paid" },
+  adopted: { label: "אומץ", cls: "chip-paid" },
+  inaccessible: { label: "לא נגיש", cls: "chip-failed" },
+  failed: { label: "נכשל", cls: "chip-failed" },
+  reconciliation_required: { label: "נדרשת התאמה מחדש", cls: "chip-failed" },
 };
 
 export function ChannexRoomTypesSection({ initial }: { initial: RoomSyncContext }) {
@@ -130,162 +132,183 @@ export function ChannexRoomTypesSection({ initial }: { initial: RoomSyncContext 
   const resumeMode = s.mappedRooms > 0 && s.validReady > 0;
 
   return (
-    <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="card">
+      <div className="card-hd justify-between">
         <div className="flex items-center gap-2">
           <Icon name="rooms" size={20} className="text-primary" />
-          <h2 className="text-lg font-bold text-ink">סנכרון חדרים פיזיים ל־Channex</h2>
+          <span className="h4">סנכרון חדרים פיזיים ל־Channex</span>
         </div>
         <span
-          className={`rounded-full px-3 py-1 text-xs font-bold ${
-            s.activeRooms > 0 && s.mappedRooms === s.activeRooms
-              ? "bg-status-success-050 text-status-success"
-              : "bg-hover text-muted"
+          className={`chip ${
+            s.activeRooms > 0 && s.mappedRooms === s.activeRooms ? "chip-paid" : "chip-neutral"
           }`}
         >
-          {s.mappedRooms}/{s.activeRooms} ממופים
+          <bdi className="ltr-num">{s.mappedRooms}/{s.activeRooms}</bdi> ממופים
         </span>
       </div>
 
-      {/* Model note — the inventory unit, and what count_of_rooms does NOT mean */}
-      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-primary-050 p-3">
-        <Icon name="info" size={18} className="mt-0.5 shrink-0 text-primary" />
-        <p className="text-xs font-semibold leading-relaxed text-text2">
-          יחידת המיפוי ל-Channex היא <strong>החדר הפיזי</strong>: כל חדר הופך לסוג חדר אחד ב-Channex עם{" "}
-          <strong>יחידה פיזית אחת</strong>. שלוש קטגוריות החדרים ב-GuestHub נשארות תיאוריות בלבד ואינן
-          נרשמות כמלאי ב-Channex. כל סוג חדר מכיל יחידה פיזית אחת —{" "}
-          <strong>הזמינות היומית תישאר סגורה עד לשלב סנכרון ה-ARI</strong>.
-        </p>
-      </div>
-
-      {!view.connected && (
-        <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
-          לא קיים חיבור Channex.
-        </p>
-      )}
-      {view.connected && !propertyId && (
-        <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
-          לא קיים נכס Channex ממופה — יש למפות נכס בכרטיס שלמעלה לפני סנכרון חדרים.
-        </p>
-      )}
-      {view.connected && !view.apiKeyConfigured && (
-        <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
-          יש לשמור מפתח API של Channex בכרטיס החיבור למעלה.
-        </p>
-      )}
-
-      {/* Summary cards */}
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-6">
-        <Stat label="קטגוריות חדרים ב-GuestHub" value={s.roomCategories} hint="תיאורי — לא מלאי" />
-        <Stat label="חדרים פיזיים פעילים" value={s.activeRooms} />
-        <Stat label="תקינים ומוכנים ליצירה" value={s.validReady} />
-        <Stat label="חדרים ממופים" value={s.mappedRooms} />
-        <Stat label="חדרים ללא מיפוי" value={s.unmappedRooms} danger={s.unmappedRooms > 0} />
-        <Stat label="שגיאות ולידציה" value={s.validationErrors} danger={s.validationErrors > 0} />
-      </div>
-      <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-        <Stat label="סוגי חדרים ב-Channex" value={s.externalRoomTypes} />
-        <Stat label="סוגי חדרים חיצוניים ללא מיפוי" value={s.externalUnmapped} danger={s.externalUnmapped > 0} />
-        <div className="rounded-xl border border-line bg-hover/40 p-3">
-          <p className="text-base font-extrabold text-ink">טרם סונכרנה</p>
-          <p className="mt-0.5 text-xs font-medium text-muted">זמינות נוכחית ב-Channex</p>
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={onOpenPreview}
-          disabled={!canAct || busy || s.validReady === 0 || view.running}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-        >
-          <Icon name="plus" size={16} />
-          {resumeMode ? `המשך סנכרון (${s.validReady} חדרים)` : `יצירת ${s.validReady} חדרים ב־Channex Staging`}
-        </button>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={!canAct || busy}
-          className="flex items-center gap-2 rounded-xl border border-line bg-surface px-4 py-2 text-sm font-bold text-ink hover:bg-hover disabled:opacity-50"
-        >
-          <Icon name="refresh" size={16} />
-          רענון מצב החדרים מ־Channex
-        </button>
-        {view.running && (
-          <span className="rounded-full bg-status-warning-050 px-3 py-1 text-xs font-bold text-status-warning">
-            סנכרון פועל כעת
-          </span>
-        )}
-      </div>
-
-      {msg && (
-        <p className={`text-sm font-semibold ${msg.tone === "ok" ? "text-status-success" : "text-status-danger"}`}>
-          {msg.text}
-        </p>
-      )}
-
-      {/* External Room Types with no local mapping — explicit adoption only */}
-      {plan.externalUnmapped.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-xl border border-status-warning bg-status-warning-050 p-4">
-          <p className="text-sm font-bold text-status-warning">
-            סוגי חדרים קיימים ב-Channex ללא מיפוי מקומי — אימוץ מפורש בלבד (אין אימוץ אוטומטי לפי שם):
+      <div className="card-bd flex flex-col gap-4">
+        {/* Model note — the inventory unit, and what count_of_rooms does NOT mean */}
+        <div className="flex items-start gap-2.5 rounded-xl border border-line bg-primary-050 p-3">
+          <Icon name="info" size={17} className="mt-0.5 shrink-0 text-primary" />
+          <p className="t-label leading-relaxed text-text2">
+            יחידת המיפוי ל-Channex היא <strong>החדר הפיזי</strong>: כל חדר הופך לסוג חדר אחד ב-Channex עם{" "}
+            <strong>יחידה פיזית אחת</strong>. שלוש קטגוריות החדרים ב-GuestHub נשארות תיאוריות בלבד ואינן
+            נרשמות כמלאי ב-Channex. כל סוג חדר מכיל יחידה פיזית אחת —{" "}
+            <strong>הזמינות היומית תישאר סגורה עד לשלב סנכרון ה-ARI</strong>.
           </p>
-          {plan.externalUnmapped.map((e) => (
-            <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface px-3 py-2">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold text-ink">{e.title ?? "(ללא שם)"}</p>
-                <p className="truncate font-mono text-xs text-faint">
-                  {e.id} · יחידות: {e.countOfRooms ?? "—"} · {e.occAdults ?? "—"}/{e.occChildren ?? "—"}/
-                  {e.occInfants ?? "—"}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAdoptTarget({ externalId: e.id, title: e.title })}
-                disabled={busy}
-                className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-bold text-ink hover:bg-hover disabled:opacity-50"
-              >
-                אימוץ לחדר פיזי
-              </button>
-            </div>
-          ))}
         </div>
-      )}
 
-      <PreviewTable rows={plan.rows} />
+        {!view.connected && (
+          <p className="t-label rounded-lg bg-status-warning-050 px-3 py-2 text-status-warning">
+            לא קיים חיבור Channex.
+          </p>
+        )}
+        {view.connected && !propertyId && (
+          <p className="t-label rounded-lg bg-status-warning-050 px-3 py-2 text-status-warning">
+            לא קיים נכס Channex ממופה — יש למפות נכס בכרטיס שלמעלה לפני סנכרון חדרים.
+          </p>
+        )}
+        {view.connected && !view.apiKeyConfigured && (
+          <p className="t-label rounded-lg bg-status-warning-050 px-3 py-2 text-status-warning">
+            יש לשמור מפתח API של Channex בכרטיס החיבור למעלה.
+          </p>
+        )}
+
+        {/* Summary cards */}
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-6">
+          <Stat label="קטגוריות חדרים ב-GuestHub" value={s.roomCategories} hint="תיאורי — לא מלאי" />
+          <Stat label="חדרים פיזיים פעילים" value={s.activeRooms} />
+          <Stat label="תקינים ומוכנים ליצירה" value={s.validReady} />
+          <Stat label="חדרים ממופים" value={s.mappedRooms} />
+          <Stat label="חדרים ללא מיפוי" value={s.unmappedRooms} danger={s.unmappedRooms > 0} />
+          <Stat label="שגיאות ולידציה" value={s.validationErrors} danger={s.validationErrors > 0} />
+        </div>
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
+          <Stat label="סוגי חדרים ב-Channex" value={s.externalRoomTypes} />
+          <Stat label="סוגי חדרים חיצוניים ללא מיפוי" value={s.externalUnmapped} danger={s.externalUnmapped > 0} />
+          <div className="rounded-xl border border-line bg-hover/40 p-4">
+            <p className="h4">טרם סונכרנה</p>
+            <p className="t-label mt-0.5">זמינות נוכחית ב-Channex</p>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onOpenPreview}
+            disabled={!canAct || busy || s.validReady === 0 || view.running}
+            className="btn btn-primary"
+          >
+            <Icon name="plus" size={20} />
+            {resumeMode ? `המשך סנכרון (${s.validReady} חדרים)` : `יצירת ${s.validReady} חדרים ב־Channex Staging`}
+          </button>
+          <button type="button" onClick={onRefresh} disabled={!canAct || busy} className="btn btn-secondary">
+            <Icon name="refresh" size={20} />
+            רענון מצב החדרים מ־Channex
+          </button>
+          {view.running && (
+            <span className="chip chip-approval">
+              <span className="dot" />
+              סנכרון פועל כעת
+            </span>
+          )}
+        </div>
+
+        {msg && (
+          <p className={`t-secondary ${msg.tone === "ok" ? "text-status-success" : "text-status-danger"}`}>
+            {msg.text}
+          </p>
+        )}
+
+        {/* External Room Types with no local mapping — explicit adoption only */}
+        {plan.externalUnmapped.length > 0 && (
+          <div className="flex flex-col gap-2 rounded-xl border border-status-warning bg-status-warning-050 p-4">
+            <p className="t-secondary text-status-warning">
+              סוגי חדרים קיימים ב-Channex ללא מיפוי מקומי — אימוץ מפורש בלבד (אין אימוץ אוטומטי לפי שם):
+            </p>
+            {plan.externalUnmapped.map((e) => (
+              <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface px-3 py-2">
+                <div className="min-w-0">
+                  <p className="t-secondary truncate text-ink">{e.title ?? "(ללא שם)"}</p>
+                  <p className="t-label truncate text-faint">
+                    <bdi className="ltr-num font-mono">{e.id}</bdi> · יחידות:{" "}
+                    <bdi className="ltr-num">{e.countOfRooms ?? "—"}</bdi> ·{" "}
+                    <bdi className="ltr-num">
+                      {e.occAdults ?? "—"}/{e.occChildren ?? "—"}/{e.occInfants ?? "—"}
+                    </bdi>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAdoptTarget({ externalId: e.id, title: e.title })}
+                  disabled={busy}
+                  className="btn btn-sm btn-secondary"
+                >
+                  אימוץ לחדר פיזי
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <PreviewTable rows={plan.rows} />
+      </div>
 
       {preview && (
-        <ConfirmDialog title="יצירת סוגי חדרים ב־Channex Staging" onClose={() => setPreview(null)}>
-          <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
+        <ConfirmDialog
+          title="יצירת סוגי חדרים ב־Channex Staging"
+          onClose={() => setPreview(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={onConfirmSync}
+                disabled={busy || !!preview.blockedReason || preview.toCreate === 0}
+                className="btn btn-primary"
+              >
+                {submitting ? "מסנכרן…" : "צור את החדרים הקיימים ב־Channex"}
+              </button>
+              <button type="button" onClick={() => setPreview(null)} className="btn btn-secondary">
+                ביטול
+              </button>
+            </>
+          }
+        >
+          <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5">
             <Dt>סביבה</Dt>
             <Dd className="col-span-2">Staging</Dd>
             <Dt>נכס Channex</Dt>
             <Dd className="col-span-2">{preview.propertyTitle ?? "—"}</Dd>
             <Dt>מזהה נכס</Dt>
-            <Dd className="col-span-2 font-mono text-xs">{preview.propertyId}</Dd>
+            <Dd className="col-span-2"><bdi className="ltr-num font-mono">{preview.propertyId}</bdi></Dd>
             <Dt>חדרים פיזיים</Dt>
-            <Dd className="col-span-2">{preview.activeRooms}</Dd>
+            <Dd className="col-span-2"><bdi className="ltr-num">{preview.activeRooms}</bdi></Dd>
             <Dt>כבר ממופים</Dt>
-            <Dd className="col-span-2">{preview.alreadyMapped}</Dd>
+            <Dd className="col-span-2"><bdi className="ltr-num">{preview.alreadyMapped}</bdi></Dd>
             <Dt>ייווצרו כעת</Dt>
-            <Dd className="col-span-2 font-bold text-ink">{preview.toCreate}</Dd>
+            <Dd className="col-span-2 text-ink"><bdi className="ltr-num">{preview.toCreate}</bdi></Dd>
             <Dt>מבנה השם</Dt>
-            <Dd className="col-span-2 font-mono text-xs">חדר &lt;מספר&gt; - &lt;סוג חדר&gt;</Dd>
+            <Dd className="col-span-2 font-mono">חדר &lt;מספר&gt; - &lt;סוג חדר&gt;</Dd>
             <Dt>יחידות פיזיות</Dt>
-            <Dd className="col-span-2">{preview.countOfRooms} לכל סוג חדר</Dd>
+            <Dd className="col-span-2">
+              <bdi className="ltr-num">{preview.countOfRooms}</bdi> לכל סוג חדר
+            </Dd>
           </dl>
 
           <div className="max-h-40 overflow-y-auto rounded-lg border border-line p-3">
-            <p className="mb-1 text-xs font-bold text-ink">שמות שייווצרו ({preview.titles.length})</p>
-            <ul className="flex flex-col gap-0.5 text-xs font-semibold text-text2">
+            <p className="t-label mb-1 text-ink">
+              שמות שייווצרו (<bdi className="ltr-num">{preview.titles.length}</bdi>)
+            </p>
+            <ul className="t-label flex flex-col gap-0.5 text-text2">
               {preview.titles.map((t) => (
                 <li key={t.roomNumber}>{t.title}</li>
               ))}
             </ul>
           </div>
 
-          <ul className="flex flex-col gap-1 text-xs font-semibold text-status-warning">
+          <ul className="t-label flex flex-col gap-1 text-status-warning">
             <li>• הזמינות היומית תישאר 0 — לא מסונכרנת בשלב זה.</li>
             <li>• לא ייווצרו תוכניות תעריף (Rate Plans) ולא ייכתבו מחירים.</li>
             <li>• לא ייווצר חיבור ל-Booking.com או ל-Expedia.</li>
@@ -293,43 +316,38 @@ export function ChannexRoomTypesSection({ initial }: { initial: RoomSyncContext 
           </ul>
 
           {preview.blockedReason && (
-            <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-bold text-status-danger">
+            <p className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
               {preview.blockedReason}
             </p>
           )}
-
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setPreview(null)}
-              className="rounded-xl border border-line px-4 py-2 text-sm font-bold text-ink hover:bg-hover"
-            >
-              ביטול
-            </button>
-            <button
-              type="button"
-              onClick={onConfirmSync}
-              disabled={busy || !!preview.blockedReason || preview.toCreate === 0}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-            >
-              {submitting ? "מסנכרן…" : "צור את החדרים הקיימים ב־Channex"}
-            </button>
-          </div>
         </ConfirmDialog>
       )}
 
       {adoptTarget && (
-        <ConfirmDialog title="אימוץ סוג חדר קיים ב־Channex" onClose={() => setAdoptTarget(null)}>
-          <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
+        <ConfirmDialog
+          title="אימוץ סוג חדר קיים ב־Channex"
+          onClose={() => setAdoptTarget(null)}
+          footer={
+            <>
+              <button type="button" onClick={onAdopt} disabled={busy || !adoptRoomId} className="btn btn-primary">
+                אמץ סוג חדר זה
+              </button>
+              <button type="button" onClick={() => setAdoptTarget(null)} className="btn btn-secondary">
+                ביטול
+              </button>
+            </>
+          }
+        >
+          <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5">
             <Dt>שם ב-Channex</Dt>
             <Dd className="col-span-2">{adoptTarget.title ?? "(ללא שם)"}</Dd>
             <Dt>מזהה Channex</Dt>
-            <Dd className="col-span-2 font-mono text-xs">{adoptTarget.externalId}</Dd>
+            <Dd className="col-span-2"><bdi className="ltr-num font-mono">{adoptTarget.externalId}</bdi></Dd>
           </dl>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-bold text-ink">חדר פיזי לשיוך</span>
+          <label className="field">
+            <span className="field-label">חדר פיזי לשיוך</span>
             <select
-              className="rounded-lg border border-line bg-surface px-3 py-2 text-sm"
+              className="field-input"
               value={adoptRoomId}
               onChange={(e) => setAdoptRoomId(e.target.value)}
             >
@@ -341,26 +359,9 @@ export function ChannexRoomTypesSection({ initial }: { initial: RoomSyncContext 
               ))}
             </select>
           </label>
-          <p className="text-xs font-semibold text-muted">
+          <p className="t-label">
             סוג החדר יאומת מול Channex לפני האימוץ. סוג חדר חיצוני אחד יכול להיות משויך לחדר פיזי אחד בלבד.
           </p>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setAdoptTarget(null)}
-              className="rounded-xl border border-line px-4 py-2 text-sm font-bold text-ink hover:bg-hover"
-            >
-              ביטול
-            </button>
-            <button
-              type="button"
-              onClick={onAdopt}
-              disabled={busy || !adoptRoomId}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-            >
-              אמץ סוג חדר זה
-            </button>
-          </div>
         </ConfirmDialog>
       )}
     </section>
@@ -371,28 +372,30 @@ function PreviewTable({ rows }: { rows: PreviewRow[] }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <Icon name="list" size={16} className="text-muted" />
-        <h3 className="text-sm font-bold text-ink">תצוגה מקדימה — חדר פיזי אחד לכל סוג חדר (לקריאה בלבד)</h3>
-        <span className="rounded-full bg-hover px-2 py-0.5 text-[11px] font-bold text-muted">{rows.length}</span>
+        <Icon name="list" size={17} className="text-muted" />
+        <h3 className="h4">תצוגה מקדימה — חדר פיזי אחד לכל סוג חדר (לקריאה בלבד)</h3>
+        <span className="chip chip-neutral">
+          <bdi className="ltr-num">{rows.length}</bdi>
+        </span>
       </div>
       <div className="overflow-x-auto rounded-xl border border-line">
         <table className="w-full min-w-[1080px] text-sm">
           <thead>
-            <tr className="border-b border-line bg-hover/40 text-right text-xs font-bold text-faint">
-              <th className="px-4 py-3">חדר</th>
-              <th className="px-4 py-3">קטגוריה</th>
-              <th className="px-4 py-3">בניין/אזור</th>
-              <th className="px-4 py-3">קומה</th>
-              <th className="px-4 py-3">שם מוצע ב-Channex</th>
-              <th className="px-4 py-3">יחידות פיזיות</th>
-              <th className="px-4 py-3">מבוגרים</th>
-              <th className="px-4 py-3">ילדים</th>
-              <th className="px-4 py-3">תינוקות</th>
-              <th className="px-4 py-3">ברירת מחדל</th>
-              <th className="px-4 py-3">סטטוס</th>
-              <th className="px-4 py-3">מזהה Channex</th>
-              <th className="px-4 py-3">אומת</th>
-              <th className="px-4 py-3">הערה</th>
+            <tr className="border-b border-line bg-hover/40">
+              <th className="t-label px-4 py-3 text-start text-faint">חדר</th>
+              <th className="t-label px-4 py-3 text-start text-faint">קטגוריה</th>
+              <th className="t-label px-4 py-3 text-start text-faint">בניין/אזור</th>
+              <th className="t-label px-4 py-3 text-start text-faint">קומה</th>
+              <th className="t-label px-4 py-3 text-start text-faint">שם מוצע ב-Channex</th>
+              <th className="t-label px-4 py-3 text-start text-faint">יחידות פיזיות</th>
+              <th className="t-label px-4 py-3 text-start text-faint">מבוגרים</th>
+              <th className="t-label px-4 py-3 text-start text-faint">ילדים</th>
+              <th className="t-label px-4 py-3 text-start text-faint">תינוקות</th>
+              <th className="t-label px-4 py-3 text-start text-faint">ברירת מחדל</th>
+              <th className="t-label px-4 py-3 text-start text-faint">סטטוס</th>
+              <th className="t-label px-4 py-3 text-start text-faint">מזהה Channex</th>
+              <th className="t-label px-4 py-3 text-start text-faint">אומת</th>
+              <th className="t-label px-4 py-3 text-start text-faint">הערה</th>
             </tr>
           </thead>
           <tbody>
@@ -400,20 +403,32 @@ function PreviewTable({ rows }: { rows: PreviewRow[] }) {
               const meta = STATUS_META[r.status];
               return (
                 <tr key={r.roomId} className={`border-b border-line last:border-0 ${r.isActive ? "" : "opacity-60"}`}>
-                  <td className="px-4 py-3 font-bold text-ink">{r.roomNumber}</td>
+                  <td className="px-4 py-3 text-ink">
+                    <bdi className="ltr-num font-bold">{r.roomNumber}</bdi>
+                  </td>
                   <td className="px-4 py-3 text-text2">{r.roomTypeName ?? "—"}</td>
                   <td className="px-4 py-3 text-text2">{r.areaName ?? "—"}</td>
-                  <td className="px-4 py-3 text-text2">{r.floor ?? "—"}</td>
-                  <td className="px-4 py-3 font-semibold text-text2">{r.proposedTitle ?? "—"}</td>
-                  <td className="px-4 py-3 text-muted">{r.isActive ? r.countOfRooms : "—"}</td>
-                  <td className="px-4 py-3 text-muted">{r.occ?.occ_adults ?? "—"}</td>
-                  <td className="px-4 py-3 text-muted">{r.occ?.occ_children ?? "—"}</td>
-                  <td className="px-4 py-3 text-muted">{r.occ?.occ_infants ?? "—"}</td>
+                  <td className="px-4 py-3 text-text2">
+                    <bdi className="ltr-num">{r.floor ?? "—"}</bdi>
+                  </td>
+                  <td className="px-4 py-3 text-text2">{r.proposedTitle ?? "—"}</td>
                   <td className="px-4 py-3 text-muted">
-                    {r.occ?.default_occupancy ?? "—"}
+                    <bdi className="ltr-num">{r.isActive ? r.countOfRooms : "—"}</bdi>
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    <bdi className="ltr-num">{r.occ?.occ_adults ?? "—"}</bdi>
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    <bdi className="ltr-num">{r.occ?.occ_children ?? "—"}</bdi>
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    <bdi className="ltr-num">{r.occ?.occ_infants ?? "—"}</bdi>
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    <bdi className="ltr-num">{r.occ?.default_occupancy ?? "—"}</bdi>
                     {r.occ?.defaultOccupancyCapped && (
                       <span
-                        className="mr-1 rounded-full bg-status-warning-050 px-1.5 py-0.5 text-[10px] font-bold text-status-warning"
+                        className="chip chip-approval ms-1"
                         title={`ב-GuestHub ${r.occ.sourceDefaultOccupancy} — הוקטן ל-${r.occ.default_occupancy} כי Channex אוסר על ערך גדול ממספר מקומות המבוגרים. הנתון ב-GuestHub לא שונה.`}
                       >
                         הוקטן
@@ -421,11 +436,15 @@ function PreviewTable({ rows }: { rows: PreviewRow[] }) {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${meta.cls}`}>{meta.label}</span>
+                    <span className={`chip ${meta.cls}`}>{meta.label}</span>
                   </td>
-                  <td className="px-4 py-3 font-mono text-[11px] text-faint">{r.channexRoomTypeId ?? "—"}</td>
-                  <td className="px-4 py-3 text-muted">{fmtDt(r.lastVerifiedAt)}</td>
-                  <td className="px-4 py-3 text-xs text-status-danger">{r.validationError ?? r.lastError ?? ""}</td>
+                  <td className="px-4 py-3 text-faint">
+                    <bdi className="ltr-num font-mono">{r.channexRoomTypeId ?? "—"}</bdi>
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    <bdi className="ltr-num">{fmtDt(r.lastVerifiedAt)}</bdi>
+                  </td>
+                  <td className="t-label px-4 py-3 text-status-danger">{r.validationError ?? r.lastError ?? ""}</td>
                 </tr>
               );
             })}
@@ -445,34 +464,17 @@ function PreviewTable({ rows }: { rows: PreviewRow[] }) {
 
 function Stat({ label, value, hint, danger }: { label: string; value: number; hint?: string; danger?: boolean }) {
   return (
-    <div className="rounded-xl border border-line bg-hover/40 p-3">
-      <p className={`text-xl font-extrabold ${danger ? "text-status-danger" : "text-ink"}`}>{value}</p>
-      <p className="mt-0.5 text-xs font-medium text-muted">{label}</p>
-      {hint && <p className="text-[10px] font-medium text-faint">{hint}</p>}
+    <div className="rounded-xl border border-line bg-hover/40 p-4">
+      <p className={`h3 ${danger ? "text-status-danger" : "text-ink"}`}>
+        <bdi className="ltr-num">{value}</bdi>
+      </p>
+      <p className="t-label mt-0.5">{label}</p>
+      {hint && <p className="field-hint">{hint}</p>}
     </div>
   );
 }
 
-function ConfirmDialog({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 backdrop-blur-sm" dir="rtl" onClick={onClose}>
-      <div
-        className="flex max-h-[90vh] w-full max-w-xl flex-col gap-4 overflow-y-auto rounded-2xl border border-line bg-surface p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-lg font-bold text-ink">{title}</h3>
-          <button type="button" onClick={onClose} className="grid h-11 w-11 place-items-center rounded-lg hover:bg-hover" aria-label="סגור">
-            <Icon name="close" size={18} className="text-muted" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-const Dt = ({ children }: { children: React.ReactNode }) => <dt className="text-faint">{children}</dt>;
+const Dt = ({ children }: { children: React.ReactNode }) => <dt className="t-label text-faint">{children}</dt>;
 const Dd = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => (
-  <dd className={`font-semibold text-text2 ${className}`}>{children}</dd>
+  <dd className={`t-secondary text-text2 ${className}`}>{children}</dd>
 );

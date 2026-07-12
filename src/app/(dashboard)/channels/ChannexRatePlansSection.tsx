@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   getChannexRatePlanSyncContextAction,
   startChannexRatePlanSyncAction,
@@ -131,182 +132,171 @@ export function ChannexRatePlansSection({ initial }: { initial: RatePlanSyncCont
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold text-ink">תוכניות תעריף ב־Channex</h2>
-      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4">
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-          <div>
-            <dt className="text-xs font-medium text-faint">תוכניות פעילות ב־GuestHub</dt>
-            <dd className="text-xl font-extrabold text-ink">{view.planNames.length}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-faint">חדרים ממופים</dt>
-            <dd className="text-xl font-extrabold text-ink">
-              {view.mappedRooms}
-              <span className="text-sm font-bold text-faint"> / {view.activeRooms}</span>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-faint">שילובים נדרשים</dt>
-            <dd className="text-xl font-extrabold text-ink">{view.requiredCombinations}</dd>
-          </div>
-          <div>
-            <dt className="text-xs font-medium text-faint">תוכניות ממופות ב־Channex</dt>
-            <dd className="text-xl font-extrabold text-ink">
-              {view.mappedCombinations}
-              <span className="text-sm font-bold text-faint"> / {view.requiredCombinations}</span>
-            </dd>
-          </div>
-          {view.mappedCombinations > 0 && (
+      <h2 className="h3">תוכניות תעריף ב־Channex</h2>
+      <div className="card">
+        <div className="card-bd flex flex-col gap-4">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
             <div>
-              <dt className="text-xs font-medium text-faint">שמות תואמים</dt>
-              <dd className="text-xl font-extrabold text-ink">
-                {matchingTitles}
-                <span className="text-sm font-bold text-faint"> / {view.mappedCombinations}</span>
+              <dt className="t-label text-faint">תוכניות פעילות ב־GuestHub</dt>
+              <dd className="h3">
+                <bdi className="ltr-num">{view.planNames.length}</bdi>
               </dd>
             </div>
-          )}
-        </dl>
-
-        {view.titleMismatches > 0 && (
-          <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-sm font-semibold text-status-warning">
-            {view.titleMismatches} שמות דורשים עדכון
-          </p>
-        )}
-
-        {view.planNames.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-medium text-muted">תוכניות מקומיות:</span>
-            {view.planNames.map((name) => (
-              <span key={name} className="rounded-full bg-hover px-2.5 py-0.5 text-xs font-bold text-text2">
-                {name}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {view.problems.length > 0 && (
-          <div className="flex flex-col gap-1 rounded-lg bg-status-danger-050 px-3 py-2">
-            <p className="text-xs font-bold text-status-danger">שגיאות ({view.problems.length})</p>
-            {view.problems.slice(0, 5).map((p) => (
-              <p key={`${p.roomNumber}:${p.planName}`} className="text-xs font-semibold text-status-danger">
-                חדר {p.roomNumber} · {p.planName} — {p.message}
-              </p>
-            ))}
-            {view.problems.length > 5 && (
-              <p className="text-xs font-semibold text-status-danger">ועוד {view.problems.length - 5}…</p>
+            <div>
+              <dt className="t-label text-faint">חדרים ממופים</dt>
+              <dd className="h3">
+                <bdi className="ltr-num">
+                  {view.mappedRooms}
+                  <span className="text-faint"> / {view.activeRooms}</span>
+                </bdi>
+              </dd>
+            </div>
+            <div>
+              <dt className="t-label text-faint">שילובים נדרשים</dt>
+              <dd className="h3">
+                <bdi className="ltr-num">{view.requiredCombinations}</bdi>
+              </dd>
+            </div>
+            <div>
+              <dt className="t-label text-faint">תוכניות ממופות ב־Channex</dt>
+              <dd className="h3">
+                <bdi className="ltr-num">
+                  {view.mappedCombinations}
+                  <span className="text-faint"> / {view.requiredCombinations}</span>
+                </bdi>
+              </dd>
+            </div>
+            {view.mappedCombinations > 0 && (
+              <div>
+                <dt className="t-label text-faint">שמות תואמים</dt>
+                <dd className="h3">
+                  <bdi className="ltr-num">
+                    {matchingTitles}
+                    <span className="text-faint"> / {view.mappedCombinations}</span>
+                  </bdi>
+                </dd>
+              </div>
             )}
-          </div>
-        )}
+          </dl>
 
-        {msg && (
-          <p
-            className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-              msg.tone === "ok" ? "bg-status-success-050 text-status-success" : "bg-status-danger-050 text-status-danger"
-            }`}
-          >
-            {msg.text}
-          </p>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={!canAct || busy}
-            onClick={() => setConfirming(true)}
-            className="min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? "מסנכרן…" : "יצירת תוכניות התעריף ב־Channex Staging"}
-          </button>
           {view.titleMismatches > 0 && (
+            <p className="t-secondary rounded-lg bg-status-warning-050 px-3 py-2 text-status-warning">
+              <bdi className="ltr-num">{view.titleMismatches}</bdi> שמות דורשים עדכון
+            </p>
+          )}
+
+          {view.planNames.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="t-label">תוכניות מקומיות:</span>
+              {view.planNames.map((name) => (
+                <span key={name} className="chip chip-neutral">
+                  {name}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {view.problems.length > 0 && (
+            <div className="flex flex-col gap-1 rounded-lg bg-status-danger-050 px-3 py-2">
+              <p className="t-label text-status-danger">
+                שגיאות (<bdi className="ltr-num">{view.problems.length}</bdi>)
+              </p>
+              {view.problems.slice(0, 5).map((p) => (
+                <p key={`${p.roomNumber}:${p.planName}`} className="t-label text-status-danger">
+                  חדר <bdi className="ltr-num">{p.roomNumber}</bdi> · {p.planName} — {p.message}
+                </p>
+              ))}
+              {view.problems.length > 5 && (
+                <p className="t-label text-status-danger">
+                  ועוד <bdi className="ltr-num">{view.problems.length - 5}</bdi>…
+                </p>
+              )}
+            </div>
+          )}
+
+          {msg && (
+            <p
+              className={`t-secondary rounded-lg px-3 py-2 ${
+                msg.tone === "ok"
+                  ? "bg-status-success-050 text-status-success"
+                  : "bg-status-danger-050 text-status-danger"
+              }`}
+            >
+              {msg.text}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={!canRename || busy}
-              onClick={() => setConfirmingTitles(true)}
-              className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-bold text-text2 transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!canAct || busy}
+              onClick={() => setConfirming(true)}
+              className="btn btn-primary"
             >
-              {busy ? "מעדכן…" : "עדכון שמות ב־Channex"}
+              {busy ? "מסנכרן…" : "יצירת תוכניות התעריף ב־Channex Staging"}
             </button>
-          )}
+            {view.titleMismatches > 0 && (
+              <button
+                type="button"
+                disabled={!canRename || busy}
+                onClick={() => setConfirmingTitles(true)}
+                className="btn btn-secondary"
+              >
+                {busy ? "מעדכן…" : "עדכון שמות ב־Channex"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {confirmingTitles && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 backdrop-blur-sm"
-          dir="rtl"
-          onClick={() => setConfirmingTitles(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-line bg-surface p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-base font-bold text-ink">
-              לעדכן את שמות {view.titleMismatches} תוכניות התעריף הקיימות ב־Channex?
-            </p>
-            <p className="text-sm text-muted">
-              יעודכנו רק שמות (title) של תוכניות קיימות — ללא יצירה, מחיקה, מחירים או זמינות.
-            </p>
-            <div className="flex flex-row-reverse gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={runTitleSync}
-                className="min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50"
-              >
+        <ConfirmDialog
+          title="עדכון שמות ב־Channex"
+          onClose={() => setConfirmingTitles(false)}
+          footer={
+            <>
+              <button type="button" disabled={busy} onClick={runTitleSync} className="btn btn-primary">
                 עדכן שמות
               </button>
-              <button
-                type="button"
-                onClick={() => setConfirmingTitles(false)}
-                className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 hover:bg-hover"
-              >
+              <button type="button" onClick={() => setConfirmingTitles(false)} className="btn btn-secondary">
                 ביטול
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p className="h4">
+            לעדכן את שמות <bdi className="ltr-num">{view.titleMismatches}</bdi> תוכניות התעריף הקיימות ב־Channex?
+          </p>
+          <p className="t-secondary">
+            יעודכנו רק שמות (title) של תוכניות קיימות — ללא יצירה, מחיקה, מחירים או זמינות.
+          </p>
+        </ConfirmDialog>
       )}
 
       {confirming && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4 backdrop-blur-sm"
-          dir="rtl"
-          onClick={() => setConfirming(false)}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-line bg-surface p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-base font-bold text-ink">
-              ליצור {view.creatable} תוכניות תעריף ב־Channex מתוך {view.planNames.length} התוכניות הקיימות ו־
-              {view.mappedRooms} החדרים הממופים?
-            </p>
-            <p className="text-sm text-muted">
-              התוכניות ייווצרו סגורות למכירה (Stop Sell) וללא מחירים אמיתיים — עד סנכרון ה-ARI הראשון.
-            </p>
-            <div className="flex flex-row-reverse gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={runSync}
-                className="min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50"
-              >
+        <ConfirmDialog
+          title="יצירת תוכניות תעריף ב־Channex Staging"
+          onClose={() => setConfirming(false)}
+          footer={
+            <>
+              <button type="button" disabled={busy} onClick={runSync} className="btn btn-primary">
                 צור תוכניות תעריף
               </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                className="min-h-11 rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 hover:bg-hover"
-              >
+              <button type="button" onClick={() => setConfirming(false)} className="btn btn-secondary">
                 ביטול
               </button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+        >
+          <p className="h4">
+            ליצור <bdi className="ltr-num">{view.creatable}</bdi> תוכניות תעריף ב־Channex מתוך{" "}
+            <bdi className="ltr-num">{view.planNames.length}</bdi> התוכניות הקיימות ו־
+            <bdi className="ltr-num">{view.mappedRooms}</bdi> החדרים הממופים?
+          </p>
+          <p className="t-secondary">
+            התוכניות ייווצרו סגורות למכירה (Stop Sell) וללא מחירים אמיתיים — עד סנכרון ה-ARI הראשון.
+          </p>
+        </ConfirmDialog>
       )}
     </section>
   );

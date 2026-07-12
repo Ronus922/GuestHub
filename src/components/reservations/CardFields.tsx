@@ -96,7 +96,7 @@ function CopyBtn({ value, label }: { value: string; label: string }) {
   return (
     <button
       type="button"
-      className="bw-btn bw-btn-ghost bw-cc-copy"
+      className="icon-btn"
       title={`העתקת ${label}`}
       onClick={async () => {
         try {
@@ -107,7 +107,7 @@ function CopyBtn({ value, label }: { value: string; label: string }) {
         }
       }}
     >
-      <Icon name="copy" size={14} />
+      <Icon name="copy" size={20} label={`העתקת ${label}`} />
     </button>
   );
 }
@@ -270,10 +270,10 @@ export function CardFields({
   return (
     <div className={`bw-ccbox ${entryOff ? "bw-ccbox-off" : ""}`}>
       <div className="bw-cc-top">
-        <Icon name="credit-card" size={19} />
+        <Icon name="credit-card" size={20} />
         פרטי כרטיס אשראי
-        {view.brandLabel && <span className="bw-opt">{view.brandLabel}</span>}
-        {view.isVirtual && <span className="bw-cc-tag">כרטיס וירטואלי</span>}
+        {view.brandLabel && <span className="field-hint">{view.brandLabel}</span>}
+        {view.isVirtual && <span className="chip chip-approval">כרטיס וירטואלי</span>}
       </div>
 
       {entryOff && (
@@ -284,12 +284,12 @@ export function CardFields({
 
       <fieldset disabled={entryOff} className="m-0 min-w-0 border-0 p-0">
         <div className="bw-grid2">
-          <label className="bw-fg">
-            <span className="bw-lbl">
+          <label className="field">
+            <span className="field-label">
               שם בעל הכרטיס {view.editable && <span className="bw-req">*</span>}
             </span>
             <input
-              className={`bw-fld ${roCls}`}
+              className={`field-input ${roCls}`}
               placeholder={ro ? "לא התקבל" : "שם כפי שמופיע על הכרטיס"}
               autoComplete="off"
               readOnly={ro}
@@ -297,15 +297,15 @@ export function CardFields({
               onChange={(e) => onChange((p) => ({ ...p, holder: e.target.value }))}
             />
           </label>
-          <label className="bw-fg">
-            <span className="bw-lbl">
+          <label className="field">
+            <span className="field-label">
               מספר כרטיס {view.editable && <span className="bw-req">*</span>}
               {revealed && <CopyBtn value={revealed.pan} label="מספר כרטיס" />}
             </span>
             <div className="bw-fld-wrap">
               <Icon name="credit-card" size={17} className="bw-fi" />
               <input
-                className={`bw-fld ic ${roCls} ${numberBad ? "bad" : ""}`}
+                className={`field-input bw-ic ltr-num ${roCls} ${numberBad ? "field-error" : ""}`}
                 dir="ltr"
                 inputMode="numeric"
                 placeholder={ro ? "לא התקבל" : "0000 0000 0000 0000"}
@@ -319,13 +319,13 @@ export function CardFields({
         </div>
 
         <div className="bw-grid2 mt-4">
-          <label className="bw-fg">
-            <span className="bw-lbl">
+          <label className="field">
+            <span className="field-label">
               תוקף {view.editable && <span className="bw-req">*</span>}
               {revealed && <CopyBtn value={view.exp} label="תוקף" />}
             </span>
             <input
-              className={`bw-fld ${roCls} ${expiryBad ? "bad" : ""}`}
+              className={`field-input ltr-num ${roCls} ${expiryBad ? "field-error" : ""}`}
               dir="ltr"
               inputMode="numeric"
               placeholder={ro ? "לא התקבל" : "MM/YY"}
@@ -336,13 +336,13 @@ export function CardFields({
             />
           </label>
           {showIdField && (
-            <label className="bw-fg">
-              <span className="bw-lbl">
-                תעודת זהות <span className="bw-opt">(לא חובה)</span>
+            <label className="field">
+              <span className="field-label">
+                תעודת זהות <span className="field-hint">(לא חובה)</span>
                 {revealed && view.idNumber && <CopyBtn value={view.idNumber} label="תעודת זהות" />}
               </span>
               <input
-                className={`bw-fld ${roCls} ${idBad ? "bad" : ""}`}
+                className={`field-input ltr-num ${roCls} ${idBad ? "field-error" : ""}`}
                 dir="ltr"
                 inputMode="numeric"
                 placeholder={ro ? (revealed ? "לא נשמר" : "מוצג לאחר הצגת פרטי אשראי") : "9 ספרות"}
@@ -356,11 +356,11 @@ export function CardFields({
           )}
         </div>
 
-        <label className="bw-fg mt-4 block">
-          <span className="bw-lbl">מקור פרטי הכרטיס</span>
+        <label className="field mt-4">
+          <span className="field-label">מקור פרטי הכרטיס</span>
           {view.editable ? (
             <select
-              className="bw-fld"
+              className="field-input"
               value={value.source}
               onChange={(e) => onChange((p) => ({ ...p, source: e.target.value as CardSource }))}
             >
@@ -372,16 +372,16 @@ export function CardFields({
             </select>
           ) : (
             /* the REAL origin of the values above — never hardcoded back-office */
-            <input className="bw-fld bw-ro" readOnly value={view.sourceLabel} />
+            <input className="field-input bw-ro" readOnly value={view.sourceLabel} />
           )}
         </label>
 
-        <label className="bw-fg mt-4 block">
-          <span className="bw-lbl">
-            הערות חיוב <span className="bw-opt">(לא חובה)</span>
+        <label className="field mt-4">
+          <span className="field-label">
+            הערות חיוב <span className="field-hint">(לא חובה)</span>
           </span>
           <textarea
-            className={`bw-fld ${roCls}`}
+            className={`field-input ${roCls}`}
             placeholder={ro ? "—" : "הערה לחיוב"}
             autoComplete="off"
             maxLength={500}
@@ -396,7 +396,7 @@ export function CardFields({
       {/* subordinate status metadata — NOT a second presentation of the card */}
       {(view.helper || view.availableUntil) && (
         <p className="bw-cc-status">
-          <Icon name="check" size={14} />
+          <Icon name="check" size={17} />
           <span>
             {view.helper}
             {view.availableUntil && (
@@ -416,13 +416,13 @@ export function CardFields({
       <div className="bw-cc-foot">
         {view.origin === "stored" && canReveal && (
           revealed ? (
-            <button type="button" className="bw-btn bw-btn-o" onClick={hide}>
-              <Icon name="circle-slash" size={15} />
+            <button type="button" className="btn btn-secondary" onClick={hide}>
+              <Icon name="circle-slash" size={17} />
               הסתרת פרטי אשראי
             </button>
           ) : (
-            <button type="button" className="bw-btn bw-btn-o" disabled={revealing} onClick={reveal}>
-              <Icon name="search" size={15} />
+            <button type="button" className="btn btn-secondary" disabled={revealing} onClick={reveal}>
+              <Icon name="search" size={17} />
               {revealing ? "טוען…" : "הצגת פרטי אשראי"}
             </button>
           )
@@ -434,12 +434,12 @@ export function CardFields({
           <span className="flex items-center gap-2">
             <button
               type="button"
-              className="bw-btn bw-btn-o"
+              className="btn btn-secondary"
               disabled
               onClick={charge}
               title={NO_GATEWAY_MESSAGE}
             >
-              <Icon name="finance" size={15} />
+              <Icon name="finance" size={17} />
               {charging ? "מחייב…" : `סליקה · ₪${Math.round(Math.max(0, chargeAmount)).toLocaleString()}`}
             </button>
             <span className="text-xs font-semibold text-muted">{NO_GATEWAY_MESSAGE}</span>
@@ -447,36 +447,36 @@ export function CardFields({
         )}
 
         {canRecordPayment && reservationId && !payOpen && (
-          <button type="button" className="bw-btn bw-btn-o" onClick={openPay}>
-            <Icon name="finance" size={15} />
+          <button type="button" className="btn btn-secondary" onClick={openPay}>
+            <Icon name="finance" size={17} />
             רישום תשלום שבוצע חיצונית
           </button>
         )}
 
         {/* switch the SAME fields to manual entry — not a second form */}
         {!view.editable && canManage && onToggleManual && (
-          <button type="button" className="bw-btn bw-btn-ghost" onClick={() => onToggleManual(true)}>
-            <Icon name="refresh" size={15} />
+          <button type="button" className="btn btn-tertiary" onClick={() => onToggleManual(true)}>
+            <Icon name="refresh" size={17} />
             {view.origin === "stored" ? "החלף כרטיס" : "הזנת כרטיס ידנית במקום"}
           </button>
         )}
         {view.editable && manualEntry && onToggleManual && (
-          <button type="button" className="bw-btn bw-btn-ghost" onClick={() => onToggleManual(false)}>
-            <Icon name="circle-slash" size={15} />
+          <button type="button" className="btn btn-tertiary" onClick={() => onToggleManual(false)}>
+            <Icon name="circle-slash" size={17} />
             ביטול — חזרה לפרטי הכרטיס הקיימים
           </button>
         )}
 
         {view.origin === "stored" && canManage && onDelete && (
-          <button type="button" className="bw-btn bw-btn-danger" disabled={deleting} onClick={onDelete}>
-            <Icon name="trash" size={15} />
+          <button type="button" className="btn btn-danger" disabled={deleting} onClick={onDelete}>
+            <Icon name="trash" size={17} />
             הסר כרטיס
           </button>
         )}
 
         {view.editable && !entryOff && (
           <span className="bw-cc-hint">
-            <Icon name="check" size={15} />
+            <Icon name="check" size={17} />
             הכרטיס נשמר מוצפן · לא מתבצע חיוב
           </span>
         )}
@@ -485,16 +485,16 @@ export function CardFields({
       {/* record a payment collected OUTSIDE GuestHub — not a charge; updates
           paid/balance only after explicit staff confirmation */}
       {payOpen && (
-        <div className="mt-3 rounded-lg bg-black/[0.03] p-3">
+        <div className="mt-3 rounded-xl bg-field p-4">
           <p className="mb-2 text-xs font-semibold text-muted">
             רישום תשלום שבוצע חיצונית — GuestHub אינו מבצע כאן חיוב. אשרו רק לאחר
             שהתשלום נגבה בפועל בטרמינל או אצל ספק חיצוני.
           </p>
           <div className="bw-grid2">
-            <label className="bw-fg">
-              <span className="bw-lbl">סכום (₪)</span>
+            <label className="field">
+              <span className="field-label">סכום (₪)</span>
               <input
-                className="bw-fld"
+                className="field-input ltr-num"
                 type="text"
                 inputMode="numeric"
                 dir="ltr"
@@ -502,12 +502,12 @@ export function CardFields({
                 onChange={(e) => setPayAmount(Math.max(0, Number(e.target.value.replace(/\D/g, "")) || 0))}
               />
             </label>
-            <label className="bw-fg">
-              <span className="bw-lbl">
-                אסמכתא / מספר אישור <span className="bw-opt">(לא חובה)</span>
+            <label className="field">
+              <span className="field-label">
+                אסמכתא / מספר אישור <span className="field-hint">(לא חובה)</span>
               </span>
               <input
-                className="bw-fld"
+                className="field-input ltr-num"
                 dir="ltr"
                 maxLength={120}
                 value={payRef}
@@ -522,14 +522,14 @@ export function CardFields({
                 <span className="flex-1" />
                 <button
                   type="button"
-                  className="bw-btn bw-btn-primary"
+                  className="btn btn-primary"
                   disabled={recording || payAmount <= 0}
                   onClick={record}
                 >
-                  <Icon name="check" size={15} />
+                  <Icon name="check" size={17} />
                   {recording ? "רושם…" : "אשר וסכם תשלום"}
                 </button>
-                <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setPayConfirm(false)}>
+                <button type="button" className="btn btn-tertiary" onClick={() => setPayConfirm(false)}>
                   חזרה
                 </button>
               </>
@@ -537,14 +537,14 @@ export function CardFields({
               <>
                 <button
                   type="button"
-                  className="bw-btn bw-btn-o"
+                  className="btn btn-secondary"
                   disabled={payAmount <= 0}
                   onClick={() => setPayConfirm(true)}
                 >
-                  <Icon name="finance" size={15} />
+                  <Icon name="finance" size={17} />
                   רישום תשלום
                 </button>
-                <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setPayOpen(false)}>
+                <button type="button" className="btn btn-tertiary" onClick={() => setPayOpen(false)}>
                   ביטול
                 </button>
               </>

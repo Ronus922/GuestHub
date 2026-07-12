@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   validateCancellationTiers,
   type CancellationTier,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/commercial/cancellation";
 import { saveCancellationPolicyAction, deleteCancellationPolicyAction } from "./commercial-actions";
 import { PolicyToolbar, PolicyCard, EmptyState } from "./PolicyList";
-import { Switch } from "./controls";
+import { Field, FormGrid, IconBtn, SettingsCard, Switch } from "./controls";
 import { CANCEL_TRIGGER, CANCEL_FEE, CALC_BASE, DISTRIBUTION, TIME_UNIT, opts } from "./labels";
 import type { CancellationPolicyView } from "./types";
 
@@ -72,31 +72,33 @@ export function CancellationSection({ policies }: { policies: CancellationPolicy
   const [editing, setEditing] = useState<Draft | null>(null);
 
   return (
-    <div className="bw-card">
-      <PolicyToolbar
-        title="מדיניות ביטול"
-        subtitle="תבניות מדיניות ביטול לשימוש חוזר — מספר שלבי עמלה בלתי מוגבל לכל מדיניות"
-        onAdd={() => setEditing(blankDraft())}
-      />
-      {policies.length === 0 ? (
-        <EmptyState label="אין עדיין מדיניות ביטול. הוסף מדיניות ראשונה." />
-      ) : (
-        <div className="flex flex-col gap-3">
-          {policies.map((p) => (
-            <PolicyCard
-              key={p.id}
-              name={p.name}
-              title={p.public_title}
-              code={p.code}
-              isDefault={p.is_default}
-              isActive={p.is_active}
-              summary={`${p.tiers.length} שלבים · ${DISTRIBUTION[p.distribution_scope]}`}
-              onEdit={() => setEditing(toDraft(p))}
-              onDelete={() => deleteCancellationPolicyAction(p.id)}
-            />
-          ))}
-        </div>
-      )}
+    <div className="card">
+      <div className="card-bd">
+        <PolicyToolbar
+          title="מדיניות ביטול"
+          subtitle="תבניות מדיניות ביטול לשימוש חוזר — מספר שלבי עמלה בלתי מוגבל לכל מדיניות"
+          onAdd={() => setEditing(blankDraft())}
+        />
+        {policies.length === 0 ? (
+          <EmptyState label="אין עדיין מדיניות ביטול. הוסף מדיניות ראשונה." />
+        ) : (
+          <div className="flex flex-col gap-3">
+            {policies.map((p) => (
+              <PolicyCard
+                key={p.id}
+                name={p.name}
+                title={p.public_title}
+                code={p.code}
+                isDefault={p.is_default}
+                isActive={p.is_active}
+                summary={`${p.tiers.length} שלבים · ${DISTRIBUTION[p.distribution_scope]}`}
+                onEdit={() => setEditing(toDraft(p))}
+                onDelete={() => deleteCancellationPolicyAction(p.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       {editing && <CancellationEditor draft={editing} onClose={() => setEditing(null)} />}
     </div>
   );
@@ -152,37 +154,37 @@ function CancellationEditor({ draft, onClose }: { draft: Draft; onClose: () => v
       title={d.id ? "עריכת מדיניות ביטול" : "מדיניות ביטול חדשה"}
       icon="circle-slash"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-faint">{warnings.length > 0 ? `${warnings.length} אזהרות` : ""}</span>
-          <div className="flex gap-2">
-            <button type="button" className="bw-btn bw-btn-o" onClick={onClose}>ביטול</button>
-            <button type="button" className="bw-btn bw-btn-primary" disabled={saving || !canSave} onClick={save}>
-              <Icon name="check" size={16} />
-              {saving ? "שומר…" : "שמירה"}
-            </button>
-          </div>
-        </div>
+        /* §7 flat footer: .dw-ft is row-reverse, so the FIRST DOM child (the
+           primary) hugs the LEFT edge, cancel to its right; the tertiary meta
+           rides the far right via me-auto (margin-left in RTL row-reverse). */
+        <>
+          <button type="button" className="btn btn-primary" disabled={saving || !canSave} onClick={save}>
+            <Icon name="check" size={20} />
+            {saving ? "שומר…" : "שמירה"}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>ביטול</button>
+          <span className="field-hint me-auto">{warnings.length > 0 ? `${warnings.length} אזהרות` : ""}</span>
+        </>
       }
     >
       <div className="flex flex-col gap-5">
-        <section className="bw-card">
-          <CardTitle icon="documents" title="פרטי מדיניות" />
-          <div className="bw-grid2">
+        <SettingsCard icon="documents" title="פרטי מדיניות">
+          <FormGrid>
             <Field label="שם פנימי" required>
-              <input className="bw-fld" value={d.name} onChange={(e) => set("name", e.target.value)} />
+              <input className="field-input" value={d.name} onChange={(e) => set("name", e.target.value)} />
             </Field>
             <Field label="כותרת ללקוח" required>
-              <input className="bw-fld" value={d.public_title} onChange={(e) => set("public_title", e.target.value)} />
+              <input className="field-input" value={d.public_title} onChange={(e) => set("public_title", e.target.value)} />
             </Field>
             <Field label="קוד/מפתח" required>
-              <input className="bw-fld" dir="ltr" value={d.code} onChange={(e) => set("code", e.target.value)} placeholder="flex-14d" />
+              <input className="field-input ltr-num" value={d.code} onChange={(e) => set("code", e.target.value)} placeholder="flex-14d" />
             </Field>
             <Field label="הפצה">
-              <select className="bw-fld" value={d.distribution_scope} onChange={(e) => set("distribution_scope", e.target.value as Draft["distribution_scope"])}>
+              <select className="field-input" value={d.distribution_scope} onChange={(e) => set("distribution_scope", e.target.value as Draft["distribution_scope"])}>
                 {opts(DISTRIBUTION).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
-          </div>
+          </FormGrid>
           <div className="mt-3 flex flex-wrap items-center gap-5">
             <label className="flex items-center gap-2 text-sm text-ink">
               <Switch checked={d.is_active} onChange={(v) => set("is_active", v)} label="פעיל" /> פעיל
@@ -191,23 +193,27 @@ function CancellationEditor({ draft, onClose }: { draft: Draft; onClose: () => v
               <Switch checked={d.is_default} onChange={(v) => set("is_default", v)} label="ברירת מחדל" /> ברירת מחדל
             </label>
           </div>
-          <div className="bw-grid2 mt-3">
-            <Field label="תיאור ללקוח">
-              <textarea className="bw-fld" rows={2} value={d.guest_description} onChange={(e) => set("guest_description", e.target.value)} />
-            </Field>
-            <Field label="הערות פנימיות">
-              <textarea className="bw-fld" rows={2} value={d.internal_notes} onChange={(e) => set("internal_notes", e.target.value)} />
-            </Field>
+          <div className="mt-3">
+            <FormGrid>
+              <Field label="תיאור ללקוח">
+                <textarea className="field-input" rows={2} value={d.guest_description} onChange={(e) => set("guest_description", e.target.value)} />
+              </Field>
+              <Field label="הערות פנימיות">
+                <textarea className="field-input" rows={2} value={d.internal_notes} onChange={(e) => set("internal_notes", e.target.value)} />
+              </Field>
+            </FormGrid>
           </div>
-        </section>
+        </SettingsCard>
 
-        <section className="bw-card">
-          <div className="mb-3 flex items-center justify-between">
-            <CardTitle icon="circle-slash" title="שלבי עמלת ביטול" />
-            <button type="button" className="bw-btn bw-btn-o" onClick={addTier}>
-              <Icon name="plus" size={15} /> הוסף שלב
+        <SettingsCard
+          icon="circle-slash"
+          title="שלבי עמלת ביטול"
+          action={
+            <button type="button" className="btn btn-secondary shrink-0" onClick={addTier}>
+              <Icon name="plus" size={20} /> הוסף שלב
             </button>
-          </div>
+          }
+        >
           <div className="flex flex-col gap-3">
             {d.tiers.map((t, i) => (
               <TierRow
@@ -222,20 +228,23 @@ function CancellationEditor({ draft, onClose }: { draft: Draft; onClose: () => v
               />
             ))}
           </div>
-        </section>
+        </SettingsCard>
 
         {(errors.length > 0 || warnings.length > 0) && (
-          <section className="bw-card">
-            {errors.map((e, i) => (
-              <p key={`e${i}`} className="flex items-center gap-2 text-sm text-status-danger">
-                <Icon name="warning" size={14} /> {e}
-              </p>
-            ))}
-            {warnings.map((w, i) => (
-              <p key={`w${i}`} className="flex items-center gap-2 text-sm" style={{ color: "#B4670A" }}>
-                <Icon name="info" size={14} /> {w}
-              </p>
-            ))}
+          <section className="card">
+            <div className="card-bd flex flex-col gap-1">
+              {errors.map((e, i) => (
+                <p key={`e${i}`} className="field-msg flex items-center gap-2">
+                  <Icon name="warning" size={13.5} /> {e}
+                </p>
+              ))}
+              {warnings.map((w, i) => (
+                // the approved §3.1 "ממתין לאישור" text colour — the system's one amber
+                <p key={`w${i}`} className="flex items-center gap-2 text-sm" style={{ color: STATUS_COLORS.approval.tx }}>
+                  <Icon name="info" size={13.5} /> {w}
+                </p>
+              ))}
+            </div>
           </section>
         )}
       </div>
@@ -266,9 +275,9 @@ function TierRow({
   const showNights = tier.fee_type === "nights";
 
   return (
-    <div className="rounded-xl border border-line bg-surface p-3">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-bold text-faint">שלב {index + 1}</span>
+        <span className="t-label">שלב {index + 1}</span>
         <div className="flex items-center gap-1">
           <IconBtn name="arrow-up" label="הזז מעלה" disabled={index === 0} onClick={() => onMove(-1)} />
           <IconBtn name="arrow-down" label="הזז מטה" disabled={index === total - 1} onClick={() => onMove(1)} />
@@ -276,70 +285,56 @@ function TierRow({
           <IconBtn name="trash" label="מחיקה" disabled={total <= 1} onClick={onRemove} danger />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="טריגר">
-          <select className="bw-fld" value={tier.trigger_type} onChange={(e) => onChange({ trigger_type: e.target.value as CancellationTriggerType })}>
+          <select className="field-input" value={tier.trigger_type} onChange={(e) => onChange({ trigger_type: e.target.value as CancellationTriggerType })}>
             {opts(CANCEL_TRIGGER).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
         {timed ? (
           <>
             <Field label="יחידה">
-              <select className="bw-fld" value={tier.time_unit ?? "days"} onChange={(e) => onChange({ time_unit: e.target.value as "hours" | "days" })}>
+              <select className="field-input" value={tier.time_unit ?? "days"} onChange={(e) => onChange({ time_unit: e.target.value as "hours" | "days" })}>
                 {opts(TIME_UNIT).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
             <Field label="מ־ (קרוב להגעה)">
-              <input className="bw-fld" dir="ltr" inputMode="numeric" value={tier.time_from ?? 0} onChange={(e) => onChange({ time_from: intOrNull(e.target.value) ?? 0 })} />
+              <input className="field-input ltr-num" inputMode="numeric" value={tier.time_from ?? 0} onChange={(e) => onChange({ time_from: intOrNull(e.target.value) ?? 0 })} />
             </Field>
             <Field label="עד (ריק=פתוח)">
-              <input className="bw-fld" dir="ltr" inputMode="numeric" value={tier.time_to ?? ""} onChange={(e) => onChange({ time_to: intOrNull(e.target.value) })} />
+              <input className="field-input ltr-num" inputMode="numeric" value={tier.time_to ?? ""} onChange={(e) => onChange({ time_to: intOrNull(e.target.value) })} />
             </Field>
           </>
         ) : (
-          <div className="col-span-3 self-end text-xs text-faint">אין טווח זמן לטריגר זה</div>
+          <div className="col-span-3 self-end field-hint">אין טווח זמן לטריגר זה</div>
         )}
         <Field label="סוג עמלה">
-          <select className="bw-fld" value={tier.fee_type} onChange={(e) => onChange({ fee_type: e.target.value as CancellationFeeType })}>
+          <select className="field-input" value={tier.fee_type} onChange={(e) => onChange({ fee_type: e.target.value as CancellationFeeType })}>
             {opts(CANCEL_FEE).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
         {showAmount && (
           <Field label="סכום">
-            <input className="bw-fld" dir="ltr" inputMode="decimal" value={tier.fee_amount} onChange={(e) => onChange({ fee_amount: numOf(e.target.value) })} />
+            <input className="field-input ltr-num" inputMode="decimal" value={tier.fee_amount} onChange={(e) => onChange({ fee_amount: numOf(e.target.value) })} />
           </Field>
         )}
         {showPercent && (
           <Field label="אחוז">
-            <input className="bw-fld" dir="ltr" inputMode="decimal" value={tier.fee_percent} onChange={(e) => onChange({ fee_percent: numOf(e.target.value) })} />
+            <input className="field-input ltr-num" inputMode="decimal" value={tier.fee_percent} onChange={(e) => onChange({ fee_percent: numOf(e.target.value) })} />
           </Field>
         )}
         {showNights && (
           <Field label="לילות">
-            <input className="bw-fld" dir="ltr" inputMode="numeric" value={tier.fee_nights} onChange={(e) => onChange({ fee_nights: intOrNull(e.target.value) ?? 0 })} />
+            <input className="field-input ltr-num" inputMode="numeric" value={tier.fee_nights} onChange={(e) => onChange({ fee_nights: intOrNull(e.target.value) ?? 0 })} />
           </Field>
         )}
         <Field label="בסיס חישוב">
-          <select className="bw-fld" value={tier.calc_base} onChange={(e) => onChange({ calc_base: e.target.value as CancellationTier["calc_base"] })}>
+          <select className="field-input" value={tier.calc_base} onChange={(e) => onChange({ calc_base: e.target.value as CancellationTier["calc_base"] })}>
             {opts(CALC_BASE).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
       </div>
     </div>
-  );
-}
-
-function IconBtn({ name, label, onClick, disabled, danger }: { name: Parameters<typeof Icon>[0]["name"]; label: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`grid h-8 w-8 place-items-center rounded-lg text-text2 transition-colors hover:bg-hover disabled:opacity-40 ${danger ? "hover:text-status-danger" : ""}`}
-    >
-      <Icon name={name} size={15} />
-    </button>
   );
 }
 

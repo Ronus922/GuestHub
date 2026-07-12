@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { Badge } from "@/components/ui/Badge";
 import { ToggleRow } from "@/app/(dashboard)/settings/controls";
 import { F, QtyStep } from "@/app/(dashboard)/rooms/RoomWizard";
 import { formatFullDate } from "@/lib/dates";
@@ -184,17 +183,10 @@ export function OverridesPanel({
       icon="percent"
       bodyClassName="p-4"
       footer={
-        <div className="flex items-center gap-2.5">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-faint">
-            <Icon name="info" size={15} />
-            {pendingCount > 0
-              ? `${upserts.length} עדכונים · ${removals.length} הסרות ממתינים לשמירה`
-              : "אין שינויים ממתינים"}
-          </span>
-          <span className="flex-1" />
-          <button type="button" className="btn btn-outline" onClick={onClose}>
-            סגור
-          </button>
+        /* §7 — flat .dw-ft children (row-reverse): the FIRST DOM child (the
+           primary) lands on the LEFT edge, "סגור" to its right; the pending
+           hint is pushed to the far right with me-auto. No wrapper. */
+        <>
           {canEdit && (
             <button
               type="button"
@@ -202,28 +194,37 @@ export function OverridesPanel({
               disabled={saving || pendingCount === 0}
               onClick={save}
             >
-              <Icon name="check" size={17} />
+              <Icon name="check" size={20} />
               {saving ? "שומר…" : "שמור שינויים"}
             </button>
           )}
-        </div>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            סגור
+          </button>
+          <span className="field-hint me-auto inline-flex items-center gap-1.5">
+            <Icon name="info" size={17} />
+            {pendingCount > 0
+              ? `${upserts.length} עדכונים · ${removals.length} הסרות ממתינים לשמירה`
+              : "אין שינויים ממתינים"}
+          </span>
+        </>
       }
     >
       <div className="flex flex-col gap-4">
         {/* staged additions/updates — saved on "שמור שינויים" */}
         {upserts.length > 0 && (
           <section className="flex flex-col gap-2 rounded-card border border-primary-100 bg-primary-050/40 p-4">
-            <h3 className="inline-flex items-center gap-2 text-sm font-bold text-primary">
-              <Icon name="plus" size={16} />
+            <h3 className="inline-flex items-center gap-2 text-[14px] font-bold text-primary">
+              <Icon name="plus" size={17} />
               שינויים ממתינים לשמירה ({upserts.length})
             </h3>
             {upserts.map((u) => (
               <div
                 key={`${u.sellableUnitId}-${u.date}`}
-                className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3"
+                className="flex flex-wrap items-center gap-2 rounded-[12px] border border-line bg-surface px-4 py-3"
               >
-                <span className="text-sm font-semibold text-ink">
-                  <span dir="ltr">{formatFullDate(u.date)}</span>
+                <span className="text-[14px] font-semibold text-ink">
+                  <bdi className="ltr-num">{formatFullDate(u.date)}</bdi>
                 </span>
                 <UnitLabel unit={unit(u.sellableUnitId)} />
                 <OverrideChips
@@ -235,13 +236,13 @@ export function OverridesPanel({
                   ctd={u.closedToDeparture}
                   stopSell={u.stopSell}
                 />
-                {u.note && <span className="text-xs text-muted">{u.note}</span>}
+                {u.note && <span className="text-[12px] text-muted">{u.note}</span>}
                 <span className="flex-1" />
                 <button
                   type="button"
                   aria-label="הסרה מהשינויים הממתינים"
                   title="הסרה מהשינויים הממתינים"
-                  className="grid h-11 w-11 place-items-center rounded-xl text-text2 transition-colors hover:bg-hover"
+                  className="icon-btn"
                   onClick={() =>
                     setUpserts((s) =>
                       s.filter(
@@ -250,7 +251,7 @@ export function OverridesPanel({
                     )
                   }
                 >
-                  <Icon name="close" size={16} />
+                  <Icon name="close" size={20} />
                 </button>
               </div>
             ))}
@@ -260,14 +261,14 @@ export function OverridesPanel({
         {/* add-row form */}
         {canEdit && (
           <section className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4">
-            <h3 className="inline-flex items-center gap-2 text-sm font-bold text-ink">
-              <Icon name="plus" size={16} />
+            <h3 className="h4 inline-flex items-center gap-2">
+              <Icon name="plus" size={17} />
               הוספת חריגת תאריך
             </h3>
             <div className="rm-frow">
               <F label="יחידה" required>
                 <select
-                  className="rm-fld"
+                  className="field-input"
                   value={form.unitId}
                   onChange={(e) => setForm((s) => ({ ...s, unitId: e.target.value }))}
                 >
@@ -283,7 +284,7 @@ export function OverridesPanel({
               <F label="תאריך" required>
                 <input
                   type="date"
-                  className="rm-fld"
+                  className="field-input"
                   dir="ltr"
                   value={form.date}
                   onChange={(e) => setForm((s) => ({ ...s, date: e.target.value }))}
@@ -293,7 +294,7 @@ export function OverridesPanel({
             <div className="rm-frow3">
               <F label="מחיר ללילה (₪)">
                 <input
-                  className="rm-fld"
+                  className="field-input"
                   dir="ltr"
                   type="number"
                   min={0}
@@ -338,7 +339,7 @@ export function OverridesPanel({
             <div className="rm-frow">
               <F label="הערה">
                 <input
-                  className="rm-fld"
+                  className="field-input"
                   dir="auto"
                   maxLength={500}
                   placeholder="הערה פנימית (אופציונלי)…"
@@ -348,7 +349,7 @@ export function OverridesPanel({
               </F>
               <div className="flex items-end">
                 <button type="button" className="btn btn-primary" onClick={addRow}>
-                  <Icon name="plus" size={17} />
+                  <Icon name="plus" size={20} />
                   הוסף
                 </button>
               </div>
@@ -357,30 +358,30 @@ export function OverridesPanel({
         )}
 
         {/* existing rows, grouped by date */}
-        {loading && <p className="p-2 text-sm text-muted">טוען חריגות תאריך…</p>}
+        {loading && <p className="p-2 text-[14px] text-muted">טוען חריגות תאריך…</p>}
         {!loading && rows.length === 0 && upserts.length === 0 && (
           <div className="flex flex-col items-center gap-2 rounded-card border border-dashed border-line bg-surface p-8 text-center">
-            <Icon name="percent" size={28} className="text-faint" />
-            <p className="text-sm font-medium text-text2">
+            <Icon name="percent" size={24} className="text-faint" />
+            <p className="text-[14px] font-medium text-muted">
               אין חריגות תאריך לתוכנית זו — המחירים נקבעים לפי הנוסחה
             </p>
           </div>
         )}
         {grouped.map(([date, dateRows]) => (
           <section key={date} className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-sm font-bold text-ink">
-              <Icon name="calendar" size={16} className="text-muted" />
+            <div className="flex items-center gap-2 text-[14px] font-bold text-ink">
+              <Icon name="calendar" size={17} className="text-muted" />
               {formatFullDate(date)}
-              <span dir="ltr" className="text-xs font-normal text-faint">
+              <bdi className="ltr-num text-[12px] font-normal text-faint">
                 {date}
-              </span>
+              </bdi>
             </div>
             {dateRows.map((r) => {
               const staged = isStagedRemoval(r);
               return (
                 <div
                   key={`${r.sellable_unit_id}-${r.date}`}
-                  className={`flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3 ${
+                  className={`flex flex-wrap items-center gap-2 rounded-[12px] border border-line bg-surface px-4 py-3 ${
                     staged ? "opacity-60" : ""
                   }`}
                 >
@@ -394,22 +395,20 @@ export function OverridesPanel({
                     ctd={r.closed_to_departure}
                     stopSell={r.stop_sell}
                   />
-                  {r.note && <span className="text-xs text-muted">{r.note}</span>}
-                  {staged && <Badge tone="danger">יוסר בשמירה</Badge>}
+                  {r.note && <span className="text-[12px] text-muted">{r.note}</span>}
+                  {staged && <span className="chip chip-unpaid">יוסר בשמירה</span>}
                   <span className="flex-1" />
                   {canEdit && (
                     <button
                       type="button"
                       aria-label={staged ? "ביטול הסרה" : "הסרת חריגה"}
                       title={staged ? "ביטול הסרה" : "הסרת חריגה"}
-                      className={`grid h-11 w-11 place-items-center rounded-xl transition-colors ${
-                        staged
-                          ? "text-text2 hover:bg-hover"
-                          : "text-status-danger hover:bg-status-danger-050"
+                      className={`icon-btn ${
+                        staged ? "" : "text-status-danger hover:bg-status-danger-050"
                       }`}
                       onClick={() => toggleRemoval(r)}
                     >
-                      <Icon name={staged ? "refresh" : "trash"} size={16} />
+                      <Icon name={staged ? "refresh" : "trash"} size={20} />
                     </button>
                   )}
                 </div>
@@ -425,12 +424,12 @@ export function OverridesPanel({
 // ---------- shared row pieces ----------
 
 function UnitLabel({ unit }: { unit: AssignableUnit | null }) {
-  if (!unit) return <span className="text-sm text-muted">יחידה לא מוכרת</span>;
+  if (!unit) return <span className="text-[14px] text-muted">יחידה לא מוכרת</span>;
   return (
-    <span className="text-sm font-medium text-text2">
+    <span className="text-[14px] font-medium text-muted">
       {unit.room_number && (
         <>
-          <span dir="ltr">{unit.room_number}</span>
+          <bdi className="ltr-num">{unit.room_number}</bdi>
           {" · "}
         </>
       )}
@@ -459,16 +458,16 @@ function OverrideChips({
   return (
     <>
       {price != null && (
-        <span dir="ltr" className="text-sm font-bold text-ink">
+        <bdi className="ltr-num text-[14px] font-bold text-ink">
           ₪{price}
-        </span>
+        </bdi>
       )}
-      {minThrough != null && <Badge tone="neutral">מינ׳ {minThrough} לילות</Badge>}
-      {minArrival != null && <Badge tone="neutral">מינ׳ הגעה {minArrival}</Badge>}
-      {maxStay != null && <Badge tone="neutral">מקס׳ {maxStay} לילות</Badge>}
-      {cta && <Badge tone="warning">CTA</Badge>}
-      {ctd && <Badge tone="warning">CTD</Badge>}
-      {stopSell && <Badge tone="danger">סגור למכירה</Badge>}
+      {minThrough != null && <span className="chip chip-neutral">מינ׳ {minThrough} לילות</span>}
+      {minArrival != null && <span className="chip chip-neutral">מינ׳ הגעה {minArrival}</span>}
+      {maxStay != null && <span className="chip chip-neutral">מקס׳ {maxStay} לילות</span>}
+      {cta && <span className="chip chip-approval">CTA</span>}
+      {ctd && <span className="chip chip-approval">CTD</span>}
+      {stopSell && <span className="chip chip-unpaid">סגור למכירה</span>}
     </>
   );
 }

@@ -139,17 +139,22 @@ export function MoveConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-label={OP_LABEL[op]}
-        className="ch"
+        className="modal"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="ch-hd">
-          <div className="ch-t">{OP_LABEL[op]}</div>
-          <div className="ch-s">
-            {proposal.guestName} · הזמנה #{proposal.reservationNumber}
+        <div className="md-hd">
+          <span className="md-icon">
+            <Icon name="calendar" size={20} />
+          </span>
+          <div className="min-w-0">
+            <div className="md-title">{OP_LABEL[op]}</div>
+            <div className="md-sub">
+              {proposal.guestName} · הזמנה <span className="ltr-num">#{proposal.reservationNumber}</span>
+            </div>
           </div>
         </div>
 
-        <div className="ch-body">
+        <div className="md-bd ch-body">
           <StayCard
             tag="לפני"
             nights={before.nights}
@@ -158,7 +163,7 @@ export function MoveConfirmDialog({
             roomLabel={before.roomLabel}
           />
           <div className="ch-arrow">
-            <Icon name="arrow-up" size={18} />
+            <Icon name="arrow-up" size={20} />
           </div>
           <StayCard
             tag="אחרי"
@@ -192,19 +197,24 @@ export function MoveConfirmDialog({
           </StayCard>
         </div>
 
-        <div className="ch-ft">
-          <span className="flex-1" />
-          <button type="button" className="ch-btng" onClick={onReject} disabled={committing}>
-            ביטול
-          </button>
+        {/* §7 footer: the primary action hugs the LEFT edge, "ביטול" to its right */}
+        <div className="md-ft">
           <button
             type="button"
-            className="ch-btn"
+            className="btn btn-primary"
             onClick={onConfirm}
             disabled={committing || Boolean(priceError)}
           >
-            <Icon name="check-circle" size={17} />
+            <Icon name="check-circle" size={20} />
             {committing ? "מעדכן…" : "אישור שינוי"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={onReject}
+            disabled={committing}
+          >
+            ביטול
           </button>
         </div>
       </div>

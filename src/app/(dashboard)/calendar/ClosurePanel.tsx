@@ -55,11 +55,38 @@ export function ClosurePanel({
     });
 
   return (
-    <SidePanel open={open} onClose={onClose} title="סגירת חדר זמנית" icon="circle-slash">
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="סגירת חדר זמנית"
+      icon="circle-slash"
+      // §7 footer: canonical .dw-ft (border-top, 16px/24px). The PRIMARY action
+      // is FIRST in the DOM — .dw-ft is row-reverse, so it hugs the LEFT edge
+      // with "ביטול" to its right.
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={saving || !roomId || !startDate || !endDate || nights < 1}
+            onClick={submit}
+          >
+            {saving ? "סוגר…" : "סגור חדר"}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            ביטול
+          </button>
+        </>
+      }
+    >
       <div className="space-y-5">
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-semibold text-text2">חדר *</span>
-          <select className="field" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+        <label className="field">
+          <span className="field-label">חדר *</span>
+          <select
+            className="field-input"
+            value={roomId}
+            onChange={(e) => setRoomId(e.target.value)}
+          >
             <option value="">בחירת חדר…</option>
             {rooms
               .filter((r) => r.status === "available" && r.is_active)
@@ -73,22 +100,20 @@ export function ClosurePanel({
         </label>
 
         <div className="grid grid-cols-2 gap-4">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-semibold text-text2">מתאריך *</span>
+          <label className="field">
+            <span className="field-label">מתאריך *</span>
             <input
               type="date"
-              className="field"
+              className="field-input"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
             />
           </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-semibold text-text2">
-              עד תאריך (לא כולל) *
-            </span>
+          <label className="field">
+            <span className="field-label">עד תאריך (לא כולל) *</span>
             <input
               type="date"
-              className="field"
+              className="field-input"
               value={endDate}
               min={startDate}
               onChange={(e) => setEndDate(e.target.value)}
@@ -97,15 +122,15 @@ export function ClosurePanel({
         </div>
 
         {nights > 0 && (
-          <p className="rounded-xl bg-[#FDE7EC] px-4 py-3 text-sm font-semibold text-[#BE123C]">
-            החדר ייסגר ל־{nights} לילות
+          <p className="cb-closenote">
+            החדר ייסגר ל־<span className="ltr-num">{nights}</span> לילות
           </p>
         )}
 
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-semibold text-text2">סיבה</span>
+        <label className="field">
+          <span className="field-label">סיבה</span>
           <input
-            className="field"
+            className="field-input"
             value={reason}
             placeholder="תחזוקה, צביעה, ליקוי…"
             maxLength={200}
@@ -113,19 +138,6 @@ export function ClosurePanel({
           />
         </label>
 
-        <div className="flex gap-3 pt-2">
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={saving || !roomId || !startDate || !endDate || nights < 1}
-            onClick={submit}
-          >
-            {saving ? "סוגר…" : "סגור חדר"}
-          </button>
-          <button type="button" className="btn btn-outline" onClick={onClose}>
-            ביטול
-          </button>
-        </div>
       </div>
     </SidePanel>
   );

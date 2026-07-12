@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
 import { formatBalance } from "@/lib/inventory-rules";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { PAY_STYLE } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
@@ -26,8 +27,11 @@ export type TooltipTarget = {
   anchor: { x: number; top: number; bottom: number };
 };
 
-const POP_W = 366; // InvitationCard.png, measured on the reference render
+// §8: the ONE canonical popover width (.popover in design-system.css). The
+// caret/clamp math below derives from this constant, so it MUST mirror the CSS.
+const POP_W = 316;
 const GAP = 10; // px gap between the pill edge and the tooltip (§1: 8–12px)
+const MARGIN = 12; // §8 viewport margin
 
 function hebDayMonth(d: string): string {
   return `${Number(d.slice(8, 10))} ב${HEBREW_MONTHS[Number(d.slice(5, 7)) - 1]}`;
@@ -59,17 +63,20 @@ export function ReservationTooltip({
     const h = ref.current.offsetHeight;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const left = Math.min(Math.max(target.anchor.x - POP_W / 2, 8), vw - POP_W - 8);
+    const left = Math.min(
+      Math.max(target.anchor.x - POP_W / 2, MARGIN),
+      vw - POP_W - MARGIN,
+    );
     // above = the whole card fits in the gap above the pill top
     const above = target.anchor.top - h - GAP;
     let place: "above" | "below";
     let top: number;
-    if (above >= 8) {
+    if (above >= MARGIN) {
       place = "above";
       top = above;
     } else {
       place = "below";
-      top = Math.min(target.anchor.bottom + GAP, vh - h - 8);
+      top = Math.min(target.anchor.bottom + GAP, vh - h - MARGIN);
     }
     // the speech-bubble pointer stays under the pill it belongs to, even after
     // the card is clamped away from the viewport edge (kept off the rounded
@@ -99,10 +106,12 @@ export function ReservationTooltip({
     partial: "שולם חלקית",
     unpaid: "ממתין לתשלום",
   };
+  // the tag is a canonical .chip wearing an approved §3.1 class — the triplet is
+  // never re-typed here
   const badge =
     stay.status === "draft"
-      ? { label: statusLabel.get("draft") ?? "ממתין לאישור", tx: "#B4670A", bg: "#FDF2E1" }
-      : { label: PAY_LABEL[stay.payment] ?? "ממתין לתשלום", tx: pal.tx, bg: pal.bg };
+      ? { label: statusLabel.get("draft") ?? "ממתין לאישור", chip: STATUS_COLORS.approval.chip }
+      : { label: PAY_LABEL[stay.payment] ?? "ממתין לתשלום", chip: pal.chip };
   // canonical balance (D52 §7): NOT floored — a credit is shown as a credit,
   // never as a zero balance. Shared formatter, one semantics everywhere.
   const bal = formatBalance(stay.total_price, stay.paid_amount);
@@ -114,7 +123,7 @@ export function ReservationTooltip({
   return (
     <div
       ref={ref}
-      className="cb-pop"
+      className="popover cb-pop"
       role="tooltip"
       aria-label={`הזמנה ${stay.reservation_number}`}
       data-place={pos?.place ?? "above"}
@@ -132,10 +141,10 @@ export function ReservationTooltip({
       }
     >
       <div className="cb-pop-h">
-        <span className="cb-pav">{initials}</span>
+        <span className="dw-icon cb-pav">{initials}</span>
         <div className="min-w-0">
           <p className="cb-pop-nm">
-            {stay.is_vip && <Icon name="star" size={13} className="cb-vip" />}
+            {stay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
             {/* a Latin guest name keeps its own direction inside the RTL card */}
             <bdi className="truncate">{stay.guest_name}</bdi>
           </p>
@@ -144,9 +153,9 @@ export function ReservationTooltip({
             {subRest && ` · ${subRest}`}
           </p>
         </div>
-        <span className="cb-pbadge" style={{ color: badge.tx, background: badge.bg }}>
+        <span className={`chip ${badge.chip}`}>
           {badge.label}
-          <span className="cb-d" style={{ background: badge.tx }} />
+          <span className="dot" />
         </span>
       </div>
 
@@ -173,13 +182,13 @@ export function ReservationTooltip({
         <p className="cb-pl">
           <Icon name="finance" size={17} className="cb-pli" />
           <span>
-            סה״כ <b>₪{stay.total_price.toLocaleString()}</b>
+            סה״כ <b className="ltr-num">₪{stay.total_price.toLocaleString()}</b>
             {bal.kind === "settled" ? (
               " · שולם במלואו"
             ) : (
               <>
                 {" "}
-                · {bal.label} <b>₪{bal.amount.toLocaleString()}</b>
+                · {bal.label} <b className="ltr-num">₪{bal.amount.toLocaleString()}</b>
               </>
             )}
           </span>

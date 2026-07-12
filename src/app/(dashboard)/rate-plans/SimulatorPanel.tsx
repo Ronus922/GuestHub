@@ -4,7 +4,6 @@ import { useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { Badge } from "@/components/ui/Badge";
 import { F, QtyStep } from "@/app/(dashboard)/rooms/RoomWizard";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import type {
@@ -88,10 +87,7 @@ function Money({ fmt, v }: { fmt: Intl.NumberFormat; v: number }) {
 
 function CodeChip({ code }: { code: string }) {
   return (
-    <span
-      dir="ltr"
-      className="rounded-md bg-hover px-2 py-0.5 font-mono text-[11px] text-muted"
-    >
+    <span dir="ltr" className="chip chip-neutral font-mono">
       {code}
     </span>
   );
@@ -101,11 +97,11 @@ function ErrorList({ errors }: { errors: PricingError[] }) {
   return (
     <ul className="flex flex-col gap-1.5">
       {errors.map((e, i) => (
-        <li key={`${e.code}-${i}`} className="flex flex-wrap items-center gap-2 text-sm">
+        <li key={`${e.code}-${i}`} className="flex flex-wrap items-center gap-2 text-[14px]">
           <span>{e.message}</span>
           <CodeChip code={e.code} />
           {e.date ? (
-            <span dir="ltr" className="text-xs opacity-80">
+            <span dir="ltr" className="text-[12px] opacity-80">
               {formatFullDate(e.date)}
             </span>
           ) : null}
@@ -119,12 +115,12 @@ function WarningList({ warnings }: { warnings: PricingWarning[] }) {
   return (
     <ul className="flex flex-col gap-1.5">
       {warnings.map((w, i) => (
-        <li key={`${w.code}-${i}`} className="flex flex-wrap items-center gap-2 text-sm">
-          <Icon name="info" size={14} />
+        <li key={`${w.code}-${i}`} className="flex flex-wrap items-center gap-2 text-[14px]">
+          <Icon name="info" size={13.5} />
           <span>{w.message}</span>
           <CodeChip code={w.code} />
           {w.date ? (
-            <span dir="ltr" className="text-xs opacity-80">
+            <span dir="ltr" className="text-[12px] opacity-80">
               {formatFullDate(w.date)}
             </span>
           ) : null}
@@ -145,8 +141,8 @@ function Stat({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs text-muted">{label}</span>
-      <span className={big ? "text-xl font-bold text-ink" : "text-sm font-semibold text-ink"}>
+      <span className="t-label">{label}</span>
+      <span className={big ? "h3" : "text-[14px] font-semibold text-ink"}>
         {children}
       </span>
     </div>
@@ -169,11 +165,11 @@ const NIGHT_HEADERS = [
 function NightsTable({ nights, fmt }: { nights: NightQuote[]; fmt: Intl.NumberFormat }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-line">
-      <table className="w-full min-w-[860px] text-sm text-ink">
+      <table className="w-full min-w-[860px] text-[14px] text-ink">
         <thead>
           <tr className="border-b border-line bg-hover">
             {NIGHT_HEADERS.map((h) => (
-              <th key={h} className="px-4 py-3 text-start text-xs font-medium text-muted">
+              <th key={h} className="px-4 py-3 text-start text-[12px] font-bold text-muted">
                 {h}
               </th>
             ))}
@@ -190,7 +186,7 @@ function NightsTable({ nights, fmt }: { nights: NightQuote[]; fmt: Intl.NumberFo
                   <span className="flex flex-col">
                     <Money fmt={fmt} v={n.basePrice} />
                     {n.basePriceSource ? (
-                      <span className="text-xs text-muted">
+                      <span className="text-[12px] text-muted">
                         {PRICE_SOURCE_HE[n.basePriceSource]}
                       </span>
                     ) : null}
@@ -209,7 +205,7 @@ function NightsTable({ nights, fmt }: { nights: NightQuote[]; fmt: Intl.NumberFo
                           : String(n.adjustmentValue)}
                       </span>
                       {n.adjustmentSource ? (
-                        <span className="text-xs text-muted">
+                        <span className="text-[12px] text-muted">
                           {ADJUSTMENT_SOURCE_HE[n.adjustmentSource]}
                         </span>
                       ) : null}
@@ -218,7 +214,7 @@ function NightsTable({ nights, fmt }: { nights: NightQuote[]; fmt: Intl.NumberFo
                     <span>—</span>
                   )}
                   {n.parentResolvedPrice != null ? (
-                    <span className="text-xs text-muted">
+                    <span className="text-[12px] text-muted">
                       אב: <Money fmt={fmt} v={n.parentResolvedPrice} />
                     </span>
                   ) : null}
@@ -255,19 +251,21 @@ function RoomCard({ room, fmt }: { room: RoomQuote; fmt: Intl.NumberFormat }) {
   const extraCount = room.extraAdults + room.extraChildren + room.extraInfants;
   const showExtra = room.extraGuestTotal > 0 || extraCount > 0;
   return (
-    <section className="flex flex-col gap-4 rounded-xl border border-line bg-surface p-4">
+    <section className="flex flex-col gap-4 rounded-[16px] border border-line bg-surface p-4 shadow-card">
       <header className="flex flex-wrap items-center gap-2">
-        <h4 className="text-base font-bold text-ink">חדר {room.roomNumber}</h4>
-        {room.roomName ? <span className="text-sm text-muted">{room.roomName}</span> : null}
-        <span className="text-sm text-ink">· {room.ratePlanName}</span>
+        <h4 className="h4">חדר {room.roomNumber}</h4>
+        {room.roomName ? <span className="text-[14px] text-muted">{room.roomName}</span> : null}
+        <span className="text-[14px] text-ink">· {room.ratePlanName}</span>
         <CodeChip code={room.ratePlanCode} />
         <span className="grow" />
-        <Badge tone={room.valid ? "success" : "danger"} dot>
+        <span className={`chip ${room.valid ? "chip-paid" : "chip-unpaid"}`}>
+          <span className="dot" />
           {room.valid ? "תקף" : "נדחה"}
-        </Badge>
-        <Badge tone={room.available ? "success" : "danger"} dot>
+        </span>
+        <span className={`chip ${room.available ? "chip-paid" : "chip-unpaid"}`}>
+          <span className="dot" />
           {room.available ? "פנוי" : "לא זמין"}
-        </Badge>
+        </span>
       </header>
 
       {room.errors.length > 0 ? (
@@ -281,15 +279,15 @@ function RoomCard({ room, fmt }: { room: RoomQuote; fmt: Intl.NumberFormat }) {
         </div>
       ) : null}
 
-      <p className="flex items-center gap-1.5 text-sm text-ink">
-        <Icon name="users-round" size={15} />
+      <p className="flex items-center gap-1.5 text-[14px] text-ink">
+        <Icon name="users-round" size={17} />
         מבוגרים {room.adults} · ילדים {room.children} · תינוקות {room.infants}
       </p>
 
       {showExtra ? (
-        <div className="flex flex-col gap-1.5 rounded-xl bg-primary-050 p-4 text-sm text-ink">
+        <div className="flex flex-col gap-1.5 rounded-[12px] bg-primary-050 p-4 text-[14px] text-ink">
           <p className="flex items-center gap-1.5 font-semibold">
-            <Icon name="baby" size={15} />
+            <Icon name="baby" size={17} />
             אורחים נוספים
           </p>
           <p>תפוסה כלולה: {room.includedOccupancy ?? "—"}</p>
@@ -318,7 +316,7 @@ function RoomCard({ room, fmt }: { room: RoomQuote; fmt: Intl.NumberFormat }) {
 
       {room.nights.length > 0 ? <NightsTable nights={room.nights} fmt={fmt} /> : null}
 
-      <p className="text-sm font-semibold text-ink">
+      <p className="text-[14px] font-semibold text-ink">
         סה&quot;כ לחדר: <Money fmt={fmt} v={room.roomSubtotal} />
       </p>
     </section>
@@ -343,11 +341,11 @@ function ResultsView({ quote, onClear }: { quote: PricingQuoteResult; onClear: (
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-bold text-ink">תוצאות הסימולציה</h3>
+        <h3 className="h4">תוצאות הסימולציה</h3>
         <button
           type="button"
           onClick={onClear}
-          className="min-h-11 rounded-xl px-3 text-sm text-muted transition-colors hover:bg-hover hover:text-ink"
+          className="btn btn-tertiary"
         >
           נקה תוצאות
         </button>
@@ -362,7 +360,7 @@ function ResultsView({ quote, onClear }: { quote: PricingQuoteResult; onClear: (
         }`}
       >
         <p className="flex items-center gap-2 font-semibold">
-          <Icon name={quote.valid ? "check" : "warning"} size={18} />
+          <Icon name={quote.valid ? "check" : "warning"} size={20} />
           {quote.valid ? "הצעת המחיר תקפה" : "הצעת המחיר אינה תקפה"}
         </p>
         {quote.errors.length > 0 ? <ErrorList errors={quote.errors} /> : null}
@@ -406,7 +404,7 @@ function ResultsView({ quote, onClear }: { quote: PricingQuoteResult; onClear: (
       ))}
 
       {/* 6 — engine meta */}
-      <section className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 text-xs text-muted">
+      <section className="flex flex-col gap-2 rounded-[12px] border border-line bg-surface p-4 text-[12px] text-muted">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span>
             גרסת מנוע: <span dir="ltr">{quote.engineVersion}</span>
@@ -425,7 +423,7 @@ function ResultsView({ quote, onClear }: { quote: PricingQuoteResult; onClear: (
           <div className="flex flex-wrap items-center gap-1.5">
             <span>חוקים שנבדקו:</span>
             {restrictions.map((r) => (
-              <span key={r} className="rounded-full bg-hover px-2 py-0.5 text-[11px]">
+              <span key={r} className="chip chip-neutral">
                 {RESTRICTION_GROUP_HE[r] ?? r}
               </span>
             ))}
@@ -434,8 +432,10 @@ function ResultsView({ quote, onClear }: { quote: PricingQuoteResult; onClear: (
         {sources.length > 0 ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <span>מקורות מחיר בשימוש:</span>
+            {/* price SOURCES wear the canonical .chip-brand so they stay visually
+                distinct from the grey restriction-group chips above */}
             {sources.map((s) => (
-              <span key={s} className="rounded-full bg-primary-050 px-2 py-0.5 text-primary">
+              <span key={s} className="chip chip-brand">
                 {PRICE_SOURCE_HE[s]}
               </span>
             ))}
@@ -549,7 +549,7 @@ export function SimulatorPanel({
               <input
                 type="date"
                 dir="ltr"
-                className="field"
+                className="field-input ltr-num"
                 value={checkIn}
                 onChange={(e) => setCheckIn(e.target.value)}
               />
@@ -558,16 +558,16 @@ export function SimulatorPanel({
               <input
                 type="date"
                 dir="ltr"
-                className="field"
+                className="field-input ltr-num"
                 value={checkOut}
                 onChange={(e) => setCheckOut(e.target.value)}
               />
             </F>
             {nights != null && nights >= 1 ? (
               <div className="flex items-center pb-3.5">
-                <Badge tone="brand">
-                  <span dir="ltr">{nights}</span> לילות
-                </Badge>
+                <span className="chip chip-neutral">
+                  <bdi className="ltr-num">{nights}</bdi> לילות
+                </span>
               </div>
             ) : null}
           </div>
@@ -576,12 +576,12 @@ export function SimulatorPanel({
             {rows.map((row) => (
               <div
                 key={row.key}
-                className="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-surface p-4"
+                className="flex flex-wrap items-end gap-3 rounded-[12px] border border-line bg-surface p-4"
               >
                 <div className="min-w-44 flex-1">
                   <F label="חדר" required>
                     <select
-                      className="field"
+                      className="field-input"
                       value={row.roomId}
                       onChange={(e) => setRow(row.key, { roomId: e.target.value })}
                     >
@@ -597,7 +597,7 @@ export function SimulatorPanel({
                 <div className="min-w-44 flex-1">
                   <F label="תוכנית תעריף" required>
                     <select
-                      className="field"
+                      className="field-input"
                       value={row.ratePlanId}
                       onChange={(e) => setRow(row.key, { ratePlanId: e.target.value })}
                     >
@@ -631,10 +631,10 @@ export function SimulatorPanel({
                     type="button"
                     aria-label="הסרת חדר"
                     title="הסרת חדר"
-                    className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-status-danger transition-colors hover:bg-status-danger-050"
+                    className="icon-btn shrink-0 text-status-danger hover:bg-status-danger-050"
                     onClick={() => setRows((rs) => rs.filter((r) => r.key !== row.key))}
                   >
-                    <Icon name="trash" size={17} />
+                    <Icon name="trash" size={20} />
                   </button>
                 ) : null}
               </div>
@@ -644,15 +644,15 @@ export function SimulatorPanel({
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              className="btn btn-outline"
+              className="btn btn-secondary"
               onClick={addRow}
               disabled={rows.length >= MAX_ROOMS}
             >
-              <Icon name="plus" size={17} />
+              <Icon name="plus" size={20} />
               הוסף חדר
             </button>
             <button type="button" className="btn btn-primary" onClick={submit} disabled={pending}>
-              <Icon name="calculator" size={17} />
+              <Icon name="calculator" size={20} />
               {pending ? "מחשב…" : "חשב מחיר"}
             </button>
           </div>

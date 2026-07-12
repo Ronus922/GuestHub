@@ -35,8 +35,8 @@ export function Sidebar({
         </div>
         {!collapsed && (
           <div className="min-w-0">
-            <p className="truncate font-extrabold text-ink">GuestHub</p>
-            <p className="truncate text-xs text-faint">Property Management</p>
+            <p className="h4 truncate">GuestHub</p>
+            <p className="t-label truncate text-faint">Property Management</p>
           </div>
         )}
       </div>
@@ -51,7 +51,7 @@ export function Sidebar({
             title="הזמנה חדשה"
             onClick={() => openNewReservation({ source: "global_sidebar" })}
           >
-            <Icon name="plus" size={18} />
+            <Icon name="plus" size={20} />
             {!collapsed && "הזמנה חדשה"}
           </button>
         </div>
@@ -66,7 +66,7 @@ export function Sidebar({
           return (
             <div key={section.title} className="mb-4">
               {!collapsed && (
-                <p className="px-3 pb-1 text-[11px] font-bold tracking-wide text-faint">
+                <p className="t-label px-3 pb-1 tracking-wide text-faint">
                   {section.title}
                 </p>
               )}
@@ -100,7 +100,7 @@ export function Sidebar({
                   {propertyIdentity}
                 </p>
               </div>
-              <Icon name="chevron" size={16} className="shrink-0 text-faint" />
+              <Icon name="chevron" size={17} className="shrink-0 text-faint" />
             </>
           )}
         </div>
@@ -108,11 +108,11 @@ export function Sidebar({
         <form action={logoutAction} className="mt-1">
           <button
             type="submit"
-            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-status-danger hover:bg-status-danger-050 ${
+            className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-status-danger hover:bg-status-danger-050 ${
               collapsed ? "justify-center" : ""
             }`}
           >
-            <Icon name="logout" size={18} />
+            <Icon name="logout" size={20} />
             {!collapsed && "התנתקות"}
           </button>
         </form>
@@ -139,12 +139,12 @@ function NavRow({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
 
   const active = isNavActive(item.href, pathname, searchParams.get("panel"));
 
-  const base = `relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors ${
+  const base = `relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] transition-colors ${
     collapsed ? "justify-center" : ""
   }`;
   const state = active
     ? "bg-primary-050 font-semibold text-primary"
-    : "text-text2 hover:bg-hover";
+    : "font-medium text-text2 hover:bg-hover";
 
   const inner = (
     <>

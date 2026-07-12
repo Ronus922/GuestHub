@@ -82,9 +82,9 @@ export function ChannexKeyReplacementForm({
       name="channex-api-key-replacement"
       autoComplete="off"
       onSubmit={submit}
-      className="flex flex-col gap-3 rounded-xl border border-line bg-hover p-4"
+      className="field rounded-xl border border-line bg-hover p-4"
     >
-      <label htmlFor={FIELD_NAME} className="text-sm font-semibold text-text2">
+      <label htmlFor={FIELD_NAME} className="field-label">
         {configured ? "מפתח API חדש" : "מפתח API"}
       </label>
 
@@ -104,16 +104,16 @@ export function ChannexKeyReplacementForm({
         placeholder="user-api-key מ-Channex"
         disabled={disabled || pending}
         aria-describedby="channex-key-help"
-        className="bw-fld min-w-[240px] flex-1 px-3 py-2 disabled:opacity-60"
+        className="field-input ltr-num min-w-[240px]"
         dir="ltr"
       />
 
-      <p id="channex-key-help" className="text-xs text-muted">
+      <p id="channex-key-help" className="field-hint">
         המפתח נשמר מוצפן, נבדק מול Channex לפני השמירה, ולא יוצג שוב לאחר מכן.
       </p>
 
       {error && (
-        <p role="alert" className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
+        <p role="alert" className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
           {error}
         </p>
       )}
@@ -122,16 +122,11 @@ export function ChannexKeyReplacementForm({
         <button
           type="submit"
           disabled={disabled || pending || trimmed === ""}
-          className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+          className="btn btn-primary"
         >
           {pending ? "בודק ושומר…" : configured ? "שמור מפתח חדש" : "שמור מפתח"}
         </button>
-        <button
-          type="button"
-          onClick={cancel}
-          disabled={pending}
-          className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 transition hover:bg-surface disabled:opacity-50"
-        >
+        <button type="button" onClick={cancel} disabled={pending} className="btn btn-secondary">
           ביטול
         </button>
       </div>

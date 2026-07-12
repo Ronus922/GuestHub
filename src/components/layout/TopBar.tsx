@@ -1,6 +1,6 @@
 "use client";
 
-import { Icon } from "@/components/shared/Icon";
+import { Icon, type IconName } from "@/components/shared/Icon";
 import { useActor } from "@/components/providers/TenantProvider";
 
 export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
@@ -9,26 +9,28 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
 
   return (
     <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-line bg-surface/90 px-4 backdrop-blur-md">
+      {/* icon-only controls: 36×36, radius 10, 20px icon (§4) */}
       <button
         type="button"
         onClick={onToggleSidebar}
-        aria-label="כווץ/הרחב תפריט"
-        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-muted hover:bg-hover"
+        className="icon-btn"
+        title="כווץ/הרחב תפריט"
       >
-        <Icon name="chevron" size={20} />
+        <Icon name="chevron" size={20} label="כווץ/הרחב תפריט" />
       </button>
 
-      {/* חיפוש */}
+      {/* חיפוש — the canonical 44px field (§5) */}
       <div className="relative w-full max-w-md">
         <Icon
           name="search"
-          size={18}
+          size={20}
           className="pointer-events-none absolute start-0 top-1/2 ms-3 -translate-y-1/2 text-faint"
         />
         <input
           type="search"
+          aria-label="חיפוש"
           placeholder="חיפוש הזמנות, אורחים או חדרים…"
-          className="h-11 w-full rounded-xl bg-field ps-11 pe-4 text-sm text-ink placeholder:text-faint focus:bg-surface"
+          className="field-input ps-11 pe-4"
         />
       </div>
 
@@ -45,20 +47,10 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   );
 }
 
-function IconButton({
-  icon,
-  label,
-}: {
-  icon: "languages" | "bell" | "moon";
-  label: string;
-}) {
+function IconButton({ icon, label }: { icon: IconName; label: string }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      className="grid h-11 w-11 place-items-center rounded-xl text-muted hover:bg-hover"
-    >
-      <Icon name={icon} size={20} />
+    <button type="button" className="icon-btn" title={label}>
+      <Icon name={icon} size={20} label={label} />
     </button>
   );
 }

@@ -102,15 +102,21 @@ const STATE_LABELS: Record<string, { label: string; tone: "success" | "warning" 
   disconnected: { label: "מנותק", tone: "muted" },
 };
 
+// §3 — every badge is the canonical .chip wearing one of the §3.1 triplets.
+const TONE_CHIP: Record<"success" | "warning" | "muted", string> = {
+  success: "chip-paid",
+  warning: "chip-approval",
+  muted: "chip-cancelled",
+};
+
 function stateBadge(state: string) {
   const s = STATE_LABELS[state] ?? { label: state, tone: "muted" as const };
-  const cls =
-    s.tone === "success"
-      ? "bg-status-success-050 text-status-success"
-      : s.tone === "warning"
-        ? "bg-status-warning-050 text-status-warning"
-        : "bg-hover text-muted";
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${cls}`}>{s.label}</span>;
+  return (
+    <span className={`chip ${TONE_CHIP[s.tone]}`}>
+      <span className="dot" />
+      {s.label}
+    </span>
+  );
 }
 
 export default async function ChannelsPage() {
@@ -144,17 +150,15 @@ export default async function ChannelsPage() {
   return (
     <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold text-ink">ערוצים</h1>
-        <p className="mt-1 text-sm font-semibold text-muted">
-          אבחון וסנכרון מנהל הערוצים (Channel Manager)
-        </p>
+      <div className="flex flex-col gap-1">
+        <h1 className="h1">ערוצים</h1>
+        <p className="t-secondary">אבחון וסנכרון מנהל הערוצים (Channel Manager)</p>
       </div>
 
       {/* Scope note — this is a diagnostics screen, not the rate editor */}
       <div className="flex items-start gap-3 rounded-2xl border border-line bg-primary-050 p-4">
         <Icon name="info" size={20} className="mt-0.5 shrink-0 text-primary" />
-        <div className="text-sm leading-relaxed text-text2">
+        <div className="t-secondary leading-relaxed">
           מסך זה <strong>מציג ומאבחן</strong> את מצב הסנכרון מול ערוצי ההפצה — סטטוס חיבור,
           שלמות המיפוי, תקינות התור והשגיאות האחרונות. הוא <strong>אינו עורך התעריפים</strong>;
           מחירים, הגבלות וזמינות נקבעים אך ורק ב&quot;עדכון קבוצתי&quot; שברשת התעריפים{" "}
@@ -198,7 +202,7 @@ export default async function ChannelsPage() {
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
           <Icon name="warning" size={20} className="mt-0.5 shrink-0 text-status-danger" />
-          <p className="text-sm font-semibold text-status-danger">{res.error}</p>
+          <p className="t-secondary text-status-danger">{res.error}</p>
         </div>
       ) : (
         <StatusView data={res.data as ChannelStatus} />
@@ -222,15 +226,15 @@ function StatusView({ data }: { data: ChannelStatus }) {
     <div className="flex flex-col gap-5">
       {/* Connections */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-ink">חיבורי ערוצים</h2>
+        <h2 className="h3">חיבורי ערוצים</h2>
         {connections.length === 0 ? (
-          <div className="grid min-h-[220px] place-items-center rounded-2xl border border-dashed border-line bg-surface">
-            <div className="flex max-w-md flex-col items-center gap-3 text-center">
+          <div className="card">
+            <div className="empty-state">
               <div className="grid h-16 w-16 place-items-center rounded-2xl bg-hover">
-                <Icon name="channels" size={30} className="text-faint" />
+                <Icon name="channels" size={24} className="text-faint" />
               </div>
-              <h3 className="text-lg font-bold text-ink">לא מחובר — אין חיבור ערוצים פעיל</h3>
-              <p className="text-sm text-muted">
+              <p className="empty-t">לא מחובר — אין חיבור ערוצים פעיל</p>
+              <p className="empty-s max-w-md">
                 לא הוגדר אף חיבור לערוץ הפצה. זהו המצב הצפוי בשלב זה — הקמת חיבור, מיפוי
                 וסנכרון יתווספו בשלב הבא (Phase 4B).
               </p>
@@ -239,28 +243,30 @@ function StatusView({ data }: { data: ChannelStatus }) {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {connections.map((c) => (
-              <div key={c.id} className="flex flex-col gap-3 rounded-2xl border border-line bg-surface p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-ink">
-                    {c.provider} · {c.environment}
-                  </span>
-                  {stateBadge(c.state)}
+              <div key={c.id} className="card">
+                <div className="card-bd flex flex-col gap-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="h4">
+                      <bdi>{c.provider}</bdi> · <bdi>{c.environment}</bdi>
+                    </span>
+                    {stateBadge(c.state)}
+                  </div>
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                    <InfoRow label="Channex Property" value={c.channex_property_id ?? "—"} code />
+                    <InfoRow label="מפתח API" value={c.api_key_hint ?? "—"} code />
+                    <InfoRow label="סנכרון יוצא" value={c.outbound_sync_enabled ? "פעיל" : "כבוי"} />
+                    <InfoRow label="ייבוא נכנס" value={c.inbound_sync_enabled ? "פעיל" : "כבוי"} />
+                    <InfoRow label="סנכרון יוצא אחרון" value={fmtDateTime(c.last_outbound_sync_at)} code />
+                    <InfoRow label="ייבוא נכנס אחרון" value={fmtDateTime(c.last_inbound_import_at)} code />
+                    <InfoRow label="התאמה אחרונה" value={fmtDateTime(c.last_reconciliation_at)} code />
+                    <InfoRow label="נדרש סנכרון מלא" value={c.full_sync_required ? "כן" : "לא"} />
+                  </dl>
+                  {c.last_error && (
+                    <p className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
+                      {c.last_error}
+                    </p>
+                  )}
                 </div>
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-                  <InfoRow label="Channex Property" value={c.channex_property_id ?? "—"} />
-                  <InfoRow label="מפתח API" value={c.api_key_hint ?? "—"} />
-                  <InfoRow label="סנכרון יוצא" value={c.outbound_sync_enabled ? "פעיל" : "כבוי"} />
-                  <InfoRow label="ייבוא נכנס" value={c.inbound_sync_enabled ? "פעיל" : "כבוי"} />
-                  <InfoRow label="סנכרון יוצא אחרון" value={fmtDateTime(c.last_outbound_sync_at)} />
-                  <InfoRow label="ייבוא נכנס אחרון" value={fmtDateTime(c.last_inbound_import_at)} />
-                  <InfoRow label="התאמה אחרונה" value={fmtDateTime(c.last_reconciliation_at)} />
-                  <InfoRow label="נדרש סנכרון מלא" value={c.full_sync_required ? "כן" : "לא"} />
-                </dl>
-                {c.last_error && (
-                  <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
-                    {c.last_error}
-                  </p>
-                )}
               </div>
             ))}
           </div>
@@ -269,14 +275,16 @@ function StatusView({ data }: { data: ChannelStatus }) {
 
       {/* Aggregate queue / health counts */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-ink">בריאות התור והסנכרון</h2>
+        <h2 className="h3">בריאות התור והסנכרון</h2>
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
           {statCards.map((s) => (
-            <div key={s.label} className="rounded-2xl border border-line bg-surface p-4">
-              <p className={`text-2xl font-extrabold ${s.danger ? "text-status-danger" : "text-ink"}`}>
-                {s.value}
-              </p>
-              <p className="mt-1 text-xs font-medium text-muted">{s.label}</p>
+            <div key={s.label} className="card">
+              <div className="card-bd">
+                <p className={`h2 ${s.danger ? "text-status-danger" : "text-ink"}`}>
+                  <bdi className="ltr-num">{s.value}</bdi>
+                </p>
+                <p className="t-label mt-1">{s.label}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -287,67 +295,92 @@ function StatusView({ data }: { data: ChannelStatus }) {
           mapping progress (the old "0/3" read as if they were the inventory
           unit). The Channex inventory unit is the individual physical room. */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-ink">מיפוי מלאי ל-Channex</h2>
+        <h2 className="h3">מיפוי מלאי ל-Channex</h2>
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl border border-line bg-surface p-4">
-            <p className="text-2xl font-extrabold text-ink">{counts.room_categories}</p>
-            <p className="mt-1 text-xs font-medium text-muted">קטגוריות חדרים ב-GuestHub</p>
-            <p className="text-[10px] font-medium text-faint">תיאוריות בלבד — אינן יחידת המלאי</p>
-          </div>
-          <div className="rounded-2xl border border-line bg-surface p-4">
-            <p className="text-2xl font-extrabold text-ink">{counts.active_rooms}</p>
-            <p className="mt-1 text-xs font-medium text-muted">חדרים פיזיים לסנכרון</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
-            <div>
-              <p className="text-2xl font-extrabold text-ink">
-                {counts.mapped_rooms}
-                <span className="text-base font-bold text-faint"> / {counts.active_rooms}</span>
+          <div className="card">
+            <div className="card-bd">
+              <p className="h2">
+                <bdi className="ltr-num">{counts.room_categories}</bdi>
               </p>
-              <p className="mt-1 text-xs font-medium text-muted">חדרים פיזיים ממופים</p>
+              <p className="t-label mt-1">קטגוריות חדרים ב-GuestHub</p>
+              <p className="field-hint">תיאוריות בלבד — אינן יחידת המלאי</p>
             </div>
-            {counts.active_rooms > counts.mapped_rooms && (
-              <span className="rounded-full bg-status-warning-050 px-2.5 py-0.5 text-xs font-bold text-status-warning">
-                {counts.active_rooms - counts.mapped_rooms} ללא מיפוי
-              </span>
-            )}
           </div>
-          <div className="rounded-2xl border border-line bg-surface p-4">
-            <p className="text-2xl font-extrabold text-ink">{counts.channex_room_types}</p>
-            <p className="mt-1 text-xs font-medium text-muted">סוגי חדרים ב-Channex</p>
-            <p className="text-[10px] font-medium text-faint">יחידה פיזית אחת לכל סוג חדר</p>
+          <div className="card">
+            <div className="card-bd">
+              <p className="h2">
+                <bdi className="ltr-num">{counts.active_rooms}</bdi>
+              </p>
+              <p className="t-label mt-1">חדרים פיזיים לסנכרון</p>
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-bd flex flex-wrap items-center gap-3">
+              <div>
+                <p className="h2">
+                  <bdi className="ltr-num">
+                    {counts.mapped_rooms}
+                    <span className="text-faint"> / {counts.active_rooms}</span>
+                  </bdi>
+                </p>
+                <p className="t-label mt-1">חדרים פיזיים ממופים</p>
+              </div>
+              {counts.active_rooms > counts.mapped_rooms && (
+                <span className="chip chip-approval">
+                  <span className="dot" />
+                  <bdi className="ltr-num">{counts.active_rooms - counts.mapped_rooms}</bdi> ללא מיפוי
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-bd">
+              <p className="h2">
+                <bdi className="ltr-num">{counts.channex_room_types}</bdi>
+              </p>
+              <p className="t-label mt-1">סוגי חדרים ב-Channex</p>
+              <p className="field-hint">יחידה פיזית אחת לכל סוג חדר</p>
+            </div>
           </div>
         </div>
       </section>
 
       {/* Recent unresolved sync errors */}
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-bold text-ink">שגיאות סנכרון אחרונות</h2>
+        <h2 className="h3">שגיאות סנכרון אחרונות</h2>
         {errors.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface p-4">
-            <Icon name="shield-check" size={20} className="shrink-0 text-status-success" />
-            <p className="text-sm font-semibold text-muted">אין שגיאות סנכרון פתוחות.</p>
+          <div className="card">
+            <div className="card-bd flex items-center gap-3">
+              <Icon name="shield-check" size={20} className="shrink-0 text-status-success" />
+              <p className="t-secondary">אין שגיאות סנכרון פתוחות.</p>
+            </div>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-line bg-surface">
+          <div className="card overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm">
               <thead>
-                <tr className="border-b border-line text-right text-xs font-bold text-faint">
-                  <th className="px-4 py-3">קוד</th>
-                  <th className="px-4 py-3">הודעה</th>
-                  <th className="px-4 py-3">טווח</th>
-                  <th className="px-4 py-3">מתי</th>
+                <tr className="border-b border-line">
+                  <th className="t-label px-4 py-3 text-start text-faint">קוד</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">הודעה</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">טווח</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">מתי</th>
                 </tr>
               </thead>
               <tbody>
                 {errors.map((e) => (
                   <tr key={e.id} className="border-b border-line last:border-0">
-                    <td className="px-4 py-3 font-mono text-xs text-status-danger">{e.error_code ?? "—"}</td>
+                    <td className="px-4 py-3 text-status-danger">
+                      <bdi className="ltr-num font-mono">{e.error_code ?? "—"}</bdi>
+                    </td>
                     <td className="px-4 py-3 text-text2">{e.error_message ?? "—"}</td>
                     <td className="px-4 py-3 text-muted">
-                      {e.date_from || e.date_to ? `${fmtDate(e.date_from)} – ${fmtDate(e.date_to)}` : "—"}
+                      <bdi className="ltr-num">
+                        {e.date_from || e.date_to ? `${fmtDate(e.date_from)} – ${fmtDate(e.date_to)}` : "—"}
+                      </bdi>
                     </td>
-                    <td className="px-4 py-3 text-muted">{fmtDateTime(e.created_at)}</td>
+                    <td className="px-4 py-3 text-muted">
+                      <bdi className="ltr-num">{fmtDateTime(e.created_at)}</bdi>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -360,12 +393,12 @@ function StatusView({ data }: { data: ChannelStatus }) {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
   return (
     <>
-      <dt className="text-faint">{label}</dt>
-      <dd className="truncate font-semibold text-text2" title={value}>
-        {value}
+      <dt className="t-label text-faint">{label}</dt>
+      <dd className="t-secondary truncate text-text2" title={value}>
+        {code ? <bdi className="ltr-num">{value}</bdi> : value}
       </dd>
     </>
   );

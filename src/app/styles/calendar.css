@@ -1,118 +1,138 @@
 /* ============================================================
-   /calendar occupancy board — ported 1:1 from the rendered reference
-   ref/html/rooms-calendar.html (extracted computed CSS, Phase 3 visual
-   pass). Values that match Azure Ethos tokens use the tokens; the rest
-   are the exact reference values — do not "round" them.
+   /calendar occupancy board — GUIDELINES.md compliant.
+
+   Every colour is a token (or a value DERIVED from a token with color-mix),
+   every font-size is in the §2 scale, every radius is one of {16,12,8,7}, and
+   the only shadows are var(--shadow-card) / var(--shadow-float) / the
+   var(--brand-shadow) glow. Chips, buttons, fields and cards are NOT restyled
+   here — the screen consumes .chip / .btn / .icon-btn / .card / .modal from
+   design-system.css.
+
+   What is still local, and why:
+   - the board GEOMETRY (column width, row height, bar inset/height, sticky
+     layers, month separator) — it is calculated, mirrored by
+     src/lib/calendar-interactions.ts, and must not mirror or shift;
+   - the dense day cell (price / min-nights / stop-sell), which lives inside a
+     ~37px-wide column: it uses the §12.1 dense-cell floor of 12px and cannot
+     carry a 28px chip;
+   - .cb-nav / .cb-seg / .cb-rangebox / .cb-todaybtn, which are SHARED with
+     /rates (RateToolbar, GroupUpdatePanel). They are declared here with the
+     canonical values; the calendar itself consumes .chip / .icon-btn.
    ============================================================ */
 
 @layer components {
 
 /* The reference renders at `line-height: normal`; the app inherits Tailwind's
    1.5, which inflated every label, price and pill row by ~2px and broke the
-   vertical rhythm against the reference. Elements needing a specific leading
-   still declare their own.
-   (The font itself is Assistant app-wide — see the --font-sans note in
-   base.css for why it has to be declared on :root and not in @theme.) */
+   vertical rhythm. Elements needing a specific leading still declare their own. */
 .cb-screen {
   line-height: normal;
 }
 
-/* ---------- toolbar ---------- */
-.cb-title {
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.4px;
-  color: var(--color-ink);
-}
-.cb-count {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--color-muted);
-  background: #e9ecf3;
-  padding: 4px 11px;
-  border-radius: 9px;
-  white-space: nowrap;
-}
+/* ---------- toolbar ----------
+   Shared with /rates. Sizes are the §4 control sizes: a 44px control row, a
+   36px control inside a 44px group, radius 12/8. */
 .cb-seg {
   display: flex;
-  background: #e9ecf3;
-  border-radius: 12px;
-  padding: 3px;
+  background: color-mix(in srgb, var(--line) 70%, #fff);
+  border-radius: var(--r-md);
+  padding: 4px;
 }
 .cb-seg button {
-  height: 34px;
+  height: 36px;
   padding: 0 16px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: transparent;
-  color: #5b6478;
+  color: var(--muted);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
 }
 .cb-seg button.on {
   background: #fff;
-  color: var(--color-ink);
-  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
 }
 .cb-rangebox {
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 40px;
+  height: 44px;
   background: #fff;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 12px;
-  padding: 0 6px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 0 4px;
 }
-.cb-rangebox .cb-nav {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
+/* alias of `.icon-btn` — kept ONLY for /rates RateToolbar; the calendar uses
+   the primitive. Same 36×36 / radius 10 anatomy (§4). */
+.cb-nav {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   border: none;
   background: transparent;
-  color: #5b6478;
+  color: var(--muted);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
 }
-.cb-rangebox .cb-nav:hover {
-  background: #f2f4f8;
+.cb-nav:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--ink);
 }
 .cb-rangebox .cb-rl {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   direction: ltr;
   padding: 0 8px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  height: 30px;
+  height: 36px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
-  color: var(--color-ink);
+  color: var(--ink);
   font-family: inherit;
   cursor: pointer;
   display: flex;
   align-items: center;
 }
 .cb-rangebox .cb-rl:hover {
-  background: #f2f4f8;
+  background: var(--surface-hover);
+}
+/* "היום" — the one brand-soft control (§1: --brand-soft is the "today" button) */
+.cb-todaybtn {
+  height: 44px;
+  padding: 0 22px;
+  border: 1.5px solid var(--brand-line);
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cb-todaybtn:hover {
+  background: var(--brand-line);
 }
 
-/* ---------- toolbar date-picker popover ---------- */
+/* ---------- toolbar date-picker popover (§8) ---------- */
 .cb-dpop {
   position: absolute;
   top: calc(100% + 6px);
   inset-inline-end: 0;
-  width: 288px;
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.26);
+  width: 316px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float);
   z-index: 80;
   direction: rtl;
   padding: 12px;
@@ -127,7 +147,7 @@
 .cb-dpop-m {
   font-size: 14px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .cb-dpop-g {
   display: grid;
@@ -135,61 +155,42 @@
   gap: 2px;
 }
 .cb-dpop-w {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--color-faint);
+  color: var(--faint);
   text-align: center;
   padding: 4px 0 6px;
 }
 .cb-dpop-d {
-  height: 34px;
+  height: 36px;
   border: none;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
-  color: var(--color-ink);
+  color: var(--ink);
   cursor: pointer;
   font-variant-numeric: tabular-nums;
 }
 .cb-dpop-d:hover {
-  background: #f2f4f8;
+  background: var(--surface-hover);
 }
 .cb-dpop-d.out {
-  color: #b9c0d6;
+  color: var(--faint);
 }
 .cb-dpop-d.tdy {
-  box-shadow: inset 0 0 0 1.5px var(--color-primary);
-  color: var(--color-primary);
+  box-shadow: inset 0 0 0 1.5px var(--brand);
+  color: var(--brand);
 }
 .cb-dpop-d.on {
-  background: var(--color-primary);
+  background: var(--brand);
   color: #fff;
 }
-.cb-todaybtn {
-  height: 40px;
-  padding: 0 18px;
-  border: 1.5px solid #dfe5fb;
-  border-radius: 12px;
-  background: var(--color-primary-050);
-  color: var(--color-primary);
-  font-family: inherit;
-  font-size: 13.5px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.cb-todaybtn:hover {
-  background: #dfe5fb;
-}
 
-/* ---------- KPI row ---------- */
+/* ---------- KPI row ----------
+   The box itself is a `.card`; only the KPI layout lives here. */
 .cb-kpi {
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
   padding: 14px 16px;
   display: flex;
   align-items: center;
@@ -197,87 +198,86 @@
   min-width: 0;
 }
 .cb-kpi-l {
-  font-size: 13px;
-  color: var(--color-muted);
+  font-size: 12px;
+  color: var(--muted);
   font-weight: 700;
   white-space: nowrap;
 }
 .cb-kpi-v {
-  font-size: 22px;
+  font-size: 21px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1.15;
   white-space: nowrap;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .cb-kpi-v .cb-u {
   font-size: 13.5px;
-  color: var(--color-faint);
+  color: var(--faint);
   font-weight: 700;
 }
 .cb-kpi-ic {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
 }
-.cb-kpi-delta {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 12px;
-  font-weight: 700;
-  border-radius: 7px;
-  padding: 2px 7px;
-  white-space: nowrap;
+/* icon tints — DERIVED from the §1 status tokens, never new colours */
+.cb-kpi-ic.k-ok {
+  background: color-mix(in srgb, var(--ok) 12%, #fff);
+  color: color-mix(in srgb, var(--ok) 75%, var(--ink));
 }
-
-/* ---------- payment legend ---------- */
-.cb-leg {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 9px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 700;
-  color: #5b6478;
-  cursor: pointer;
-  white-space: nowrap;
+.cb-kpi-ic.k-warn {
+  background: color-mix(in srgb, var(--warn) 14%, #fff);
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
 }
-.cb-leg:hover {
-  background: #e9ecf3;
+.cb-kpi-ic.k-info {
+  background: color-mix(in srgb, var(--info) 12%, #fff);
+  color: color-mix(in srgb, var(--info) 80%, var(--ink));
 }
-.cb-leg.on {
-  background: #fff;
-  box-shadow: inset 0 0 0 1.5px var(--color-primary);
-  color: var(--color-ink);
-}
-.cb-leg .cb-d {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+/* occupancy ring — a token conic gradient; icons and vector art come from <Icon> (§10).
+   --cb-pct (0–100) is set by the component. */
+.cb-donut {
+  position: relative;
+  width: 44px;
+  height: 44px;
   flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(
+    var(--brand) calc(var(--cb-pct, 0) * 3.6deg),
+    var(--line) 0
+  );
+}
+.cb-donut span {
+  width: 33px;
+  height: 33px;
+  border-radius: 50%;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
 }
 
-/* ---------- board card + scroll container ---------- */
+/* the "הכל" filter chip has no status triplet — it wears the neutral dot */
+.cb-dot-all {
+  background: var(--muted);
+}
+
+/* ---------- board card + scroll container ----------
+   The frame (radius / border / shadow) comes from `.card`. */
 .cb-calcard {
   flex: 1;
   min-height: 0;
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 8px 22px rgba(16, 24, 40, 0.05);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 .cb-calwrap {
   flex: 1;
@@ -317,7 +317,7 @@
   bottom: 0;
   inset-inline-start: calc(var(--cb-room-col) + (100% - var(--cb-room-col)) * var(--cb-sep));
   width: 3px;
-  background: #b9c2d8;
+  background: color-mix(in srgb, var(--faint) 75%, #fff);
   pointer-events: none;
 }
 
@@ -348,9 +348,9 @@
   position: sticky;
   inset-inline-start: 0;
   z-index: 7;
-  background: #fbfcfe;
+  background: color-mix(in srgb, var(--bg) 30%, #fff);
   flex: none;
-  border-inline-end: 1px solid #e4e8f0;
+  border-inline-end: 1px solid var(--line);
 }
 .cb-hcells {
   flex: 1;
@@ -361,12 +361,12 @@
   height: var(--cb-month-h);
 }
 .cb-mrow .cb-hcorn {
-  border-bottom: 1px solid #eef0f5;
+  border-bottom: 1px solid var(--line);
 }
 .cb-mseg {
   height: var(--cb-month-h);
-  background: #fbfcfe;
-  border-bottom: 1px solid #eef0f5;
+  background: color-mix(in srgb, var(--bg) 30%, #fff);
+  border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -375,14 +375,12 @@
 .cb-mseg .cb-min {
   font-size: 17px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
   letter-spacing: -0.2px;
   padding: 0 12px;
   white-space: nowrap;
-  /* The reference only ever shows one month, so it never has to survive a
-     narrow segment. A real range straddles months, and at 17px a one-day tail
-     segment hard-clips mid-glyph ("אוגוסט 2"). Ellipsise instead — the normal,
-     wide segment is unaffected. */
+  /* A real range straddles months, and a one-day tail segment would hard-clip
+     mid-glyph ("אוגוסט 2"). Ellipsise instead — the wide segment is unaffected. */
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
@@ -392,7 +390,7 @@
 }
 .cb-drow .cb-hcorn {
   background: #fff;
-  border-bottom: 1px solid #e4e8f0;
+  border-bottom: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -402,23 +400,23 @@
 .cb-drow .cb-hcorn .cb-t {
   font-size: 15px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .cb-drow .cb-hcorn .cb-cnt {
-  font-size: 12.5px;
-  color: var(--color-faint);
+  font-size: 12px;
+  color: var(--faint);
   font-weight: 700;
 }
-/* Day header scaled to the supplied day-header screenshot: small weekday
-   label above a LARGE bold date number, today in a blue rounded pill,
-   weekend weekday labels in amber. */
+/* Day header: small weekday label above a large bold date number, today in a
+   brand pill, weekend weekday labels amber (derived from --warn). */
 .cb-dcell {
   flex: 1 1 0;
   min-width: 0;
   height: var(--cb-day-h);
   background: #fff;
-  border-bottom: 1px solid #e4e8f0;
-  border-inline-end: 1px solid #f3f5f9;
+  border-bottom: 1px solid var(--line);
+  /* §12.2 — the ONE permitted extra line value: the internal grid line */
+  border-inline-end: 1px solid var(--grid-line);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -426,37 +424,37 @@
   gap: 1px;
 }
 .cb-dcell.we {
-  background: #fbf6e7;
+  background: color-mix(in srgb, var(--warn) 11%, #fff);
 }
 .cb-dcell.we .cb-dw {
-  color: #b4670a;
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
 }
 .cb-dcell .cb-dw {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
-  color: var(--color-muted);
+  color: var(--muted);
   white-space: nowrap;
 }
 .cb-dcell .cb-dn {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
   min-width: 28px;
   height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 0 4px;
 }
 .cb-dcell.td .cb-dn {
-  background: var(--color-primary);
+  background: var(--brand);
   color: #fff;
-  box-shadow: 0 4px 10px rgba(37, 64, 200, 0.28);
+  box-shadow: var(--brand-shadow);
 }
 .cb-dcell.td .cb-dw {
-  color: var(--color-primary);
+  color: var(--brand);
   font-weight: 800;
 }
 
@@ -475,8 +473,8 @@
   justify-content: center;
   gap: 3px;
   padding: 0 14px;
-  border-bottom: 1px solid #f1f3f7;
-  border-inline-end: 1px solid #e4e8f0;
+  border-bottom: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
   flex: none;
 }
 .cb-rl1 {
@@ -488,13 +486,16 @@
 .cb-rnum {
   font-size: 19px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
   letter-spacing: -0.2px;
 }
+.cb-rnum.hold {
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+}
 .cb-rtype {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
-  color: var(--color-muted);
+  color: var(--muted);
   letter-spacing: 0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -504,28 +505,47 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--color-faint);
+  color: var(--faint);
 }
-.cb-rl2 .cb-d {
-  width: 6px;
-  height: 6px;
+.cb-rl2.hold {
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+}
+/* room state — the dot and the word share ONE colour (§1 status tokens) */
+.cb-rst {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.cb-rst .cb-d {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex: none;
+  background: currentColor;
+}
+.cb-rst.free {
+  color: var(--ok);
+}
+.cb-rst.busy {
+  color: var(--danger);
+}
+.cb-rst.off {
+  color: var(--faint);
 }
 .cb-rstrip {
   flex: 1;
   height: var(--cb-row-h);
   position: relative;
-  border-bottom: 1px solid #f1f3f7;
+  border-bottom: 1px solid var(--line);
   min-width: 0;
   display: flex;
 }
 .cb-rcell {
   flex: 1 1 0;
   min-width: 0;
-  border-inline-end: 1px solid #f3f5f9;
+  border-inline-end: 1px solid var(--grid-line);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -539,28 +559,27 @@
   cursor: cell;
 }
 .cb-rcell.we {
-  background: #fcf9ef;
+  background: color-mix(in srgb, var(--warn) 6%, #fff);
 }
 .cb-rcell.td {
-  background: #eef1fd;
+  background: var(--brand-soft);
 }
 .cb-rcell.blocked {
   background-image: repeating-linear-gradient(
     45deg,
     transparent,
     transparent 6px,
-    #f1f3f6 6px,
-    #f1f3f6 12px
+    var(--line) 6px,
+    var(--line) 12px
   );
 }
-/* #7e7e7e is the reference's RENDERED price colour, not the one its stylesheet
-   declares (a later rule overrides `var(--ink)`); all 252 price cells in the
-   bundle compute to it, and the approved PNG shows grey prices. Read from the
-   browser, not from the rule. */
+/* Dense day cell (§12.1): a ~37px-wide column in the 30-day view. 12px is the
+   absolute floor of the scale and a 28px .chip cannot fit here, so the price,
+   the min-nights hint and the stop-sell flag stay compact markers. */
 .cb-rcell .cb-pr {
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 800;
-  color: #7e7e7e;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -570,56 +589,56 @@
   gap: 2px;
   font-size: 12px;
   font-weight: 700;
-  color: #a6adc0;
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
-/* commercial stop-sell indicator (§1): a compact hatch-free red chip on an
-   empty sellable cell. Deliberately unlike the gray dashed physical
-   .cb-blockbar and the rounded reservation pills — a per-day commercial flag,
-   not a multi-day bar. Its price mate (.cb-pr.cx) reads dimmed + struck. */
+/* commercial stop-sell indicator (§1): a per-day flag on an empty sellable cell,
+   deliberately unlike the gray dashed physical .cb-blockbar and the reservation
+   pills. Its price mate (.cb-pr.cx) reads dimmed + struck. */
 .cb-rcell .cb-pr.cx {
-  color: #b9c0d6;
+  color: var(--faint);
   text-decoration: line-through;
-  text-decoration-color: #d98a9a;
+  text-decoration-color: color-mix(in srgb, var(--danger) 55%, #fff);
 }
 .cb-rcell .cb-cx {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-size: 9.5px;
+  font-size: 12px;
   font-weight: 800;
-  color: #b4231f;
-  background: #fdecec;
-  border-radius: 5px;
-  padding: 1px 5px;
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  border-radius: var(--r-xs);
+  padding: 0 5px;
   line-height: 1.4;
   white-space: nowrap;
 }
 
-/* ---------- reservation pill ---------- */
+/* ---------- reservation pill ----------
+   The §3.1 triplet (bg / border / text) is applied by the component from
+   src/lib/status-colors.ts — never re-typed here. */
 .cb-resbar {
   position: absolute;
   top: var(--cb-bar-top);
   height: var(--cb-bar-h);
-  border-radius: 11px;
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   gap: 6px;
   padding-inline: 12px 13px;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
   cursor: grab;
   overflow: hidden;
   white-space: nowrap;
   border: 1.5px solid transparent;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.07);
+  box-shadow: var(--shadow-card);
   touch-action: none;
   z-index: 2;
   font-family: inherit;
   text-align: start;
 }
 .cb-resbar:hover {
-  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.16);
+  box-shadow: var(--shadow-float);
   z-index: 4;
 }
 .cb-resbar.lk {
@@ -633,8 +652,8 @@
 }
 .cb-resbar .cb-vip,
 .cb-ghost .cb-vip {
-  color: #f5b04c;
-  fill: #f5b04c;
+  color: var(--vip);
+  fill: var(--vip);
   flex: none;
 }
 .cb-resbar .cb-nm,
@@ -653,20 +672,22 @@
   font-weight: 800;
   opacity: 0.8;
   flex: none;
+  font-variant-numeric: tabular-nums;
 }
+/* a clipped edge reads as "continues beyond the view" — the corner is cut off */
 .cb-resbar.cutR {
-  border-start-end-radius: 2px;
-  border-end-end-radius: 2px;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
 }
 .cb-resbar.cutL {
-  border-start-start-radius: 2px;
-  border-end-start-radius: 2px;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
 }
 .cb-resbar.dim {
   opacity: 0.18;
 }
 .cb-resbar.sel {
-  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.16);
+  box-shadow: var(--shadow-float);
   z-index: 4;
 }
 .cb-resbar.src {
@@ -684,7 +705,7 @@
 
 /* departure resize handle — lives INSIDE the pill's inline-end edge; the
    12px strip is the hit target, the visible affordance is the thin 3px
-   line revealed on hover (reference .rh). */
+   line revealed on hover. */
 .cb-rh {
   position: absolute;
   inset-inline-end: 0;
@@ -704,7 +725,7 @@
   bottom: 12px;
   inset-inline-end: 4px;
   width: 3px;
-  border-radius: 2px;
+  border-radius: 999px;
   background: currentColor;
   opacity: 0;
   transition: opacity 0.12s;
@@ -714,45 +735,44 @@
   opacity: 0.45;
 }
 
-/* ---------- closures / blocks ---------- */
+/* ---------- closures / blocks ----------
+   Colours come from the §3.1 neutral ("הוחזר") triplet, applied by the
+   component from status-colors.ts. */
 .cb-blockbar {
   position: absolute;
   top: var(--cb-bar-top);
   height: var(--cb-bar-h);
-  border-radius: 11px;
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   overflow: hidden;
   white-space: nowrap;
-  border: 1.5px dashed #aeb8c6;
-  background: #e9ecf1;
-  color: #3c4a5e;
+  border: 1.5px dashed transparent;
   z-index: 1;
   font-family: inherit;
   cursor: pointer;
 }
 
-/* ---------- unassigned holds lane ---------- */
+/* ---------- unassigned holds lane ----------
+   Colours come from the §3.1 "ממתין לאישור" triplet (status-colors.ts). */
 .cb-holdbar {
   position: absolute;
   top: var(--cb-bar-top);
   height: var(--cb-bar-h);
-  border-radius: 11px;
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   overflow: hidden;
   white-space: nowrap;
-  border: 1.5px dashed #ebc078;
-  background: #fdf2e1;
-  color: #8a5207;
+  border: 1.5px dashed transparent;
 }
 
 /* ---------- drag ghost layer ----------
@@ -763,17 +783,17 @@
   top: 0;
   left: 0;
   height: var(--cb-bar-h);
-  border-radius: 11px;
+  border-radius: var(--r-md);
   display: none;
   align-items: center;
   gap: 6px;
   padding-inline: 12px 13px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
-  border: 1.5px solid var(--color-primary);
-  box-shadow: 0 12px 28px rgba(37, 64, 200, 0.3);
+  border: 1.5px solid var(--brand);
+  box-shadow: var(--shadow-float);
   pointer-events: none;
   /* same layer as pills (last in DOM wins) so it still slides under the
      sticky room column and header while dragging */
@@ -792,55 +812,55 @@
 .cb-calin.resizing .cb-resbar,
 .cb-calin.selecting .cb-resbar {
   z-index: 2 !important;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.07) !important;
+  box-shadow: var(--shadow-card) !important;
 }
 .cb-ghost[data-invalid="true"] {
-  background: #fdecec !important;
-  border-color: var(--color-status-danger);
-  color: #b4231f !important;
-  box-shadow: 0 12px 28px rgba(220, 38, 38, 0.25);
+  background: color-mix(in srgb, var(--danger) 10%, #fff) !important;
+  border-color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink)) !important;
+  box-shadow: var(--shadow-float);
 }
 /* delta-only resize preview band (§J) */
 .cb-ghost.rsz {
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border-width: 1.5px;
   box-shadow: none;
 }
 .cb-ghost.rsz[data-kind="extend"] {
-  background: rgba(22, 163, 74, 0.14);
-  border-color: var(--color-status-success);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border-color: var(--ok);
 }
 /* removal band: red hatch so the nights being removed read as "cut",
    clearly visible on top of the committed pill's solid fill */
 .cb-ghost.rsz[data-kind="shorten"] {
   background: repeating-linear-gradient(
     -45deg,
-    rgba(220, 38, 38, 0.26) 0 6px,
-    rgba(220, 38, 38, 0.1) 6px 12px
+    color-mix(in srgb, var(--danger) 26%, transparent) 0 6px,
+    color-mix(in srgb, var(--danger) 10%, transparent) 6px 12px
   ) !important;
-  border-color: var(--color-status-danger);
+  border-color: var(--danger);
 }
 .cb-ghost.rsz[data-invalid="true"] {
-  background: rgba(220, 38, 38, 0.2) !important;
-  border-color: var(--color-status-danger);
+  background: color-mix(in srgb, var(--danger) 20%, transparent) !important;
+  border-color: var(--danger);
 }
 
 /* empty-cell range-selection band (§4): dashed brand band over the
    selected whole-day cells with a live nights label */
 .cb-ghost.new {
-  background: rgba(37, 64, 200, 0.09);
-  border: 1.5px dashed var(--color-primary);
-  border-radius: 10px;
-  color: var(--color-primary);
+  background: color-mix(in srgb, var(--brand) 9%, transparent);
+  border: 1.5px dashed var(--brand);
+  border-radius: var(--r-md);
+  color: var(--brand);
   justify-content: center;
   font-weight: 800;
-  font-size: 12.5px;
+  font-size: 12px;
   box-shadow: none;
 }
 .cb-ghost.new[data-invalid="true"] {
-  background: rgba(220, 38, 38, 0.12) !important;
-  border-color: var(--color-status-danger);
-  color: #b4231f !important;
+  background: color-mix(in srgb, var(--danger) 12%, transparent) !important;
+  border-color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink)) !important;
   box-shadow: none;
 }
 .cb-ghost .cb-gn {
@@ -852,30 +872,19 @@
 }
 
 /* ---------- reservation hover tooltip (invitation card) ----------
-   ref/screens/InvitationCard.png is the source of truth (D88), measured on the
-   reference render: a 366px card, r18, a brand-blue header band carrying a
-   translucent avatar square, the payment chip on the far side, a hairline
-   divider, icon rows on a 33px rhythm, and a blue action line. D87 had replaced
-   it with a white header taken from GuesthubCalandrUpdate.html — the owner's
-   approved card is this one.
-   The payment chip keeps its own tint (PAY_STYLE): payment state and reservation
-   status stay two separate axes and are never merged. */
+   The card IS the canonical §8 `.popover` (316px / r-lg / shadow-float) —
+   composed as class="popover cb-pop"; the box anatomy is never re-typed here.
+   It wears the §7 blue header band: the avatar is the canonical `.dw-icon`,
+   the payment tag is a canonical `.chip`. The chip keeps its PAYMENT triplet:
+   payment state and reservation status stay two separate axes and are never
+   merged. Only what the primitive does not cover lives below. */
 .cb-pop {
-  position: fixed;
-  width: 366px;
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 18px;
-  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.26);
-  z-index: 60;
-  direction: rtl;
-  /* NO overflow:hidden — it clipped the speech-bubble pointer off the card
-     (D88.1). The header rounds its own top corners instead. */
+  /* NO overflow:hidden — it clipped the speech-bubble pointer off the card.
+     The header rounds its own top corners instead. */
   animation: cb-pop-in 0.14s ease-out;
-  /* D44: informational only — it must NEVER intercept a pointer, capture a
-     click, or become a drag/drop target, so it can never cover or block the
-     reservation pill or its resize handles. `pointer-events` is about the MOUSE;
-     it has nothing to do with the visible pointer below. */
+  /* informational only — it must NEVER intercept a pointer, capture a click, or
+     become a drag/drop target, so it can never cover or block the reservation
+     pill or its resize handles. */
   pointer-events: none;
 }
 @keyframes cb-pop-in {
@@ -884,12 +893,11 @@
     transform: translateY(4px);
   }
 }
-/* the speech-bubble pointer (InvitationCard.png): a rotated square welded to the
-   edge facing the pill, wearing the color of the face it grows out of — the white
-   foot when the card sits above the pill, the blue header when it flips below. It
-   sits OUTSIDE the box, so it adds nothing to the card height, and `--cb-caret`
-   (physical px from the card's left edge, set by the component) keeps it under the
-   reservation it belongs to after the card is clamped to the viewport. */
+/* the speech-bubble pointer: a rotated square welded to the edge facing the
+   pill, wearing the colour of the face it grows out of. It sits OUTSIDE the box,
+   so it adds nothing to the card height, and `--cb-caret` (physical px from the
+   card's left edge, set by the component) keeps it under the reservation it
+   belongs to after the card is clamped to the viewport. */
 .cb-pop::after {
   content: "";
   position: absolute;
@@ -901,48 +909,43 @@
 }
 .cb-pop[data-place="above"]::after {
   bottom: -8px;
-  border-inline-end: 1px solid #eef0f5;
-  border-bottom: 1px solid #eef0f5;
-  box-shadow: 3px 3px 7px rgba(16, 24, 40, 0.07);
+  border-inline-end: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .cb-pop[data-place="below"]::after {
   top: -8px;
-  background: var(--color-primary);
+  background: var(--brand);
 }
 .cb-pop-h {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 15px 16px;
-  background: var(--color-primary);
+  background: var(--brand);
   /* the header rounds its own top corners (the card no longer clips), and stays
      square where it meets the white body — no seam, no gap, no stray radius */
-  border-radius: 17px 17px 0 0;
+  border-radius: 16px 16px 0 0;
 }
+/* the payment chip sits on the far side of the header band */
+.cb-pop-h .chip {
+  margin-inline-start: auto;
+}
+/* initials inside the canonical .dw-icon square */
 .cb-pav {
-  width: 42px;
-  height: 42px;
-  border-radius: 13px;
-  font-weight: 800;
   font-size: 15px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
+  font-weight: 800;
 }
 .cb-pop-nm {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
-  line-height: 1.2;
+  line-height: 1.15;
   display: flex;
   align-items: center;
   gap: 5px;
   color: #fff;
 }
 .cb-pop-sub {
-  font-size: 13px;
+  font-size: 14px;
   color: rgba(255, 255, 255, 0.75);
   font-weight: 600;
   line-height: 1.35;
@@ -954,23 +957,6 @@
 .cb-pop-sub b {
   color: #fff;
   font-weight: 800;
-}
-.cb-pbadge {
-  margin-inline-start: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.cb-pbadge .cb-d {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
 }
 .cb-pop-b {
   padding: 14px 16px;
@@ -985,7 +971,7 @@
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
-  color: var(--color-muted);
+  color: var(--muted);
 }
 .cb-pl > span {
   min-width: 0;
@@ -994,42 +980,35 @@
 }
 /* the icon comes first in the DOM = the far (right) edge in RTL, text beside it */
 .cb-pl .cb-pli {
-  color: var(--color-faint);
+  color: var(--faint);
   flex: none;
 }
 .cb-pl b {
-  color: var(--color-ink);
+  color: var(--ink);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-/* D44: footer edit button removed — the tooltip is informational only, so the
-   whole card is pointer-events:none. Editing happens by clicking the pill.
-   InvitationCard.png: the hint reads as a blue action line. */
+/* the tooltip is informational only, so the whole card is pointer-events:none.
+   Editing happens by clicking the pill; the hint reads as a blue action line. */
 .cb-pop-hint {
   padding: 13px 16px 15px;
-  border-top: 1px solid #eef0f5;
-  font-size: 13px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
   font-weight: 600;
-  color: var(--color-primary);
+  color: var(--brand);
   text-align: center;
 }
 
 /* ---------- empty-cell commercial (rate) hover tooltip (§2) ----------
-   Room-availability card (ref/screens/RoomAvailability.png) — same visual
-   language as the reservation invitation card: brand-gradient header, roomy
-   divided rows, full-width state band, caret toward the cell. Reads the
-   already-fetched rate row for one room/date; informational only. */
+   The card IS the canonical §8 `.popover` (316px / r-lg / shadow-float) —
+   composed as class="popover cb-rtip". Same visual language as the reservation
+   card: brand header, divided rows, full-width state band, caret toward the
+   cell. Reads the already-fetched rate row for one room/date; informational
+   only. Unlike .cb-pop it stays pointer-interactive (hover keep-alive). */
 .cb-rtip {
-  position: fixed;
-  width: 252px;
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 22px 52px rgba(16, 24, 40, 0.28);
-  z-index: 60;
-  direction: rtl;
   animation: cb-pop-in 0.14s ease-out;
 }
-/* anchor caret on the edge facing the cell — band-colored below the card,
+/* anchor caret on the edge facing the cell — band-coloured below the card,
    header-blue above it (no overflow:hidden so it can sit outside) */
 .cb-rtip::after {
   content: "";
@@ -1041,14 +1020,14 @@
 }
 .cb-rtip[data-place="above"]::after {
   bottom: -5px;
-  background: #f2fbf5;
+  background: color-mix(in srgb, var(--ok) 8%, #fff);
 }
 .cb-rtip[data-place="above"].cl-card::after {
-  background: #fdf0f0;
+  background: color-mix(in srgb, var(--danger) 8%, #fff);
 }
 .cb-rtip[data-place="below"]::after {
   top: -5px;
-  background: var(--color-primary);
+  background: var(--brand);
 }
 .cb-rtip-h {
   display: flex;
@@ -1056,11 +1035,11 @@
   justify-content: space-between;
   gap: 8px;
   padding: 11px 14px;
-  background: var(--color-primary);
-  border-radius: 14px 14px 0 0;
+  background: var(--brand);
+  border-radius: 16px 16px 0 0;
 }
 .cb-rtip-t {
-  font-size: 14.5px;
+  font-size: 15px;
   font-weight: 800;
   color: #fff;
   white-space: nowrap;
@@ -1082,34 +1061,34 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8.5px 0;
-  border-bottom: 1px solid #f1f3f7;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
 }
 .cb-rtip-row:last-child {
   border-bottom: none;
 }
 .cb-rtip-k {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
   white-space: nowrap;
 }
 .cb-rtip-v {
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .cb-rtip-v.dash {
-  color: var(--color-faint);
+  color: var(--faint);
   font-weight: 700;
 }
 .cb-rtip-v.yes {
-  color: #1f7a3d;
+  color: color-mix(in srgb, var(--ok) 75%, var(--ink));
 }
 .cb-rtip-v.no {
-  color: #b4231f;
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
 }
 .cb-rtip-f {
   display: flex;
@@ -1117,63 +1096,99 @@
   justify-content: center;
   gap: 6px;
   padding: 10px 14px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 800;
-  border-radius: 0 0 14px 14px;
+  border-radius: 0 0 16px 16px;
 }
 .cb-rtip-f.op {
-  color: #1f7a3d;
-  background: #f2fbf5;
+  color: color-mix(in srgb, var(--ok) 75%, var(--ink));
+  background: color-mix(in srgb, var(--ok) 8%, #fff);
 }
 .cb-rtip-f.cl {
-  color: #b4231f;
-  background: #fdf0f0;
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
+  background: color-mix(in srgb, var(--danger) 8%, #fff);
 }
 
-/* ---------- drag/resize confirm — "שינוי שהייה" (Change of stay.png,
-   ref/html/Calendar messages.html .ch) ---------- */
-.ch {
-  position: relative;
-  width: min(92vw, 430px);
-  background: #fff;
-  border-radius: 16px;
-  box-shadow:
-    0 2px 6px rgba(16, 24, 40, 0.06),
-    0 18px 44px rgba(16, 24, 40, 0.16);
-  direction: rtl;
+/* ---------- floating context menus (empty cell / closure delete) ----------
+   The box IS the canonical §8 `.popover` (316px / r-lg / shadow-float) —
+   composed as class="popover cb-menu", opened at the click point and clamped
+   to the viewport with the §8 12px margin (measured in CalendarGrid). Only
+   the menu-specific internals live here: a row is the §4 popover-size control
+   (36px — permitted ONLY inside a popover/table row) with §2 Base 15px/700
+   text, the same popover-row language as the /rooms status popover. */
+.cb-menu {
+  padding: 8px;
 }
-.ch-hd {
-  background: var(--color-primary);
-  padding: 16px 20px 14px;
-  border-radius: 16px 16px 0 0;
+.cb-menu-h {
+  padding: 4px 14px 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.ch-t {
-  font-size: 21px;
-  font-weight: 800;
-  color: #fff;
-  line-height: 1.15;
+.cb-menu-it {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: start;
+  white-space: nowrap;
 }
-.ch-s {
-  font-size: 13.5px;
+.cb-menu-it:hover {
+  background: var(--surface-hover);
+}
+/* destructive row — text derived from the §1 danger token, never a new colour */
+.cb-menu-it.danger {
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
+}
+.cb-menu-it.danger:hover {
+  background: color-mix(in srgb, var(--danger) 8%, #fff);
+}
+/* trailing group divider (the /rates deep-link) — same pattern as .rm-pop-edit */
+.cb-menu-sep {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+/* non-interactive note (missing permission) — §5 hint typography */
+.cb-menu-note {
+  padding: 8px 14px;
+  font-size: 12px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.75);
-  margin-top: 3px;
+  color: var(--faint);
 }
+
+/* ---------- drag/resize confirm — "שינוי שהייה" ----------
+   The shell is the canonical .modal / .md-hd / .md-bd / .md-ft (§8); only the
+   before/after comparison cards live here. */
 .ch-body {
-  padding: 16px 16px 4px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 .ch-card {
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 13px 15px;
-  background: #f4f5f9;
-  border: 1px solid #edf0f5;
+  background: var(--field-bg);
+  border: 1px solid var(--line);
 }
 .ch-card.aft {
-  background: var(--color-primary-050);
-  border-color: #dfe5fb;
+  background: var(--brand-soft);
+  border-color: var(--brand-line);
 }
 .ch-cr {
   display: flex;
@@ -1184,16 +1199,16 @@
 .ch-tag {
   font-size: 13.5px;
   font-weight: 700;
-  color: var(--color-muted);
+  color: var(--muted);
 }
 .ch-n {
   margin-inline-start: auto;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .ch-card.aft .ch-n {
-  color: var(--color-primary);
+  color: var(--brand);
 }
 .ch-grid {
   /* dates take their natural width; the room label gets the remainder and
@@ -1210,16 +1225,16 @@
   min-width: 0;
 }
 .ch-cl {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--color-faint);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--faint);
 }
 .ch-cv {
   font-size: 15px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
   direction: ltr;
-  text-align: right;
+  text-align: end;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1227,13 +1242,13 @@
   font-variant-numeric: tabular-nums;
 }
 .ch-cv.chg {
-  color: var(--color-primary);
+  color: var(--brand);
 }
 .ch-arrow {
   display: flex;
   justify-content: center;
   margin: -4px 0;
-  color: var(--color-faint);
+  color: var(--faint);
 }
 .ch-money {
   display: flex;
@@ -1241,102 +1256,54 @@
   gap: 8px;
   margin-top: 11px;
   padding-top: 10px;
-  border-top: 1px solid #dfe5fb;
-  font-size: 13px;
+  border-top: 1px solid var(--brand-line);
+  font-size: 13.5px;
   font-weight: 700;
 }
 .ch-money .lbl {
-  color: var(--color-muted);
+  color: var(--muted);
   font-weight: 600;
 }
 .ch-money .old {
-  color: var(--color-faint);
+  color: var(--faint);
   text-decoration: line-through;
   direction: ltr;
+  font-variant-numeric: tabular-nums;
 }
 .ch-money .new {
-  color: var(--color-ink);
+  color: var(--ink);
   font-weight: 800;
   direction: ltr;
+  font-variant-numeric: tabular-nums;
 }
 .ch-money .diff {
   margin-inline-start: auto;
   font-weight: 800;
   direction: ltr;
+  font-variant-numeric: tabular-nums;
 }
 .ch-money .diff.up {
-  color: #b4231f;
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
 }
 .ch-money .diff.down {
-  color: #1f7a3d;
+  color: color-mix(in srgb, var(--ok) 75%, var(--ink));
 }
-.ch-ft {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 14px 16px 16px;
-}
-.ch-btn {
-  height: 44px;
-  padding: 0 22px;
-  border: none;
-  border-radius: 12px;
-  background: var(--color-primary);
-  color: #fff;
-  font-family: inherit;
-  font-size: 15px;
+
+/* ---------- closure panel notice ---------- */
+.cb-closenote {
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+  font-size: 14px;
   font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(37, 64, 200, 0.22);
-}
-.ch-btn:hover:not(:disabled) {
-  background: #1c2e9a;
-}
-.ch-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-  box-shadow: none;
-}
-.ch-btng {
-  height: 44px;
-  padding: 0 17px;
-  border: none;
-  border-radius: 12px;
-  background: transparent;
-  color: #4b5266;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.ch-btng:hover:not(:disabled) {
-  background: #f2f4f8;
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
 }
 
 /* ---------- hint ---------- */
 .cb-hint {
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-faint);
-}
-
-/* ---------- calendar-scoped toolbar sizes ----------
-   .cb-seg / .cb-todaybtn / .cb-rangebox are SHARED with /rates (RateToolbar).
-   The reference's sizes for them differ from what /rates renders today, so they
-   are scoped to .cb-screen — the calendar matches its reference, and the rates
-   board keeps its own toolbar byte-for-byte unchanged. */
-.cb-screen .cb-seg button {
-  font-size: 13.5px;
-}
-.cb-screen .cb-todaybtn {
-  font-size: 14px;
-}
-.cb-screen .cb-rangebox .cb-rl {
-  font-size: 14px;
-  padding: 0 6px;
+  color: var(--faint);
 }
 
 } /* @layer components */

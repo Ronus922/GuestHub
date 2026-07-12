@@ -265,7 +265,7 @@ export function EmployeeSidePanel({
         <Field label="שם מלא" required error={errors.full_name?.message}>
           <IconField icon="user">
             <input
-              className="field ps-11"
+              className="field-input ps-11"
               {...register("full_name")}
               placeholder="שם פרטי ומשפחה"
             />
@@ -274,7 +274,7 @@ export function EmployeeSidePanel({
         <Field label="טלפון" required error={errors.phone?.message}>
           <IconField icon="phone">
             <input
-              className="field ps-11"
+              className="field-input ps-11"
               dir="ltr"
               {...register("phone")}
               placeholder="050-0000000"
@@ -290,7 +290,7 @@ export function EmployeeSidePanel({
       >
         <IconField icon="mail">
           <input
-            className="field ps-11"
+            className="field-input ps-11"
             dir="ltr"
             {...register("email")}
             placeholder="email@example.com"
@@ -329,7 +329,7 @@ export function EmployeeSidePanel({
         />
       ) : null}
       {errors.enable_userpass?.message ? (
-        <p className="text-xs text-status-danger">{errors.enable_userpass.message}</p>
+        <p className="field-msg">{errors.enable_userpass.message}</p>
       ) : null}
 
       {userpassOn ? (
@@ -338,7 +338,7 @@ export function EmployeeSidePanel({
             <Field label="שם משתמש" required error={errors.username?.message}>
               <IconField icon="user">
                 <input
-                  className="field ps-11"
+                  className="field-input ps-11"
                   dir="ltr"
                   {...register("username")}
                   placeholder="לדוגמה: mor2026"
@@ -353,7 +353,7 @@ export function EmployeeSidePanel({
               <PasswordInput register={register("password")} />
             </Field>
           </div>
-          <p className="mt-2 text-xs text-faint">
+          <p className="field-hint mt-2">
             {mode === "create"
               ? "הסיסמה לא תוצג שוב לאחר היצירה — מומלץ להעביר לעובד באופן מאובטח."
               : "השאר ריק כדי לא לשנות את הסיסמה הקיימת."}
@@ -402,12 +402,8 @@ export function EmployeeSidePanel({
           </div>
         )}
       />
-      {errors.role_id?.message ? (
-        <p className="text-xs text-status-danger">{errors.role_id.message}</p>
-      ) : null}
-      {isSelf ? (
-        <p className="text-xs text-faint">לא ניתן לשנות את התפקיד של עצמך</p>
-      ) : null}
+      {errors.role_id?.message ? <p className="field-msg">{errors.role_id.message}</p> : null}
+      {isSelf ? <p className="field-hint">לא ניתן לשנות את התפקיד של עצמך</p> : null}
     </Card>
   );
 
@@ -438,9 +434,9 @@ export function EmployeeSidePanel({
                 ),
               )
             }
-            className="flex h-11 items-center gap-1.5 rounded-lg px-3 text-xs font-medium text-primary hover:bg-primary-050"
+            className="btn btn-sm btn-tertiary text-primary hover:bg-primary-050"
           >
-            <Icon name="refresh" size={14} />
+            <Icon name="refresh" size={17} />
             אפס לברירת המחדל של התפקיד
           </button>
         ) : undefined
@@ -448,13 +444,13 @@ export function EmployeeSidePanel({
     >
       {selectedRole ? (
         <>
-          <p className="-mt-2 text-xs text-faint">
+          <p className="field-hint -mt-2">
             {overridesEditable
               ? `ברירת המחדל נגזרת מהתפקיד (${selectedRole.name}); סימון או ביטול תא יוצר הרשאה אישית לעובד זה בלבד. השינויים נשמרים בלחיצה על שמירת שינויים.`
               : `הרשאות בתוקף הנגזרות מהתפקיד שנבחר (${selectedRole.name}) וכן הרשאות אישיות אם קיימות. שינוי התפקיד למעלה מעדכן את הטבלה מיידית; ההרשאות ייכנסו לתוקף בשמירה.`}
           </p>
           {selectedFullAccess ? (
-            <p className="rounded-xl bg-primary-050 px-4 py-3 text-sm font-medium text-primary">
+            <p className="t-secondary rounded-xl bg-primary-050 px-4 py-3 text-primary">
               גישה מלאה לכל המערכת — {selectedRole.name}. אין צורך בהרשאות אישיות.
             </p>
           ) : null}
@@ -471,21 +467,21 @@ export function EmployeeSidePanel({
               }))
             }
           />
-          <p className="text-xs text-faint">
+          <p className="field-hint">
             סימון מלא — כל פעולות העמודה במודול · סימון חלקי (־) — חלק מהפעולות, ריחוף מציג
             פירוט.{" "}
             {mode === "edit" && !canManageOverrides
               ? "ההרשאות מוענקות מהתפקיד — רק מנהל מורשה יכול להוסיף או להסיר הרשאות אישיות לעובד. "
               : null}
             {canViewPermissions ? (
-              <Link href="/permissions" className="font-medium text-primary hover:underline">
+              <Link href="/permissions" className="font-bold text-primary hover:underline">
                 עריכת ברירת המחדל של תפקיד — במסך ההרשאות
               </Link>
             ) : null}
           </p>
         </>
       ) : (
-        <p className="text-sm text-faint">בחר תפקיד כדי להציג הרשאות.</p>
+        <p className="t-secondary text-faint">בחר תפקיד כדי להציג הרשאות.</p>
       )}
     </Card>
   );
@@ -505,7 +501,7 @@ export function EmployeeSidePanel({
       // with an activity dot + the (live) selected-role chip — all real data
       avatar={
         mode === "edit" && user ? (
-          <span className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white text-base font-bold text-primary">
+          <span className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full bg-white text-[17px] font-bold text-primary">
             {initials(user.full_name, user.username)}
             <span
               aria-hidden
@@ -520,25 +516,27 @@ export function EmployeeSidePanel({
         mode === "edit" ? (selectedRole?.name ?? user?.role_name ?? undefined) : undefined
       }
       footer={
-        <div className="flex items-center justify-between gap-2">
-          <button type="button" className="btn btn-outline" onClick={onClose}>
-            ביטול
-          </button>
+        // §7 — .dw-ft is row-reverse, so the FIRST DOM child (the primary)
+        // hugs the LEFT edge and "ביטול" sits to its right. No local wrapper.
+        <>
           <button
             type="submit"
             form="employee-form"
             className="btn btn-primary"
             disabled={isSubmitting || isProtected}
           >
-            <Icon name={mode === "create" ? "user-plus" : "check"} size={18} />
+            <Icon name={mode === "create" ? "user-plus" : "check"} size={20} />
             {isSubmitting ? "שומר…" : mode === "create" ? "צור עובד" : "שמירת שינויים"}
           </button>
-        </div>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            ביטול
+          </button>
+        </>
       }
     >
       <form id="employee-form" onSubmit={onSubmit} className="flex flex-col gap-5">
         {isProtected ? (
-          <p className="rounded-xl bg-status-warning-050 px-4 py-3 text-sm text-status-warning">
+          <p className="t-secondary rounded-xl bg-status-warning-050 px-4 py-3 text-status-warning">
             רק בעל דרגה מתאימה יכול לערוך משתמש זה
           </p>
         ) : null}
@@ -607,10 +605,8 @@ function fmtMoment(iso: string | null): string {
 function InfoItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-faint">{label}</span>
-      <span dir="ltr" className="text-end text-sm font-semibold text-ink">
-        {value}
-      </span>
+      <span className="t-label text-faint">{label}</span>
+      <bdi className="ltr-num t-secondary text-end text-ink">{value}</bdi>
     </div>
   );
 }
@@ -623,6 +619,8 @@ function initials(name: string | null, username: string): string {
   return parts.map((p) => p[0] ?? "").join("").toUpperCase() || "?";
 }
 
+// §6 — the canonical card. Nothing about its radius, border, shadow or heading
+// size is decided here; it consumes .card / .card-hd / .card-bd.
 function Card({
   title,
   icon,
@@ -635,19 +633,21 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-line bg-surface p-5 shadow-card">
-      <div className="mb-4 flex items-center gap-3">
+    <section className="card">
+      <div className="card-hd">
         <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary-050 text-primary">
-          <Icon name={icon} size={18} />
+          <Icon name={icon} size={20} />
         </span>
-        <h3 className="font-bold text-ink">{title}</h3>
+        <h3>{title}</h3>
         {action ? <span className="ms-auto">{action}</span> : null}
       </div>
-      <div className="flex flex-col gap-4">{children}</div>
+      <div className="card-bd flex flex-col gap-4">{children}</div>
     </section>
   );
 }
 
+// §5 — label ABOVE at 12px/700, hint/error below. The anatomy is .field /
+// .field-label / .field-hint / .field-msg; this only wires them to the form.
 function Field({
   label,
   required,
@@ -664,18 +664,18 @@ function Field({
   // The <label> wraps its control (implicit association) so clicking the label
   // focuses the input and AT announces the field name; errors are role="alert".
   return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-sm font-medium text-text2">
+    <label className="field">
+      <span className="field-label">
         {label}
         {required ? <span className="ms-1 text-status-danger">*</span> : null}
       </span>
       {children}
       {error ? (
-        <span role="alert" className="text-xs text-status-danger">
+        <span role="alert" className="field-msg">
           {error}
         </span>
       ) : hint ? (
-        <span className="text-xs text-faint">{hint}</span>
+        <span className="field-hint">{hint}</span>
       ) : null}
     </label>
   );
@@ -717,15 +717,15 @@ function CheckRow({
       }`}
     >
       <span
-        className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border ${
+        className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-[7px] border ${
           checked ? "border-primary bg-primary text-white" : "border-line bg-surface"
         }`}
       >
-        {checked ? <Icon name="check" size={13} strokeWidth={3} /> : null}
+        {checked ? <Icon name="check" size={13.5} /> : null}
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-semibold text-ink">{title}</span>
-        <span className="block text-xs text-muted">{desc}</span>
+        <span className="t-body block font-semibold text-ink">{title}</span>
+        <span className="t-label block font-semibold">{desc}</span>
       </span>
     </button>
   );
@@ -765,12 +765,12 @@ function RoleCard({
       <span
         className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${AVATAR_TINT[meta.tone]}`}
       >
-        <Icon name={meta.icon} size={19} />
+        <Icon name={meta.icon} size={20} />
       </span>
       <span className="min-w-0">
-        <span className="block text-sm font-bold text-ink">{role.name}</span>
+        <span className="t-body block font-bold text-ink">{role.name}</span>
         {role.description ? (
-          <span className="block truncate text-xs text-muted">{role.description}</span>
+          <span className="t-label block truncate font-semibold">{role.description}</span>
         ) : null}
       </span>
     </button>
@@ -793,8 +793,8 @@ function Switch({
   return (
     <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
       <div>
-        <p className="text-sm font-medium text-ink">{label}</p>
-        {hint ? <p className="text-xs text-faint">{hint}</p> : null}
+        <p className="t-body font-semibold text-ink">{label}</p>
+        {hint ? <p className="field-hint">{hint}</p> : null}
       </div>
       <button
         type="button"
@@ -810,7 +810,7 @@ function Switch({
         {/* anchored at the inline END (RTL: left) — ON sits at the end, OFF slides
             back toward the start; transform-based so the motion animates */}
         <span
-          className={`absolute end-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+          className={`absolute end-0.5 top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
             checked ? "translate-x-0" : "translate-x-5"
           }`}
         />
@@ -828,7 +828,7 @@ function PasswordInput({
   return (
     <div className="relative">
       <input
-        className="field ps-11 pe-11"
+        className="field-input ps-11 pe-11"
         dir="ltr"
         type={show ? "text" : "password"}
         autoComplete="new-password"
@@ -843,10 +843,9 @@ function PasswordInput({
       <button
         type="button"
         onClick={() => setShow((v) => !v)}
-        aria-label={show ? "הסתר סיסמה" : "הצג סיסמה"}
-        className="absolute end-0 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-lg text-faint hover:text-muted"
+        className="icon-btn absolute end-1 top-1/2 -translate-y-1/2"
       >
-        <Icon name={show ? "eye-off" : "eye"} size={18} />
+        <Icon name={show ? "eye-off" : "eye"} size={20} label={show ? "הסתר סיסמה" : "הצג סיסמה"} />
       </button>
     </div>
   );

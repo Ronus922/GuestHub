@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   validatePaymentStages,
   type PaymentStage,
@@ -15,7 +15,7 @@ import {
 } from "@/lib/commercial/payment";
 import { savePaymentPolicyAction, deletePaymentPolicyAction } from "./commercial-actions";
 import { PolicyToolbar, PolicyCard, EmptyState } from "./PolicyList";
-import { Switch } from "./controls";
+import { Field, FormGrid, IconBtn, SettingsCard, Switch } from "./controls";
 import { PAY_TRIGGER, PAY_AMOUNT, RETRY, TIME_UNIT, opts } from "./labels";
 import type { PaymentPolicyView, PaymentMethodRef } from "./types";
 
@@ -72,31 +72,33 @@ export function PaymentSection({ policies, methods }: { policies: PaymentPolicyV
   const [editing, setEditing] = useState<Draft | null>(null);
 
   return (
-    <div className="bw-card">
-      <PolicyToolbar
-        title="מדיניות תשלום"
-        subtitle="תבניות גביית תשלום לשימוש חוזר — שלבי גבייה מרובים לכל מדיניות"
-        onAdd={() => setEditing(blankDraft())}
-      />
-      {policies.length === 0 ? (
-        <EmptyState label="אין עדיין מדיניות תשלום. הוסף מדיניות ראשונה." />
-      ) : (
-        <div className="flex flex-col gap-3">
-          {policies.map((p) => (
-            <PolicyCard
-              key={p.id}
-              name={p.name}
-              title={p.public_title}
-              code={p.code}
-              isDefault={p.is_default}
-              isActive={p.is_active}
-              summary={`${p.stages.length} שלבים`}
-              onEdit={() => setEditing(toDraft(p))}
-              onDelete={() => deletePaymentPolicyAction(p.id)}
-            />
-          ))}
-        </div>
-      )}
+    <div className="card">
+      <div className="card-bd">
+        <PolicyToolbar
+          title="מדיניות תשלום"
+          subtitle="תבניות גביית תשלום לשימוש חוזר — שלבי גבייה מרובים לכל מדיניות"
+          onAdd={() => setEditing(blankDraft())}
+        />
+        {policies.length === 0 ? (
+          <EmptyState label="אין עדיין מדיניות תשלום. הוסף מדיניות ראשונה." />
+        ) : (
+          <div className="flex flex-col gap-3">
+            {policies.map((p) => (
+              <PolicyCard
+                key={p.id}
+                name={p.name}
+                title={p.public_title}
+                code={p.code}
+                isDefault={p.is_default}
+                isActive={p.is_active}
+                summary={`${p.stages.length} שלבים`}
+                onEdit={() => setEditing(toDraft(p))}
+                onDelete={() => deletePaymentPolicyAction(p.id)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       {editing && <PaymentEditor draft={editing} methods={methods} onClose={() => setEditing(null)} />}
     </div>
   );
@@ -153,32 +155,32 @@ function PaymentEditor({ draft, methods, onClose }: { draft: Draft; methods: Pay
       title={d.id ? "עריכת מדיניות תשלום" : "מדיניות תשלום חדשה"}
       icon="credit-card"
       footer={
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-faint">{warnings.length > 0 ? `${warnings.length} אזהרות` : ""}</span>
-          <div className="flex gap-2">
-            <button type="button" className="bw-btn bw-btn-o" onClick={onClose}>ביטול</button>
-            <button type="button" className="bw-btn bw-btn-primary" disabled={saving || !canSave} onClick={save}>
-              <Icon name="check" size={16} />
-              {saving ? "שומר…" : "שמירה"}
-            </button>
-          </div>
-        </div>
+        /* §7 flat footer: .dw-ft is row-reverse, so the FIRST DOM child (the
+           primary) hugs the LEFT edge, cancel to its right; the tertiary meta
+           rides the far right via me-auto (margin-left in RTL row-reverse). */
+        <>
+          <button type="button" className="btn btn-primary" disabled={saving || !canSave} onClick={save}>
+            <Icon name="check" size={20} />
+            {saving ? "שומר…" : "שמירה"}
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>ביטול</button>
+          <span className="field-hint me-auto">{warnings.length > 0 ? `${warnings.length} אזהרות` : ""}</span>
+        </>
       }
     >
       <div className="flex flex-col gap-5">
-        <section className="bw-card">
-          <CardTitle icon="documents" title="פרטי מדיניות" />
-          <div className="bw-grid2">
+        <SettingsCard icon="documents" title="פרטי מדיניות">
+          <FormGrid>
             <Field label="שם פנימי" required>
-              <input className="bw-fld" value={d.name} onChange={(e) => set("name", e.target.value)} />
+              <input className="field-input" value={d.name} onChange={(e) => set("name", e.target.value)} />
             </Field>
             <Field label="כותרת ללקוח" required>
-              <input className="bw-fld" value={d.public_title} onChange={(e) => set("public_title", e.target.value)} />
+              <input className="field-input" value={d.public_title} onChange={(e) => set("public_title", e.target.value)} />
             </Field>
             <Field label="קוד/מפתח" required>
-              <input className="bw-fld" dir="ltr" value={d.code} onChange={(e) => set("code", e.target.value)} placeholder="deposit-30" />
+              <input className="field-input ltr-num" value={d.code} onChange={(e) => set("code", e.target.value)} placeholder="deposit-30" />
             </Field>
-          </div>
+          </FormGrid>
           <div className="mt-3 flex flex-wrap items-center gap-5">
             <label className="flex items-center gap-2 text-sm text-ink">
               <Switch checked={d.is_active} onChange={(v) => set("is_active", v)} label="פעיל" /> פעיל
@@ -187,23 +189,27 @@ function PaymentEditor({ draft, methods, onClose }: { draft: Draft; methods: Pay
               <Switch checked={d.is_default} onChange={(v) => set("is_default", v)} label="ברירת מחדל" /> ברירת מחדל
             </label>
           </div>
-          <div className="bw-grid2 mt-3">
-            <Field label="תיאור ללקוח">
-              <textarea className="bw-fld" rows={2} value={d.guest_description} onChange={(e) => set("guest_description", e.target.value)} />
-            </Field>
-            <Field label="הערות פנימיות">
-              <textarea className="bw-fld" rows={2} value={d.internal_notes} onChange={(e) => set("internal_notes", e.target.value)} />
-            </Field>
+          <div className="mt-3">
+            <FormGrid>
+              <Field label="תיאור ללקוח">
+                <textarea className="field-input" rows={2} value={d.guest_description} onChange={(e) => set("guest_description", e.target.value)} />
+              </Field>
+              <Field label="הערות פנימיות">
+                <textarea className="field-input" rows={2} value={d.internal_notes} onChange={(e) => set("internal_notes", e.target.value)} />
+              </Field>
+            </FormGrid>
           </div>
-        </section>
+        </SettingsCard>
 
-        <section className="bw-card">
-          <div className="mb-3 flex items-center justify-between">
-            <CardTitle icon="credit-card" title="שלבי גבייה" />
-            <button type="button" className="bw-btn bw-btn-o" onClick={addStage}>
-              <Icon name="plus" size={15} /> הוסף שלב
+        <SettingsCard
+          icon="credit-card"
+          title="שלבי גבייה"
+          action={
+            <button type="button" className="btn btn-secondary shrink-0" onClick={addStage}>
+              <Icon name="plus" size={20} /> הוסף שלב
             </button>
-          </div>
+          }
+        >
           <div className="flex flex-col gap-3">
             {d.stages.map((s, i) => (
               <StageRow
@@ -220,24 +226,27 @@ function PaymentEditor({ draft, methods, onClose }: { draft: Draft; methods: Pay
             ))}
           </div>
           {methods.length === 0 && (
-            <p className="bw-hint text-status-danger">
-              <Icon name="warning" size={14} /> לא הוגדרו אמצעי תשלום — הגדר תחילה תחת אמצעי תשלום.
+            <p className="field-msg mt-3 flex items-center gap-2">
+              <Icon name="warning" size={13.5} /> לא הוגדרו אמצעי תשלום — הגדר תחילה תחת אמצעי תשלום.
             </p>
           )}
-        </section>
+        </SettingsCard>
 
         {(errors.length > 0 || warnings.length > 0) && (
-          <section className="bw-card">
-            {errors.map((e, i) => (
-              <p key={`e${i}`} className="flex items-center gap-2 text-sm text-status-danger">
-                <Icon name="warning" size={14} /> {e}
-              </p>
-            ))}
-            {warnings.map((w, i) => (
-              <p key={`w${i}`} className="flex items-center gap-2 text-sm" style={{ color: "#B4670A" }}>
-                <Icon name="info" size={14} /> {w}
-              </p>
-            ))}
+          <section className="card">
+            <div className="card-bd flex flex-col gap-1">
+              {errors.map((e, i) => (
+                <p key={`e${i}`} className="field-msg flex items-center gap-2">
+                  <Icon name="warning" size={13.5} /> {e}
+                </p>
+              ))}
+              {warnings.map((w, i) => (
+                // the approved §3.1 "ממתין לאישור" text colour — the system's one amber
+                <p key={`w${i}`} className="flex items-center gap-2 text-sm" style={{ color: STATUS_COLORS.approval.tx }}>
+                  <Icon name="info" size={13.5} /> {w}
+                </p>
+              ))}
+            </div>
           </section>
         )}
       </div>
@@ -271,9 +280,9 @@ function StageRow({
     onChange({ methods: stage.methods.includes(key) ? stage.methods.filter((m) => m !== key) : [...stage.methods, key] });
 
   return (
-    <div className="rounded-xl border border-line bg-surface p-3">
+    <div className="rounded-xl border border-line bg-surface p-4">
       <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-bold text-faint">שלב {index + 1}</span>
+        <span className="t-label">שלב {index + 1}</span>
         <div className="flex items-center gap-1">
           <IconBtn name="arrow-up" label="הזז מעלה" disabled={index === 0} onClick={() => onMove(-1)} />
           <IconBtn name="arrow-down" label="הזז מטה" disabled={index === total - 1} onClick={() => onMove(1)} />
@@ -281,49 +290,49 @@ function StageRow({
           <IconBtn name="trash" label="מחיקה" disabled={total <= 1} onClick={onRemove} danger />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="טריגר">
-          <select className="bw-fld" value={stage.trigger_type} onChange={(e) => onChange({ trigger_type: e.target.value as PaymentTriggerType })}>
+          <select className="field-input" value={stage.trigger_type} onChange={(e) => onChange({ trigger_type: e.target.value as PaymentTriggerType })}>
             {opts(PAY_TRIGGER).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
         {timed ? (
           <>
             <Field label="יחידה">
-              <select className="bw-fld" value={stage.trigger_offset_unit ?? "days"} onChange={(e) => onChange({ trigger_offset_unit: e.target.value as "hours" | "days" })}>
+              <select className="field-input" value={stage.trigger_offset_unit ?? "days"} onChange={(e) => onChange({ trigger_offset_unit: e.target.value as "hours" | "days" })}>
                 {opts(TIME_UNIT).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
             <Field label="לפני הגעה">
-              <input className="bw-fld" dir="ltr" inputMode="numeric" value={stage.trigger_offset_value ?? ""} onChange={(e) => onChange({ trigger_offset_value: intOrNull(e.target.value) })} />
+              <input className="field-input ltr-num" inputMode="numeric" value={stage.trigger_offset_value ?? ""} onChange={(e) => onChange({ trigger_offset_value: intOrNull(e.target.value) })} />
             </Field>
           </>
         ) : (
-          <div className="col-span-2 self-end text-xs text-faint">ללא היסט זמן</div>
+          <div className="col-span-2 self-end field-hint">ללא היסט זמן</div>
         )}
         <Field label="סוג סכום">
-          <select className="bw-fld" value={stage.amount_type} onChange={(e) => onChange({ amount_type: e.target.value as PaymentAmountType })}>
+          <select className="field-input" value={stage.amount_type} onChange={(e) => onChange({ amount_type: e.target.value as PaymentAmountType })}>
             {opts(PAY_AMOUNT).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
         {showAmount && (
           <Field label="סכום">
-            <input className="bw-fld" dir="ltr" inputMode="decimal" value={stage.amount_value} onChange={(e) => onChange({ amount_value: numOf(e.target.value) })} />
+            <input className="field-input ltr-num" inputMode="decimal" value={stage.amount_value} onChange={(e) => onChange({ amount_value: numOf(e.target.value) })} />
           </Field>
         )}
         {showPercent && (
           <Field label="אחוז">
-            <input className="bw-fld" dir="ltr" inputMode="decimal" value={stage.amount_percent} onChange={(e) => onChange({ amount_percent: numOf(e.target.value) })} />
+            <input className="field-input ltr-num" inputMode="decimal" value={stage.amount_percent} onChange={(e) => onChange({ amount_percent: numOf(e.target.value) })} />
           </Field>
         )}
         <Field label="התנהגות כשל">
-          <select className="bw-fld" value={stage.retry_behavior} onChange={(e) => onChange({ retry_behavior: e.target.value as RetryBehavior })}>
+          <select className="field-input" value={stage.retry_behavior} onChange={(e) => onChange({ retry_behavior: e.target.value as RetryBehavior })}>
             {opts(RETRY).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </Field>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-faint">אמצעי תשלום מותרים:</span>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="t-label">אמצעי תשלום מותרים:</span>
         {methods.map((m) => {
           const on = stage.methods.includes(m.key);
           return (
@@ -332,40 +341,28 @@ function StageRow({
               type="button"
               aria-pressed={on}
               onClick={() => toggleMethod(m.key)}
-              className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${on ? "border-primary bg-primary-050 text-primary" : "border-line text-text2 hover:bg-hover"}`}
+              className={`chip clickable ${on ? "on" : ""}`}
             >
               {m.label}
             </button>
           );
         })}
       </div>
-      <label className="mt-2 flex items-center gap-2 text-sm text-ink">
+      <label className="mt-3 flex items-center gap-2 text-sm text-ink">
         <Switch checked={stage.require_card_guarantee} onChange={(v) => onChange({ require_card_guarantee: v })} label="נדרש כרטיס להבטחה" />
         נדרש כרטיס אשראי להבטחה
       </label>
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <Field label="הוראות לצוות">
-          <textarea className="bw-fld" rows={2} value={stage.staff_instructions ?? ""} onChange={(e) => onChange({ staff_instructions: e.target.value })} />
-        </Field>
-        <Field label="טקסט ללקוח">
-          <textarea className="bw-fld" rows={2} value={stage.guest_text ?? ""} onChange={(e) => onChange({ guest_text: e.target.value })} />
-        </Field>
+      <div className="mt-3">
+        <FormGrid>
+          <Field label="הוראות לצוות">
+            <textarea className="field-input" rows={2} value={stage.staff_instructions ?? ""} onChange={(e) => onChange({ staff_instructions: e.target.value })} />
+          </Field>
+          <Field label="טקסט ללקוח">
+            <textarea className="field-input" rows={2} value={stage.guest_text ?? ""} onChange={(e) => onChange({ guest_text: e.target.value })} />
+          </Field>
+        </FormGrid>
       </div>
     </div>
-  );
-}
-
-function IconBtn({ name, label, onClick, disabled, danger }: { name: Parameters<typeof Icon>[0]["name"]; label: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`grid h-8 w-8 place-items-center rounded-lg text-text2 transition-colors hover:bg-hover disabled:opacity-40 ${danger ? "hover:text-status-danger" : ""}`}
-    >
-      <Icon name={name} size={15} />
-    </button>
   );
 }
 

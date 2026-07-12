@@ -377,38 +377,43 @@ export function RoomWizard({
       bodyClassName="p-4"
       band={<StepsBar step={step} onStep={(s) => (roomId ? setStep(s) : s === 1 && setStep(1))} />}
       footer={
-        <div className="flex items-center gap-2.5">
-          <span className="rm-ftnote">
-            <Icon name="info" size={15} />
-            שלב {step} מתוך 3{warnings[0] ? ` · ${warnings[0]}` : ""}
-          </span>
-          <span className="flex-1" />
-          {step > 1 && (
-            <button type="button" className="rm-btnsec" onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as 1 | 2)))}>
-              חזרה
-              <Icon name="chevron-right" size={17} />
-            </button>
-          )}
-          <button type="button" className="rm-btng" onClick={closeGuarded}>ביטול</button>
+        /* §7 footer — DIRECT children of .dw-ft (row-reverse): the PRIMARY is
+           FIRST in the DOM and lands on the LEFT edge, "ביטול" to its right.
+           No local flex wrapper — the shared .dw-ft rule owns the ordering. */
+        <>
           {step < 3 ? (
-            <button type="button" className="rm-btn" disabled={saving || uploading} onClick={goNext}>
+            <button type="button" className="btn btn-primary" disabled={saving || uploading} onClick={goNext}>
               הבא
-              <Icon name="chevron-left" size={17} />
+              <Icon name="chevron-left" size={20} />
             </button>
           ) : (
-            <button type="button" className={`rm-btn${blocked ? " dis" : ""}`} disabled={saving || blocked || uploading} onClick={() => save({ close: true })}>
-              <Icon name="check" size={17} />
+            <button type="button" className="btn btn-primary" disabled={saving || blocked || uploading} onClick={() => save({ close: true })}>
+              <Icon name="check" size={20} />
               {saving ? "שומר…" : uploading ? "מעלה תמונות…" : "שמור"}
             </button>
           )}
-        </div>
+          <button type="button" className="btn btn-tertiary" onClick={closeGuarded}>ביטול</button>
+          {step > 1 && (
+            <button type="button" className="btn btn-secondary" onClick={() => setStep((s) => (s === 1 ? 1 : ((s - 1) as 1 | 2)))}>
+              חזרה
+              <Icon name="chevron-right" size={20} />
+            </button>
+          )}
+          <span className="flex-1" />
+          <span className="rm-ftnote">
+            <Icon name="info" size={17} />
+            שלב {step} מתוך 3{warnings[0] ? ` · ${warnings[0]}` : ""}
+          </span>
+        </>
       }
     >
       <div className="flex flex-col gap-3.5">
         {/* language chips + room-level actions (reference row) */}
         <div className="flex flex-wrap items-center gap-2">
           {ALL_LANGS.map((l) => (
-            <button key={l} type="button" onClick={() => setLang(l)} className={`rm-lchip${lang === l ? " on" : ""}`}>
+            /* .rm-opt: these pickers sit on WHITE surfaces where the transparent
+               resting state of .chip.clickable has no visible boundary */
+            <button key={l} type="button" onClick={() => setLang(l)} className={`chip clickable rm-opt${lang === l ? " on" : ""}`}>
               {LANG_META[l].label}
               <span className="rm-cc">{LANG_META[l].tag}</span>
             </button>
@@ -416,14 +421,14 @@ export function RoomWizard({
           <span className="flex-1" />
           <CopyFromMenu current={lang} onCopy={copyFromLang} />
           {roomId && can.create && (
-            <button type="button" className="rm-lnk" disabled={saving} onClick={doDuplicate}>
-              <Icon name="copy" size={17} />
+            <button type="button" className="btn btn-secondary" disabled={saving} onClick={doDuplicate}>
+              <Icon name="copy" size={20} />
               שכפל חדר
             </button>
           )}
           {roomId && can.del && (
-            <button type="button" className="rm-lnkd" disabled={saving} onClick={doDelete}>
-              <Icon name="trash" size={17} />
+            <button type="button" className="btn btn-danger" disabled={saving} onClick={doDelete}>
+              <Icon name="trash" size={20} />
               מחק חדר
             </button>
           )}
@@ -435,7 +440,7 @@ export function RoomWizard({
               <div className="rm-frow">
                 <F label="שם החדר" required>
                   <input
-                    className="rm-fld"
+                    className="field-input"
                     dir="auto"
                     placeholder="לדוגמה: סוויטת פרימיום פנטהאוס עם נוף לים"
                     value={tr.name}
@@ -444,7 +449,7 @@ export function RoomWizard({
                 </F>
                 <F label="מספר חדר" required>
                   <input
-                    className="rm-fld text-right"
+                    className="field-input ltr-num text-end"
                     dir="ltr"
                     placeholder="לדוגמה: 101"
                     value={base.room_number}
@@ -454,7 +459,7 @@ export function RoomWizard({
               </div>
               <div className="rm-frow3">
                 <F label="סוג חדר" required>
-                  <select className="rm-fld" value={base.room_type_id ?? ""} onChange={(e) => setB("room_type_id", e.target.value || null)}>
+                  <select className="field-input" value={base.room_type_id ?? ""} onChange={(e) => setB("room_type_id", e.target.value || null)}>
                     <option value="">בחר סוג חדר</option>
                     {roomTypes.map((t) => (
                       <option key={t.id} value={t.id}>{t.name}</option>
@@ -462,7 +467,7 @@ export function RoomWizard({
                   </select>
                 </F>
                 <F label="בניין / אגף">
-                  <select className="rm-fld" value={base.area_id ?? ""} onChange={(e) => setB("area_id", e.target.value || null)}>
+                  <select className="field-input" value={base.area_id ?? ""} onChange={(e) => setB("area_id", e.target.value || null)}>
                     <option value="">בניין</option>
                     {buildings.map((b) => (
                       <option key={b.id} value={b.id}>{b.name}</option>
@@ -470,7 +475,7 @@ export function RoomWizard({
                   </select>
                 </F>
                 <F label="קומה">
-                  <select className="rm-fld" value={base.floor} onChange={(e) => setB("floor", e.target.value)}>
+                  <select className="field-input" value={base.floor} onChange={(e) => setB("floor", e.target.value)}>
                     <option value="">קומה</option>
                     {!FLOOR_OPTIONS.includes(base.floor) && base.floor !== "" && (
                       <option value={base.floor}>{floorLabel(base.floor)}</option>
@@ -490,7 +495,7 @@ export function RoomWizard({
               />
               <F label="תקציר SEO / Meta Summary">
                 <textarea
-                  className="rm-fld"
+                  className="field-input"
                   rows={2}
                   dir="auto"
                   maxLength={SUMMARY_MAX}
@@ -537,7 +542,7 @@ export function RoomWizard({
                   <EffRow label="אורח בוגר נוסף" amount={effective.extra_adult.value} source={SOURCE_LABEL[effective.extra_adult.source]} currency={currency} />
                   <EffRow label="ילד נוסף" amount={effective.extra_child.value} source={SOURCE_LABEL[effective.extra_child.source]} currency={currency} />
                   <EffRow label="תינוק נוסף" amount={effective.extra_infant.value} source={SOURCE_LABEL[effective.extra_infant.source]} currency={currency} />
-                  <p className="rm-hint">
+                  <p className="field-hint">
                     {property.configured
                       ? "״אורחים הכלולים במחיר הבסיס״ קובע מאיזה אורח מתחיל חיוב נוסף (ערך 2 → חיוב מהאורח השלישי). החדר יורש את ערכי הנכס."
                       : "תמחור הנכס טרם הוגדר. הגדירו בהגדרות ← תמחור תפוסה, או קבעו חריגה לחדר זה."}
@@ -565,12 +570,12 @@ export function RoomWizard({
 
             <Sec icon="filter" title="סטטוס וזמינות">
               <F label="סטטוס חדר">
-                <select className="rm-fld" value={base.status} onChange={(e) => setB("status", e.target.value as BaseDraft["status"])}>
+                <select className="field-input" value={base.status} onChange={(e) => setB("status", e.target.value as BaseDraft["status"])}>
                   <option value="available">זמין</option>
                   <option value="out_of_order">חסימה זמנית</option>
                   <option value="inactive">בשיפוץ</option>
                 </select>
-                <span className="rm-hint">חדר פעיל — זמין להזמנות · לחסימה זמנית (תחזוקה, ניקיון יסודי וכד׳) — ניהול חסימות</span>
+                <span className="field-hint">חדר פעיל — זמין להזמנות · לחסימה זמנית (תחזוקה, ניקיון יסודי וכד׳) — ניהול חסימות</span>
               </F>
               <div className="rm-frow3">
                 <SwRow label="חדר פעיל" hint="חדר זמין להזמנות" checked={base.is_active} onChange={(v) => setB("is_active", v)} />
@@ -579,7 +584,7 @@ export function RoomWizard({
               </div>
               <F label="הערות פנימיות">
                 <textarea
-                  className="rm-fld"
+                  className="field-input"
                   rows={2}
                   placeholder="הערות פנימיות לצוות…"
                   value={base.notes}
@@ -627,7 +632,7 @@ export function RoomWizard({
                 <QtyStep label="עריסות (לתינוק)" value={base.cribs} onChange={(v) => setB("cribs", v ?? 0)} />
                 <F label="גודל החדר (מ״ר)">
                   <input
-                    className="rm-fld"
+                    className="field-input ltr-num"
                     dir="ltr"
                     inputMode="decimal"
                     placeholder="לדוגמה: 32"
@@ -672,7 +677,7 @@ export function RoomWizard({
             <Sec icon="globe" title="הגדרות SEO" note={`עריכה בשפה: ${LANG_META[lang].label}`}>
               <F label="כותרת SEO (Title Tag)">
                 <input
-                  className="rm-fld"
+                  className="field-input"
                   dir="auto"
                   maxLength={SEO_TITLE_MAX}
                   placeholder="כותרת המופיעה בתוצאות חיפוש…"
@@ -683,7 +688,7 @@ export function RoomWizard({
               </F>
               <F label="תיאור SEO (Meta Description)">
                 <textarea
-                  className="rm-fld"
+                  className="field-input"
                   rows={3}
                   dir="auto"
                   maxLength={SEO_DESC_MAX}
@@ -703,20 +708,26 @@ export function RoomWizard({
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={(images.find((i) => i.is_main) ?? images[0]).url} alt="" />
                     ) : (
-                      <Icon name="image" size={40} />
+                      <Icon name="image" size={24} />
                     )}
                   </div>
                   <div className="rm-bd">
                     <div className="rm-nm">{tr.name || "שם החדר"}</div>
                     <div className="rm-ds">{tr.summary || "תקציר החדר…"}</div>
                     <div className="rm-mt">
+                      {/* the phrase is ONE flex item — a bare <bdi> sibling would
+                          become its own item and pick up the flex gap as spacing */}
                       <span className="inline-flex items-center gap-1.5">
-                        <Icon name="users-round" size={16} />
-                        עד {base.max_occupancy} אורחים
+                        <Icon name="users-round" size={17} />
+                        <span>
+                          עד <bdi className="ltr-num">{base.max_occupancy}</bdi> אורחים
+                        </span>
                       </span>
                       <span className="inline-flex items-center gap-1.5">
-                        <Icon name="star" size={16} />
-                        {amenityIds.length} שירותים
+                        <Icon name="star" size={17} />
+                        <span>
+                          <bdi className="ltr-num">{amenityIds.length}</bdi> שירותים
+                        </span>
                       </span>
                     </div>
                   </div>
@@ -798,8 +809,8 @@ function AmenitiesSection({
 
   return (
     <Sec icon="approve-requests" title="איבזור ושירותים" note={`${selected.length} פריטים נבחרו`}>
-      <div className="rm-search">
-        <Icon name="search" size={19} />
+      <div className="field-input rm-search">
+        <Icon name="search" size={20} />
         <input placeholder="חיפוש איבזור…" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       {groups.map((g) => (
@@ -809,8 +820,9 @@ function AmenitiesSection({
             {g.items.map((a) => {
               const on = selected.includes(a.id);
               return (
-                <button key={a.id} type="button" onClick={() => onToggle(a.id)} className={`rm-achip${on ? " on" : ""}`}>
-                  {a.icon && <Icon name={a.icon as IconName} size={15} />}
+                /* .rm-opt: visible resting boundary on the white card body */
+                <button key={a.id} type="button" onClick={() => onToggle(a.id)} className={`chip clickable rm-opt${on ? " on" : ""}`}>
+                  {a.icon && <Icon name={a.icon as IconName} size={13.5} />}
                   {a.label}
                 </button>
               );
@@ -818,24 +830,24 @@ function AmenitiesSection({
           </div>
         </div>
       ))}
-      {visible.length === 0 && <p className="rm-hint">לא נמצא איבזור תואם.</p>}
+      {visible.length === 0 && <p className="field-hint">לא נמצא איבזור תואם.</p>}
       <div className="rm-addrow">
         <input
-          className="rm-fld"
+          className="field-input"
           placeholder="הוסף איבזור חדש…"
           value={newLabel}
           onChange={(e) => setNewLabel(e.target.value)}
         />
         <button
           type="button"
-          className="rm-addbtn"
+          className="btn btn-primary"
           disabled={!newLabel.trim()}
           onClick={async () => {
             await onAdd(newLabel.trim());
             setNewLabel("");
           }}
         >
-          <Icon name="plus" size={16} />
+          <Icon name="plus" size={20} />
           הוסף
         </button>
       </div>
@@ -962,7 +974,7 @@ function ImagesSection({
           onClick={() => fileRef.current?.click()}
           className="rm-imgslot"
         >
-          <Icon name="plus" size={18} />
+          <Icon name="plus" size={20} />
           {uploading ? "מעלה…" : "תמונת גלריה"}
         </button>
       </div>
@@ -974,31 +986,30 @@ function ImagesSection({
         hidden
         onChange={(e) => upload(e.target.files)}
       />
-      {!roomId && <p className="rm-hint">שמרו את שלב 1 כדי לאפשר העלאת תמונות.</p>}
+      {!roomId && <p className="field-hint">שמרו את שלב 1 כדי לאפשר העלאת תמונות.</p>}
 
       {images.length > 0 && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rm-imgtiles">
           {images.map((img, i) => (
-            <div key={img.id} className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
+            <div key={img.id} className="rm-imgtile">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={img.url} alt={img.alt_text ?? ""} className="h-32 w-full rounded-lg object-cover" />
+              <img src={img.url} alt={img.alt_text ?? ""} />
               <input
-                className="rm-fld"
+                className="field-input"
                 placeholder="טקסט חלופי (Alt) לתמונה…"
                 value={img.alt_text ?? ""}
                 onChange={(e) =>
                   onChange(images.map((x) => (x.id === img.id ? { ...x, alt_text: e.target.value } : x)))
                 }
               />
-              <div className="flex items-center justify-between">
+              <div className="rm-imgacts">
                 <button
                   type="button"
-                  className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold ${
-                    img.is_main ? "bg-primary-050 text-primary" : "text-text2 hover:bg-hover"
-                  }`}
+                  /* .rm-opt: visible resting boundary on the white image tile */
+                  className={`chip clickable rm-opt${img.is_main ? " on" : ""}`}
                   onClick={() => onChange(images.map((x) => ({ ...x, is_main: x.id === img.id })))}
                 >
-                  <Icon name="star" size={12} />
+                  <Icon name="star" size={13.5} />
                   {img.is_main ? "תמונה ראשית" : "קבע כראשית"}
                 </button>
                 <div className="flex gap-1">
@@ -1027,9 +1038,9 @@ function ImagesSection({
   );
 }
 
-// ---------- reference building blocks ----------
+// ---------- shared building blocks (canonical primitives, §5/§6) ----------
 
-// section card: rm-card > rm-ch (icon + title + optional note) > rm-cb
+// section card — the canonical .card / .card-hd / .card-bd (§6)
 export function Sec({
   icon,
   title,
@@ -1042,17 +1053,18 @@ export function Sec({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rm-card">
-      <div className="rm-ch">
-        <Icon name={icon} size={19} />
-        <span className="rm-ct">{title}</span>
-        {note ? <span className="rm-cd">{note}</span> : null}
+    <section className="card">
+      <div className="card-hd">
+        <Icon name={icon} size={20} className="text-primary" />
+        <span>{title}</span>
+        {note ? <span className="field-hint ms-auto">{note}</span> : null}
       </div>
-      <div className="rm-cb">{children}</div>
+      <div className="card-bd flex flex-col gap-4">{children}</div>
     </section>
   );
 }
 
+// field — the canonical .field / .field-label (§5): label ABOVE, 12px/700
 export function F({
   label,
   required,
@@ -1063,8 +1075,8 @@ export function F({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rm-fg">
-      <span className="rm-lbl">
+    <div className="field">
+      <span className="field-label">
         {label}
         {required && <span className="rm-req">*</span>}
       </span>
@@ -1088,7 +1100,7 @@ function StepsBar({ step, onStep }: { step: 1 | 2 | 3; onStep: (s: 1 | 2 | 3) =>
             onClick={() => onStep(s.n)}
             className={`rm-stp${step === s.n ? " on" : step > s.n ? " done" : ""}`}
           >
-            <span className="rm-n">{step > s.n ? <Icon name="check" size={16} /> : s.n}</span>
+            <span className="rm-n">{step > s.n ? <Icon name="check" size={17} /> : s.n}</span>
             <span className="rm-l">{s.label}</span>
           </button>
           {i < steps.length - 1 && <span className={`rm-stln${step > s.n ? " done" : ""}`} />}
@@ -1103,8 +1115,8 @@ function CopyFromMenu({ current, onCopy }: { current: Lang; onCopy: (src: Lang) 
   const others = ALL_LANGS.filter((l) => l !== current);
   return (
     <span className="relative">
-      <button type="button" className="rm-lnk" onClick={() => setOpen((s) => !s)}>
-        <Icon name="languages" size={17} />
+      <button type="button" className="btn btn-secondary" onClick={() => setOpen((s) => !s)}>
+        <Icon name="languages" size={20} />
         שכפל משפה אחרת
       </button>
       {open && (
@@ -1113,7 +1125,7 @@ function CopyFromMenu({ current, onCopy }: { current: Lang; onCopy: (src: Lang) 
             <button
               key={l}
               type="button"
-              className="rounded-lg px-3 py-2 text-start text-sm text-text2 hover:bg-hover"
+              className="btn btn-sm btn-tertiary justify-start"
               onClick={() => {
                 onCopy(l);
                 setOpen(false);
@@ -1128,17 +1140,11 @@ function CopyFromMenu({ current, onCopy }: { current: Lang; onCopy: (src: Lang) 
   );
 }
 
+// icon-only control — the canonical .icon-btn (36×36, radius 10, 20px icon, §4)
 function IconBtn({ label, icon, onClick, disabled }: { label: string; icon: "chevron-right" | "chevron-left" | "trash"; onClick: () => void; disabled?: boolean }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      className="grid h-8 w-8 place-items-center rounded-lg text-text2 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
-      onClick={onClick}
-    >
-      <Icon name={icon} size={14} />
+    <button type="button" title={label} disabled={disabled} className="icon-btn" onClick={onClick}>
+      <Icon name={icon} size={20} label={label} />
     </button>
   );
 }
@@ -1175,10 +1181,10 @@ export function QtyStep({
   const shown = value ?? (nullable ? null : min);
   return (
     <div className="rm-occg">
-      <span className="rm-lbl">{label}</span>
+      <span className="field-label">{label}</span>
       <span className="rm-step">
         <button type="button" aria-label={`הוספת ${label}`} onClick={() => onChange((shown ?? min) + 1)}>
-          <Icon name="plus" size={17} />
+          <Icon name="plus" size={20} />
         </button>
         <input
           className="rm-v"
@@ -1195,10 +1201,10 @@ export function QtyStep({
           }}
         />
         <button type="button" aria-label={`הפחתת ${label}`} onClick={() => onChange(Math.max(min, (shown ?? min) - 1))}>
-          <Icon name="minus" size={17} />
+          <Icon name="minus" size={20} />
         </button>
       </span>
-      {hint ? <span className="rm-hint">{hint}</span> : null}
+      {hint ? <span className="field-hint">{hint}</span> : null}
     </div>
   );
 }
@@ -1254,30 +1260,30 @@ function RichTextArea({
   ];
 
   return (
-    <div className="rm-fg">
-      <span className="rm-lbl">{label}</span>
+    <div className="field">
+      <span className="field-label">{label}</span>
       <div className="rm-rtb">
         {tools.map((t) => (
-          <button key={t.icon} type="button" title={t.title} onClick={t.run}>
-            <Icon name={t.icon} size={17} />
+          <button key={t.icon} type="button" className="icon-btn" title={t.title} onClick={t.run}>
+            <Icon name={t.icon} size={20} label={t.title} />
           </button>
         ))}
         <span className="rm-sep" />
         {tools2.map((t) => (
-          <button key={t.icon} type="button" title={t.title} onClick={t.run}>
-            <Icon name={t.icon} size={17} />
+          <button key={t.icon} type="button" className="icon-btn" title={t.title} onClick={t.run}>
+            <Icon name={t.icon} size={20} label={t.title} />
           </button>
         ))}
         <span className="rm-sep" />
         {tools3.map((t) => (
-          <button key={t.icon} type="button" title={t.title} onClick={t.run}>
-            <Icon name={t.icon} size={17} />
+          <button key={t.icon} type="button" className="icon-btn" title={t.title} onClick={t.run}>
+            <Icon name={t.icon} size={20} label={t.title} />
           </button>
         ))}
       </div>
       <textarea
         ref={ref}
-        className="rm-fld rm-rtxt"
+        className="field-input rm-rtxt"
         rows={5}
         dir="auto"
         maxLength={max}
@@ -1304,7 +1310,11 @@ function EffRow({ label, amount, source, currency }: { label: string; amount: nu
     <div className="rm-swrow">
       <span className="rm-swt flex-1">{label}</span>
       <span className="text-sm">
-        {amount === null ? <span className="text-status-warning">טרם הוגדר</span> : <strong dir="ltr">{amount} {currency}</strong>}
+        {amount === null ? (
+          <span className="text-status-warning">טרם הוגדר</span>
+        ) : (
+          <strong className="ltr-num">{amount} {currency}</strong>
+        )}
         <span className="text-xs text-faint"> · {source}</span>
       </span>
     </div>
@@ -1325,7 +1335,7 @@ function MoneyField({
   return (
     <F label={`${label} (${currency})`}>
       <input
-        className="rm-fld"
+        className="field-input ltr-num"
         dir="ltr"
         inputMode="decimal"
         placeholder="יורש מהנכס"

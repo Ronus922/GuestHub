@@ -41,21 +41,18 @@ export function RateToolbar({
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
-            <h1 className="cb-title">רשת תעריפים</h1>
-            <span className="cb-count">{state.unitCount} יחידות · {state.typeCount} סוגים</span>
+            <h1 className="h1">רשת תעריפים</h1>
+            <span className="chip chip-neutral">{state.unitCount} יחידות · {state.typeCount} סוגים</span>
           </div>
-          <p className="text-[12.5px] font-medium text-[var(--color-muted)] mt-0.5">
+          <p className="t-label mt-0.5">
             מחירים ומגבלות לכל יחידת מכירה ותאריך · לחיצה על תא לעריכה מהירה
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <ChannelSyncControl initial={syncStatus} savePulse={savePulse} />
           {can.bulk && (
-            <button
-              type="button" onClick={onGroupUpdate}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-xl bg-[var(--color-primary)] text-white text-[12.5px] font-bold hover:bg-[var(--color-primary-dark)]"
-            >
-              <Icon name="bulk-update" size={15} />
+            <button type="button" onClick={onGroupUpdate} className="btn btn-primary">
+              <Icon name="bulk-update" size={20} />
               עדכון קבוצתי
             </button>
           )}
@@ -66,13 +63,20 @@ export function RateToolbar({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="rg-filters">
           <span className="rg-flabl">סוג יחידה:</span>
-          <button className={`rg-chip${typeFilter === "all" ? " on" : ""}`} onClick={() => onFilter("all")}>הכל</button>
+          <button type="button" aria-pressed={typeFilter === "all"} className={`chip clickable${typeFilter === "all" ? " on" : ""}`} onClick={() => onFilter("all")}>הכל</button>
           {state.types.map((t) => (
-            <button key={t.roomTypeId ?? "—"} className={`rg-chip${typeFilter === (t.roomTypeId ?? "—") ? " on" : ""}`} onClick={() => onFilter(t.roomTypeId ?? "—")}>
+            <button
+              key={t.roomTypeId ?? "—"} type="button"
+              aria-pressed={typeFilter === (t.roomTypeId ?? "—")}
+              className={`chip clickable${typeFilter === (t.roomTypeId ?? "—") ? " on" : ""}`}
+              onClick={() => onFilter(t.roomTypeId ?? "—")}
+            >
               {t.roomTypeName}
             </button>
           ))}
-          <button className="rg-chip" onClick={onToggleCollapseAll}>{allCollapsed ? "הרחב הכל" : "כווץ הכל"}</button>
+          {/* a command, not a filter — §4 button (a .chip.clickable never enters
+              `.on`, so as a command it would render borderless muted text) */}
+          <button type="button" className="btn btn-secondary" onClick={onToggleCollapseAll}>{allCollapsed ? "הרחב הכל" : "כווץ הכל"}</button>
         </div>
         <div className="flex items-center gap-2">
           <div className="cb-seg">
@@ -80,9 +84,9 @@ export function RateToolbar({
             <button className={view === "month" ? "on" : ""} onClick={() => onNavigate(state.from, "month")}>חודש</button>
           </div>
           <div className="cb-rangebox">
-            <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, -days), view)} disabled={prevDisabled} aria-label="הקודם" title={prevDisabled ? "לא ניתן לנווט לתאריכים שעברו" : undefined}><Icon name="chevron-right" size={18} /></button>
+            <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, -days), view)} disabled={prevDisabled} aria-label="הקודם" title={prevDisabled ? "לא ניתן לנווט לתאריכים שעברו" : undefined}><Icon name="chevron-right" size={20} /></button>
             <span className="cb-rl">{rangeLabel(state.from, state.toInclusive)}</span>
-            <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, days), view)} aria-label="הבא"><Icon name="chevron-left" size={18} /></button>
+            <button className="cb-nav" onClick={() => onNavigate(addDays(state.from, days), view)} aria-label="הבא"><Icon name="chevron-left" size={20} /></button>
           </div>
           <button className="cb-todaybtn" onClick={() => onNavigate(today, view)}>היום</button>
         </div>

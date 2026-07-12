@@ -5,41 +5,47 @@
    ============================================================ */
 
 @theme {
+  /* Tailwind utilities MIRROR the canonical tokens of design-system.css
+     (GUIDELINES §1). This block invents nothing: every value below is the token
+     with the same meaning, so `bg-primary` and `var(--brand)` can never drift. */
+
   /* Brand */
   --color-primary: #2540c8;
   --color-primary-dark: #1c2e9a;
-  --color-primary-100: #d5dbf6;
-  --color-primary-050: #eef1fd;
+  --color-primary-100: #dfe5fb; /* = --brand-line */
+  --color-primary-050: #eef1fd; /* = --brand-soft */
 
   /* Text */
-  --color-ink: #1b2233; /* primary text (rendered design-system value) */
-  --color-text2: #4b5266;
+  --color-ink: #1b2233;
+  --color-text2: #6b7385; /* legacy alias of --muted (no separate gray) */
   --color-muted: #6b7385;
-  --color-faint: #9aa1b4; /* labels */
+  --color-faint: #9aa1b4;
 
   /* Surfaces & lines */
-  --color-line: #e7eaf1; /* borders */
-  --color-field: #eff2fb; /* input background */
+  --color-line: #e7eaf1; /* the ONE line token */
+  --color-field: #f7f8fb; /* = --field-bg */
   --color-surface: #ffffff;
-  --color-hover: #f2f4f8; /* row hover / search */
-  --color-appbg: #f1f3f8; /* app background */
+  --color-hover: color-mix(in srgb, #e7eaf1 45%, #fff); /* DERIVED hover (§1) */
+  --color-appbg: #f1f3f8;
 
-  /* Status (from the design-system status table) */
-  --color-status-danger: #dc2626;
-  --color-status-danger-050: #fdecec; /* danger tint surface (banners, destructive hover) */
+  /* Status (§1) */
+  --color-status-danger: #e5484d;
+  --color-status-danger-050: #fdebec; /* §3.1 "לא שולם" surface */
   --color-status-success: #16a34a;
-  --color-status-success-050: #e7f6ec; /* success tint surface (badges) */
+  --color-status-success-050: #dff2e7; /* §3.1 "שולם מלא" surface */
   --color-status-warning: #ea9314;
-  --color-status-warning-050: #fdf2e1; /* warning tint surface (badges) */
-  --color-status-info: #2540c8;
-  --color-status-purple: #7c3aed;
+  --color-status-warning-050: #fdf2e1; /* §3.1 "ממתין לאישור" surface */
+  --color-status-info: #8b5cf6;
+  --color-status-purple: #8b5cf6;
 
+  /* Radii — only the four approved (§1) */
   --radius-card: 16px;
-  --radius-panel: 0.65rem;
+  --radius-panel: 16px;
 
+  /* Shadows — only the two approved (§1) */
   --shadow-card: 0 6px 20px rgba(16, 24, 40, 0.03);
   --shadow-primary: 0 4px 12px rgba(37, 64, 200, 0.2);
-  --shadow-pop: 0 12px 32px rgba(16, 24, 40, 0.1);
+  --shadow-pop: 0 24px 60px rgba(16, 24, 40, 0.26); /* = --shadow-float */
 }
 
 :root {
@@ -62,6 +68,8 @@ body {
 }
 
 body {
+  font-size: 15px; /* §2 Base — without this, unstyled text inherits the UA's 16px */
+  line-height: 1.6; /* §2 */
   background: var(--color-appbg);
   color: var(--color-ink);
   font-family: var(--font-sans);
@@ -72,13 +80,13 @@ body {
    (a later layer) can override them per-instance — e.g. `field ps-11` for inputs
    with a leading icon. Unlayered rules would silently beat every utility. */
 @layer components {
-/* Focus ring — Azure Ethos: 0 0 0 4px rgba(37,64,200,.12) */
+/* Focus ring (§5) */
 .focus-ring:focus-visible,
 input:focus-visible,
 button:focus-visible,
 a:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
+  box-shadow: 0 0 0 3px rgba(37, 64, 200, 0.12);
 }
 
 /* Slim, unobtrusive scrollbars (contained board scroll comes later). */
@@ -87,80 +95,7 @@ a:focus-visible {
   scrollbar-color: var(--color-line) transparent;
 }
 
-/* ---------- Buttons (overview §16) ---------- */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  min-height: 44px; /* touch target — rendered sheet is 42px; rounded up for a11y (D14) */
-  padding: 0.5rem 1.25rem; /* 0 20px per rendered primary button */
-  border-radius: 12px;
-  font-weight: 700;
-  font-size: 0.875rem; /* 14px */
-  line-height: 1.2;
-  transition:
-    background-color 0.15s ease,
-    box-shadow 0.15s ease,
-    border-color 0.15s ease,
-    opacity 0.15s ease;
-  cursor: pointer;
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+/* Buttons, fields, chips, cards, drawers, modals, popovers and toasts are
+   CANONICAL in design-system.css. Nothing may re-declare them here. */
 
-.btn-primary {
-  background: var(--color-primary);
-  color: #fff;
-  box-shadow: var(--shadow-primary);
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-dark);
-}
-
-.btn-outline {
-  background: var(--color-surface);
-  color: var(--color-ink);
-  border: 1px solid var(--color-line);
-}
-.btn-outline:hover:not(:disabled) {
-  background: var(--color-hover);
-}
-
-.btn-filter {
-  background: var(--color-surface);
-  color: var(--color-text2);
-  border: 1px solid var(--color-line);
-  font-weight: 500;
-}
-.btn-filter:hover:not(:disabled) {
-  background: var(--color-hover);
-}
-
-/* ---------- Form field ---------- */
-.field {
-  width: 100%;
-  min-height: 52px; /* rendered design-system input height */
-  background: var(--color-field);
-  border: 1px solid transparent;
-  border-radius: 13px; /* rendered design-system input radius */
-  padding: 0.75rem 1rem;
-  font-size: 0.9375rem; /* 15px */
-  color: var(--color-ink);
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease,
-    background-color 0.15s ease;
-}
-.field::placeholder {
-  color: var(--color-faint);
-}
-.field:focus {
-  outline: none;
-  background: var(--color-surface);
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
-}
 } /* @layer components */

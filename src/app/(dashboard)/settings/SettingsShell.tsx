@@ -64,18 +64,18 @@ export function SettingsShell({
   return (
     <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
       <div>
-        <h1 className="text-2xl font-extrabold text-ink">הגדרות</h1>
-        <p className="mt-1 text-sm font-semibold text-muted">
+        <h1 className="h1">הגדרות</h1>
+        <p className="t-secondary mt-1">
           {propertyIdentity} — ניהול ערכים, סטטוסים וברירות מחדל של המערכת
         </p>
       </div>
 
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
         {/* right-hand settings navigation — first child = right side in RTL (like Shell's Sidebar) */}
-        <nav className="shrink-0 rounded-2xl border border-line bg-surface p-3 lg:w-[280px]" aria-label="ניווט הגדרות">
+        <nav className="card shrink-0 p-3 lg:w-[280px]" aria-label="ניווט הגדרות">
           {groups.map((group) => (
             <div key={group.title} className="mb-3 last:mb-0">
-              <p className="px-3 pb-1 text-[11px] font-bold tracking-wide text-faint">{group.title}</p>
+              <p className="t-label px-3 pb-1 tracking-wide text-faint">{group.title}</p>
               <ul className="flex flex-col gap-0.5">
                 {group.items.map((item) => (
                   <li key={item.key}>
@@ -129,7 +129,7 @@ function SettingsNavRow({
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start text-sm transition-colors ${
+      className={`relative flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start text-sm transition-colors ${
         active ? "bg-primary-050 font-semibold text-primary" : "text-text2 hover:bg-hover"
       }`}
     >

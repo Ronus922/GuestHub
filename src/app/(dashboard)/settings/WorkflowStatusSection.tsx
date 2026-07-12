@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { HEX_COLOR_RE, STATUS_PALETTE, readableTextColor } from "@/lib/colors";
+import { Switch } from "./controls";
 import {
   createWorkflowStatusAction,
   deleteWorkflowStatusAction,
@@ -14,14 +15,16 @@ import {
   type WorkflowStatusDef,
 } from "./status-actions";
 
-// סטטוסי הזמנה (D77 §B2, visuals D77.2) — tenant workflow statuses: operator
-// tags that never touch inventory or payment state. UI is a 1:1 port of
-// ref/html/OrderStatus.html (OrderStatus.png / AddOrderStatusValue.png) over
-// the EXISTING model/actions — same rules, same data, new presentation.
+// סטטוסי הזמנה (D77 §B2) — tenant workflow statuses: operator tags that never
+// touch inventory or payment state. The card, its header, the buttons, the fields
+// and the status pill are the canonical primitives (GUIDELINES §3–§6); only the
+// table grid and the colour palette are local (status-settings.css).
 
-function Pill({ label, color }: { label: string; color: string }) {
+// The tag wears the tenant's chosen colour on the ONE chip anatomy (§3): 28px,
+// radius 8, 13.5px/700. The text shade is derived (WCAG), never stored.
+function StatusChip({ label, color }: { label: string; color: string }) {
   return (
-    <span className="ws-pill" style={{ background: color, color: readableTextColor(color) }}>
+    <span className="chip" style={{ background: color, color: readableTextColor(color) }}>
       {label}
     </span>
   );
@@ -72,51 +75,51 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
   const valid = label.trim().length > 0 && label.trim().length <= 60 && HEX_COLOR_RE.test(color);
   const customColor = !STATUS_PALETTE.includes(color as (typeof STATUS_PALETTE)[number]);
   const activeCount = rows.filter((r) => r.isActive).length;
+  const hexBad = color.length > 0 && !HEX_COLOR_RE.test(color);
 
   return (
-    <section className="ws-card max-w-4xl">
-      <div className="ws-head">
-        <span className="ws-ico">
+    <section className="card max-w-4xl">
+      <header className="card-hd">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
           <Icon name="check-circle" size={20} />
         </span>
-        <div>
-          <h3 className="ws-t">סטטוסי הזמנה (תפעוליים)</h3>
-          <p className="ws-d">
-            תגית תפעולית לצוות — אינה משנה זמינות, מחזור חיים או מצב תשלום. סטטוס שבשימוש לא
-            ניתן למחיקה; רק להשבתה.
+        <div className="min-w-0 flex-1">
+          <h3 className="h4">סטטוסי הזמנה (תפעוליים)</h3>
+          <p className="t-secondary max-w-[640px]">
+            תגית תפעולית לצוות — אינה משנה זמינות, מחזור חיים או מצב תשלום. סטטוס שבשימוש לא ניתן
+            למחיקה; רק להשבתה.
           </p>
         </div>
-        <span className="flex-1" />
         <button
           type="button"
-          className="bw-btn bw-btn-primary"
+          className="btn btn-primary shrink-0"
           disabled={pending || editing === "new"}
           onClick={() => startEdit(null)}
         >
-          <Icon name="plus" size={16} />
+          <Icon name="plus" size={20} />
           הוסף סטטוס
         </button>
-      </div>
+      </header>
 
       {editing && (
         <div className="ws-form">
           <h4 className="ws-form-t">{editing === "new" ? "סטטוס חדש" : "עריכת סטטוס"}</h4>
           <div className="ws-form-grid">
-            <div className="ws-fld">
-              <label className="ws-fld-l" htmlFor="ws-name">
-                שם הסטטוס<b>*</b>
+            <div className="field">
+              <label className="field-label" htmlFor="ws-name">
+                שם הסטטוס<span className="text-status-danger"> *</span>
               </label>
               <input
                 id="ws-name"
-                className="bw-fld ws-inp"
+                className="field-input ws-inp"
                 placeholder="לדוגמה: ממתין לאישוש"
                 maxLength={60}
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
               />
             </div>
-            <div className="ws-fld">
-              <span className="ws-fld-l">צבע</span>
+            <div className="field">
+              <span className="field-label">צבע</span>
               <div className="ws-pal">
                 {STATUS_PALETTE.map((c) => (
                   <button
@@ -131,26 +134,21 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                   />
                 ))}
                 <input
-                  className={`bw-fld ws-hex ${color && !HEX_COLOR_RE.test(color) ? "bad" : ""}`}
-                  dir="ltr"
+                  className={`field-input ltr-num ws-hex ${hexBad ? "field-error" : ""}`}
                   placeholder="#RRGGBB"
                   value={customColor ? color : ""}
                   onChange={(e) => setColor(e.target.value.trim())}
                   aria-label="צבע מותאם (hex)"
+                  aria-invalid={hexBad}
                 />
               </div>
             </div>
           </div>
           <div className="ws-form-foot">
-            <button
-              type="button"
-              className="bw-btn bw-btn-primary"
-              disabled={pending || !valid}
-              onClick={save}
-            >
+            <button type="button" className="btn btn-primary" disabled={pending || !valid} onClick={save}>
               {pending ? "שומר…" : "שמור"}
             </button>
-            <button type="button" className="bw-btn bw-btn-ghost" onClick={() => setEditing(null)}>
+            <button type="button" className="btn btn-tertiary" onClick={() => setEditing(null)}>
               ביטול
             </button>
           </div>
@@ -179,7 +177,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                     disabled={pending || i === 0}
                     onClick={() => move(i, -1)}
                   >
-                    <Icon name="arrow-up" size={14} />
+                    <Icon name="arrow-up" size={13.5} />
                   </button>
                   <button
                     type="button"
@@ -187,25 +185,22 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                     disabled={pending || i === rows.length - 1}
                     onClick={() => move(i, 1)}
                   >
-                    <Icon name="arrow-down" size={14} />
+                    <Icon name="arrow-down" size={13.5} />
                   </button>
                 </span>
               </span>
-              <span className="c ws-cnt">{i + 1}</span>
+              <span className="c ws-cnt ltr-num">{i + 1}</span>
               <span>
-                <Pill label={row.label} color={row.color} />
+                <StatusChip label={row.label} color={row.color} />
               </span>
               <span className="ws-cnt">
-                <b>{row.usedCount}</b> הזמנות
+                <b className="ltr-num">{row.usedCount}</b> הזמנות
               </span>
               <span className="c">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={row.isActive}
-                  aria-label={`${row.label} — ${row.isActive ? "פעיל" : "מושבת"}`}
-                  className={`ws-sw ${row.isActive ? "on" : ""}`}
+                <Switch
+                  checked={row.isActive}
                   disabled={pending || row.isDefault}
+                  label={`${row.label} — ${row.isActive ? "פעיל" : "מושבת"}`}
                   title={
                     row.isDefault
                       ? "לא ניתן להשבית את ברירת המחדל"
@@ -213,7 +208,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                         ? "השבת"
                         : "הפעל"
                   }
-                  onClick={() =>
+                  onChange={() =>
                     startTransition(async () =>
                       apply(
                         await setWorkflowStatusActiveAction({ id: row.id, isActive: !row.isActive }),
@@ -226,7 +221,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
               <span className="c">
                 <button
                   type="button"
-                  className={`ws-star ${row.isDefault ? "on" : ""}`}
+                  className={`icon-btn ws-star ${row.isDefault ? "on" : ""}`}
                   disabled={pending || row.isDefault || !row.isActive}
                   title={
                     row.isDefault
@@ -235,14 +230,17 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                         ? "הפעל את הסטטוס לפני קביעתו כברירת מחדל"
                         : "קבע כברירת מחדל"
                   }
-                  aria-label={row.isDefault ? `${row.label} — ברירת מחדל` : `קבע את ${row.label} כברירת מחדל`}
                   onClick={() =>
                     startTransition(async () =>
                       apply(await setDefaultWorkflowStatusAction({ id: row.id }), "ברירת המחדל עודכנה"),
                     )
                   }
                 >
-                  <Icon name="star" size={19} />
+                  <Icon
+                    name="star"
+                    size={20}
+                    label={row.isDefault ? `${row.label} — ברירת מחדל` : `קבע את ${row.label} כברירת מחדל`}
+                  />
                 </button>
               </span>
               <span className="ws-acts">
@@ -250,7 +248,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                   <>
                     <button
                       type="button"
-                      className="bw-btn bw-btn-danger !h-[34px]"
+                      className="btn btn-sm btn-danger"
                       disabled={pending}
                       onClick={() =>
                         startTransition(async () =>
@@ -262,7 +260,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                     </button>
                     <button
                       type="button"
-                      className="bw-btn bw-btn-ghost !h-[34px]"
+                      className="btn btn-sm btn-tertiary"
                       onClick={() => setConfirmDelete(null)}
                     >
                       ביטול
@@ -272,17 +270,16 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                   <>
                     <button
                       type="button"
-                      className="ws-ibtn"
+                      className="icon-btn ws-ibtn"
                       title="עריכה"
-                      aria-label={`עריכת ${row.label}`}
                       disabled={pending}
                       onClick={() => startEdit(row)}
                     >
-                      <Icon name="edit" size={16} />
+                      <Icon name="edit" size={20} label={`עריכת ${row.label}`} />
                     </button>
                     <button
                       type="button"
-                      className="ws-ibtn danger"
+                      className="icon-btn ws-ibtn danger"
                       title={
                         row.usedCount > 0
                           ? "סטטוס בשימוש — ניתן רק להשבית"
@@ -290,11 +287,10 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                             ? "לא ניתן למחוק את ברירת המחדל"
                             : "מחיקה"
                       }
-                      aria-label={`מחיקת ${row.label}`}
                       disabled={pending || row.usedCount > 0 || row.isDefault}
                       onClick={() => setConfirmDelete(row.id)}
                     >
-                      <Icon name="trash" size={16} />
+                      <Icon name="trash" size={20} label={`מחיקת ${row.label}`} />
                     </button>
                   </>
                 )}
@@ -305,9 +301,10 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
       </div>
 
       <div className="ws-ft">
-        <Icon name="info" size={15} />
+        <Icon name="info" size={17} />
         <span>
-          {rows.length} סטטוסים סה״כ · {activeCount} פעילים
+          <span className="ltr-num">{rows.length}</span> סטטוסים סה״כ ·{" "}
+          <span className="ltr-num">{activeCount}</span> פעילים
         </span>
       </div>
     </section>
