@@ -4,13 +4,19 @@ import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Icon, type IconName } from "@/components/shared/Icon";
 
-// Project modal replacement (DESIGN_SYSTEM §5, /side-panel skill): slides in from
-// the left in RTL (x: -100% → 0) with fade, overlay fades only — both 1.2s
-// ease-in-out via framer-motion, AnimatePresence animating the exit. Glass body,
-// overlay 65%, 55% width desktop / 100% mobile, Primary header, shadow-pop.
-// No centered modals. z-90: above every calendar layer (sticky headers z-7,
-// tooltip z-60, date picker z-80). Escape / overlay click / X all route
-// through onClose — the OWNER decides (dirty-state confirm lives there).
+// THE canonical drawer (GUIDELINES §7). Every modal in the app is this panel —
+// there is no centered modal and no second drawer shell.
+//
+//   opens from the LEFT (x: -100% → 0), 60% of the screen, blurred overlay,
+//   closes on Esc / overlay click / X (all routed through onClose — the OWNER
+//   decides, so a dirty-state confirm lives there).
+//   header .dw-hd  : full brand bar · 40×40 icon square · 21px/800 title ·
+//                    14px subtitle · 36×36 close.
+//   body   .dw-bd  : padding 24, internal scroll, sections are `.card`.
+//   footer .dw-ft  : border-top, the PRIMARY action hugging the left edge.
+//
+// z-90: above every calendar layer (sticky headers z-7, tooltip z-60, date
+// picker z-80).
 const DURATION = 1.2;
 
 export function SidePanel({
@@ -27,7 +33,6 @@ export function SidePanel({
   band,
   bodyClassName,
   widthClassName,
-  v2 = false,
   children,
   footer,
 }: {
@@ -40,7 +45,7 @@ export function SidePanel({
   // square, badge is a chip rendered next to the title block
   avatar?: React.ReactNode;
   badge?: React.ReactNode;
-  // raw chips (e.g. reservation # + status, .bw-hd-num / .bw-st-badge) rendered after the title
+  // raw chips (e.g. reservation # + status) rendered after the title
   headerChips?: React.ReactNode;
   // compact icon-buttons in the LEFT header cluster, before the built-in close X
   // (e.g. the booking action toolbar: email / whatsapp / pdf / print). RTL DOM
@@ -51,17 +56,16 @@ export function SidePanel({
   overlay?: React.ReactNode;
   // full-width strip between the header and the scrolling body (e.g. wizard stepper)
   band?: React.ReactNode;
-  // body padding/background override (default p-6 glass)
+  // body OVERRIDE (not stack): passing this replaces the default §7 24px body
+  // padding — bring your own p-* (a caller passing only a background gets a
+  // full-bleed body, e.g. the guest-profile drawer's skeleton blocks)
   bodyClassName?: string;
-  // panel width override (default 55% desktop / full mobile; e.g. rooms drawer = 60vw)
+  // panel width override (default: the §7 60%; full width on mobile)
   widthClassName?: string;
-  /** V2 chrome (edit-booking-modal-V2 reference) — opt-in per panel: 22px/800
-   *  title, 26px header/footer padding, 40px header actions + divider,
-   *  white-on-red close hover, footer shadow, and the `.bw-v2` CSS scope for
-   *  the V2 form-token overrides. Panels that don't opt in keep the original
-   *  shell untouched. */
-  v2?: boolean;
   children: React.ReactNode;
+  // rendered inside the §7 `.dw-ft`. Pass FLAT .btn children with the PRIMARY
+  // action FIRST in the DOM — .dw-ft is row-reverse, so the first child hugs
+  // the LEFT edge and "ביטול" sits to its right (§7).
   footer?: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
@@ -111,18 +115,18 @@ export function SidePanel({
     <AnimatePresence>
       {open && (
         <div className="fixed inset-0 z-[90]" dir="rtl">
-          {/* Overlay — fade only */}
+          {/* Overlay — blurred, fade only */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: DURATION, ease: "easeInOut" }}
-            className="absolute inset-0 bg-black/65"
+            className="absolute inset-0 bg-black/65 backdrop-blur-sm"
             onClick={onClose}
             aria-hidden="true"
           />
 
-          {/* Panel — slide from the left + fade */}
+          {/* Panel — slide from the left + fade. 60% of the screen (§7). */}
           <motion.aside
             ref={panelRef}
             initial={{ x: "-100%", opacity: 0 }}
@@ -133,90 +137,52 @@ export function SidePanel({
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
-            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[55%]"} flex-col overflow-hidden rounded-tr-[0.65rem] rounded-br-[0.65rem] bg-white/90 shadow-pop outline-none backdrop-blur-md max-sm:w-full${v2 ? " bw-v2" : ""}`}
+            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[60%]"} flex-col overflow-hidden rounded-s-2xl bg-surface shadow-pop outline-none max-sm:w-full`}
           >
-            <header
-              className={`flex shrink-0 items-center justify-between bg-primary py-4 text-white ${
-                v2 ? "gap-4 px-[26px]" : "gap-3 px-6"
-              }`}
-            >
-              <div className="flex min-w-0 items-center gap-3">
-                {avatar ??
-                  (icon ? (
-                    <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/15">
-                      <Icon name={icon} size={22} />
-                    </span>
-                  ) : null)}
-                <div className="min-w-0">
-                  {/* V2 header hierarchy: 22px/800 title, chips inline after it */}
-                  <div className={`flex flex-wrap items-center ${v2 ? "gap-2.5" : "gap-2"}`}>
-                    <h2
-                      className={
-                        v2
-                          ? "truncate text-[22px] font-extrabold tracking-[-0.3px]"
-                          : "truncate text-lg font-bold"
-                      }
-                    >
-                      {title}
-                    </h2>
-                    {headerChips}
-                  </div>
-                  {subtitle ? (
-                    <p
-                      className={
-                        v2
-                          ? "mt-1 truncate text-sm font-medium text-white/[.82]"
-                          : "truncate text-sm text-white/80"
-                      }
-                    >
-                      {subtitle}
-                    </p>
-                  ) : null}
-                </div>
-                {badge ? (
-                  <span className="shrink-0 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">
-                    {badge}
+            <header className="dw-hd shrink-0">
+              {avatar ??
+                (icon ? (
+                  <span className="dw-icon">
+                    <Icon name={icon} size={24} />
                   </span>
-                ) : null}
+                ) : null)}
+
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="dw-title truncate">{title}</h2>
+                  {headerChips}
+                  {/* on-brand header chip — the §7 header surface (white at .16, the
+                      same value as .dw-icon/.dw-close); design-system.css has no
+                      canonical on-brand chip class yet, so it is composed here once */}
+                  {badge ? <span className="chip chip-onbrand">{badge}</span> : null}
+                </div>
+                {subtitle ? <p className="dw-sub truncate">{subtitle}</p> : null}
               </div>
-              {/* left header cluster: action toolbar (RTL: right→left) + close X.
-                  V2 only: thin divider before the X, close hovers white-on-red. */}
-              <div className="flex shrink-0 items-center gap-1.5">
+
+              {/* left header cluster: action toolbar (RTL: right→left) + close X */}
+              <div className="ms-auto flex shrink-0 items-center gap-1.5">
                 {headerActions}
-                {v2 && headerActions ? (
-                  <span aria-hidden className="mx-[3px] h-[26px] w-px shrink-0 self-center bg-white/[.28]" />
-                ) : null}
                 <button
                   type="button"
                   onClick={onClose}
-                  aria-label="סגירה"
+                  className="dw-close"
                   title="סגירת החלון"
-                  className={
-                    v2
-                      ? "grid h-10 w-10 shrink-0 place-items-center rounded-[11px] bg-white/[.12] text-white transition-colors hover:bg-white hover:text-[#DC2626] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                      : "grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white/90 transition-colors hover:bg-white/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                  }
                 >
-                  <Icon name="close" size={20} />
+                  <Icon name="close" size={20} label="סגירה" />
                 </button>
               </div>
             </header>
 
             {band}
 
-            <div className={`thin-scroll flex-1 overflow-y-auto ${bodyClassName ?? "p-6"}`}>
+            {/* body — bodyClassName OVERRIDES the default 24px padding rather than
+                stacking on it: `p-0` cancels `.dw-bd`'s components-layer padding and
+                any caller-supplied p-* utility is emitted after p-0, so it wins. */}
+            <div className={`dw-bd thin-scroll${bodyClassName ? ` p-0 ${bodyClassName}` : ""}`}>
               {children}
             </div>
 
-            {footer ? (
-              <footer
-                className={`shrink-0 border-t border-line bg-surface ${
-                  v2 ? "px-[26px] py-3.5 shadow-[0_-4px_16px_rgba(16,24,40,0.04)]" : "p-4"
-                }`}
-              >
-                {footer}
-              </footer>
-            ) : null}
+            {footer ? <footer className="dw-ft shrink-0">{footer}</footer> : null}
 
             {/* full-panel overlay (e.g. in-panel message composer) — booking stays
                 mounted underneath so closing restores its exact scroll state */}

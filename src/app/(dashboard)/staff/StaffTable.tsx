@@ -31,9 +31,9 @@ function lastLogin(iso: string | null) {
   if (!iso) return <span className="text-faint">לא התחבר</span>;
   const d = new Date(iso);
   return (
-    <span dir="ltr" className="text-text2">
+    <bdi className="ltr-num text-text2">
       {timeFmt.format(d)} · {dateFmt.format(d)}
-    </span>
+    </bdi>
   );
 }
 
@@ -69,12 +69,12 @@ export function StaffTable({
               {initials(u.full_name ?? u.username)}
             </span>
             <div className="min-w-0">
-              <p className="truncate font-semibold text-ink">
+              <p className="t-body truncate font-semibold text-ink">
                 {u.full_name ?? u.username}
               </p>
               {u.email ? (
-                <p className="max-w-[260px] truncate text-xs text-faint">
-                  <span dir="ltr">{u.email}</span>
+                <p className="t-label max-w-[260px] truncate text-faint">
+                  <bdi className="ltr-num">{u.email}</bdi>
                 </p>
               ) : null}
             </div>
@@ -87,9 +87,9 @@ export function StaffTable({
       enableSorting: false,
       // dir=ltr keeps digit order; text-end aligns with the RTL header (right)
       cell: (c) => (
-        <span dir="ltr" className="block text-end text-text2">
+        <bdi className="ltr-num block text-end text-text2">
           {c.getValue() || "—"}
-        </span>
+        </bdi>
       ),
     }),
     col.accessor((u) => u.role_name ?? "", {
@@ -135,11 +135,10 @@ export function StaffTable({
           <button
             type="button"
             onClick={() => onEdit(c.row.original)}
-            aria-label="עריכה"
             title="עריכה"
-            className="grid h-11 w-11 place-items-center rounded-xl text-muted hover:bg-hover hover:text-ink"
+            className="icon-btn"
           >
-            <Icon name="edit" size={17} />
+            <Icon name="edit" size={20} label="עריכה" />
           </button>
         ) : null,
     }),
@@ -155,7 +154,7 @@ export function StaffTable({
   });
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+    <div className="card">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[880px] border-collapse text-sm">
           <thead>
@@ -165,10 +164,7 @@ export function StaffTable({
                   const sortable = h.column.getCanSort();
                   const dir = h.column.getIsSorted();
                   return (
-                    <th
-                      key={h.id}
-                      className="px-4 py-3 text-start text-xs font-bold tracking-wide text-muted"
-                    >
+                    <th key={h.id} className="t-label px-4 py-3 text-start tracking-wide">
                       {h.isPlaceholder ? null : sortable ? (
                         <button
                           type="button"
@@ -179,7 +175,7 @@ export function StaffTable({
                           {dir ? (
                             <Icon
                               name={dir === "asc" ? "arrow-up" : "arrow-down"}
-                              size={14}
+                              size={13.5}
                               className="text-primary"
                             />
                           ) : null}
@@ -213,22 +209,23 @@ export function StaffTable({
       </div>
 
       {users.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
+        <div className="empty-state">
           <div className="grid h-14 w-14 place-items-center rounded-2xl bg-primary-050">
-            <Icon name="guests" size={26} className="text-primary" />
+            <Icon name="guests" size={24} className="text-primary" />
           </div>
-          <p className="font-bold text-ink">
+          <p className="empty-t">
             {totalCount === 0 ? "אין עדיין עובדים" : "לא נמצאו תוצאות"}
           </p>
-          <p className="text-sm text-muted">
+          <p className="empty-s">
             {totalCount === 0
               ? "הוסף את העובד הראשון כדי להתחיל"
               : "נסה לשנות את מונחי החיפוש או הסינון"}
           </p>
         </div>
       ) : (
-        <div className="border-t border-line px-4 py-3 text-xs text-muted">
-          מציג {users.length} מתוך {totalCount} עובדים
+        <div className="t-label border-t border-line px-4 py-3">
+          מציג <bdi className="ltr-num">{users.length}</bdi> מתוך{" "}
+          <bdi className="ltr-num">{totalCount}</bdi> עובדים
         </div>
       )}
     </div>

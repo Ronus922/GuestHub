@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { statusTintPalette } from "@/lib/colors";
+import { paymentTriplet } from "@/lib/status-colors";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type {
@@ -48,14 +49,24 @@ const QUICK_CHIPS: { key: QuickFilter; label: string; icon: IconName }[] = [
   { key: "noshow_candidates", label: "מועמדי No-show", icon: "warning" },
 ];
 
+// the stay lifecycle wears the SAME chip anatomy as everything else (§3): the
+// approved §3.1 families, plus the brand family for "מאושר".
+//
+// Families are chosen so no stay family collides with a payment family inside
+// one row — the payment column only ever wears unpaid/partial/paid/transfer
+// (PaymentState; overpaid → transfer). So: no_show does NOT wear the transfer
+// purple (that is "שולם ביתר"), and "בוטל" wears the crimson "נכשל" family so
+// a cancelled stay keeps its red operational signal and never melts into the
+// checked-out/blocked greys. cancelled and no_show never share a row with any
+// other stay state, so failed/approval stay unambiguous per row.
 const LIFECYCLE_PILL: Record<string, { label: string; cls: string; icon: IconName }> = {
-  confirmed: { label: "מאושר", cls: "confirmed", icon: "check" },
-  checked_in: { label: "In House", cls: "inhouse", icon: "hotel" },
-  checked_out: { label: "צ׳ק אאוט", cls: "out", icon: "logout" },
-  cancelled: { label: "בוטל", cls: "cancelled", icon: "circle-slash" },
-  draft: { label: "טיוטה", cls: "draft", icon: "moon" },
-  no_show: { label: "No Show", cls: "noshow", icon: "warning" },
-  blocked: { label: "חסום", cls: "out", icon: "lock" },
+  confirmed: { label: "מאושר", cls: "chip-brand", icon: "check" },
+  checked_in: { label: "In House", cls: "chip-paid", icon: "hotel" },
+  checked_out: { label: "צ׳ק אאוט", cls: "chip-refunded", icon: "logout" },
+  cancelled: { label: "בוטל", cls: "chip-failed", icon: "circle-slash" },
+  draft: { label: "טיוטה", cls: "chip-approval", icon: "moon" },
+  no_show: { label: "No Show", cls: "chip-approval", icon: "warning" },
+  blocked: { label: "חסום", cls: "chip-refunded", icon: "lock" },
 };
 
 const PAY_LABEL: Record<string, string> = {
@@ -169,8 +180,8 @@ export function ReservationsScreen({
     <div className="rl-app">
       {/* ---- header ---- */}
       <div className="rl-hd">
-        <h1 className="rl-hd-t">הזמנות</h1>
-        <p className="rl-hd-sub">רשימת ההזמנות הפעילות והסגורות במלון</p>
+        <h1 className="h1">הזמנות</h1>
+        <p className="t-secondary">רשימת ההזמנות הפעילות והסגורות במלון</p>
       </div>
 
       {/* ---- tabs (right) + search (left) ---- */}
@@ -182,17 +193,17 @@ export function ReservationsScreen({
               type="button"
               role="tab"
               aria-selected={filters.tab === t.key}
-              className={`rl-tab ${filters.tab === t.key ? "on" : ""}`}
+              className={`btn rl-tab ${filters.tab === t.key ? "btn-primary" : "btn-tertiary"}`}
               onClick={() => apply({ tab: t.key })}
             >
               {t.label}
-              <span className="rl-cnt">{data.counts[t.key]}</span>
+              <span className="chip chip-neutral ltr-num">{data.counts[t.key]}</span>
             </button>
           ))}
         </div>
         <span className="rl-sp" />
-        <label className="rl-search">
-          <Icon name="search" size={22} />
+        <label className="rl-search field-input">
+          <Icon name="search" size={20} />
           <input
             value={q}
             placeholder="חיפוש לפי מספר הזמנה, שם אורח, טלפון או חדר…"
@@ -202,159 +213,161 @@ export function ReservationsScreen({
       </div>
 
       {/* ---- filters card ---- */}
-      <div className="rl-filters">
-        <div className="rl-fbar">
-          <div className="rl-fld-g">
-            <span className="rl-flbl">סוג תאריך</span>
-            <select
-              className="rl-fsel"
-              value={filters.dateType}
-              onChange={(e) => apply({ dateType: e.target.value as ListFilters["dateType"] })}
-            >
-              <option value="checkin">תאריך כניסה</option>
-              <option value="checkout">תאריך יציאה</option>
-              <option value="created">תאריך הזמנה</option>
-            </select>
-          </div>
-          <div className="rl-fld-g">
-            <span className="rl-flbl">מתאריך</span>
-            <input
-              type="date"
-              className="rl-fdate"
-              value={filters.from ?? ""}
-              onChange={(e) => apply({ from: e.target.value || null })}
-            />
-          </div>
-          <div className="rl-fld-g">
-            <span className="rl-flbl">עד תאריך</span>
-            <input
-              type="date"
-              className="rl-fdate"
-              value={filters.to ?? ""}
-              onChange={(e) => apply({ to: e.target.value || null })}
-            />
-          </div>
-          <div className="rl-fld-g">
-            <span className="rl-flbl">סוכן</span>
-            <select
-              className="rl-fsel"
-              value={filters.sourceId ?? ""}
-              onChange={(e) => apply({ sourceId: e.target.value || null })}
-            >
-              <option value="">כל הסוכנים</option>
-              {bookingSources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="rl-fld-g">
-            <span className="rl-flbl">סטטוס הזמנה</span>
-            <select
-              className="rl-fsel"
-              value={filters.workflowId ?? ""}
-              onChange={(e) => apply({ workflowId: e.target.value || null })}
-            >
-              <option value="">כל הסטטוסים</option>
-              {workflowStatuses.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="rl-fld-g">
-            <span className="rl-flbl">תשלום</span>
-            <select
-              className="rl-fsel"
-              value={filters.payment ?? ""}
-              onChange={(e) =>
-                apply({ payment: (e.target.value || null) as ListFilters["payment"] })
-              }
-            >
-              <option value="">כל התשלומים</option>
-              <option value="unpaid">ממתין לתשלום</option>
-              <option value="partial">שולם חלקית</option>
-              <option value="paid">שולם מלא</option>
-            </select>
-          </div>
-          <div className="rl-fld-g">
-            <span className="rl-flbl">חדר</span>
-            <select
-              className="rl-fsel"
-              style={{ minWidth: 110 }}
-              value={filters.roomId ?? ""}
-              onChange={(e) => apply({ roomId: e.target.value || null })}
-            >
-              <option value="">כל החדרים</option>
-              {rooms.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.room_number}
-                </option>
-              ))}
-            </select>
-          </div>
-          {cancelledTab && (
-            <div className="rl-fld-g">
-              <span className="rl-flbl">מקור ביטול</span>
+      <div className="card rl-filters">
+        <div className="card-bd">
+          <div className="rl-fbar">
+            <label className="field rl-fld">
+              <span className="field-label">סוג תאריך</span>
               <select
-                className="rl-fsel"
-                value={filters.cancellationOrigin ?? ""}
-                onChange={(e) => apply({ cancellationOrigin: e.target.value || null })}
+                className="field-input"
+                value={filters.dateType}
+                onChange={(e) => apply({ dateType: e.target.value as ListFilters["dateType"] })}
               >
-                <option value="">כל המקורות</option>
-                {Object.entries(CANCEL_ORIGIN_SHORT).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
+                <option value="checkin">תאריך כניסה</option>
+                <option value="checkout">תאריך יציאה</option>
+                <option value="created">תאריך הזמנה</option>
+              </select>
+            </label>
+            <label className="field rl-fld">
+              <span className="field-label">מתאריך</span>
+              <input
+                type="date"
+                className="field-input ltr-num"
+                value={filters.from ?? ""}
+                onChange={(e) => apply({ from: e.target.value || null })}
+              />
+            </label>
+            <label className="field rl-fld">
+              <span className="field-label">עד תאריך</span>
+              <input
+                type="date"
+                className="field-input ltr-num"
+                value={filters.to ?? ""}
+                onChange={(e) => apply({ to: e.target.value || null })}
+              />
+            </label>
+            <label className="field rl-fld">
+              <span className="field-label">סוכן</span>
+              <select
+                className="field-input"
+                value={filters.sourceId ?? ""}
+                onChange={(e) => apply({ sourceId: e.target.value || null })}
+              >
+                <option value="">כל הסוכנים</option>
+                {bookingSources.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
                   </option>
                 ))}
               </select>
-            </div>
-          )}
-          {filtersActive && (
-            <button
-              type="button"
-              className="rl-clear"
-              onClick={() => {
-                setQ("");
-                apply({
-                  q: "",
-                  from: null,
-                  to: null,
-                  sourceId: null,
-                  workflowId: null,
-                  payment: null,
-                  roomId: null,
-                  cancellationOrigin: null,
-                  quick: null,
-                  dateType: "checkin",
-                });
-              }}
-            >
-              <Icon name="filter" size={16} />
-              ניקוי סינון
-            </button>
-          )}
-        </div>
-        <div className="rl-quick">
-          <span className="rl-quick-lbl">סינון מהיר:</span>
-          {QUICK_CHIPS.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              className={`rl-qchip ${filters.quick === c.key ? "on" : ""}`}
-              onClick={() => apply({ quick: filters.quick === c.key ? null : c.key })}
-            >
-              <Icon name={c.icon} size={17} />
-              {c.label}
-            </button>
-          ))}
+            </label>
+            <label className="field rl-fld">
+              <span className="field-label">סטטוס הזמנה</span>
+              <select
+                className="field-input"
+                value={filters.workflowId ?? ""}
+                onChange={(e) => apply({ workflowId: e.target.value || null })}
+              >
+                <option value="">כל הסטטוסים</option>
+                {workflowStatuses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field rl-fld">
+              <span className="field-label">תשלום</span>
+              <select
+                className="field-input"
+                value={filters.payment ?? ""}
+                onChange={(e) =>
+                  apply({ payment: (e.target.value || null) as ListFilters["payment"] })
+                }
+              >
+                <option value="">כל התשלומים</option>
+                <option value="unpaid">ממתין לתשלום</option>
+                <option value="partial">שולם חלקית</option>
+                <option value="paid">שולם מלא</option>
+              </select>
+            </label>
+            <label className="field rl-fld narrow">
+              <span className="field-label">חדר</span>
+              <select
+                className="field-input"
+                value={filters.roomId ?? ""}
+                onChange={(e) => apply({ roomId: e.target.value || null })}
+              >
+                <option value="">כל החדרים</option>
+                {rooms.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.room_number}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {cancelledTab && (
+              <label className="field rl-fld">
+                <span className="field-label">מקור ביטול</span>
+                <select
+                  className="field-input"
+                  value={filters.cancellationOrigin ?? ""}
+                  onChange={(e) => apply({ cancellationOrigin: e.target.value || null })}
+                >
+                  <option value="">כל המקורות</option>
+                  {Object.entries(CANCEL_ORIGIN_SHORT).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {filtersActive && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setQ("");
+                  apply({
+                    q: "",
+                    from: null,
+                    to: null,
+                    sourceId: null,
+                    workflowId: null,
+                    payment: null,
+                    roomId: null,
+                    cancellationOrigin: null,
+                    quick: null,
+                    dateType: "checkin",
+                  });
+                }}
+              >
+                <Icon name="filter" size={17} />
+                ניקוי סינון
+              </button>
+            )}
+          </div>
+          <div className="rl-quick">
+            <span className="rl-quick-lbl">סינון מהיר:</span>
+            {QUICK_CHIPS.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                aria-pressed={filters.quick === c.key}
+                className={`chip clickable ${filters.quick === c.key ? "on" : ""}`}
+                onClick={() => apply({ quick: filters.quick === c.key ? null : c.key })}
+              >
+                <Icon name={c.icon} size={13.5} />
+                {c.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* ---- table card ---- */}
-      <div className="rl-card">
+      <div className="card rl-card">
         <div className="rl-twrap thin-scroll">
           <div className="rl-thead rl-rowg">
             <div className="rl-th start">אורח</div>
@@ -371,10 +384,10 @@ export function ReservationsScreen({
             <div className="rl-th end">סה״כ</div>
           </div>
           {data.rows.length === 0 ? (
-            <div className="rl-empty">
-              <Icon name="search" size={44} />
-              <p className="rl-empty-t">לא נמצאו הזמנות</p>
-              <p className="rl-empty-s">נסו לשנות את הסינון או את מונח החיפוש</p>
+            <div className="empty-state">
+              <Icon name="search" size={24} />
+              <p className="empty-t">לא נמצאו הזמנות</p>
+              <p className="empty-s">נסו לשנות את הסינון או את מונח החיפוש</p>
             </div>
           ) : (
             data.rows.map((row) => (
@@ -426,7 +439,7 @@ function ReservationRow({
 }) {
   const pill = LIFECYCLE_PILL[row.status] ?? {
     label: row.status,
-    cls: "out",
+    cls: "chip-refunded",
     icon: "info" as IconName,
   };
   const initial = (row.guest_name || "א").slice(0, 1);
@@ -446,35 +459,39 @@ function ReservationRow({
       <div className="rl-td rl-guest">
         <span className="rl-av">{initial}</span>
         <span className="rl-gname">{row.guest_name}</span>
-        {row.is_vip && <Icon name="star" size={19} className="rl-star" />}
+        {row.is_vip && (
+          <Icon name="star" size={20} className="rl-star" label="אורח VIP" />
+        )}
       </div>
-      <div className="rl-td" style={{ textAlign: "right" }}>
-        <span className="rl-resno">#{row.reservation_number}</span>
+      <div className="rl-td start">
+        <span className="rl-resno ltr-num">#{row.reservation_number}</span>
         {row.ota_reservation_code && (
-          <span className="rl-otacode">{row.ota_reservation_code}</span>
+          <span className="rl-otacode ltr-num">{row.ota_reservation_code}</span>
         )}
       </div>
       <div className="rl-td">
         <span className="rl-src">{row.source_label ?? (row.is_ota ? row.ota_name : "ישיר")}</span>
       </div>
       <div className="rl-td">
-        <span className="rl-phone">{row.guest_phone ?? "—"}</span>
+        <span className="rl-phone ltr-num">{row.guest_phone ?? "—"}</span>
       </div>
       <div className="rl-td">
-        <span className="rl-roomchip">{row.rooms_label ?? "—"}</span>
+        <span className="chip chip-neutral">
+          <bdi className="rl-room ltr-num">{row.rooms_label ?? "—"}</bdi>
+        </span>
       </div>
       <div className="rl-td">
-        <span className="rl-date">{ddmm(row.check_in)}</span>
+        <span className="rl-date ltr-num">{ddmm(row.check_in)}</span>
       </div>
       <div className="rl-td">
-        <span className="rl-date">{ddmm(row.check_out)}</span>
+        <span className="rl-date ltr-num">{ddmm(row.check_out)}</span>
       </div>
       <div className="rl-td">
-        <span className="rl-nights">{row.nights}</span>
+        <span className="rl-nights ltr-num">{row.nights}</span>
       </div>
       <div className="rl-td">
-        <span className={`rl-pill ${pill.cls}`}>
-          <Icon name={pill.icon} size={15} />
+        <span className={`chip ${pill.cls}`}>
+          <Icon name={pill.icon} size={13.5} />
           {pill.label}
         </span>
       </div>
@@ -492,10 +509,10 @@ function ReservationRow({
         ) : row.workflow_label ? (
           /* D77.1 — the same tint family the calendar pill wears */
           <span
-            className="rl-wf"
+            className="chip rl-wf"
             style={(() => {
               const t = statusTintPalette(row.workflow_color);
-              return { background: t.bg, borderColor: t.bd, color: t.tx };
+              return { backgroundColor: t.bg, borderColor: t.bd, color: t.tx };
             })()}
           >
             {row.workflow_label}
@@ -505,15 +522,20 @@ function ReservationRow({
         )}
       </div>
       <div className="rl-td">
-        <span className={`rl-pay ${row.payment}`}>{PAY_LABEL[row.payment]}</span>
+        <span className={`chip ${paymentTriplet(row.payment).chip}`}>
+          <span className="dot" />
+          {PAY_LABEL[row.payment]}
+        </span>
         {row.balance > 0 && row.payment !== "paid" && row.status !== "cancelled" && (
-          <span className="rl-balance">יתרה {money(row.balance, row.currency)}</span>
+          <span className="rl-balance">
+            יתרה <bdi className="ltr-num">{money(row.balance, row.currency)}</bdi>
+          </span>
         )}
       </div>
-      <div className="rl-td" style={{ textAlign: "left" }}>
-        <span className="rl-total">
+      <div className="rl-td end">
+        <span className="rl-total ltr-num">
           {money(row.total_price, row.currency)}
-          <Icon name="finance" size={16} />
+          <Icon name="finance" size={17} />
         </span>
       </div>
     </div>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
-import { Field } from "@/components/reservations/BookingPanel";
+import { Field, FormGrid } from "./controls";
 import { googleMapsLink, type NormalizedPlace } from "@/lib/business/google-place";
 import { sanitizeMapsError, type SanitizedMapsError } from "@/lib/business/maps-errors";
 import {
@@ -249,8 +249,8 @@ export function LocationPicker({
         <Row label="מקור המיקום" value={sourceLabel(profile.locationSource)} />
       </div>
       {mapsHref && (
-        <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="bw-btn w-fit">
-          <Icon name="globe" size={15} />
+        <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn btn-secondary w-fit">
+          <Icon name="globe" size={20} />
           פתיחה ב-Google Maps
         </a>
       )}
@@ -276,7 +276,7 @@ export function LocationPicker({
           {status === "error" && sdkError && (
             <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
               {sdkError.message}
-              <span className="mx-1 font-mono text-[10px] opacity-70">[{sdkError.code}]</span>
+              <span className="mx-1 font-mono text-[12px] opacity-70">[{sdkError.code}]</span>
             </p>
           )}
 
@@ -324,14 +324,15 @@ export function LocationPicker({
           </dl>
           <div className="flex gap-2">
             <button
-              className="bw-btn bw-btn-primary"
+              type="button"
+              className="btn btn-primary"
               disabled={saving}
               onClick={() => saveLocation(pending.place, pending.source)}
             >
-              <Icon name="check" size={15} />
+              <Icon name="check" size={20} />
               אישור ושמירת המיקום
             </button>
-            <button className="bw-btn" disabled={saving} onClick={discardPending}>
+            <button type="button" className="btn btn-secondary" disabled={saving} onClick={discardPending}>
               ביטול
             </button>
           </div>
@@ -347,10 +348,10 @@ export function LocationPicker({
             className="flex w-full items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-ink"
           >
             <span className="flex items-center gap-2">
-              <Icon name="edit" size={15} className="text-muted" />
+              <Icon name="edit" size={20} className="text-muted" />
               מיקום ידני מתקדם
             </span>
-            <Icon name={manualOpen ? "arrow-up" : "arrow-down"} size={15} className="text-faint" />
+            <Icon name={manualOpen ? "arrow-up" : "arrow-down"} size={20} className="text-faint" />
           </button>
           {manualOpen && (
             <div className="flex flex-col gap-3 border-t border-line p-4">
@@ -358,10 +359,10 @@ export function LocationPicker({
                 Google Maps הוא המקור המועדף למיקום. דריסה ידנית מבטלת את המיקום שנבחר ב-Google — יש להזין
                 קואורדינטות מדויקות ולאשר במפורש.
               </p>
-              <div className="bw-grid2">
+              <FormGrid>
                 <Field label="קו רוחב (-90..90)">
                   <input
-                    className="bw-fld"
+                    className="field-input"
                     dir="ltr"
                     inputMode="decimal"
                     value={manual.lat}
@@ -370,14 +371,14 @@ export function LocationPicker({
                 </Field>
                 <Field label="קו אורך (-180..180)">
                   <input
-                    className="bw-fld"
+                    className="field-input"
                     dir="ltr"
                     inputMode="decimal"
                     value={manual.lng}
                     onChange={(e) => setManual((m) => ({ ...m, lng: e.target.value }))}
                   />
                 </Field>
-              </div>
+              </FormGrid>
               <label className="flex items-center gap-2 text-xs font-semibold text-text2">
                 <input
                   type="checkbox"
@@ -387,11 +388,12 @@ export function LocationPicker({
                 אני מאשר/ת דריסה ידנית של המיקום
               </label>
               <button
-                className="bw-btn bw-btn-primary w-fit"
+                type="button"
+                className="btn btn-primary w-fit"
                 disabled={saving || !manualConfirm}
                 onClick={onManualSave}
               >
-                <Icon name="check" size={15} />
+                <Icon name="check" size={20} />
                 שמירת מיקום ידני
               </button>
             </div>
@@ -439,18 +441,18 @@ function PostalCodeField({
     <Field label="מיקוד">
       <div className="flex items-center gap-2">
         <input
-          className="bw-fld"
+          className="field-input ltr-num"
           value={value}
           maxLength={40}
           onChange={(e) => setValue(e.target.value)}
           placeholder="לדוגמה 6688101"
         />
-        <button className="bw-btn shrink-0" disabled={saving || !dirty} onClick={save}>
-          <Icon name="check" size={15} />
+        <button type="button" className="btn btn-secondary shrink-0" disabled={saving || !dirty} onClick={save}>
+          <Icon name="check" size={20} />
           {saving ? "שומר…" : "שמירה"}
         </button>
       </div>
-      <p className="bw-hint">
+      <p className="field-hint">
         מתמלא אוטומטית מ-Google כשקיים. ניתן לערוך ידנית — מיקוד עשוי לכלול אותיות במדינות מסוימות.
       </p>
     </Field>

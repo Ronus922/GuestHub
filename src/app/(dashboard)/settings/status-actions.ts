@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
-import { HEX_COLOR_RE } from "@/lib/colors";
+import { HEX_COLOR_RE, STATUS_PALETTE } from "@/lib/colors";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
@@ -21,6 +21,11 @@ import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 // ============================================================
 
 const CATEGORY = "workflow_statuses";
+
+// the fallback tint for a status row saved without a colour: the approved
+// --muted token, taken from the palette the picker itself offers (lib/colors.ts
+// is the token source — no screen re-types a hex).
+const DEFAULT_STATUS_COLOR: string = STATUS_PALETTE[6];
 
 export type WorkflowStatusDef = {
   id: string;
@@ -64,7 +69,7 @@ async function listForTenant(tenantId: string): Promise<WorkflowStatusDef[]> {
     id: r.id,
     key: r.key,
     label: r.label,
-    color: r.color ?? "#6B7385",
+    color: r.color ?? DEFAULT_STATUS_COLOR,
     sortOrder: r.sort_order,
     isDefault: r.is_default,
     isActive: r.is_active,

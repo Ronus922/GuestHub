@@ -1,3 +1,7 @@
+// TOKEN DECLARATION file (with lib/status-colors.ts): one of the only two
+// TypeScript files allowed to hold raw colour literals — every value below is an
+// approved token from GUIDELINES §1/§3.1.
+//
 // PURE color helpers — no imports. Workflow-status tags carry an arbitrary
 // tenant-chosen background; the text color is DERIVED (WCAG), never stored.
 
@@ -16,19 +20,19 @@ export function readableTextColor(hex: string): "#0B1220" | "#FFFFFF" {
   return luminance > 0.42 ? "#0B1220" : "#FFFFFF";
 }
 
-// The design-system palette offered by the status color picker — the hex
-// values already used by the seeded lookup lists (Settings reference).
+// The palette offered by the status colour picker — ONLY approved tokens
+// (GUIDELINES §1). A tenant cannot pick a colour the design system does not own.
 export const STATUS_PALETTE = [
-  "#2540C8", // primary blue
-  "#16A34A", // success green
-  "#EA9314", // warning amber
-  "#DC2626", // danger red
-  "#E11D48", // rose
-  "#0B6E7A", // teal
-  "#7C3AED", // purple
-  "#64748B", // slate
-  "#475569", // dark slate
-  "#6B7385", // gray
+  "#2540C8", // --brand
+  "#16A34A", // --ok
+  "#EA9314", // --warn
+  "#E5484D", // --danger
+  "#8B5CF6", // --info
+  "#F5B04C", // --vip
+  "#6B7385", // --muted
+  "#9AA1B4", // --faint
+  "#1B2233", // --ink
+  "#475569", // §3.1 "הוחזר" dot
 ] as const;
 
 // ---- status tint family (D77.1) ----
@@ -39,7 +43,8 @@ export const STATUS_PALETTE = [
 
 export type TintPalette = { bg: string; bd: string; tx: string };
 
-const NEUTRAL_TINT: TintPalette = { bg: "#EEF1F6", bd: "#9AA1B4", tx: "#1B2233" };
+// the approved neutral family (§3.1 "בוטל")
+const NEUTRAL_TINT: TintPalette = { bg: "#F1F3F6", bd: "#C9D0DA", tx: "#5B6478" };
 
 export function statusTintPalette(hex: string | null | undefined): TintPalette {
   if (!hex || !HEX_COLOR_RE.test(hex)) return NEUTRAL_TINT;

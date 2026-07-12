@@ -1,10 +1,11 @@
 /* ============================================================
-   GuestHub · /reservations list (D77 §17)
-   1:1 port of the approved reference bundle:
-     ref/html/Orders.html  (structure, dimensions, typography)
-     ref/screens/Orders.png (visual fidelity)
-   Prefix: rl- · tokens map to base.css (--brand→--color-primary,
-   --brand-050→--color-primary-050, --line→--color-line, bg→--color-appbg)
+   GuestHub · /reservations + /guests list shell
+   GUIDELINES.md is the ONLY source of truth for every value below.
+   The screen consumes the canonical primitives from design-system.css
+   (.h1 .t-secondary .btn .chip .field .card .empty-state .ltr-num); what lives
+   here is ONLY what the primitives cannot express: the list layout, the table
+   grid and the cell typography.
+   Prefix: rl-
    ============================================================ */
 
 @layer components {
@@ -14,27 +15,17 @@
     flex-direction: column;
     direction: rtl;
     padding: 24px 28px 26px;
-    background: var(--color-appbg);
+    background: var(--bg);
   }
 
-  /* ---------- header (.hd) ---------- */
+  /* ---------- header (.h1 + .t-secondary come from design-system.css) ---------- */
   .rl-hd {
     display: flex;
     align-items: flex-end;
     gap: 12px;
     margin-bottom: 16px;
   }
-  .rl-hd-t {
-    font-size: 40px;
-    font-weight: 800;
-    letter-spacing: -0.6px;
-    color: var(--color-ink);
-    line-height: 1.1;
-  }
-  .rl-hd-sub {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--color-muted);
+  .rl-hd .t-secondary {
     padding-bottom: 6px;
   }
 
@@ -53,66 +44,30 @@
     align-items: center;
     gap: 6px;
     background: #fff;
-    border: 1.5px solid var(--color-line);
-    border-radius: 14px;
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-lg);
     padding: 5px;
   }
+  /* a tab IS a button (§4): .btn + .btn-primary / .btn-tertiary. Only the
+     tighter padding of a segmented control lives here. */
   .rl-tab {
-    height: 36px;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
     padding: 0 15px;
-    border: none;
-    border-radius: 10px;
-    background: transparent;
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--color-muted);
-    cursor: pointer;
-    white-space: nowrap;
   }
-  .rl-tab:hover {
-    background: #f5f7fb;
-  }
-  .rl-tab.on {
-    background: var(--color-primary);
-    color: #fff;
-    box-shadow: 0 3px 9px rgba(37, 64, 200, 0.22);
-  }
-  .rl-cnt {
-    font-size: 12px;
-    font-weight: 800;
-    border-radius: 20px;
-    padding: 1px 7px;
-    min-width: 20px;
-    text-align: center;
-    background: var(--color-appbg);
-    color: var(--color-muted);
-  }
-  .rl-tab.on .rl-cnt {
-    background: rgba(255, 255, 255, 0.22);
-    color: #fff;
-  }
+
+  /* the search box wears .field-input (§5); the wrapper only lays the icon out */
   .rl-search {
-    flex: 1;
-    max-width: 440px;
-    height: 48px;
     display: flex;
     align-items: center;
     gap: 10px;
-    background: #fff;
-    border: 1.5px solid var(--color-line);
-    border-radius: 13px;
-    padding: 0 15px;
+    flex: 1;
+    max-width: 440px;
   }
   .rl-search:focus-within {
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
+    border-color: var(--brand);
+    box-shadow: var(--focus-ring);
   }
-  .rl-search svg {
-    color: var(--color-faint);
-    flex-shrink: 0;
+  .rl-search .ms-icon {
+    color: var(--faint);
   }
   .rl-search input {
     flex: 1;
@@ -120,22 +75,18 @@
     border: none;
     outline: none;
     background: transparent;
+    font-family: inherit;
     font-size: 15px;
     font-weight: 600;
-    color: var(--color-ink);
+    color: var(--ink);
   }
   .rl-search input::placeholder {
-    color: var(--color-faint);
+    color: var(--faint);
     font-weight: 500;
   }
 
-  /* ---------- filters card ---------- */
+  /* ---------- filters card (.card + .card-bd) ---------- */
   .rl-filters {
-    background: #fff;
-    border: 1px solid var(--color-line);
-    border-radius: 16px;
-    box-shadow: 0 6px 20px rgba(16, 24, 40, 0.03);
-    padding: 16px 18px;
     margin-bottom: 16px;
   }
   .rl-fbar {
@@ -144,58 +95,18 @@
     gap: 13px;
     flex-wrap: wrap;
   }
-  .rl-fld-g {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .rl-flbl {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--color-muted);
-  }
-  .rl-fsel,
-  .rl-fdate {
-    height: 44px;
-    border: 1.5px solid var(--color-line);
-    border-radius: 12px;
-    padding: 0 13px;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--color-ink);
-    background: #fff;
+  /* a filter control is a .field; only its track width lives here */
+  .rl-fld {
     min-width: 158px;
   }
-  .rl-fdate {
-    min-width: 150px;
-    direction: ltr;
-    text-align: right;
+  .rl-fld.narrow {
+    min-width: 110px;
   }
-  .rl-fsel:focus,
-  .rl-fdate:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 4px rgba(37, 64, 200, 0.12);
-  }
-  .rl-clear {
-    height: 44px;
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 0 14px;
-    border: 1.5px solid var(--color-line);
-    border-radius: 12px;
-    background: #fff;
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--color-muted);
-    cursor: pointer;
-  }
-  .rl-clear:hover {
-    background: #f5f7fb;
+  .rl-fbar input[type="date"].field-input {
+    text-align: end;
   }
 
-  /* quick-filter chips */
+  /* quick-filter chips are .chip.clickable (§3) — no local chip styling */
   .rl-quick {
     display: flex;
     align-items: center;
@@ -203,51 +114,16 @@
     flex-wrap: wrap;
     margin-top: 15px;
     padding-top: 15px;
-    border-top: 1px solid #f1f3f7;
+    border-top: 1px solid var(--line);
   }
   .rl-quick-lbl {
     font-size: 13.5px;
-    font-weight: 800;
-    color: var(--color-muted);
-  }
-  .rl-qchip {
-    height: 36px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 13px;
-    border: 1.5px solid var(--color-line);
-    border-radius: 10px;
-    background: #fff;
-    font-size: 13.5px;
     font-weight: 700;
-    color: var(--color-text2);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .rl-qchip svg {
-    color: #8a91a3;
-  }
-  .rl-qchip:hover {
-    background: #f5f7fb;
-    border-color: #ced6e4;
-  }
-  .rl-qchip.on {
-    background: var(--color-primary);
-    border-color: var(--color-primary);
-    color: #fff;
-  }
-  .rl-qchip.on svg {
-    color: #fff;
+    color: var(--muted);
   }
 
   /* ---------- table card (CSS grid, not <table>) ---------- */
   .rl-card {
-    background: #fff;
-    border: 1px solid var(--color-line);
-    border-radius: 16px;
-    box-shadow: 0 6px 20px rgba(16, 24, 40, 0.03);
-    overflow: hidden;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -259,7 +135,7 @@
     min-height: 0;
   }
   /* RTL: first column = rightmost. Reference 10-col grid + מקור + טיפול;
-     the cancelled tab swaps תשלום for פרטי ביטול (rl-rowg-cancelled). */
+     the cancelled tab swaps תשלום for פרטי ביטול. */
   .rl-rowg {
     display: grid;
     grid-template-columns:
@@ -271,44 +147,55 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    background: #f3f5fc;
-    border-bottom: 1px solid var(--color-line);
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
   }
   .rl-th {
     padding: 15px 14px;
     font-size: 13.5px;
-    font-weight: 800;
-    color: #586178;
+    font-weight: 700;
+    color: var(--muted);
     white-space: nowrap;
     text-align: center;
   }
-  .rl-th.start {
-    text-align: right;
+  .rl-th.start,
+  .rl-td.start {
+    text-align: start;
   }
-  .rl-th.end {
-    text-align: left;
+  .rl-th.end,
+  .rl-td.end {
+    text-align: end;
   }
   .rl-trow {
-    border-bottom: 1px solid #f1f3f7;
+    border-bottom: 1px solid var(--line);
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background-color 0.1s;
     text-align: center;
   }
   .rl-trow:last-child {
     border-bottom: none;
   }
-  .rl-trow:hover {
-    background: #f8fafe;
-  }
   .rl-trow:nth-child(even) {
-    background: #fbfcfe;
+    background-color: var(--field-bg);
   }
-  .rl-trow:nth-child(even):hover {
-    background: #f5f8fe;
+  .rl-trow:hover {
+    background-color: var(--surface-hover);
   }
-  /* unpaid rows carry a 3px dusty-red stripe on the LEFT edge (reference) */
+  /* an unpaid row carries a soft danger stripe on its inline-start edge (§11).
+     It is an absolutely-positioned ::before — a border would eat 3px of the
+     grid track and knock the row out of alignment with the header, and an
+     absolute box never becomes a grid item. */
   .rl-trow.unpaid {
-    box-shadow: inset 3px 0 0 #e8b4b0;
+    position: relative;
+  }
+  .rl-trow.unpaid::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 3px;
+    background: color-mix(in srgb, var(--danger) 45%, #fff);
+    pointer-events: none;
   }
   .rl-td {
     padding: 14px;
@@ -319,7 +206,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    text-align: right;
+    text-align: start;
   }
   .rl-av {
     width: 34px;
@@ -327,166 +214,86 @@
     flex-shrink: 0;
     display: grid;
     place-items: center;
-    border-radius: 999px;
-    background: var(--color-primary-050);
-    color: var(--color-primary);
+    border-radius: 50%;
+    background: var(--brand-soft);
+    color: var(--brand);
     font-size: 15px;
     font-weight: 800;
   }
   .rl-gname {
     font-size: 15px;
     font-weight: 700;
-    color: var(--color-ink);
+    color: var(--ink);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .rl-star {
     margin-inline-start: auto;
-    color: #e9a23b;
-    flex-shrink: 0;
+    color: var(--vip);
   }
   .rl-resno {
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 800;
-    color: var(--color-primary);
-    direction: ltr;
-    unicode-bidi: isolate;
+    color: var(--brand);
   }
   .rl-trow:hover .rl-resno {
-    color: var(--color-primary-dark);
+    color: var(--brand-hover);
   }
   .rl-otacode {
     display: block;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 700;
-    color: var(--color-faint);
-    direction: ltr;
-    unicode-bidi: isolate;
+    color: var(--faint);
   }
   .rl-phone {
-    font-size: 14.5px;
-    font-weight: 600;
-    color: var(--color-text2);
-    direction: ltr;
-    unicode-bidi: isolate;
-  }
-  .rl-roomchip {
-    display: inline-block;
-    background: var(--color-appbg);
-    color: #2c3446;
     font-size: 14px;
-    font-weight: 800;
-    border-radius: 9px;
-    padding: 5px 12px;
-    min-width: 46px;
-    direction: ltr;
-    unicode-bidi: isolate;
-    max-width: 100%;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  /* the room label rides inside a .chip.chip-neutral — this only lets a long
+     multi-room label truncate instead of bursting the cell */
+  .rl-room {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .rl-date {
-    font-size: 14.5px;
+    font-size: 14px;
     font-weight: 700;
-    color: #3a4257;
-    direction: ltr;
-    unicode-bidi: isolate;
+    color: var(--ink);
   }
   .rl-nights {
     font-size: 15px;
     font-weight: 800;
-    color: #20283a;
+    color: var(--ink);
   }
   .rl-src {
     font-size: 13.5px;
     font-weight: 700;
-    color: var(--color-text2);
+    color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  /* lifecycle pill (reference .pill) */
-  .rl-pill {
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 0 12px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 800;
-    white-space: nowrap;
-  }
-  .rl-pill.confirmed {
-    background: var(--color-primary-050);
-    color: var(--color-primary);
-  }
-  .rl-pill.inhouse {
-    background: #e9f7ef;
-    color: #1b8a54;
-  }
-  .rl-pill.out {
-    background: #eef0f5;
-    color: #5a6478;
-  }
-  .rl-pill.cancelled {
-    background: #fbeae8;
-    color: #c32b25;
-  }
-  .rl-pill.draft {
-    background: #fdf2e1;
-    color: #b4670a;
-  }
-  .rl-pill.noshow {
-    background: #f3e8ff;
-    color: #7c3aed;
-  }
+  /* the lifecycle tag is a .chip (§3) wearing a canonical family from
+     design-system.css (.chip-brand / §3.1 triplets) — the mapping lives in
+     LIFECYCLE_PILL (ReservationsScreen.tsx). No local chip colour here. */
 
-  /* workflow tag — DB-driven tint family (D77.1): soft bg + status-color
-     border + readable derived text, all via inline style */
+  /* workflow tag: a .chip whose tint family is DB-driven (statusTintPalette,
+     lib/colors.ts) — this only bounds it inside the cell */
   .rl-wf {
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 11px;
-    border: 1.5px solid transparent;
-    border-radius: 20px;
-    font-size: 12.5px;
-    font-weight: 800;
-    white-space: nowrap;
     max-width: 100%;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
 
-  /* payment status — plain colored text (reference .pay) */
-  .rl-pay {
-    font-size: 14.5px;
-    font-weight: 800;
-  }
-  .rl-pay.unpaid {
-    color: #c32b25;
-  }
-  .rl-pay.partial {
-    color: #b4670a;
-  }
-  .rl-pay.paid {
-    color: #1b8a54;
-  }
-  .rl-pay.overpaid {
-    color: #0b6e7a;
-  }
   .rl-balance {
     display: block;
-    font-size: 11.5px;
+    font-size: 12px;
     font-weight: 700;
-    color: #c32b25;
-    direction: ltr;
-    unicode-bidi: isolate;
+    color: var(--danger);
   }
   .rl-total {
     display: inline-flex;
@@ -495,61 +302,36 @@
     gap: 6px;
     font-size: 15px;
     font-weight: 800;
-    color: var(--color-primary);
-    direction: ltr;
-    unicode-bidi: isolate;
+    color: var(--brand);
   }
-  .rl-total svg {
-    color: #9aa6d6;
+  .rl-total .ms-icon {
+    color: var(--faint);
   }
   .rl-cancelinfo {
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 700;
-    color: #c32b25;
+    color: var(--danger);
     line-height: 1.35;
   }
   .rl-cancelinfo small {
     display: block;
-    color: var(--color-muted);
-    font-size: 11.5px;
+    color: var(--muted);
+    font-size: 12px;
   }
 
-  /* empty state */
-  .rl-empty {
-    padding: 60px 20px;
-    text-align: center;
-  }
-  .rl-empty svg {
-    color: #c7cdda;
-    margin: 0 auto 10px;
-  }
-  .rl-empty-t {
-    font-size: 17px;
-    font-weight: 800;
-    color: #7a828f;
-  }
-  .rl-empty-s {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--color-faint);
-    margin-top: 4px;
-  }
   .rl-truncated {
-    padding: 10px 16px;
-    font-size: 13px;
+    padding: 12px 16px;
+    font-size: 13.5px;
     font-weight: 700;
-    color: var(--color-muted);
-    background: #fff9e8;
-    border-top: 1px solid var(--color-line);
+    color: var(--muted);
+    background: color-mix(in srgb, var(--warn) 12%, #fff);
+    border-top: 1px solid var(--line);
   }
 
   /* responsive — the wide grid scrolls inside the card, never the page */
   @media (max-width: 1200px) {
     .rl-app {
       padding: 16px;
-    }
-    .rl-hd-t {
-      font-size: 28px;
     }
     .rl-toolbar {
       flex-wrap: wrap;

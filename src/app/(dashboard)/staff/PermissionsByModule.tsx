@@ -62,14 +62,9 @@ export function PermissionsByModule({
         <table className="w-full min-w-[420px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-line bg-appbg">
-              <th className="px-4 py-3 text-start text-[11px] font-bold tracking-wide text-faint">
-                מודול
-              </th>
+              <th className="t-label px-4 py-3 text-start tracking-wide text-faint">מודול</th>
               {COLUMNS.map((c) => (
-                <th
-                  key={c.id}
-                  className="w-20 px-3 py-3 text-center text-[11px] font-bold tracking-wide text-faint"
-                >
+                <th key={c.id} className="t-label w-20 px-3 py-3 text-center tracking-wide text-faint">
                   {c.label}
                 </th>
               ))}
@@ -82,9 +77,9 @@ export function PermissionsByModule({
                 className={`border-b border-line last:border-0 ${i % 2 ? "bg-appbg/60" : ""}`}
               >
                 <th className="px-4 py-2.5 text-start font-normal">
-                  <span className="flex items-center gap-2.5 text-sm font-medium text-ink">
+                  <span className="t-secondary flex items-center gap-2.5 text-ink">
                     <span className="text-faint">
-                      <Icon name={CATEGORY_ICON[cat] ?? "info"} size={16} />
+                      <Icon name={CATEGORY_ICON[cat] ?? "info"} size={17} />
                     </span>
                     {CATEGORY_LABEL[cat] ?? cat}
                   </span>
@@ -110,21 +105,21 @@ export function PermissionsByModule({
         </table>
       </div>
       {(hasOverrides || editable) && !fullAccess ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted">
+        <div className="t-label flex flex-wrap items-center gap-x-4 gap-y-1.5">
           <span className="flex items-center gap-1.5">
-            <span className="inline-grid h-4 w-4 place-items-center rounded border border-primary bg-primary text-white">
-              <Icon name="check" size={10} strokeWidth={3} />
+            <span className="inline-grid h-5 w-5 place-items-center rounded-[7px] border border-primary bg-primary text-white">
+              <Icon name="check" size={13.5} />
             </span>
             ברירת מחדל מהתפקיד
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-grid h-4 w-4 place-items-center rounded border border-status-success bg-status-success text-white">
-              <Icon name="plus" size={10} strokeWidth={3} />
+            <span className="inline-grid h-5 w-5 place-items-center rounded-[7px] border border-status-success bg-status-success text-white">
+              <Icon name="plus" size={13.5} />
             </span>
             נוסף ידנית
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-grid h-4 w-4 place-items-center rounded border border-dashed border-status-danger bg-status-danger-050" />
+            <span className="inline-grid h-5 w-5 place-items-center rounded-[7px] border border-dashed border-status-danger bg-status-danger-050" />
             הוסר ידנית
           </span>
         </div>
@@ -198,12 +193,12 @@ function MatrixCell({
 
   const cell = (
     <span
-      className={`relative inline-grid h-6 w-6 place-items-center rounded-md border transition-colors ${box} ${
+      className={`relative inline-grid h-6 w-6 place-items-center rounded-[7px] border transition-colors ${box} ${
         editable ? "cursor-pointer hover:border-primary" : ""
       }`}
     >
       {state === "all" ? (
-        <Icon name={allManual ? "plus" : "check"} size={14} strokeWidth={3} />
+        <Icon name={allManual ? "plus" : "check"} size={13.5} />
       ) : state === "some" ? (
         <span className="h-0.5 w-2.5 rounded-full bg-primary" aria-hidden />
       ) : null}

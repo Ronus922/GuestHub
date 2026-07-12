@@ -115,33 +115,31 @@ export function AreaPanel({
       widthClassName="w-[45vw] max-lg:w-[70%]"
       bodyClassName="p-4"
       footer={
-        <div className="flex items-center gap-2.5">
+        /* §7 footer — DIRECT children of .dw-ft (row-reverse): the PRIMARY is
+           FIRST in the DOM and lands on the LEFT edge, "ביטול" to its right.
+           No local flex wrapper — the shared .dw-ft rule owns the ordering. */
+        <>
+          <button type="button" className="btn btn-primary" disabled={saving || !valid} onClick={save}>
+            <Icon name="check" size={20} />
+            {saving ? "שומר…" : area ? "שמור" : "צור אזור"}
+          </button>
+          <button type="button" className="btn btn-tertiary" onClick={onClose}>ביטול</button>
+          {area && can.del && (
+            <button type="button" className="btn btn-danger" disabled={saving} onClick={doDelete}>
+              <Icon name="trash" size={20} />
+              מחק אזור
+            </button>
+          )}
+          <span className="flex-1" />
           <span className="rm-ftnote">
             {!valid && (
               <>
-                <Icon name="info" size={15} />
+                <Icon name="info" size={17} />
                 נדרשים שם אזור וסוג אזור
               </>
             )}
           </span>
-          <span className="flex-1" />
-          {area && can.del && (
-            <button type="button" className="rm-lnkd" disabled={saving} onClick={doDelete}>
-              <Icon name="trash" size={17} />
-              מחק אזור
-            </button>
-          )}
-          <button type="button" className="rm-btng" onClick={onClose}>ביטול</button>
-          <button
-            type="button"
-            className={`rm-btn${!valid ? " dis" : ""}`}
-            disabled={saving || !valid}
-            onClick={save}
-          >
-            <Icon name="check" size={17} />
-            {saving ? "שומר…" : area ? "שמור" : "צור אזור"}
-          </button>
-        </div>
+        </>
       }
     >
       <div className="rm-cols">
@@ -150,7 +148,7 @@ export function AreaPanel({
             <div className="rm-frow">
               <F label="שם אזור" required>
                 <input
-                  className="rm-fld"
+                  className="field-input"
                   placeholder="לדוגמה: לובי ראשי"
                   value={d.name}
                   onChange={(e) => set("name", e.target.value)}
@@ -158,35 +156,36 @@ export function AreaPanel({
               </F>
               <F label="קוד אזור">
                 <input
-                  className="rm-fld text-right"
+                  className="field-input ltr-num text-end"
                   dir="ltr"
                   placeholder="לדוגמה: LOBBY-1"
                   value={d.code}
                   onChange={(e) => set("code", e.target.value)}
                 />
-                <span className="rm-hint">נוצר אוטומטית לפי הסוג — ניתן לעריכה</span>
+                <span className="field-hint">נוצר אוטומטית לפי הסוג — ניתן לעריכה</span>
               </F>
             </div>
             <F label="סוג אזור" required>
               <div className="rm-tchips">
                 {typeChips.map((t) => (
+                  /* .rm-opt: visible resting boundary on the white card body */
                   <button
                     key={t.key}
                     type="button"
                     onClick={() => set("area_type", t.key)}
-                    className={`rm-tchip${d.area_type === t.key ? " on" : ""}`}
+                    className={`chip clickable rm-opt${d.area_type === t.key ? " on" : ""}`}
                   >
-                    <Icon name={t.icon} size={17} />
+                    <Icon name={t.icon} size={13.5} />
                     {AREA_TYPE_LABEL[t.key]}
                   </button>
                 ))}
               </div>
-              <span className="rm-hint">סוגי אזורים מנוהלים מתוך ההגדרות</span>
+              <span className="field-hint">סוגי אזורים מנוהלים מתוך ההגדרות</span>
             </F>
             <div className="rm-frow">
               <F label="בניין / אגף">
                 <select
-                  className="rm-fld"
+                  className="field-input"
                   value={d.building_area_id ?? ""}
                   onChange={(e) => set("building_area_id", e.target.value || null)}
                 >
@@ -197,7 +196,7 @@ export function AreaPanel({
                 </select>
               </F>
               <F label="קומה">
-                <select className="rm-fld" value={d.floor} onChange={(e) => set("floor", e.target.value)}>
+                <select className="field-input" value={d.floor} onChange={(e) => set("floor", e.target.value)}>
                   <option value="">ללא</option>
                   {!FLOOR_OPTIONS.includes(d.floor) && d.floor !== "" && (
                     <option value={d.floor}>{floorLabel(d.floor)}</option>
@@ -217,7 +216,7 @@ export function AreaPanel({
               <SwLine icon="maintenance" label="רלוונטי לתחזוקה" hint="ניתן לפתוח תקלות עבור אזור זה" checked={d.relevant_maintenance} onChange={(v) => set("relevant_maintenance", v)} />
               <div className="rm-swline">
                 <span className="rm-swic">
-                  <Icon name="sort" size={18} />
+                  <Icon name="sort" size={20} />
                 </span>
                 <div className="min-w-0">
                   <p className="rm-swt">סדר תצוגה</p>
@@ -226,7 +225,7 @@ export function AreaPanel({
                 <span className="flex-1" />
                 <span className="rm-step">
                   <button type="button" aria-label="הוספה" onClick={() => set("sort_order", d.sort_order + 1)}>
-                    <Icon name="plus" size={17} />
+                    <Icon name="plus" size={20} />
                   </button>
                   <input
                     className="rm-v"
@@ -240,14 +239,14 @@ export function AreaPanel({
                     }}
                   />
                   <button type="button" aria-label="הפחתה" onClick={() => set("sort_order", Math.max(0, d.sort_order - 1))}>
-                    <Icon name="minus" size={17} />
+                    <Icon name="minus" size={20} />
                   </button>
                 </span>
               </div>
               <div className="pt-3.5">
                 <F label="הערות תפעוליות">
                   <textarea
-                    className="rm-fld"
+                    className="field-input"
                     rows={3}
                     placeholder="הערות פנימיות לצוות…"
                     value={d.notes}
@@ -276,7 +275,7 @@ export function AreaPanel({
               {d.status !== "ok" && (
                 <F label="הערת מצב">
                   <input
-                    className="rm-fld"
+                    className="field-input"
                     placeholder="לדוגמה: טכנאי הוזמן · עד 9/7"
                     value={d.status_note}
                     onChange={(e) => set("status_note", e.target.value)}
@@ -290,14 +289,16 @@ export function AreaPanel({
         {/* live preview + requirements (reference side column) */}
         <div className="rm-colside">
           <Sec icon="eye" title="תצוגה מקדימה">
-            <div className="rm-bcard" style={{ cursor: "default" }}>
-              <span className="rm-strip" style={{ background: statusMeta.stripe }} />
+            <div className="card rm-bcard" style={{ cursor: "default" }}>
+              <span className="rm-strip" style={{ background: statusMeta.triplet.dot }} />
               <div className="rm-cr1">
                 <span className="rm-num">{d.name.trim() || "שם האזור"}</span>
-                <span className="rm-kind area">אזור</span>
+                {/* KIND tag — type label, not a status: .chip-neutral (mirrors
+                    the board's AreaCard so the preview is truthful) */}
+                <span className="chip chip-neutral">אזור</span>
                 <span className="rm-csp" />
-                <span className="rm-stbadge" style={{ background: statusMeta.bg, color: statusMeta.fg }}>
-                  <Icon name={statusMeta.icon} size={14} />
+                <span className={`chip ${statusMeta.triplet.chip}`}>
+                  <Icon name={statusMeta.icon} size={13.5} />
                   {statusMeta.label}
                 </span>
               </div>
@@ -307,7 +308,7 @@ export function AreaPanel({
               <div className="rm-cr3">
                 {d.status !== "ok" && d.status_note ? (
                   <>
-                    <Icon name={statusMeta.icon} size={14} />
+                    <Icon name={statusMeta.icon} size={13.5} />
                     {d.status_note}
                   </>
                 ) : null}
@@ -343,7 +344,7 @@ function SwLine({
   return (
     <div className="rm-swline">
       <span className="rm-swic">
-        <Icon name={icon} size={18} />
+        <Icon name={icon} size={20} />
       </span>
       <div className="min-w-0">
         <p className="rm-swt">{label}</p>
@@ -358,7 +359,7 @@ function SwLine({
 function ChkItem({ ok, label }: { ok: boolean; label: string }) {
   return (
     <div className={`rm-chki ${ok ? "ok" : "no"}`}>
-      <Icon name={ok ? "check-circle" : "circle"} size={16} />
+      <Icon name={ok ? "check-circle" : "circle"} size={17} />
       {label}
     </div>
   );

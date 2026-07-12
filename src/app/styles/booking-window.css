@@ -1,126 +1,24 @@
 /* ============================================================
-   Booking/edit content styles — ported 1:1 from the rendered reference
-   ref/html/booking-window.html + ref/screens/edit-booking-modal.png
-   (Phase 3 visual pass). Used by BookingPanel (wizard) and
-   EditReservationPanel (editor) INSIDE the site-wide SidePanel shell
-   (D41 — the full-screen .bw-window wrapper was removed with
-   FullWindow.tsx; header chips render inside the panel header).
+   Booking / edit-reservation LAYOUT.
+   Source of truth: /var/www/guesthub/GUIDELINES.md.
+
+   Every primitive this screen needs — button, field, chip, card, drawer,
+   modal, popover, toast — is CANONICAL and lives in design-system.css. This
+   file therefore holds ONLY what the booking flow adds on top: page-level
+   layout (columns, grids), the wizard stepper, and the few composite blocks
+   that have no primitive of their own (room card, price line, summary
+   sidebar, activity log, the ONE credit-card box, the header toolbar and the
+   in-panel message composer).
+
+   No colour, radius, shadow or font-size below is invented: they all come
+   from the §1/§2 tokens.
    ============================================================ */
 
 @layer components {
 
-/* header chips (V2 .hd-num / .st-badge) — reservation # + status pill,
-   rendered inside the SidePanel primary header next to the title */
-.bw-hd-num {
-  font-size: 15px;
-  font-weight: 700;
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
-  padding: 4px 11px;
-  border-radius: 9px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.bw-st-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-.bw-st-badge .bw-d {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
-}
-
-/* ---------- stepper band (wizard) ---------- */
-.bw-stp {
-  flex: none;
-  background: #fff;
-  border-bottom: 1px solid #e4e8f0;
-  padding: 20px 26px 18px;
-}
-.bw-stp-row {
-  position: relative;
-  display: flex;
-  max-width: 760px;
-  margin: 0 auto;
-}
-.bw-stp-line {
-  position: absolute;
-  top: 19px;
-  right: 12.5%;
-  left: 12.5%;
-  height: 2px;
-  background: #dce1ec;
-  z-index: 0;
-}
-.bw-stp-fill {
-  position: absolute;
-  top: 19px;
-  right: 12.5%;
-  height: 2px;
-  background: var(--color-primary);
-  z-index: 0;
-  transition: width 0.3s ease;
-}
-.bw-stp-item {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 7px;
-  background: none;
-  border: none;
-  padding: 0;
-  font-family: inherit;
-  cursor: pointer;
-}
-.bw-stp-num {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #fff;
-  border: 2px solid #d8deea;
-  color: #9aa1b4;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  font-weight: 800;
-  transition: all 0.2s;
-}
-.bw-stp-lbl {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: #9aa1b4;
-}
-.bw-stp-item.active .bw-stp-num {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(37, 64, 200, 0.35);
-}
-.bw-stp-item.active .bw-stp-lbl {
-  color: var(--color-primary);
-}
-.bw-stp-item.done .bw-stp-num {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-.bw-stp-item.done .bw-stp-lbl {
-  color: #4b5266;
-}
-
-/* ---------- body columns ---------- */
+/* ============================================================
+   layout — body columns + form grids
+   ============================================================ */
 .bw-main {
   display: flex;
   gap: 22px;
@@ -141,6 +39,9 @@
   top: 0;
   flex: none;
   width: 330px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 @media (max-width: 1024px) {
   .bw-main {
@@ -152,51 +53,6 @@
   }
 }
 
-/* ---------- section card ---------- */
-.bw-card {
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  padding: 22px 24px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 6px 18px rgba(16, 24, 40, 0.04);
-}
-.bw-card-h {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 18px;
-  font-weight: 800;
-  margin-bottom: 18px;
-  color: var(--color-ink);
-}
-.bw-card-h .bw-hi {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--color-primary-050);
-  color: var(--color-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
-.bw-card-h .bw-sp {
-  flex: 1;
-}
-/* section-dirty chip (V2 .chg) — "שונה" next to the card title */
-.bw-chg {
-  font-size: 12.5px;
-  font-weight: 800;
-  color: #b4670a;
-  background: #fdf2e1;
-  padding: 4px 10px;
-  border-radius: 7px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-/* ---------- form fields ---------- */
 .bw-grid2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -213,128 +69,181 @@
     grid-template-columns: 1fr;
   }
 }
-.bw-fg {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-width: 0;
-}
-.bw-fg.full {
+/* a field that spans the whole form grid */
+.bw-full {
   grid-column: 1 / -1;
 }
-.bw-lbl {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: #3a4257;
+
+/* ============================================================
+   card add-ons — the card itself is the canonical `.card`
+   ============================================================ */
+/* the icon square inside a `.card-hd` */
+.bw-hi {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand);
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  flex: none;
 }
-.bw-req {
-  color: var(--color-status-danger);
-  font-weight: 800;
+/* pushes a trailing chip ("שונה") to the end of a card header */
+.bw-sp {
+  flex: 1;
 }
-.bw-fld {
-  height: 46px;
-  background: #f1f3f8;
-  border: 1.5px solid transparent;
-  border-radius: 12px;
-  padding: 0 14px;
-  font-family: inherit;
-  font-size: 14.5px;
-  color: var(--color-ink);
-  width: 100%;
-  outline: none;
-  transition: background 0.15s, border-color 0.15s;
+/* state tints for a whole card (cancelled / awaiting the channel) — derived
+   from the status tokens, never new colours */
+.bw-card-danger {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 7%, #fff);
 }
-.bw-fld::placeholder {
-  color: #a7aebd;
-}
-.bw-fld:focus {
-  background-color: #fff;
-  border-color: var(--color-primary);
-  box-shadow: none;
-}
-.bw-fld:disabled {
-  color: var(--color-muted);
-  cursor: not-allowed;
-}
-textarea.bw-fld {
-  height: auto;
-  min-height: 92px;
-  padding: 12px 14px;
-  resize: vertical;
-}
-select.bw-fld {
-  cursor: pointer;
-}
-/* imported (read-only) value shown inside a regular field — same geometry,
-   the .bw-readonly palette, no focus ring (nothing here is editable) */
-.bw-fld.bw-ro {
-  background: #eef1f6;
-  color: #3a4257;
-}
-.bw-fld.bw-ro:focus {
-  background: #eef1f6;
-  border-color: transparent;
-}
-.bw-search {
-  height: 54px;
-  font-size: 15px;
-}
-.bw-readonly {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 46px;
-  background: #eef1f6;
-  border: 1.5px dashed #d3dae6;
-  border-radius: 12px;
-  padding: 0 14px;
-  font-size: 15px;
-  font-weight: 800;
-  color: #3a4257;
-}
-.bw-readonly .bw-rn {
-  color: var(--color-muted);
-  font-weight: 600;
-  font-size: 12.5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.bw-card-warn {
+  border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 9%, #fff);
 }
 
-/* ---------- qty stepper ---------- */
+/* ============================================================
+   wizard stepper band
+   ============================================================ */
+.bw-stp {
+  flex: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 20px 26px 18px;
+}
+.bw-stp-row {
+  position: relative;
+  display: flex;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.bw-stp-line {
+  position: absolute;
+  top: 21px; /* centre of the 44px step circle */
+  inset-inline: 12.5%;
+  height: 2px;
+  background: var(--line);
+  z-index: 0;
+}
+.bw-stp-fill {
+  position: absolute;
+  top: 21px;
+  inset-inline-start: 12.5%;
+  height: 2px;
+  background: var(--brand);
+  z-index: 0;
+  transition: width 0.3s ease;
+}
+.bw-stp-item {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+.bw-stp-num {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--line);
+  color: var(--faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 800;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+.bw-stp-lbl {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--faint);
+}
+.bw-stp-item.active .bw-stp-num,
+.bw-stp-item.done .bw-stp-num {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+.bw-stp-item.active .bw-stp-num {
+  box-shadow: var(--brand-shadow);
+}
+.bw-stp-item.active .bw-stp-lbl {
+  color: var(--brand);
+}
+.bw-stp-item.done .bw-stp-lbl {
+  color: var(--muted);
+}
+
+/* ============================================================
+   field add-ons — the field itself is the canonical
+   `.field` / `.field-label` / `.field-input`
+   ============================================================ */
+.bw-req {
+  color: var(--danger);
+  font-weight: 800;
+}
+/* a real, populated value the operator may NOT edit (imported / stored) */
+.field-input.bw-ro {
+  background: var(--field-bg);
+  color: var(--ink);
+  cursor: default;
+}
+.field-input.bw-ro:focus {
+  border-color: var(--line);
+  box-shadow: none;
+}
+/* leading icon inside a field */
+.bw-fld-wrap {
+  position: relative;
+}
+.bw-fld-wrap .bw-fi {
+  position: absolute;
+  inset-inline-start: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--faint);
+  pointer-events: none;
+}
+.field-input.bw-ic {
+  padding-inline-start: 42px;
+}
+
+/* occupancy stepper (‎−‎ / value / ‎+‎) — the buttons are canonical `.icon-btn` */
 .bw-qty {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 46px;
-  background: #f1f3f8;
-  border-radius: 12px;
-  padding: 5px;
+  height: 44px;
+  background: var(--field-bg);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 0 3px;
 }
 .bw-qty-b {
-  width: 38px;
-  height: 36px;
-  border: none;
-  background: #fff;
-  border-radius: 9px;
-  color: var(--color-primary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+  background: var(--surface);
+  color: var(--brand);
 }
-.bw-qty-b:hover {
-  background: var(--color-primary-050);
+.bw-qty-b:hover:not(:disabled) {
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .bw-qty-b:disabled {
-  color: #c3cad6;
-  cursor: not-allowed;
-  box-shadow: none;
   background: transparent;
+  color: var(--faint);
 }
 .bw-qty-v {
   font-size: 17px;
@@ -342,12 +251,37 @@ select.bw-fld {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- room block inside a card ---------- */
+/* a computed, never-editable value (לילות) */
+.bw-readonly {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  background: var(--field-bg);
+  border: 1.5px dashed var(--line);
+  border-radius: var(--r-md);
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.bw-readonly .bw-rn {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ============================================================
+   room block inside a card
+   ============================================================ */
 .bw-roomcard {
-  border: 1.5px solid #e4e8f0;
-  border-radius: 14px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
   padding: 18px 20px;
-  background: #fcfdfe;
+  background: var(--surface);
 }
 .bw-rc-top {
   display: flex;
@@ -358,204 +292,151 @@ select.bw-fld {
 .bw-rc-badge {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: var(--color-primary-050);
-  color: var(--color-primary);
+  border-radius: var(--r-sm);
+  background: var(--brand-soft);
+  color: var(--brand);
   font-weight: 800;
   font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: none;
 }
 .bw-rc-ttl {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
   flex: 1;
-  color: var(--color-ink);
+  color: var(--ink);
 }
+/* the destructive text action of a room block (canonical `.btn .btn-tertiary`) */
 .bw-rc-rm {
-  background: none;
-  border: none;
-  color: #b4231f;
-  font-size: 13.5px;
-  font-weight: 700;
-  cursor: pointer;
+  color: var(--danger);
+}
+.bw-rc-rm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  color: var(--danger);
+}
+/* the chosen room, summarised (number + type + swap) */
+.bw-rc-room {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 4px 6px;
-  border-radius: 8px;
-  font-family: inherit;
+  gap: 13px;
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
 }
-.bw-rc-rm:hover {
-  background: #fdecec;
-}
-
-/* ---------- buttons ---------- */
-.bw-btn {
-  height: 42px;
-  padding: 0 18px;
-  border-radius: 11px;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  display: inline-flex;
+.bw-rc-ric {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand);
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  border: 1.5px solid transparent;
+  flex: none;
 }
-.bw-btn-o {
-  background: #fff;
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+.bw-rc-info {
+  flex: 1;
+  min-width: 0;
 }
-.bw-btn-o:hover {
-  background: var(--color-primary-050);
+.bw-rc-rn {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
 }
-.bw-btn-primary {
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  box-shadow: 0 4px 12px rgba(37, 64, 200, 0.24);
+.bw-rc-rn b {
+  color: var(--brand);
 }
-.bw-btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-dark);
+.bw-rc-rs {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 2px;
 }
-.bw-btn-primary:disabled {
-  background: #b9c0d6;
-  box-shadow: none;
-  cursor: not-allowed;
-}
-.bw-btn-ghost {
-  background: none;
-  border: none;
-  color: var(--color-muted);
-}
-.bw-btn-ghost:hover {
-  color: var(--color-ink);
-}
-.bw-btn-danger {
-  background: #fff;
-  border-color: #f4b9b9;
-  color: var(--color-status-danger);
-}
-.bw-btn-danger:hover {
-  background: #fdecec;
-}
+/* "הוסף חדר נוסף" — canonical `.btn`, dashed full-width variant */
 .bw-addroom {
   width: 100%;
-  height: 50px;
-  border: 1.5px dashed #c6cedc;
-  border-radius: 13px;
-  background: none;
-  color: var(--color-primary);
-  font-family: inherit;
-  font-size: 14.5px;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+  background: transparent;
+  border: 1.5px dashed var(--line);
+  color: var(--brand);
 }
-.bw-addroom:hover {
-  background: var(--color-primary-050);
-  border-color: var(--color-primary);
+.bw-addroom:hover:not(:disabled) {
+  background: var(--brand-soft);
+  border-color: var(--brand);
 }
 
-/* ---------- pricing rows + pay chips ---------- */
+/* ============================================================
+   pricing rows + balance boxes
+   ============================================================ */
 .bw-price-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 11px 0;
-  border-bottom: 1px solid #eef1f6;
-  font-size: 14.5px;
-}
-.bw-price-line .bw-plr {
-  color: var(--color-muted);
-  font-weight: 600;
-  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
 }
 .bw-price-line b {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
+.bw-price-line .bw-plr {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13.5px;
+}
+/* the same row as a flat tile (summary step) */
+.bw-price-flat {
+  border-bottom: none;
+  padding: 11px 13px;
+  background: var(--field-bg);
+  border-radius: var(--r-md);
+}
 .bw-price-total {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding-top: 15px;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
 }
 .bw-price-total .bw-amt {
-  font-size: 24px;
-  color: var(--color-primary);
+  font-size: 21px;
+  color: var(--brand);
   font-variant-numeric: tabular-nums;
 }
-.bw-tile {
-  background: #f1f3f8;
-  border-radius: 12px;
-  padding: 12px 14px;
-  text-align: center;
-}
-.bw-tile .bw-tl {
-  font-size: 12px;
-  color: var(--color-muted);
-  font-weight: 700;
-}
-.bw-tile .bw-tv {
-  font-size: 18px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
-/* balance boxes (V2 .bal-box) — סה״כ / שולם / יתרה in the edit panel */
 .bw-bal {
-  border: 1px solid #e4e8f0;
-  border-radius: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
   padding: 13px 15px;
-  background: #f8f9fc;
+  background: var(--field-bg);
 }
 .bw-bal .bw-bal-l {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--color-muted);
+  color: var(--muted);
 }
 .bw-bal .bw-bal-v {
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   margin-top: 3px;
 }
 
-/* ---------- summary sidebar (.sum) ---------- */
-.bw-sum {
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 8px 22px rgba(16, 24, 40, 0.05);
-  overflow: hidden;
-}
-.bw-sum + .bw-sum {
-  margin-top: 16px;
-}
-.bw-sum-h {
-  background: #f7f8fb;
-  padding: 16px 18px;
-  border-bottom: 1px solid #e4e8f0;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--color-ink);
-}
+/* ============================================================
+   summary sidebar (inside a canonical `.card`)
+   ============================================================ */
 .bw-sum-b {
-  padding: 16px 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -566,13 +447,13 @@ select.bw-fld {
   gap: 11px;
 }
 .bw-sum-ava {
-  width: 42px;
-  height: 42px;
-  border-radius: 11px;
-  background: var(--color-primary);
+  width: 44px;
+  height: 44px;
+  border-radius: var(--r-md);
+  background: var(--brand);
   color: #fff;
   font-weight: 800;
-  font-size: 16px;
+  font-size: 17px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -581,40 +462,41 @@ select.bw-fld {
 .bw-sum-gname {
   font-size: 15px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .bw-sum-gsrc {
-  font-size: 12.5px;
-  color: var(--color-muted);
+  font-size: 13.5px;
+  color: var(--muted);
   font-weight: 600;
 }
 .bw-sum-sec {
-  border-top: 1px dashed #e2e7f0;
+  border-top: 1px dashed var(--line);
   padding-top: 13px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 .bw-sum-room {
-  background: #f8f9fc;
-  border-radius: 11px;
+  background: var(--field-bg);
+  border-radius: var(--r-md);
   padding: 11px 13px;
 }
 .bw-sum-rt {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 14px;
+  gap: 8px;
+  font-size: 15px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .bw-sum-rt .bw-p {
-  color: var(--color-primary);
+  color: var(--brand);
   font-variant-numeric: tabular-nums;
 }
 .bw-sum-rd {
-  font-size: 12.5px;
-  color: var(--color-muted);
+  font-size: 13.5px;
+  color: var(--muted);
   font-weight: 600;
   margin-top: 4px;
   display: flex;
@@ -626,52 +508,33 @@ select.bw-fld {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13.5px;
-  color: #4b5266;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--muted);
   font-weight: 600;
 }
 .bw-sum-total {
-  border-top: 1px solid #e4e8f0;
+  border-top: 1px solid var(--line);
   padding-top: 13px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
 }
 .bw-sum-total .bw-l {
   font-size: 15px;
   font-weight: 800;
 }
 .bw-sum-total .bw-v {
-  font-size: 23px;
+  font-size: 21px;
   font-weight: 800;
-  color: var(--color-primary);
+  color: var(--brand);
   font-variant-numeric: tabular-nums;
 }
-.bw-sum-pay {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--color-muted);
-}
-.bw-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 7px;
-  font-size: 12.5px;
-  font-weight: 700;
-  border: 1.5px solid transparent;
-}
-.bw-badge .bw-d {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
 
-/* activity timeline (V2 .log) — dot + connector line per entry */
+/* ============================================================
+   activity timeline
+   ============================================================ */
 .bw-log {
   display: flex;
   flex-direction: column;
@@ -692,7 +555,7 @@ select.bw-fld {
   bottom: 0;
   inset-inline-start: 9px;
   width: 2px;
-  background: #eef1f6;
+  background: var(--line);
 }
 .bw-log-i:last-child::before {
   display: none;
@@ -701,145 +564,70 @@ select.bw-fld {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: var(--color-primary-050);
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1.5px #d8dff8;
+  background: var(--brand-soft);
+  border: 2px solid var(--surface);
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-top: 1px;
-  color: var(--color-primary);
+  color: var(--brand);
 }
 .bw-log-t {
   font-size: 13.5px;
   font-weight: 700;
-  color: #2c3446;
+  color: var(--ink);
   line-height: 1.3;
 }
 .bw-log-s {
   font-size: 12px;
-  color: var(--color-faint);
+  color: var(--faint);
   font-weight: 600;
   margin-top: 2px;
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- footer step label ---------- */
-.bw-ft-step {
-  font-size: 13.5px;
-  color: var(--color-muted);
-  font-weight: 700;
+/* ============================================================
+   sidebar quick actions — canonical `.btn .btn-secondary`, full width
+   ============================================================ */
+.bw-qa {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 9px;
+}
+.bw-qa-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+}
+.bw-qa-btn .ms-icon {
+  color: var(--brand);
+}
+.bw-qa-btn.qg .ms-icon {
+  color: var(--ok);
 }
 
-.bw-hint {
-  font-size: 12.5px;
-  color: var(--color-faint);
-  font-weight: 600;
-  margin-top: 7px;
-}
-
-/* ---------- payment-status chips (reference .paychip) ---------- */
-.bw-chips-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.bw-paychip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 44px;
-  padding: 0 16px;
-  border-radius: 12px;
-  border: 1.5px solid #e4e8f0;
-  background: #fff;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  color: #4b5266;
-  cursor: pointer;
-}
-.bw-paychip:disabled {
-  cursor: default;
-}
-.bw-paychip .bw-d {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-}
-.bw-paychip:hover {
-  background: #f5f7fb;
-}
-.bw-paychip.on {
-  border-width: 2px;
-}
-.bw-paychip.pc-unpaid .bw-d {
-  background: #dc2626;
-}
-.bw-paychip.on.pc-unpaid {
-  border-color: #dc2626;
-  background: #fdecec;
-  color: #b4231f;
-}
-.bw-paychip.pc-partial .bw-d {
-  background: #ea9314;
-}
-.bw-paychip.on.pc-partial {
-  border-color: #ea9314;
-  background: #fdf2e1;
-  color: #b4670a;
-}
-.bw-paychip.pc-paid .bw-d {
-  background: #16a34a;
-}
-.bw-paychip.on.pc-paid {
-  border-color: #16a34a;
-  background: #e7f6ec;
-  color: #15803d;
-}
-.bw-paychip.pc-pending .bw-d {
-  background: #2540c8;
-}
-.bw-paychip.on.pc-pending {
-  border-color: #2540c8;
-  background: var(--color-primary-050);
-  color: var(--color-primary);
-}
-/* overpaid = customer credit (D52 §7) — teal family, edit panel only */
-.bw-paychip.pc-over .bw-d {
-  background: #0e8a99;
-}
-.bw-paychip.on.pc-over {
-  border-color: #0e8a99;
-  background: #dcf1f4;
-  color: #0b6e7a;
-}
-
-/* ---------- credit-card details block (reference .ccbox) ----------
-   .bw-ccbox is THE credit-card section and appears at most once per panel
-   (D86). .bw-metabox is the same container geometry for NON-card metadata
-   (e.g. channel collection facts) — deliberately a different class so a
-   second card interface cannot re-grow by reusing the card box. */
+/* ============================================================
+   THE credit-card box (D86 — exactly one per panel) and the sibling
+   channel-collection metadata box (deliberately a different class so a
+   second card interface cannot re-grow by reusing the card box).
+   ============================================================ */
 .bw-ccbox,
 .bw-metabox {
-  border: 1.5px solid #e4e8f0;
-  border-radius: 14px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
   padding: 18px 20px;
   margin-top: 16px;
-  background: #fcfdfe;
+  background: var(--surface);
 }
-/* D77 §15 — card entry deactivated (payment method is not credit card):
-   grey, non-interactive, unfocusable; turns white/active on method change */
+/* card entry deactivated (the payment method is not a credit card) */
 .bw-ccbox-off {
-  background: #f1f3f8;
+  background: var(--field-bg);
   border-style: dashed;
 }
-.bw-ccbox-off .bw-cc-top {
-  color: var(--color-muted);
+.bw-ccbox-off .bw-cc-top,
+.bw-ccbox-off .bw-cc-top .ms-icon {
+  color: var(--muted);
 }
 .bw-ccbox-off fieldset {
   opacity: 0.55;
@@ -849,68 +637,27 @@ select.bw-fld {
   display: flex;
   align-items: center;
   gap: 9px;
+  flex-wrap: wrap;
   margin-bottom: 16px;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
-.bw-cc-top svg {
-  color: var(--color-primary);
-}
-.bw-opt {
-  color: #9aa1b4;
-  font-weight: 600;
-  font-size: 12px;
-}
-/* D86 — subordinate card metadata INSIDE the one card section: the brand/virtual
-   tag beside the section title and the honest origin/collection status line under
-   the fields. Never a second presentation of holder/number/expiry. */
-.bw-cc-tag {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #fdf2e1;
-  color: #b4670a;
-  font-size: 12px;
-  font-weight: 700;
-}
-/* copy affordance for a REVEALED value — sits in the field's own label row, so a
-   revealed card stays inside the canonical fields instead of a separate box */
-.bw-cc-copy {
-  height: 22px;
-  padding: 0 6px;
-  margin-inline-start: 6px;
-  vertical-align: middle;
+.bw-cc-top .ms-icon {
+  color: var(--brand);
 }
 .bw-cc-status {
   display: flex;
   align-items: center;
   gap: 7px;
   margin-top: 14px;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
-  color: var(--color-muted);
+  color: var(--muted);
 }
-.bw-cc-status svg {
+.bw-cc-status .ms-icon {
   flex: none;
-  color: var(--color-primary);
-}
-.bw-fld-wrap {
-  position: relative;
-}
-.bw-fld-wrap .bw-fi {
-  position: absolute;
-  inset-inline-start: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #8a91a3;
-  pointer-events: none;
-}
-.bw-fld.ic {
-  padding-inline-start: 42px;
-}
-.bw-fld.bad {
-  border-color: var(--color-status-danger);
-  background: #fdecec;
+  color: var(--brand);
 }
 .bw-cc-foot {
   display: flex;
@@ -919,291 +666,284 @@ select.bw-fld {
   margin-top: 18px;
   flex-wrap: wrap;
 }
-.bw-btn-charge {
-  height: 44px;
-  padding: 0 22px;
-  border: none;
-  border-radius: 12px;
-  font-family: inherit;
-  font-size: 14.5px;
-  font-weight: 800;
-  color: #fff;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-.bw-btn-charge:disabled {
-  background: #b9c0d6;
-  box-shadow: none;
-  cursor: not-allowed;
-}
 .bw-cc-hint {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 700;
-  color: #15803d;
+  color: var(--ok);
   display: inline-flex;
   align-items: center;
   gap: 5px;
 }
 
-/* ---------- sidebar quick actions (reference פעולות מהירות) ---------- */
-.bw-qa {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-.bw-qa-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 46px;
-  padding: 0 15px;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 12px;
-  background: #fff;
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 700;
-  color: #2c3446;
-  cursor: pointer;
-  text-align: start;
-}
-.bw-qa-btn:hover:not(:disabled) {
-  background: #f5f7fb;
-  border-color: #c9d2e4;
-}
-.bw-qa-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.bw-qa-btn svg {
-  color: var(--color-primary);
-}
-.bw-qa-btn.qg svg {
-  color: #16a34a;
-}
-
-/* room summary row inside a stay card (reference: Deluxe King · חדר 214 +
-   swap button) */
-.bw-rc-room {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  margin-top: 14px;
-  padding: 14px 16px;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 13px;
-  background: #fff;
-}
-.bw-rc-ric {
-  width: 44px;
-  height: 44px;
-  border-radius: 11px;
-  background: var(--color-primary-050);
-  color: var(--color-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
-.bw-rc-info {
-  flex: 1;
-  min-width: 0;
-}
-.bw-rc-rn {
-  font-size: 15px;
-  font-weight: 800;
-  color: var(--color-ink);
-}
-.bw-rc-rn b {
-  color: var(--color-primary);
-}
-.bw-rc-rs {
+/* footer step label (wizard) */
+.bw-ft-step {
   font-size: 13.5px;
-  font-weight: 600;
-  color: var(--color-muted);
-  margin-top: 2px;
-}
-
-/* footer state chips (V2 .dirty / .saved-ok) */
-.bw-dirty {
-  font-size: 13.5px;
-  color: #b4670a;
+  color: var(--muted);
   font-weight: 700;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
-}
-.bw-saved-ok {
-  font-size: 13.5px;
-  color: #15803d;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* ============================================================
-   V2 token overrides — SCOPED to panels that opt into the V2 shell
-   (SidePanel `v2` prop stamps `.bw-v2` on the panel root; today that is
-   ONLY EditReservationPanel). Base `.bw-*` values above stay exactly as
-   the wizard and every other consumer always had them.
-   Source of truth: ref/html/edit-booking-modal-V2.html.
-   ============================================================ */
-.bw-v2 .bw-lbl {
-  font-size: 14px;
-}
-.bw-v2 .bw-fld {
-  font-size: 15px;
-}
-/* V2 custom select chevron (RTL: arrow on the left). Inline tint styles must
-   use background-COLOR — a background shorthand would wipe this arrow image. */
-.bw-v2 select.bw-fld {
-  -webkit-appearance: none;
-  appearance: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%236B7385' stroke-width='2.4' stroke-linecap='round'><path d='M6 9l6 6 6-6'/></svg>");
-  background-repeat: no-repeat;
-  background-position: left 13px center;
-}
-.bw-v2 .bw-fld-wrap .bw-fi {
-  inset-inline-start: 13px;
-  color: #9aa1b4;
-}
-.bw-v2 .bw-btn {
-  font-size: 15px;
-}
-.bw-v2 .bw-addroom {
-  font-size: 15px;
-}
-.bw-v2 .bw-price-line {
-  font-size: 15px;
-}
-.bw-v2 .bw-price-line .bw-plr {
-  font-size: 13.5px;
-}
-.bw-v2 .bw-readonly .bw-rn {
-  font-size: 13px;
-}
-.bw-v2 .bw-rc-badge {
-  font-size: 15px;
-}
-.bw-v2 .bw-rc-rm {
-  font-size: 14px;
-}
-.bw-v2 .bw-paychip {
-  font-size: 15px;
-}
-.bw-v2 .bw-cc-top {
-  font-size: 18px;
-}
-.bw-v2 .bw-opt {
-  font-size: 12.5px;
-}
-.bw-v2 .bw-col-side {
-  width: 320px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.bw-v2 .bw-sum-gsrc {
-  font-size: 13px;
-}
-.bw-v2 .bw-sum-rt {
-  font-size: 15px;
-}
-.bw-v2 .bw-sum-rd {
-  font-size: 13px;
-}
-.bw-v2 .bw-sum-line {
-  font-size: 14px;
-}
-.bw-v2 .bw-sum-total .bw-v {
-  font-size: 24px;
 }
 
 } /* @layer components */
 
 /* ============================================================
-   Booking header action toolbar + in-panel message composer (D53)
-   ref/screens/edit-booking-modal.png — compact square icon-buttons over
-   the primary header (left cluster, RTL), and a full-panel composer overlay
-   that keeps the booking mounted underneath (no navigation).
+   Booking header action toolbar + in-panel message composer (D53).
+   Compact icon-buttons over the primary header (left cluster, RTL), and a
+   full-panel composer overlay that keeps the booking mounted underneath.
    ============================================================ */
-.bk-tb { display: flex; align-items: center; }
-.bk-tb-inline { display: flex; align-items: center; gap: 6px; }
-.bk-tb-btn {
-  height: 40px; width: 40px; display: grid; place-items: center;
-  border-radius: 11px; border: none; cursor: pointer;
-  background: rgba(255, 255, 255, 0.12); color: #fff;
-  transition: background 0.15s ease;
+.bk-tb {
+  display: flex;
+  align-items: center;
 }
-.bk-tb-btn:hover { background: rgba(255, 255, 255, 0.24); }
-.bk-tb-btn:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.85); outline-offset: 1px; }
-.bk-tb-more { position: relative; display: none; }
-.bk-tb-scrim { position: fixed; inset: 0; z-index: 1; background: transparent; border: none; cursor: default; }
+.bk-tb-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* icon button on the brand header: §4 geometry (36×36 / r10 / 20px icon) */
+.bk-tb-btn {
+  height: 36px;
+  width: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  transition: background-color 0.15s ease;
+}
+.bk-tb-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.bk-tb-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 1px;
+}
+.bk-tb-more {
+  position: relative;
+  display: none;
+}
+.bk-tb-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+  border: none;
+  cursor: default;
+}
 .bk-tb-menu {
-  position: absolute; inset-inline-start: 0; top: calc(100% + 6px); z-index: 2;
-  min-width: 200px; padding: 6px; display: flex; flex-direction: column; gap: 2px;
-  background: #fff; border: 1px solid var(--color-line);
-  border-radius: 12px; box-shadow: var(--shadow-pop, 0 12px 32px rgba(0, 0, 0, 0.16));
+  position: absolute;
+  inset-inline-start: 0;
+  top: calc(100% + 6px);
+  z-index: 2;
+  min-width: 200px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-float);
 }
 .bk-tb-menu-item {
-  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-  border: none; background: none; cursor: pointer; border-radius: 8px;
-  font-family: inherit; font-size: 14px; font-weight: 600; color: var(--color-ink); text-align: start;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: start;
 }
-.bk-tb-menu-item:hover { background: var(--color-primary-050); color: var(--color-primary); }
+.bk-tb-menu-item:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
 @media (max-width: 480px) {
-  .bk-tb-inline { display: none; }
-  .bk-tb-more { display: block; }
+  .bk-tb-inline {
+    display: none;
+  }
+  .bk-tb-more {
+    display: block;
+  }
 }
 
 .bk-cmp {
-  position: absolute; inset: 0; z-index: 20;
-  display: flex; flex-direction: column; background: #eef0f5;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
 }
 .bk-cmp-h {
-  flex-shrink: 0; display: flex; align-items: center; gap: 12px;
-  padding: 16px 20px; background: var(--color-primary); color: #fff;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 24px;
+  background: var(--brand);
+  color: #fff;
+}
+/* the cancellation overlay wears the danger token — never a new colour */
+.bk-cmp-h.danger {
+  background: var(--danger);
 }
 .bk-cmp-back {
-  height: 40px; width: 40px; display: grid; place-items: center; flex-shrink: 0;
-  border: none; cursor: pointer; border-radius: 10px;
-  background: rgba(255, 255, 255, 0.12); color: #fff;
+  height: 36px;
+  width: 36px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: none;
+  cursor: pointer;
+  border-radius: 10px;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
-.bk-cmp-back:hover { background: rgba(255, 255, 255, 0.24); }
-.bk-cmp-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.bk-cmp-back:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.bk-cmp-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.bk-cmp-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 .bk-cmp-f {
-  flex-shrink: 0; display: flex; align-items: center; gap: 12px;
-  padding: 14px 20px; background: var(--color-surface, #fff); border-top: 1px solid var(--color-line);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
 }
 .bk-cmp-recipient {
-  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
-  background: #fff; border: 1px solid var(--color-line); border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
 }
-.bk-cmp-tabs { display: flex; gap: 8px; }
+.bk-cmp-tabs {
+  display: flex;
+  gap: 8px;
+}
 .bk-cmp-tab {
-  flex: 1; padding: 10px; border-radius: 10px; border: 1.5px solid var(--color-line);
-  background: #fff; font-family: inherit; font-weight: 700; font-size: 13.5px;
-  color: var(--color-muted); cursor: pointer;
+  flex: 1;
+  height: 44px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--muted);
+  cursor: pointer;
 }
-.bk-cmp-tab.on { border-color: var(--color-primary); color: var(--color-primary); background: var(--color-primary-050); }
-.bk-cmp-textarea { min-height: 150px; resize: vertical; line-height: 1.6; }
-.bk-cmp-vars { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.bk-cmp-vars-lbl { font-size: 12.5px; font-weight: 700; color: var(--color-muted); }
-.bk-cmp-var {
-  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--color-line);
-  background: #fff; font-family: inherit; font-size: 12px; font-weight: 600;
-  color: var(--color-primary); cursor: pointer;
+.bk-cmp-tab.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-soft);
 }
-.bk-cmp-var:hover { background: var(--color-primary-050); }
-.bk-cmp-preview { background: #fff; border: 1px solid var(--color-line); border-radius: 12px; padding: 14px; }
-.bk-cmp-preview-h { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; color: var(--color-muted); margin-bottom: 8px; }
-.bk-cmp-preview-subj { font-weight: 700; color: var(--color-ink); margin-bottom: 6px; }
-.bk-cmp-preview-body { white-space: pre-wrap; line-height: 1.6; color: var(--color-ink); font-size: 14px; }
-.bk-cmp-alert { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; }
-.bk-cmp-alert.warn { background: #fdf2e1; color: #b4670a; border: 1px solid #ebc078; }
-.bk-cmp-alert.danger { background: #fdecec; color: #b4231f; border: 1px solid #f4b9b9; }
-.bk-cmp-alert-link { margin-inline-start: auto; text-decoration: underline; font-weight: 700; white-space: nowrap; }
-.bk-cmp-ok { display: inline-flex; align-items: center; gap: 6px; color: #15803d; font-weight: 700; }
+.bk-cmp-textarea {
+  min-height: 150px;
+  resize: vertical;
+  line-height: 1.6;
+}
+.bk-cmp-vars {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.bk-cmp-vars-lbl {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.bk-cmp-preview {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px;
+}
+.bk-cmp-preview-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.bk-cmp-preview-subj {
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.bk-cmp-preview-body {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--ink);
+  font-size: 15px;
+}
+.bk-cmp-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.bk-cmp-alert.warn {
+  background: color-mix(in srgb, var(--warn) 10%, #fff);
+  border-color: var(--warn);
+  color: color-mix(in srgb, var(--warn) 62%, var(--ink));
+}
+.bk-cmp-alert.danger {
+  background: color-mix(in srgb, var(--danger) 8%, #fff);
+  border-color: var(--danger);
+  color: color-mix(in srgb, var(--danger) 66%, var(--ink));
+}
+.bk-cmp-alert-link {
+  margin-inline-start: auto;
+  text-decoration: underline;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.bk-cmp-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ok);
+}

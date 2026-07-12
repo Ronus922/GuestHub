@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Icon } from "@/components/shared/Icon";
 import {
   getInboundStatusAction,
   requestInboundPullAction,
@@ -25,8 +26,8 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: "ok"
     tone === "ok" ? "text-status-success" : tone === "err" ? "text-status-danger" : tone === "warn" ? "text-status-warning" : "text-text2";
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-sm text-muted">{label}</span>
-      <span className={`text-sm font-semibold ${color}`}>{value}</span>
+      <span className="t-secondary">{label}</span>
+      <span className={`t-secondary ${color}`}>{value}</span>
     </div>
   );
 }
@@ -91,9 +92,9 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold text-ink">הזמנות נכנסות מהערוצים</h2>
+      <h2 className="h3">הזמנות נכנסות מהערוצים</h2>
 
-      <div className="rounded-xl border border-line bg-surface">
+      <div className="card">
         <div className="divide-y divide-line">
           <Row
             label="ייבוא הזמנות"
@@ -172,8 +173,9 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
       {view.alerts.length > 0 && (
         <ul className="flex flex-col gap-1 rounded-xl border border-status-warning bg-status-warning-050 p-4">
           {view.alerts.map((a, i) => (
-            <li key={i} className="text-sm font-semibold text-ink">
-              ⚠ {a}
+            <li key={i} className="t-secondary flex items-center gap-2 text-ink">
+              <Icon name="warning" size={17} className="shrink-0 text-status-warning" />
+              {a}
             </li>
           ))}
         </ul>
@@ -182,7 +184,7 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
       {msg && (
         <p
           role="status"
-          className={`px-4 py-2 text-sm font-semibold ${
+          className={`t-secondary px-4 py-2 ${
             msg.tone === "ok" ? "text-status-success" : msg.tone === "warn" ? "text-status-warning" : "text-status-danger"
           }`}
         >
@@ -196,7 +198,7 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
           onClick={pullNow}
           disabled={pending || !view.enabled}
           aria-disabled={pending || !view.enabled}
-          className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn btn-primary"
         >
           משיכת הזמנות עכשיו
         </button>
@@ -205,7 +207,7 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
           onClick={testWebhook}
           disabled={pending || !view.enabled}
           aria-disabled={pending || !view.enabled}
-          className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn btn-secondary"
         >
           רישום ובדיקת Webhook
         </button>
@@ -214,7 +216,7 @@ export function InboundBookingsSection({ initial }: { initial: InboundStatusView
           onClick={toggleEnabled}
           disabled={pending || (!view.enabled && !view.connectionActive)}
           aria-disabled={pending || (!view.enabled && !view.connectionActive)}
-          className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn btn-secondary"
         >
           {view.enabled ? "השבת ייבוא הזמנות" : "הפעל ייבוא הזמנות"}
         </button>

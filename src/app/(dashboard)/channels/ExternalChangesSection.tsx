@@ -36,57 +36,63 @@ function ChangeCard({
 }) {
   const applied = change.applyStatus === "applied";
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-bold text-ink">
-          {change.otaName ?? "ערוץ"} · הזמנה {change.otaReservationCode ?? "—"}
-          {change.reservationNumber ? ` · GuestHub ${change.reservationNumber}` : ""}
-        </span>
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-            applied ? "bg-status-success-050 text-status-success" : "bg-status-danger-050 text-status-danger"
-          }`}
-        >
-          {applied ? "הוחל בלוח השנה" : "התנגשות — לא הוחל"}
-        </span>
-      </div>
-      <div className="flex flex-wrap items-center gap-4 text-sm text-text2">
-        <span>חדר: {change.roomLabels.length > 0 ? change.roomLabels.join(", ") : "—"}</span>
-        <span>
-          תאריכים קודמים: {change.oldCheckIn} ← {change.oldCheckOut}
-        </span>
-        <span className="font-semibold text-ink">
-          תאריכים חדשים: {change.newCheckIn} ← {change.newCheckOut}
-        </span>
-        <span>התקבל: {change.receivedAtDisplay}</span>
-      </div>
-      {!applied && change.conflictDetail && (
-        <p className="text-sm font-semibold text-status-danger">{change.conflictDetail}</p>
-      )}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span
-          className={`text-xs font-semibold ${
-            change.emailStatus === "sent"
-              ? "text-status-success"
-              : change.emailStatus === "failed"
-                ? "text-status-danger"
-                : "text-muted"
-          }`}
-        >
-          {EMAIL_LABEL[change.emailStatus]}
-          {change.emailDetail ? ` · ${change.emailDetail}` : ""}
-        </span>
-        {onReconcile && (
-          <button
-            type="button"
-            onClick={() => onReconcile(change.id)}
-            disabled={busy}
-            aria-disabled={busy}
-            className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            סמן כטופל
-          </button>
+    <div className="card">
+      <div className="card-bd flex flex-col gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="h4">
+            {change.otaName ?? "ערוץ"} · הזמנה <bdi className="ltr-num">{change.otaReservationCode ?? "—"}</bdi>
+            {change.reservationNumber ? (
+              <>
+                {" · GuestHub "}
+                <bdi className="ltr-num">{change.reservationNumber}</bdi>
+              </>
+            ) : null}
+          </span>
+          <span className={`chip ${applied ? "chip-paid" : "chip-failed"}`}>
+            <span className="dot" />
+            {applied ? "הוחל בלוח השנה" : "התנגשות — לא הוחל"}
+          </span>
+        </div>
+        <div className="t-secondary flex flex-wrap items-center gap-4 text-text2">
+          <span>חדר: {change.roomLabels.length > 0 ? change.roomLabels.join(", ") : "—"}</span>
+          <span>
+            תאריכים קודמים: <bdi className="ltr-num">{change.oldCheckIn} ← {change.oldCheckOut}</bdi>
+          </span>
+          <span className="text-ink">
+            תאריכים חדשים: <bdi className="ltr-num">{change.newCheckIn} ← {change.newCheckOut}</bdi>
+          </span>
+          <span>
+            התקבל: <bdi className="ltr-num">{change.receivedAtDisplay}</bdi>
+          </span>
+        </div>
+        {!applied && change.conflictDetail && (
+          <p className="t-secondary text-status-danger">{change.conflictDetail}</p>
         )}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span
+            className={`t-label ${
+              change.emailStatus === "sent"
+                ? "text-status-success"
+                : change.emailStatus === "failed"
+                  ? "text-status-danger"
+                  : "text-muted"
+            }`}
+          >
+            {EMAIL_LABEL[change.emailStatus]}
+            {change.emailDetail ? ` · ${change.emailDetail}` : ""}
+          </span>
+          {onReconcile && (
+            <button
+              type="button"
+              onClick={() => onReconcile(change.id)}
+              disabled={busy}
+              aria-disabled={busy}
+              className="btn btn-secondary"
+            >
+              סמן כטופל
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -127,49 +133,53 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold text-ink">שינויים חיצוניים מהערוצים</h2>
-      <p className="text-sm text-muted">
+      <h2 className="h3">שינויים חיצוניים מהערוצים</h2>
+      <p className="t-secondary">
         שינויי תאריכים שהתקבלו מהערוץ להזמנות קיימות. הערוץ מחשיב את השינוי כמאושר — הסימון כאן
         הוא תיאום תפעולי בלבד ואינו מבטל את השינוי מול הערוץ.
       </p>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-4">
-        <label htmlFor="ops-email" className="text-sm font-semibold text-ink">
-          נמען מייל להתראות תפעוליות
-        </label>
-        <input
-          id="ops-email"
-          type="email"
-          dir="ltr"
-          value={recipient}
-          onChange={(e) => setRecipient(e.target.value)}
-          placeholder="ops@example.com"
-          className="min-w-56 rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink"
-        />
-        <button
-          type="button"
-          onClick={saveRecipient}
-          disabled={pending}
-          aria-disabled={pending}
-          className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          שמירת נמען
-        </button>
+      <div className="card">
+        <div className="card-bd flex flex-wrap items-end gap-3">
+          <div className="field">
+            <label htmlFor="ops-email" className="field-label">
+              נמען מייל להתראות תפעוליות
+            </label>
+            <input
+              id="ops-email"
+              type="email"
+              dir="ltr"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="ops@example.com"
+              className="field-input ltr-num min-w-56"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={saveRecipient}
+            disabled={pending}
+            aria-disabled={pending}
+            className="btn btn-primary"
+          >
+            שמירת נמען
+          </button>
+        </div>
       </div>
 
       {msg && (
         <p
           role="status"
-          className={`px-4 py-2 text-sm font-semibold ${msg.tone === "ok" ? "text-status-success" : "text-status-danger"}`}
+          className={`t-secondary px-4 py-2 ${msg.tone === "ok" ? "text-status-success" : "text-status-danger"}`}
         >
           {msg.text}
         </p>
       )}
 
       {data.pending.length === 0 ? (
-        <p className="rounded-xl border border-line bg-surface p-4 text-sm text-muted">
-          אין שינויים חיצוניים ממתינים.
-        </p>
+        <div className="card">
+          <p className="empty-state">אין שינויים חיצוניים ממתינים.</p>
+        </div>
       ) : (
         <div className="flex flex-col gap-2">
           {data.pending.map((c) => (
@@ -180,8 +190,8 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
 
       {data.recentReconciled.length > 0 && (
         <details className="flex flex-col gap-2">
-          <summary className="cursor-pointer text-sm font-semibold text-muted">
-            טופלו לאחרונה ({data.recentReconciled.length})
+          <summary className="t-secondary cursor-pointer">
+            טופלו לאחרונה (<bdi className="ltr-num">{data.recentReconciled.length}</bdi>)
           </summary>
           <div className="mt-2 flex flex-col gap-2">
             {data.recentReconciled.map((c) => (

@@ -1,8 +1,9 @@
 /* ============================================================
-   GuestHub · /guests (D77 §19)
-   Shares the rl- table/design language of /reservations (same module family,
-   ref/html/Orders.html tokens); only the guest-specific grid + cells live
-   here. Prefix: gl-
+   GuestHub · /guests
+   Same list shell as /reservations (rl-); only the guest-specific grid and
+   cells live here. Every value comes from GUIDELINES.md — the chips, buttons,
+   fields and cards are the canonical primitives of design-system.css.
+   Prefix: gl-
    ============================================================ */
 
 @layer components {
@@ -19,33 +20,29 @@
   .gl-num {
     font-size: 15px;
     font-weight: 800;
-    color: #20283a;
+    color: var(--ink);
   }
   .gl-num.zero {
-    color: var(--color-faint);
+    color: var(--faint);
     font-weight: 600;
   }
   .gl-email {
     font-size: 13.5px;
     font-weight: 600;
-    color: var(--color-text2);
-    direction: ltr;
-    unicode-bidi: isolate;
+    color: var(--muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     display: block;
   }
-  .gl-blocked {
-    height: 22px;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 9px;
-    border-radius: 20px;
-    background: #fbeae8;
-    color: #c32b25;
-    font-size: 11.5px;
+  /* money in a list cell: settled reads green, an open balance reads danger */
+  .gl-money {
+    font-size: 15px;
     font-weight: 800;
+    color: var(--ok);
+  }
+  .gl-money.due {
+    color: var(--danger);
   }
   @media (max-width: 1200px) {
     .gl-rowg {

@@ -51,12 +51,16 @@ export function Shell({
           </div>
         </NewReservationProvider>
         </RealtimeProvider>
+        {/* GUIDELINES §9 — the ONE toast: bottom-centre, 26px from the bottom,
+            ink surface, white 15px/700, r-md, gone after 2.8s. `richColors` is
+            deliberately OFF: it would paint per-type surfaces that are not in
+            the token set. Semantic difference is carried by the icon colour. */}
         <Toaster
           position="bottom-center"
-          richColors
-          closeButton
           dir="rtl"
-          toastOptions={{ style: { fontFamily: "var(--font-sans)" } }}
+          offset={26}
+          duration={2800}
+          toastOptions={{ className: "gh-toast" }}
         />
       </NuqsAdapter>
     </TenantProvider>

@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
+import { STATUS_COLORS, type StatusTriplet } from "@/lib/status-colors";
 import type {
   AmenityOption,
   BoardRoom,
@@ -28,23 +29,34 @@ import { updateAreaStatusAction, updateRoomBoardStatusAction } from "./actions";
 type Property = ExtraGuestDefaults & { adult_min_age: number };
 export type Can = { create: boolean; edit: boolean; del: boolean };
 
-type StatusMeta = { label: string; stripe: string; bg: string; fg: string; icon: IconName };
+export type StatusMeta = { label: string; icon: IconName; triplet: StatusTriplet };
 
-// exact reference colors (extracted from the rendered RoomsAndAreas bundle)
+// GUIDELINES §1/§3.1: an operational status wears an APPROVED triplet — never a
+// hand-typed hex. Five of the six map onto the §3.1 families; "תפוס" wears the
+// brand family (§1 tokens) through the .chip-brand variant, because §3.1 has no
+// blue triplet. The dot of the triplet paints the card's status strip.
+const BRAND_TRIPLET: StatusTriplet = {
+  bg: "var(--brand-soft)",
+  bd: "var(--brand-line)",
+  tx: "var(--brand-hover)",
+  dot: "var(--brand)",
+  chip: "chip-brand",
+};
+
 export const STATUS_META: Record<RoomDerivedStatus, StatusMeta> = {
-  free: { label: "פנוי", stripe: "#16A34A", bg: "#E1F4E9", fg: "#0F6B3C", icon: "check-circle" },
-  occupied: { label: "תפוס", stripe: "#2540C8", bg: "#EEF1FD", fg: "#1C2E9A", icon: "user" },
-  dirty: { label: "מלוכלך", stripe: "#EA9314", bg: "#FDF2E1", fg: "#8A5207", icon: "droplets" },
-  cleaning: { label: "בניקיון", stripe: "#D9A400", bg: "#FBF4D8", fg: "#7A6203", icon: "brush" },
-  blocked: { label: "חסום", stripe: "#E5484D", bg: "#FDEBEC", fg: "#B4232D", icon: "room-blocks" },
-  maintenance: { label: "תחזוקה", stripe: "#C81E3C", bg: "#FBE7EB", fg: "#A3123B", icon: "maintenance" },
+  free: { label: "פנוי", icon: "check-circle", triplet: STATUS_COLORS.paid },
+  occupied: { label: "תפוס", icon: "user", triplet: BRAND_TRIPLET },
+  dirty: { label: "מלוכלך", icon: "droplets", triplet: STATUS_COLORS.approval },
+  cleaning: { label: "בניקיון", icon: "brush", triplet: STATUS_COLORS.transfer },
+  blocked: { label: "חסום", icon: "room-blocks", triplet: STATUS_COLORS.unpaid },
+  maintenance: { label: "תחזוקה", icon: "maintenance", triplet: STATUS_COLORS.failed },
 };
 
 export const AREA_STATUS_META: Record<OperationalArea["status"], StatusMeta> = {
-  ok: { label: "תקין", stripe: "#16A34A", bg: "#E1F4E9", fg: "#0F6B3C", icon: "check-circle" },
-  cleaning: { label: "בניקיון", stripe: "#D9A400", bg: "#FBF4D8", fg: "#7A6203", icon: "brush" },
-  maintenance: { label: "תחזוקה", stripe: "#C81E3C", bg: "#FBE7EB", fg: "#A3123B", icon: "maintenance" },
-  blocked: { label: "חסום", stripe: "#E5484D", bg: "#FDEBEC", fg: "#B4232D", icon: "room-blocks" },
+  ok: { label: "תקין", icon: "check-circle", triplet: STATUS_COLORS.paid },
+  cleaning: { label: "בניקיון", icon: "brush", triplet: STATUS_COLORS.transfer },
+  maintenance: { label: "תחזוקה", icon: "maintenance", triplet: STATUS_COLORS.failed },
+  blocked: { label: "חסום", icon: "room-blocks", triplet: STATUS_COLORS.unpaid },
 };
 
 export const AREA_TYPE_LABEL: Record<string, string> = {
@@ -155,39 +167,47 @@ export function RoomsScreen({
   const openPopover = (e: React.MouseEvent, p: PopoverSeed) => {
     if (!can.edit) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = Math.max(12, Math.min(rect.left, window.innerWidth - 276));
-    const y = Math.min(rect.bottom + 6, window.innerHeight - 320);
-    setPop({ ...p, x, y });
+    // §8: 316px popover, clamped to the viewport with a 12px margin. X clamps
+    // against the KNOWN .popover width; Y is clamped inside StatusPopover
+    // against the popover's MEASURED height — the room menu (7 rows) and the
+    // area menu (5 rows) differ, and a hardcoded height constant went stale
+    // here once and pushed the last row off-screen.
+    const x = Math.max(12, Math.min(rect.left, window.innerWidth - 328));
+    setPop({ ...p, x, y: rect.bottom + 6 });
   };
 
   return (
     <div className="flex min-h-full flex-col" dir="rtl">
-      {/* header (reference .hd) */}
+      {/* header */}
       <div className="rm-hd">
-        <h1 className="rm-hd-t">חדרים ואזורים</h1>
-        <span className="rm-hd-count">
-          {rooms.length} חדרים · {areas.length} אזורים
+        <h1 className="h1">חדרים ואזורים</h1>
+        <span className="chip chip-neutral">
+          {/* ONE flex item: .chip is a 6px-gap flex row, so bare <bdi> siblings
+              would each become items and pick up double word-spacing */}
+          <span>
+            <bdi className="ltr-num">{rooms.length}</bdi> חדרים · <bdi className="ltr-num">{areas.length}</bdi> אזורים
+          </span>
         </span>
         <span className="rm-hd-sp" />
-        <div className="rm-search">
+        <div className="field-input rm-search">
           <Icon name="search" size={20} />
           <input placeholder="חיפוש לפי מספר או שם…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         {can.create && (
-          <button type="button" className="rm-btn-primary" onClick={() => setWizard({ room: null })}>
-            <Icon name="plus" size={17} />
+          <button type="button" className="btn btn-primary" onClick={() => setWizard({ room: null })}>
+            <Icon name="plus" size={20} />
             הוספת חדר
           </button>
         )}
         {can.edit && (
-          <button type="button" className="rm-btn-secondary" onClick={() => setAreaPanel({ area: null })}>
-            <Icon name="plus" size={17} />
+          <button type="button" className="btn btn-secondary" onClick={() => setAreaPanel({ area: null })}>
+            <Icon name="plus" size={20} />
             הוספת אזור
           </button>
         )}
       </div>
 
-      {/* quick filters (reference .quick) */}
+      {/* quick filters — canonical .chip.clickable (§3) */}
       <div className="rm-quick">
         <span className="rm-quick-l">סוג:</span>
         {(
@@ -197,19 +217,19 @@ export function RoomsScreen({
             { v: "areas", label: "אזורים", icon: "building" },
           ] as const
         ).map((o) => (
-          <button key={o.v} type="button" onClick={() => setKind(o.v)} className={`rm-qchip${kind === o.v ? " on" : ""}`}>
-            <Icon name={o.icon} size={17} />
+          <button key={o.v} type="button" onClick={() => setKind(o.v)} className={`chip clickable${kind === o.v ? " on" : ""}`}>
+            <Icon name={o.icon} size={13.5} />
             {o.label}
           </button>
         ))}
         <span className="rm-vsep" />
         <span className="rm-quick-l">סטטוס:</span>
-        <button type="button" onClick={() => setStatus("all")} className={`rm-qchip${status === "all" ? " on" : ""}`}>
+        <button type="button" onClick={() => setStatus("all")} className={`chip clickable${status === "all" ? " on" : ""}`}>
           הכל
         </button>
         {(Object.keys(STATUS_META) as RoomDerivedStatus[]).map((s) => (
-          <button key={s} type="button" onClick={() => setStatus(s)} className={`rm-qchip${status === s ? " on" : ""}`}>
-            <span className="rm-d" style={{ background: STATUS_META[s].stripe }} />
+          <button key={s} type="button" onClick={() => setStatus(s)} className={`chip clickable${status === s ? " on" : ""}`}>
+            <span className="dot" style={{ background: STATUS_META[s].triplet.dot }} />
             {STATUS_META[s].label}
           </button>
         ))}
@@ -316,17 +336,19 @@ function RoomCard({
   return (
     <button
       type="button"
-      className="rm-bcard"
+      className="card rm-bcard"
       title={`חדר ${room.room_number} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
       onClick={onOpen}
     >
-      <span className="rm-strip" style={{ background: meta.stripe }} />
+      <span className="rm-strip" style={{ background: meta.triplet.dot }} />
       <div className="rm-cr1">
-        <span className="rm-num" dir="ltr">{room.room_number}</span>
-        <span className="rm-kind room">חדר</span>
+        <span className="rm-num ltr-num">{room.room_number}</span>
+        {/* KIND tag — a type label, not a status: .chip-neutral, so it can never
+            collide with the status chip beside it (occupied wears chip-brand) */}
+        <span className="chip chip-neutral">חדר</span>
         <span className="rm-csp" />
-        <span className="rm-stbadge" style={{ background: meta.bg, color: meta.fg }}>
-          <Icon name={meta.icon} size={14} />
+        <span className={`chip ${meta.triplet.chip}`}>
+          <Icon name={meta.icon} size={13.5} />
           {meta.label}
         </span>
       </div>
@@ -334,14 +356,14 @@ function RoomCard({
         {room.room_type_name ?? room.name ?? "—"}
         <span className="rm-dotsep" />
         <span className="rm-cap">
-          <Icon name="users-round" size={15} />
-          {room.max_occupancy} אורחים
+          <Icon name="users-round" size={17} />
+          <bdi className="ltr-num">{room.max_occupancy}</bdi> אורחים
         </span>
       </div>
       <div className="rm-cr3">
         {line && (
           <>
-            <Icon name={line.icon} size={14} />
+            <Icon name={line.icon} size={13.5} />
             {line.text}
           </>
         )}
@@ -363,17 +385,19 @@ function AreaCard({
   return (
     <button
       type="button"
-      className="rm-bcard"
+      className="card rm-bcard"
       title={`${area.name} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
       onClick={onOpen}
     >
-      <span className="rm-strip" style={{ background: meta.stripe }} />
+      <span className="rm-strip" style={{ background: meta.triplet.dot }} />
       <div className="rm-cr1">
         <span className="rm-num">{area.name}</span>
-        <span className="rm-kind area">אזור</span>
+        {/* KIND tag — type label, not a status: .chip-neutral (an area in
+            "בניקיון" wears chip-transfer; the tag must never mirror it) */}
+        <span className="chip chip-neutral">אזור</span>
         <span className="rm-csp" />
-        <span className="rm-stbadge" style={{ background: meta.bg, color: meta.fg }}>
-          <Icon name={meta.icon} size={14} />
+        <span className={`chip ${meta.triplet.chip}`}>
+          <Icon name={meta.icon} size={13.5} />
           {meta.label}
         </span>
       </div>
@@ -381,7 +405,7 @@ function AreaCard({
       <div className="rm-cr3">
         {area.status !== "ok" && area.status_note ? (
           <>
-            <Icon name={meta.icon} size={14} />
+            <Icon name={meta.icon} size={13.5} />
             {area.status_note}
           </>
         ) : area.building_name ? (
@@ -417,6 +441,18 @@ function StatusPopover({
   const [saving, startSaving] = useTransition();
   const busy = useRef(false);
 
+  // §8: clamp Y against the popover's REAL rendered height (room menu = 7 rows,
+  // area menu = 5 rows) with the 12px viewport margin — measured, not a
+  // constant, so the last row ("עריכת פרטי החדר") can never clip off-screen.
+  // useLayoutEffect runs before paint, so the clamped position never flashes.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [top, setTop] = useState(pop.y);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    setTop(Math.max(12, Math.min(pop.y, window.innerHeight - el.offsetHeight - 12)));
+  }, [pop]);
+
   const apply = (fn: () => Promise<{ success: boolean; error?: string }>) =>
     startSaving(async () => {
       if (busy.current) return;
@@ -446,14 +482,16 @@ function StatusPopover({
   return (
     <>
       <div className="rm-pov" onClick={onClose} aria-hidden="true" />
-      <div className="rm-pop" style={{ left: pop.x, top: pop.y }} role="dialog" aria-label="עדכון סטטוס">
+      {/* left/top are a CALCULATED anchor to the click point (§11 allows computed
+          geometry); the popover shell itself is the canonical .popover (§8) */}
+      <div ref={boxRef} className="popover" style={{ left: pop.x, top }} role="dialog" aria-label="עדכון סטטוס">
         <div className="rm-pop-h">
           <div>
             <div>{title}</div>
             <div className="rm-sub">{sub}</div>
           </div>
-          <button type="button" className="rm-pop-x" onClick={onClose} aria-label="סגירה">
-            <Icon name="close" size={16} />
+          <button type="button" className="icon-btn ms-auto" onClick={onClose}>
+            <Icon name="close" size={20} label="סגירה" />
           </button>
         </div>
         <div className="rm-pop-b">
@@ -496,7 +534,7 @@ function StatusPopover({
           {can.edit && (
             <div className="rm-pop-edit">
               <button type="button" className="rm-stopt" onClick={onEdit}>
-                <Icon name="edit" size={15} />
+                <Icon name="edit" size={17} />
                 {pop.kind === "room" ? "עריכת פרטי החדר" : "עריכת פרטי האזור"}
               </button>
             </div>
@@ -522,10 +560,10 @@ function StOpt({
 }) {
   return (
     <button type="button" className={`rm-stopt${cur ? " cur" : ""}`} disabled={disabled} title={title} onClick={onClick}>
-      <span className="rm-d" style={{ background: meta.stripe }} />
+      <span className="dot" style={{ background: meta.triplet.dot }} />
       {meta.label}
       <span className="rm-chk">
-        <Icon name="check" size={16} />
+        <Icon name="check" size={17} />
       </span>
     </button>
   );

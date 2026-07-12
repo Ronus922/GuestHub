@@ -64,8 +64,8 @@ export function PriceCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cell: 
       onMouseMove={(e) => ctx.hover(e, unit, cell)}
       onMouseLeave={ctx.leave}
     >
-      {physical ? <Icon name="circle-slash" size={12} className="rg-blk" />
-        : errored ? <Icon name="warning" size={12} className="rg-err" />
+      {physical ? <Icon name="circle-slash" size={13.5} className="rg-blk" />
+        : errored ? <Icon name="warning" size={13.5} className="rg-err" />
         : noPrice ? <span className="rg-price nomprice">—</span>
         : <span className={priceCls}>{Math.round(cell.effectivePrice)}</span>}
     </div>
@@ -116,7 +116,7 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
       onClick={ctx.editable ? () => ctx.toggleBool(unit, field, cell.date, on) : undefined}
       title={on ? "פעיל · לחיצה לביטול" : ctx.editable ? "לחיצה להפעלה" : undefined}
     >
-      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={12} /></span> : <span className="rg-dash">—</span>}
+      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={13.5} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }
@@ -161,7 +161,7 @@ export function CellTip({ x, y, unit, cell }: { x: number; y: number; unit: Rate
         )}
       </div>
       <div className={`rg-tip-f ${cell.sellable ? "op" : "cl"}`}>
-        <Icon name={cell.sellable ? "check" : "circle-slash"} size={13} />
+        <Icon name={cell.sellable ? "check" : "circle-slash"} size={13.5} />
         {SELL_REASON_TEXT[cell.sellReason]}
       </div>
     </div>
@@ -184,9 +184,9 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
       <div className={className}>
         <div className="rg-ss-edit">
           <button data-testid="ss-open" className={`rg-ss-b open${!closed ? " on" : ""}`} title="פתוח למכירה"
-            onClick={() => ctx.setBool(unit, "stopSell", cell.date, false)}><Icon name="check" size={11} /></button>
+            onClick={() => ctx.setBool(unit, "stopSell", cell.date, false)}><Icon name="check" size={13.5} /></button>
           <button data-testid="ss-close" className={`rg-ss-b close${closed ? " on" : ""}`} title="סגור למכירה"
-            onClick={() => ctx.setBool(unit, "stopSell", cell.date, true)}><Icon name="circle-slash" size={11} /></button>
+            onClick={() => ctx.setBool(unit, "stopSell", cell.date, true)}><Icon name="circle-slash" size={13.5} /></button>
         </div>
       </div>
     );
@@ -198,7 +198,7 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
       onClick={ctx.editable ? () => ctx.startEdit(unit.sellableUnitId, "stopSell", cell.date) : undefined}
       title={closed ? "סגור למכירה · לחיצה לפתיחה" : ctx.editable ? "פתוח למכירה · לחיצה לסגירה" : "פתוח למכירה"}
     >
-      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={12} /></span> : <span className="rg-dash">—</span>}
+      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={13.5} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }

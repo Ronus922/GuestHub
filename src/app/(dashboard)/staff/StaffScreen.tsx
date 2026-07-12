@@ -86,23 +86,23 @@ export function StaffScreen({
       {/* header: title + count (start) · search + add (end) */}
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-extrabold text-ink">עובדים</h1>
-          <span className="rounded-full bg-primary-050 px-3 py-1 text-sm font-semibold text-primary">
-            {users.length} עובדים
+          <h1 className="h1">עובדים</h1>
+          <span className="chip chip-neutral">
+            <bdi className="ltr-num">{users.length}</bdi> עובדים
           </span>
         </div>
         <div className="ms-auto flex flex-wrap items-center gap-3">
           <div className="relative w-full sm:w-[320px]">
             <Icon
               name="search"
-              size={18}
+              size={20}
               className="pointer-events-none absolute start-0 top-1/2 ms-3 -translate-y-1/2 text-faint"
             />
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="חיפוש לפי שם, אימייל או טלפון…"
-              className="field h-11 min-h-0 ps-11 pe-4 text-sm"
+              className="field-input ps-11 pe-4"
               aria-label="חיפוש עובדים"
             />
           </div>
@@ -112,7 +112,7 @@ export function StaffScreen({
               className="btn btn-primary"
               onClick={() => setPanel({ mode: "create" })}
             >
-              <Icon name="user-plus" size={18} />
+              <Icon name="user-plus" size={20} />
               הוסף עובד
             </button>
           ) : null}
@@ -184,20 +184,18 @@ function PillGroup({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-sm font-medium text-muted">{label}</span>
+      <span className="t-label">{label}</span>
       {options.map((o) => {
         const active = value === o.value;
+        // §3 — a filter chip is THE chip: 28px, radius 8, 13.5/700, selected =
+        // white with an inset brand ring (.chip.clickable.on).
         return (
           <button
             key={o.value}
             type="button"
             onClick={() => onChange(o.value)}
             aria-pressed={active}
-            className={`h-11 rounded-xl border px-4 text-sm font-medium transition-colors ${
-              active
-                ? "border-primary bg-primary text-white"
-                : "border-line bg-surface text-text2 hover:bg-hover"
-            }`}
+            className={`chip clickable${active ? " on" : ""}`}
           >
             {o.label}
           </button>

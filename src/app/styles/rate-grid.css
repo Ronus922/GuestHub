@@ -1,7 +1,11 @@
 /* ============================================================
-   /rates — Rate Grid (Synchronization Table). Rebuilt 1:1 from the supplied
-   reference ref/html/Synchronization-table.html (grid-template 220px + date
-   columns) and Synchronization-table.png. Page-scoped, Azure-Ethos tokens, RTL.
+   /rates — Rate Grid (Synchronization Table).
+
+   GUIDELINES.md is the law: every colour is a token (§1), every font-size is in
+   the closed §2 scale, radii are {16,12,8,7} (§1), shadows are the two tokens
+   (§1), and every chip/badge is the canonical `.chip` (§3) — this file declares
+   NO primitive of its own. What remains here is ONLY the board's geometry:
+   the sticky label column, the flex day columns and the row heights.
 
    Layout model: a horizontally-scrolling board. Every row is `label | cells`.
    The label column is a fixed-width sticky column (right, RTL); the cells are
@@ -9,31 +13,48 @@
    viewport drops below the min-width floor (set inline from the column count).
    Header day cells, month segments and body cells share the identical flex
    basis, so every column aligns exactly across header and body.
+
+   Geometry lives in CSS variables (one source, like the calendar) so a row
+   height is a declared token of the board — never a stray literal.
    ============================================================ */
 
 @layer components {
 
 /* site page insets — match /calendar (18px off the top nav, 26px sides) so the
    title/buttons never sit flush against the TopBar (Iron Rule #5: padding) */
-.rg-wrap { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; padding: 18px 26px 14px; }
+.rg-wrap {
+  /* --rg-band-h is GRID ROW GEOMETRY (§12.1 dense-grid exception, like the
+     calendar's row tokens) — it is NOT a §4 control height and must never be
+     consumed by a button/field. The checker-side exemption for row heights
+     belongs in scripts/check-design-system.mjs (foundation-owned). */
+  /* ds-geometry: room-type band row — frozen grid geometry, not a §4 control */
+  --rg-band-h: 40px;
+  --rg-day-h: 50px;    /* header day row */
+  --rg-price-h: 32px;  /* SU price row */
+  --rg-metric-h: 24px; /* restriction row */
+  --rg-month-h: 24px;  /* month band */
+  display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; padding: 18px 26px 14px;
+}
 
-/* ---------- filter chips ---------- */
+/* the weekend / today column tints are DERIVED from --brand-soft (§1).
+   The 70% mix reproduces the legacy weekend tint (hex f3f5fc) like-for-like,
+   and keeps the weekend column visibly LIGHTER than --rg-today so the two
+   always read as distinct (same relationship the old grid shipped with). */
+.rg-wrap {
+  --rg-today: var(--brand-soft);
+  --rg-weekend: color-mix(in srgb, var(--brand-soft) 70%, #fff);
+  --rg-band-bg: color-mix(in srgb, var(--bg) 55%, #fff);
+  --rg-head-bg: color-mix(in srgb, var(--bg) 25%, #fff);
+}
+
+/* ---------- filter row (the chips themselves are the canonical .chip) ---------- */
 .rg-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rg-flabl { font-size: 12px; font-weight: 700; color: var(--color-faint); }
-.rg-chip {
-  height: 32px; padding: 0 13px; border-radius: 9px; border: 1.5px solid var(--color-line);
-  background: #fff; color: #5b6478; font-family: inherit; font-size: 12.5px;
-  font-weight: 700; cursor: pointer; white-space: nowrap;
-}
-.rg-chip.on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
-.rg-chip:hover:not(.on) { background: #f2f4f8; }
+.rg-flabl { font-size: 12px; font-weight: 700; color: var(--faint); }
 
-/* ---------- board card + scroll ---------- */
-.rg-card {
-  flex: 1; min-height: 0; background: #fff; border: 1px solid var(--color-line);
-  border-radius: 14px; box-shadow: 0 1px 2px rgba(16,24,40,.03), 0 8px 22px rgba(16,24,40,.05);
-  display: flex; flex-direction: column; overflow: hidden;
-}
+/* ---------- board card + scroll ----------
+   the card chrome (bg / border / radius 16 / shadow) comes from `.card` (§6);
+   this class only makes it a scrolling flex column inside the page. */
+.rg-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .rg-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
 /* width:100% fills the workspace; min-width (inline) forces scroll when narrow */
 .rg-grid { width: 100%; }
@@ -42,183 +63,223 @@
 .rg-row { display: flex; width: 100%; }
 .rg-lab {
   position: sticky; inset-inline-start: 0; flex: none; width: var(--rg-label, 224px);
-  border-inline-end: 1px solid var(--color-line); z-index: 2; background: #fff;
+  border-inline-end: 1px solid var(--line); z-index: 2; background: var(--surface);
 }
 .rg-cells { display: flex; flex: 1; min-width: 0; }
 .rg-cell {
   flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center;
-  border-inline-end: 1px solid #f3f5f9; font-variant-numeric: tabular-nums; position: relative;
+  border-inline-end: 1px solid var(--grid-line); font-variant-numeric: tabular-nums; position: relative;
 }
 
 /* ---------- sticky header (month band + day row) ---------- */
-.rg-head { position: sticky; top: 0; z-index: 5; background: #fff; }
-.rg-head .rg-lab { z-index: 6; background: #fbfcfe; }
-.rg-mrow { height: 24px; }
-.rg-mrow .rg-lab { background: #fbfcfe; border-bottom: 1px solid #eef0f5; }
+.rg-head { position: sticky; top: 0; z-index: 5; background: var(--surface); }
+.rg-head .rg-lab { z-index: 6; background: var(--rg-head-bg); }
+.rg-mrow { height: var(--rg-month-h); }
+.rg-mrow .rg-lab { background: var(--rg-head-bg); border-bottom: 1px solid var(--line); }
 .rg-mseg {
-  flex: 1 1 0; min-width: 0; height: 24px; background: #fbfcfe; border-bottom: 1px solid #eef0f5;
-  border-inline-start: 1.5px solid #e1e5ee; display: flex; align-items: center; overflow: hidden;
+  flex: 1 1 0; min-width: 0; height: var(--rg-month-h); background: var(--rg-head-bg);
+  border-bottom: 1px solid var(--line);
+  border-inline-start: 1.5px solid var(--line); display: flex; align-items: center; overflow: hidden;
 }
 .rg-mseg:first-child { border-inline-start: none; }
-.rg-mseg span { font-size: 11px; font-weight: 800; color: #4b5266; padding: 0 10px; white-space: nowrap; }
+.rg-mseg span { font-size: 12px; font-weight: 800; color: var(--muted); padding: 0 10px; white-space: nowrap; }
 
-.rg-drow { height: 50px; }
+.rg-drow { height: var(--rg-day-h); }
 .rg-drow .rg-lab {
   display: flex; align-items: center; justify-content: space-between; padding: 0 14px;
-  background: #fff; border-bottom: 1px solid var(--color-line);
+  background: var(--surface); border-bottom: 1px solid var(--line);
 }
-.rg-drow .rg-lab .rg-htitle { font-size: 13px; font-weight: 800; color: var(--color-ink); }
-.rg-drow .rg-lab .rg-hsub { font-size: 10.5px; font-weight: 700; color: var(--color-faint); }
+.rg-drow .rg-lab .rg-htitle { font-size: 13.5px; font-weight: 800; color: var(--ink); }
+.rg-drow .rg-lab .rg-hsub { font-size: 12px; font-weight: 700; color: var(--faint); }
 .rg-dcell {
-  flex: 1 1 0; min-width: 0; height: 50px; display: flex; flex-direction: column;
+  flex: 1 1 0; min-width: 0; height: var(--rg-day-h); display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 1px;
-  border-bottom: 1px solid var(--color-line); border-inline-end: 1px solid #f3f5f9; background: #fff;
+  border-bottom: 1px solid var(--line); border-inline-end: 1px solid var(--grid-line); background: var(--surface);
 }
-.rg-dcell.we { background: #eef1fb; }
-.rg-dcell.we .rg-dw { color: #6b74c4; }
-.rg-dcell.ms { border-inline-start: 1.5px solid #e1e5ee; }
-.rg-dw { font-size: 11px; font-weight: 700; color: var(--color-faint); line-height: 1; }
+.rg-dcell.we { background: var(--rg-weekend); }
+.rg-dcell.we .rg-dw { color: var(--brand); }
+.rg-dcell.ms { border-inline-start: 1.5px solid var(--line); }
+.rg-dw { font-size: 12px; font-weight: 700; color: var(--faint); line-height: 1; }
 .rg-dn {
-  font-size: 16px; font-weight: 800; color: #3a4257; font-variant-numeric: tabular-nums;
-  min-width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 8px;
+  font-size: 15px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums;
+  min-width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm);
 }
-.rg-dcell.td .rg-dn { background: var(--color-primary); color: #fff; box-shadow: 0 3px 8px rgba(37,64,200,.30); }
-.rg-dcell.td .rg-dw { color: var(--color-primary); font-weight: 800; }
+.rg-dcell.td .rg-dn { background: var(--brand); color: #fff; box-shadow: var(--brand-shadow); }
+.rg-dcell.td .rg-dw { color: var(--brand); font-weight: 800; }
 
 /* ---------- room-type band header ---------- */
-.rg-band { height: 40px; background: #f6f8fc; border-block: 1px solid var(--color-line); }
+.rg-band { height: var(--rg-band-h); background: var(--rg-band-bg); border-block: 1px solid var(--line); }
 .rg-band .rg-lab {
-  display: flex; align-items: center; gap: 7px; padding: 0 12px; background: #f6f8fc; z-index: 3;
+  display: flex; align-items: center; gap: 7px; padding: 0 12px; background: var(--rg-band-bg); z-index: 3;
 }
 .rg-collapse {
-  width: 22px; height: 22px; border: none; background: transparent; color: var(--color-faint);
-  cursor: pointer; display: flex; align-items: center; justify-content: center; border-radius: 6px;
+  /* §4 icon button (36×36 / r10) — fits inside the 40px band without moving it */
+  width: 36px; height: 36px; border: none; background: transparent; color: var(--faint);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  border-radius: 10px; font-family: inherit;
 }
-.rg-collapse:hover { background: #e9ecf3; }
-.rg-tname { font-size: 13px; font-weight: 800; color: var(--color-ink); white-space: nowrap; }
-.rg-tcount { font-size: 11px; font-weight: 700; color: var(--color-faint); white-space: nowrap; }
-.rg-bandinfo { display: flex; align-items: center; gap: 16px; padding: 0 14px; height: 40px; background: #f6f8fc; }
-.rg-tbase { font-size: 12px; font-weight: 700; color: var(--color-muted); white-space: nowrap; }
-.rg-tbase b { color: var(--color-ink); }
+.rg-collapse:hover { background: var(--surface-hover); }
+.rg-tname { font-size: 13.5px; font-weight: 800; color: var(--ink); white-space: nowrap; }
+.rg-tcount { font-size: 12px; font-weight: 700; color: var(--faint); white-space: nowrap; }
+.rg-bandinfo {
+  display: flex; align-items: center; gap: 16px; padding: 0 14px;
+  height: var(--rg-band-h); background: var(--rg-band-bg);
+}
+.rg-tbase { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.rg-tbase b { color: var(--ink); }
 .rg-tlink {
   display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;
-  color: var(--color-primary); background: none; border: none; cursor: pointer; white-space: nowrap;
+  color: var(--brand); background: none; border: none; cursor: pointer; white-space: nowrap;
+  font-family: inherit;
+  /* §4: an in-row control gets the 36px hit area; transparent, so nothing moves */
+  height: 36px;
 }
 .rg-tlink:hover { text-decoration: underline; }
-.rg-band .rg-cells { background: #f6f8fc; }
+.rg-band .rg-cells { background: var(--rg-band-bg); }
 
-/* ---------- Sellable-Unit block: price row (32px) + 6 metric rows (24px) ---------- */
-.rg-unit { border-bottom: 2px solid #eef0f5; }
-.rg-prow { height: 32px; }
-.rg-prow .rg-lab { display: flex; align-items: center; gap: 6px; padding: 0 12px; }
-.rg-unum { font-size: 14px; font-weight: 800; color: var(--color-ink); }
-.rg-utype { font-size: 10.5px; font-weight: 700; color: var(--color-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rg-badge {
-  font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 5px; white-space: nowrap;
-  margin-inline-start: auto;
+/* ---------- Sellable-Unit block: price row + 6 metric rows ---------- */
+.rg-unit { border-bottom: 2px solid var(--line); }
+.rg-prow { height: var(--rg-price-h); }
+/* overflow:hidden guarantees the sticky column can never paint over day cells */
+.rg-prow .rg-lab { display: flex; align-items: center; gap: 6px; padding: 0 12px; overflow: hidden; }
+.rg-unum { font-size: 14px; font-weight: 800; color: var(--ink); }
+.rg-utype {
+  font-size: 12px; font-weight: 700; color: var(--faint); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.rg-badge.pool { color: var(--color-primary); background: var(--color-primary-050); }
-.rg-badge.warn { color: #b4670a; background: #fbf1e0; }
-.rg-badge.blk { color: #a23b52; background: #fbe9ee; }
-.rg-badge.closed { color: #a23b52; background: #fbe9ee; }
+/* dense-grid internal annotations (מאגר / N סגורים / ללא תוכנית) — NOT chips
+   (coordinator ruling): plain 12px/700 text labels, the §12.2-class dense
+   exception. A 28px .chip cannot fit the fixed 224px sticky label column; a
+   text label always does. Colour comes only from the §1 tokens. */
+.rg-utags { margin-inline-start: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.rg-utag { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.rg-utag.closed { color: var(--danger); }
+.rg-utag.noplan { color: color-mix(in srgb, var(--warn) 72%, var(--ink)); }
 
-.rg-mrow2 { height: 24px; }
+.rg-mrow2 { height: var(--rg-metric-h); }
 .rg-mrow2 .rg-lab { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
-.rg-mname { font-size: 10.5px; font-weight: 700; color: #8a91a3; white-space: nowrap; }
-.rg-mtag { font-size: 9px; font-weight: 800; color: #b9c0d6; letter-spacing: .03em; }
+.rg-mname { font-size: 12px; font-weight: 700; color: var(--faint); white-space: nowrap; }
+.rg-mtag { font-size: 12px; font-weight: 800; color: var(--faint); letter-spacing: .03em; }
 
 /* ---------- cells (shared price/metric) ---------- */
-.rg-cell.we { background: #f3f5fc; }
-.rg-cell.td { background: #eef1fd; }
-.rg-cell.ms { border-inline-start: 1.5px solid #e1e5ee; }
+.rg-cell.we { background: var(--rg-weekend); }
+.rg-cell.td { background: var(--rg-today); }
+.rg-cell.ms { border-inline-start: 1.5px solid var(--line); }
 .rg-cell.editable { cursor: pointer; }
-.rg-cell.editable:hover { box-shadow: inset 0 0 0 1.5px var(--color-primary); border-radius: 5px; z-index: 1; }
+.rg-cell.editable:hover { box-shadow: inset 0 0 0 1.5px var(--brand); border-radius: var(--r-xs); z-index: 1; }
 .rg-cell.blocked {
-  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, #e5e9f0 5px, #e5e9f0 10px);
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, var(--line) 5px, var(--line) 10px);
 }
 .rg-cell.saving { opacity: .45; }
 
-.rg-price { font-size: 12px; font-weight: 800; color: #3a4257; }
-.rg-price.inherited { color: #aeb5c6; font-weight: 700; }
-.rg-price.notsell { color: #c0455b; }
-.rg-num { font-size: 11px; font-weight: 800; color: #5b6478; }
-.rg-dash { color: #d7dce6; font-size: 11px; font-weight: 700; }
-.rg-blk { color: #98a0b2; }
-/* CTA/CTD/stop-sell flags render as filled rounded chips (reference), each with
-   its own hue: CTA amber, CTD purple, stop-sell red. */
+.rg-price { font-size: 12px; font-weight: 800; color: var(--ink); }
+.rg-price.inherited { color: var(--faint); font-weight: 700; }
+.rg-price.notsell { color: var(--danger); }
+.rg-num { font-size: 12px; font-weight: 800; color: var(--muted); }
+.rg-dash { color: color-mix(in srgb, var(--faint) 45%, #fff); font-size: 12px; font-weight: 700; }
+.rg-blk { color: var(--faint); }
+/* CTA/CTD/stop-sell flags render as filled rounded tags (reference), each with
+   its own token hue: CTA warn, CTD info, stop-sell danger. */
 .rg-flag {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 16px; border-radius: 5px;
+  width: 20px; height: 16px; border-radius: var(--r-xs);
 }
-.rg-flag.sell { color: #c0455b; background: #fbe9ee; }
-.rg-flag.cta { color: #b4670a; background: #fbf1e0; }
-.rg-flag.ctd { color: #6b27d6; background: #f0eafc; }
+.rg-flag.sell { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, #fff); }
+.rg-flag.cta { color: color-mix(in srgb, var(--warn) 75%, var(--ink)); background: color-mix(in srgb, var(--warn) 14%, #fff); }
+.rg-flag.ctd { color: color-mix(in srgb, var(--info) 80%, var(--ink)); background: color-mix(in srgb, var(--info) 12%, #fff); }
 
 .rg-input {
-  width: 82%; height: 22px; border: 1.5px solid var(--color-primary); border-radius: 5px;
-  text-align: center; font-family: inherit; font-size: 11.5px; font-weight: 800;
-  font-variant-numeric: tabular-nums; color: var(--color-ink); outline: none; padding: 0;
+  width: 82%; height: 22px; border: 1.5px solid var(--brand); border-radius: var(--r-xs);
+  text-align: center; font-family: inherit; font-size: 12px; font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--ink); outline: none; padding: 0;
 }
 
 /* ---------- legend + hint ---------- */
 .rg-legend { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
-.rg-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: #5b6478; }
-.rg-leg .rg-sw { width: 12px; height: 12px; border-radius: 4px; flex: none; }
-.rg-leg .rg-sw.hatch { background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, #cbd2df 3px, #cbd2df 6px); border: 1px solid #dfe4ee; }
-.rg-hint { font-size: 11px; font-weight: 600; color: var(--color-faint); }
+.rg-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.rg-leg .rg-sw { width: 12px; height: 12px; border-radius: var(--r-xs); flex: none; }
+.rg-leg .rg-sw.today { background: var(--rg-today); }
+.rg-leg .rg-sw.we { background: var(--rg-weekend); }
+.rg-leg .rg-sw.noprice {
+  background: color-mix(in srgb, var(--warn) 22%, #fff);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, #fff);
+}
+.rg-leg .rg-sw.hatch {
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--faint) 3px, var(--faint) 6px);
+  border: 1px solid var(--line);
+}
+.rg-hint { font-size: 12px; font-weight: 600; color: var(--faint); }
 
-/* ---------- cell tooltip — reference .rm window (tonnage.png /
-   Calendar messages.html): brand header, divided rows, sale-state band ---------- */
+/* ---------- cell tooltip — the §8 float surface: brand header, divided rows,
+   sale-state band. Radius 16 / var(--shadow-float), like every floating surface. */
 .rg-tip {
-  position: fixed; z-index: 70; width: 252px; background: #fff; border-radius: 14px;
-  box-shadow: 0 2px 6px rgba(16,24,40,.06), 0 18px 44px rgba(16,24,40,.2);
+  position: fixed; z-index: 70; width: 252px; background: var(--surface);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-float);
   pointer-events: none; direction: rtl;
 }
 .rg-tip-h {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-  padding: 10px 14px; background: var(--color-primary); border-radius: 14px 14px 0 0;
+  padding: 10px 14px; background: var(--brand); border-radius: 16px 16px 0 0;
 }
 .rg-tip-t { font-size: 14px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rg-tip-dt {
-  font-size: 12px; font-weight: 700; color: rgba(255,255,255,.72);
+  font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, .72);
   white-space: nowrap; direction: ltr; font-variant-numeric: tabular-nums;
 }
 .rg-tip-rows { padding: 2px 14px; }
 .rg-tip-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 8px 0; border-bottom: 1px solid #f1f3f7;
+  padding: 8px 0; border-bottom: 1px solid var(--line);
 }
 .rg-tip-row:last-child { border-bottom: none; }
-.rg-tip-row .k { font-size: 12.5px; font-weight: 600; color: var(--color-muted); white-space: nowrap; }
+.rg-tip-row .k { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .rg-tip-row .v {
-  font-size: 13px; font-weight: 800; color: var(--color-ink);
+  font-size: 13.5px; font-weight: 800; color: var(--ink);
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
-.rg-tip-row .v small { font-weight: 600; color: var(--color-muted); font-size: 11.5px; }
+.rg-tip-row .v small { font-weight: 600; color: var(--muted); font-size: 12px; }
 .rg-tip-f {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   padding: 9px 14px; font-size: 12px; font-weight: 800; text-align: center;
-  border-radius: 0 0 14px 14px;
+  border-radius: 0 0 16px 16px;
 }
-.rg-tip-f.op { color: #1f7a3d; background: #f2fbf5; }
-.rg-tip-f.cl { color: #b4231f; background: #fdf0f0; }
-
-.rg-empty { padding: 60px 24px; text-align: center; color: var(--color-muted); font-weight: 700; }
+.rg-tip-f.op { color: color-mix(in srgb, var(--ok) 72%, var(--ink)); background: color-mix(in srgb, var(--ok) 8%, #fff); }
+.rg-tip-f.cl { color: color-mix(in srgb, var(--danger) 78%, var(--ink)); background: color-mix(in srgb, var(--danger) 8%, #fff); }
 
 /* ---------- distinct sale-state cells (Step 7 — never conflated) ---------- */
-/* missing/invalid effective price — amber hatch, NOT the physical grey hatch */
-.rg-cell.noprice { background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, #fbeecd 5px, #fbeecd 10px); }
-.rg-price.nomprice { color: #b4670a; font-weight: 800; }
-/* mapping / no-plan config error — a bordered error box, not ordinary closure */
-.rg-cell.errored { background: #fbe9ee; box-shadow: inset 0 0 0 1.5px #e4b6c1; }
-.rg-err { color: #c0455b; }
+/* missing/invalid effective price — warn hatch, NOT the physical grey hatch */
+.rg-cell.noprice {
+  background-image: repeating-linear-gradient(
+    45deg, transparent, transparent 5px,
+    color-mix(in srgb, var(--warn) 22%, #fff) 5px, color-mix(in srgb, var(--warn) 22%, #fff) 10px);
+}
+.rg-price.nomprice { color: color-mix(in srgb, var(--warn) 72%, var(--ink)); font-weight: 800; }
+/* mapping / no-plan config error — a bordered error box, not ordinary closure.
+   `outline` (not box-shadow) so the two shadow tokens stay the only shadows and
+   the cell's flex basis / border box is untouched. */
+.rg-cell.errored {
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  outline: 1.5px solid color-mix(in srgb, var(--danger) 40%, #fff);
+  outline-offset: -1.5px;
+}
+.rg-err { color: var(--danger); }
 /* stop_sell explicit open/close inline editor (Step 3) */
 .rg-ss-edit { display: inline-flex; gap: 3px; }
 .rg-ss-b {
-  width: 20px; height: 18px; border-radius: 5px; border: 1.5px solid #e4e8f0;
-  display: inline-flex; align-items: center; justify-content: center; background: #fff; cursor: pointer;
+  width: 20px; height: 18px; border-radius: var(--r-xs); border: 1.5px solid var(--line);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface); cursor: pointer; font-family: inherit;
 }
-.rg-ss-b.open.on { background: #e8f6ee; color: #1f9d55; border-color: #bfe6cd; }
-.rg-ss-b.close.on { background: #fbe9ee; color: #c0455b; border-color: #f0c9d3; }
+.rg-ss-b.open.on {
+  background: color-mix(in srgb, var(--ok) 12%, #fff);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, #fff);
+}
+.rg-ss-b.close.on {
+  background: color-mix(in srgb, var(--danger) 12%, #fff);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, #fff);
+}
 
 } /* @layer components */

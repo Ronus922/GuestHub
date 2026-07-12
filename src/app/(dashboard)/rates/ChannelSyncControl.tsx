@@ -25,11 +25,12 @@ type Note = { tone: "ok" | "warn" | "err"; text: string } | null;
 /** poll only while pending work exists */
 const POLL_MS = 5000;
 
+// every state wears an approved §3.1 chip triplet — no local colour is invented
 const CHIP_CLS: Record<RatesSyncStatus["state"], string> = {
-  synced: "bg-[var(--color-status-success-050)] text-[var(--color-status-success)]",
-  syncing: "bg-[#eef1fd] text-[var(--color-primary)]",
-  failed: "bg-[#fbe9ee] text-[#a23b52]",
-  not_connected: "bg-[#f2f4f8] text-[var(--color-faint)]",
+  synced: "chip-paid",
+  syncing: "chip-transfer",
+  failed: "chip-failed",
+  not_connected: "chip-cancelled",
 };
 
 export function ChannelSyncControl({
@@ -141,11 +142,9 @@ export function ChannelSyncControl({
       <span
         data-testid="rates-sync-status"
         title={chipTitle}
-        className={`inline-flex items-center gap-2 h-9 px-3.5 rounded-xl text-[12.5px] font-bold select-none ${
-          workerDown ? "bg-[#fbeecd] text-[#8a6d1f]" : CHIP_CLS[status.state]
-        }`}
+        className={`chip select-none ${workerDown ? "chip-approval" : CHIP_CLS[status.state]}`}
       >
-        <Icon name="channels" size={15} />
+        <Icon name="channels" size={13.5} />
         {chipText}
       </span>
       <button
@@ -154,20 +153,20 @@ export function ChannelSyncControl({
         onClick={syncNow}
         disabled={submitting}
         aria-disabled={submitting}
-        className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border-[1.5px] border-[var(--color-line)] text-[12.5px] font-bold text-[var(--color-ink)] hover:bg-[#f5f7fb] disabled:opacity-50 disabled:cursor-not-allowed"
+        className="btn btn-secondary"
       >
-        <Icon name="refresh" size={15} />
+        <Icon name="refresh" size={20} />
         {submitting ? "שולח…" : "סנכרן ערוצים"}
       </button>
       {note && (
         <span
           role="status"
-          className={`text-[12.5px] font-bold ${
+          className={`text-[12px] font-bold ${
             note.tone === "ok"
-              ? "text-[var(--color-status-success)]"
+              ? "text-status-success"
               : note.tone === "warn"
-                ? "text-[#8a6d1f]"
-                : "text-[#a23b52]"
+                ? "text-status-warning"
+                : "text-status-danger"
           }`}
         >
           {note.text}

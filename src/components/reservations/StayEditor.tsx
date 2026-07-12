@@ -134,47 +134,47 @@ export function StayEditor({
         <span className="bw-rc-badge">{index + 1}</span>
         <span className="bw-rc-ttl">חדר {index + 1}</span>
         {onRemove && (
-          <button type="button" onClick={onRemove} className="bw-rc-rm">
-            <Icon name="trash" size={16} />
+          <button type="button" onClick={onRemove} className="btn btn-tertiary bw-rc-rm">
+            <Icon name="trash" size={20} />
             הסר
           </button>
         )}
       </div>
 
       <div className="bw-grid3">
-        <label className="bw-fg">
-          <span className="bw-lbl">
+        <label className="field">
+          <span className="field-label">
             תאריך כניסה <span className="bw-req">*</span>
           </span>
           <input
             type="date"
-            className="bw-fld"
+            className="field-input ltr-num"
             value={value.checkIn}
             disabled={disabled}
             onChange={(e) => onChange({ ...value, checkIn: e.target.value, roomId: "" })}
           />
         </label>
-        <label className="bw-fg">
-          <span className="bw-lbl">
+        <label className="field">
+          <span className="field-label">
             תאריך יציאה <span className="bw-req">*</span>
           </span>
           <input
             type="date"
-            className="bw-fld"
+            className="field-input ltr-num"
             value={value.checkOut}
             min={value.checkIn}
             disabled={disabled}
             onChange={(e) => onChange({ ...value, checkOut: e.target.value, roomId: value.roomId })}
           />
         </label>
-        <div className="bw-fg">
-          <span className="bw-lbl">
+        <div className="field">
+          <span className="field-label">
             לילות <span className="font-normal text-faint">(מחושב)</span>
           </span>
           <div className="bw-readonly">
-            <span>{nights || "—"}</span>
+            <span className="ltr-num">{nights || "—"}</span>
             <span className="bw-rn">
-              <Icon name="moon" size={15} />
+              <Icon name="moon" size={17} />
               אוטומטי
             </span>
           </div>
@@ -191,7 +191,7 @@ export function StayEditor({
         /* V2 .roomsel — room number bold-brand first, type after, swap = outline button */
         <div className="bw-rc-room">
           <span className="bw-rc-ric">
-            <Icon name="rooms" size={22} />
+            <Icon name="rooms" size={24} />
           </span>
           <div className="bw-rc-info">
             <p className="bw-rc-rn truncate">
@@ -203,19 +203,19 @@ export function StayEditor({
             <p className="bw-rc-rs truncate">₪{selected.avg_price} / לילה</p>
           </div>
           {!disabled && (
-            <button type="button" className="bw-btn bw-btn-o" onClick={() => setChanging(true)}>
-              <Icon name="refresh" size={16} />
+            <button type="button" className="btn btn-secondary" onClick={() => setChanging(true)}>
+              <Icon name="refresh" size={20} />
               החלף חדר
             </button>
           )}
         </div>
       ) : (
-        <label className="bw-fg mt-4">
-          <span className="bw-lbl">
+        <label className="field mt-4">
+          <span className="field-label">
             חדר <span className="bw-req">*</span>
           </span>
           <select
-            className="bw-fld"
+            className="field-input"
             value={value.roomId}
             onChange={(e) => {
               setChanging(false);
@@ -237,22 +237,20 @@ export function StayEditor({
       )}
 
       {quote && value.roomId && (
-        <div className="bw-price-line" style={{ borderBottom: "none", marginTop: 6 }}>
+        <div className="bw-price-line mt-1.5 border-b-0">
           <span className="bw-plr">
             {nights} לילות × ₪{nights ? Math.round(quote.total / nights) : 0}
           </span>
-          <b dir="ltr" style={{ color: "var(--color-primary)" }}>
-            ₪{quote.total.toLocaleString()}
-          </b>
+          <b className="ltr-num text-primary">₪{quote.total.toLocaleString()}</b>
         </div>
       )}
       {quote?.restriction && (
-        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-[#B4231F]">
+        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
           {quote.restriction}
         </p>
       )}
       {overCapacity && selected && (
-        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-[#B4231F]">
+        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
           חריגה מקיבולת החדר ({selected.max_occupancy} אורחים, עד {selected.max_adults} מבוגרים
           {selected.max_infants === 0 ? ", ללא תינוקות" : ""})
         </p>
@@ -261,7 +259,7 @@ export function StayEditor({
       {!disabled && (
         <button
           type="button"
-          className="mt-3 text-sm font-semibold text-primary hover:underline"
+          className="btn btn-tertiary mt-3 self-start"
           onClick={() => setShowGuest((v) => !v)}
         >
           {showGuest ? "− הסתר אורח לחדר זה" : "+ אורח שונה בחדר זה (אופציונלי)"}
@@ -270,21 +268,21 @@ export function StayEditor({
       {showGuest && (
         <div className="bw-grid3 mt-2">
           <input
-            className="bw-fld"
+            className="field-input"
             placeholder="שם פרטי"
             value={value.guestFirstName ?? ""}
             disabled={disabled}
             onChange={(e) => onChange({ ...value, guestFirstName: e.target.value })}
           />
           <input
-            className="bw-fld"
+            className="field-input"
             placeholder="שם משפחה"
             value={value.guestLastName ?? ""}
             disabled={disabled}
             onChange={(e) => onChange({ ...value, guestLastName: e.target.value })}
           />
           <input
-            className="bw-fld"
+            className="field-input ltr-num"
             placeholder="טלפון"
             dir="ltr"
             value={value.guestPhone ?? ""}
@@ -312,27 +310,27 @@ function Counter({
   disabled?: boolean;
 }) {
   return (
-    <div className="bw-fg">
-      <span className="bw-lbl">{label}</span>
+    <div className="field">
+      <span className="field-label">{label}</span>
       <div className="bw-qty">
         <button
           type="button"
           aria-label={`הפחתת ${label}`}
           onClick={() => onChange(Math.max(value - 1, min))}
-          className="bw-qty-b"
+          className="icon-btn bw-qty-b"
           disabled={disabled || value <= min}
         >
-          <Icon name="minus" size={17} />
+          <Icon name="minus" size={20} />
         </button>
         <span className="bw-qty-v">{value}</span>
         <button
           type="button"
           aria-label={`הוספת ${label}`}
           onClick={() => onChange(Math.min(value + 1, 20))}
-          className="bw-qty-b"
+          className="icon-btn bw-qty-b"
           disabled={disabled}
         >
-          <Icon name="plus" size={17} />
+          <Icon name="plus" size={20} />
         </button>
       </div>
     </div>

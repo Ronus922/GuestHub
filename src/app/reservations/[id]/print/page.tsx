@@ -8,6 +8,7 @@ import {
   type BookingDoc,
   type BookingDocRoom,
 } from "@/lib/pdf/booking-doc-data";
+import { DOC_COLORS } from "@/lib/pdf/doc-tokens";
 import { AutoPrint } from "./AutoPrint";
 
 // /reservations/[id]/print — a standalone, print-optimised RTL Hebrew booking
@@ -18,6 +19,12 @@ export const dynamic = "force-dynamic";
 
 // Self-contained print stylesheet (inline so the page needs no external assets).
 // Rubik is served from /public/fonts so print matches the PDF.
+//
+// This document renders OUTSIDE the app stylesheet, so it cannot say
+// `var(--ink)`. It still invents nothing: every colour is interpolated from
+// DOC_COLORS (the canonical tokens), every size is on the §2 scale and every
+// radius is one of the four approved (§1). Numbers/dates/money keep their
+// explicit LTR direction (§11).
 const PRINT_CSS = `
 @font-face {
   font-family: "RubikPrint";
@@ -35,66 +42,71 @@ const PRINT_CSS = `
 .bk-print {
   font-family: "RubikPrint", system-ui, "Segoe UI", Arial, sans-serif;
   direction: rtl;
-  text-align: right;
-  color: #111827;
-  background: #ffffff;
-  line-height: 1.5;
-  font-size: 13px;
+  text-align: start;
+  color: ${DOC_COLORS.ink};
+  background: #fff;
+  line-height: 1.6;
+  font-size: 13.5px;
 }
 .bk-sheet {
   max-width: 190mm;
   margin: 0 auto;
   padding: 10mm;
-  background: #ffffff;
+  background: #fff;
   box-sizing: border-box;
 }
 .bk-header {
-  border-bottom: 2px solid #111827;
+  border-bottom: 2px solid ${DOC_COLORS.ink};
   padding-bottom: 12px;
   margin-bottom: 18px;
 }
-.bk-property { font-size: 26px; font-weight: 700; margin: 0; }
+.bk-property { font-size: 21px; font-weight: 700; margin: 0; line-height: 1.15; }
 .bk-header-row {
   display: flex; justify-content: space-between; align-items: flex-end;
   margin-top: 8px; gap: 16px; flex-wrap: wrap;
 }
-.bk-title { font-size: 16px; font-weight: 700; margin: 0; }
+.bk-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.15; }
 .bk-pill {
-  display: inline-block; margin-top: 6px; font-size: 11px; font-weight: 700;
-  background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 5px;
-  padding: 2px 8px;
+  display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 700;
+  background: ${DOC_COLORS.soft}; border: 1px solid ${DOC_COLORS.line};
+  border-radius: 7px; padding: 2px 8px;
 }
-.bk-meta { text-align: left; direction: ltr; font-size: 11px; color: #6b7280; }
-.bk-meta .bk-meta-rtl { direction: rtl; text-align: right; }
+.bk-meta {
+  text-align: end; direction: ltr; font-size: 12px; color: ${DOC_COLORS.muted};
+  font-variant-numeric: tabular-nums;
+}
+.bk-meta .bk-meta-rtl { direction: rtl; text-align: start; }
 .bk-section { margin-bottom: 16px; break-inside: avoid; page-break-inside: avoid; }
 .bk-section-title {
   font-size: 14px; font-weight: 700; margin: 0 0 8px;
-  padding-bottom: 4px; border-bottom: 1px solid #d1d5db;
+  padding-bottom: 4px; border-bottom: 1px solid ${DOC_COLORS.line};
 }
 .bk-field { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
-.bk-field .bk-label { color: #6b7280; }
-.bk-field .bk-value { text-align: left; direction: ltr; }
-.bk-field .bk-value-rtl { text-align: right; direction: rtl; }
+.bk-field .bk-label { color: ${DOC_COLORS.muted}; }
+.bk-field .bk-value {
+  text-align: end; direction: ltr; font-variant-numeric: tabular-nums;
+}
+.bk-field .bk-value-rtl { text-align: start; direction: rtl; }
 .bk-room {
-  border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; margin-bottom: 8px;
+  border: 1px solid ${DOC_COLORS.line}; border-radius: 8px; padding: 10px; margin-bottom: 8px;
   break-inside: avoid; page-break-inside: avoid;
 }
 .bk-room-head { display: flex; justify-content: space-between; margin-bottom: 6px; gap: 12px; }
 .bk-room-title { font-weight: 700; }
-.bk-room-price { font-weight: 700; direction: ltr; }
+.bk-room-price { font-weight: 700; direction: ltr; font-variant-numeric: tabular-nums; }
 .bk-total {
   display: flex; justify-content: space-between; gap: 12px;
-  margin-top: 8px; padding-top: 8px; border-top: 1px solid #111827;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid ${DOC_COLORS.ink};
   font-size: 15px; font-weight: 700;
 }
-.bk-total .bk-total-value { direction: ltr; }
-.bk-credit { color: #047857; }
+.bk-total .bk-total-value { direction: ltr; font-variant-numeric: tabular-nums; }
+.bk-credit { color: ${DOC_COLORS.credit}; }
 .bk-notes { white-space: pre-wrap; }
 .bk-footer {
-  margin-top: 22px; padding-top: 10px; border-top: 1px solid #d1d5db;
-  font-size: 10px; color: #6b7280; text-align: center;
+  margin-top: 22px; padding-top: 10px; border-top: 1px solid ${DOC_COLORS.line};
+  font-size: 12px; color: ${DOC_COLORS.muted}; text-align: center;
 }
-.bk-empty { max-width: 520px; margin: 60px auto; text-align: center; font-size: 16px; }
+.bk-empty { max-width: 520px; margin: 60px auto; text-align: center; font-size: 17px; }
 @media print {
   .bk-sheet { padding: 0; max-width: none; }
   .bk-print { font-size: 12px; }

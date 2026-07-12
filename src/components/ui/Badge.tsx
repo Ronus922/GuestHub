@@ -1,14 +1,22 @@
-// Token-only status/role pill (DESIGN_SYSTEM §5 badges). No invented colors.
-const TONES = {
-  neutral: "bg-hover text-text2",
-  brand: "bg-primary-050 text-primary",
-  success: "bg-status-success-050 text-status-success",
-  danger: "bg-status-danger-050 text-status-danger",
-  warning: "bg-status-warning-050 text-status-warning",
-  muted: "bg-hover text-muted",
-} as const;
+// Badge = a thin wrapper over the CANONICAL `.chip` (GUIDELINES §3). There is no
+// second chip implementation in the app: the anatomy (28px tall, 8px dot,
+// 13.5px/700, radius 8) comes from design-system.css and is never re-typed here.
+// Every tone maps to a GLOBAL chip class (§0.2) — the approved §3.1 triplets
+// plus the canonical .chip-neutral / .chip-brand; no colour is composed locally.
 
-export type BadgeTone = keyof typeof TONES;
+const TONES: Record<string, string> = {
+  neutral: "chip-neutral",
+  brand: "chip-brand",
+  success: "chip-paid",
+  danger: "chip-unpaid",
+  warning: "chip-approval",
+  muted: "chip-cancelled",
+};
+
+// tones without a §3.1 dot colour of their own tint the dot with the text colour
+const CURRENT_DOT = new Set(["brand", "neutral"]);
+
+export type BadgeTone = "neutral" | "brand" | "success" | "danger" | "warning" | "muted";
 
 export function Badge({
   tone = "neutral",
@@ -20,10 +28,10 @@ export function Badge({
   children: React.ReactNode;
 }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${TONES[tone]}`}
-    >
-      {dot ? <span className="h-1.5 w-1.5 rounded-full bg-current" /> : null}
+    <span className={`chip ${TONES[tone]}`}>
+      {dot ? (
+        <span className={`dot${CURRENT_DOT.has(tone) ? " bg-current" : ""}`} />
+      ) : null}
       {children}
     </span>
   );

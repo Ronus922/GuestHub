@@ -3,14 +3,14 @@
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
-import { CardTitle, Field } from "@/components/reservations/BookingPanel";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import {
   adultMinAge,
   validateExtraGuestDefaults,
   type ExtraGuestDefaults,
 } from "@/lib/commercial/extra-guest";
 import { saveExtraGuestDefaultsAction } from "./commercial-actions";
-import { Segmented, ToggleRow, useUnsavedGuard } from "./controls";
+import { Field, FormGrid, Segmented, SettingsCard, ToggleRow, useUnsavedGuard } from "./controls";
 import type { ExtraGuestView } from "./types";
 
 // §A — default extra-adult/child/infant pricing for the property. Currency is the
@@ -47,15 +47,22 @@ export function ExtraGuestSection({
   return (
     <div className="flex max-w-2xl flex-col gap-5">
       {!value.configured && (
-        <div className="flex items-center gap-2 rounded-xl border border-status-warning-050 bg-status-warning-050 px-4 py-3 text-sm" style={{ color: "#B4670A" }}>
-          <Icon name="info" size={16} />
+        // the approved §3.1 "ממתין לאישור" family — the only amber the system owns
+        <div
+          className="flex items-center gap-2 rounded-xl border px-4 py-3 text-sm"
+          style={{
+            background: STATUS_COLORS.approval.bg,
+            borderColor: STATUS_COLORS.approval.bd,
+            color: STATUS_COLORS.approval.tx,
+          }}
+        >
+          <Icon name="info" size={17} />
           תמחור אורח נוסף <strong>טרם הוגדר</strong> לנכס. חדרים היורשים מהנכס יסומנו כדורשים השלמה עד שתגדיר ותשמור כאן.
         </div>
       )}
 
-      <section className="bw-card">
-        <CardTitle icon="users-round" title="סכומי אורח נוסף (ברירת מחדל)" />
-        <div className="bw-grid2">
+      <SettingsCard icon="users-round" title="סכומי אורח נוסף (ברירת מחדל)">
+        <FormGrid>
           <MoneyField label="אורח בוגר נוסף" currency={currency} value={form.extra_adult} onChange={(v) => set("extra_adult", v)} />
           <MoneyField label="ילד נוסף" currency={currency} value={form.extra_child} onChange={(v) => set("extra_child", v)} />
           <MoneyField label="תינוק נוסף" currency={currency} value={form.extra_infant} onChange={(v) => set("extra_infant", v)} />
@@ -70,25 +77,26 @@ export function ExtraGuestSection({
               ]}
             />
           </Field>
-        </div>
-        <p className="bw-hint">המטבע נקבע לפי הגדרת המטבע הקנונית של הנכס ({currency}). ניתן לשמור 0 כערך מפורש.</p>
-      </section>
+        </FormGrid>
+        <p className="field-hint mt-3">
+          המטבע נקבע לפי הגדרת המטבע הקנונית של הנכס ({currency}). ניתן לשמור 0 כערך מפורש.
+        </p>
+      </SettingsCard>
 
-      <section className="bw-card">
-        <CardTitle icon="baby" title="גילאים וספירת תפוסה" />
-        <div className="bw-grid2">
+      <SettingsCard icon="baby" title="גילאים וספירת תפוסה">
+        <FormGrid>
           <Field label="גיל תינוק מרבי" required>
-            <input className="bw-fld" dir="ltr" inputMode="numeric" value={form.infant_max_age}
+            <input className="field-input ltr-num" inputMode="numeric" value={form.infant_max_age}
               onChange={(e) => set("infant_max_age", intOf(e.target.value))} />
           </Field>
           <Field label="גיל ילד מרבי" required>
-            <input className="bw-fld" dir="ltr" inputMode="numeric" value={form.child_max_age}
+            <input className="field-input ltr-num" inputMode="numeric" value={form.child_max_age}
               onChange={(e) => set("child_max_age", intOf(e.target.value))} />
           </Field>
           <Field label="גיל מינימלי לבוגר (נגזר)">
-            <input className="bw-fld" dir="ltr" value={adultMinAge(form.child_max_age)} disabled readOnly />
+            <input className="field-input ltr-num" value={adultMinAge(form.child_max_age)} disabled readOnly />
           </Field>
-        </div>
+        </FormGrid>
         <div className="mt-3 flex flex-col gap-2">
           <ToggleRow
             label="תינוקות נספרים בתפוסת החדר"
@@ -103,10 +111,9 @@ export function ExtraGuestSection({
             onChange={(v) => set("infants_use_included", v)}
           />
         </div>
-      </section>
+      </SettingsCard>
 
-      <section className="bw-card">
-        <CardTitle icon="finance" title="מס ועיגול" />
+      <SettingsCard icon="finance" title="מס ועיגול">
         <div className="flex flex-col gap-3">
           <Field label="בסיס מס לסכומי אורח נוסף">
             <Segmented
@@ -133,25 +140,25 @@ export function ExtraGuestSection({
           </Field>
           {form.rounding_mode === "increment" && (
             <Field label="מרווח עיגול" required>
-              <input className="bw-fld max-w-[160px]" dir="ltr" inputMode="decimal" value={form.rounding_increment}
+              <input className="field-input ltr-num max-w-[160px]" inputMode="decimal" value={form.rounding_increment}
                 onChange={(e) => set("rounding_increment", numOf(e.target.value) ?? 0)} />
             </Field>
           )}
         </div>
-      </section>
+      </SettingsCard>
 
       {errors.length > 0 && (
-        <p className="bw-hint text-status-danger" role="alert">
-          <Icon name="warning" size={14} /> {errors[0]}
+        <p className="field-msg flex items-center gap-2" role="alert">
+          <Icon name="warning" size={13.5} /> {errors[0]}
         </p>
       )}
 
       <div className="flex items-center gap-3">
-        <button type="button" className="bw-btn bw-btn-primary" disabled={saving || !dirty || errors.length > 0} onClick={save}>
-          <Icon name="check" size={16} />
+        <button type="button" className="btn btn-primary" disabled={saving || !dirty || errors.length > 0} onClick={save}>
+          <Icon name="check" size={20} />
           {saving ? "שומר…" : "שמירת ברירות מחדל"}
         </button>
-        {dirty && <span className="text-xs text-faint">יש שינויים שלא נשמרו</span>}
+        {dirty && <span className="field-hint">יש שינויים שלא נשמרו</span>}
       </div>
     </div>
   );
@@ -171,8 +178,7 @@ function MoneyField({
   return (
     <Field label={`${label} (${currency})`}>
       <input
-        className="bw-fld"
-        dir="ltr"
+        className="field-input ltr-num"
         inputMode="decimal"
         placeholder="טרם הוגדר"
         value={value ?? ""}

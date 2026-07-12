@@ -220,18 +220,21 @@ export function GroupUpdatePanel({
       icon="bulk-update"
       bodyClassName="p-5 flex flex-col gap-4"
       footer={
-        <div className="flex items-center gap-3">
-          <button onClick={onClose} className="h-11 px-5 rounded-xl border-[1.5px] border-[#e4e8f0] text-[13.5px] font-bold text-[var(--color-ink)] hover:bg-[#f5f7fb]">ביטול</button>
+        /* §7 — flat .dw-ft children (row-reverse): the FIRST DOM child (the
+           primary) lands on the LEFT edge, "ביטול" to its right. No wrapper. */
+        <>
           <button
+            type="button"
             data-testid="gu-apply"
             onClick={apply}
             disabled={!canApply}
-            className="flex-1 h-11 rounded-xl bg-[var(--color-primary)] text-white text-[14px] font-extrabold hover:bg-[var(--color-primary-dark)] disabled:opacity-45 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+            className="btn btn-primary flex-1"
           >
-            <Icon name="check" size={18} />
+            <Icon name="check" size={20} />
             {busy ? "מעדכן…" : `עדכן ${cellCount} תאים`}
           </button>
-        </div>
+          <button type="button" onClick={onClose} className="btn btn-secondary">ביטול</button>
+        </>
       }
     >
           {/* 1 — Sellable Units */}
@@ -241,16 +244,24 @@ export function GroupUpdatePanel({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="חיפוש יחידה…"
-                className="h-9 px-3 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-medium bg-white flex-1 min-w-[140px] outline-none focus:border-[var(--color-primary)]"
+                aria-label="חיפוש יחידה"
+                className="field-input flex-1 min-w-[140px]"
               />
-              <button className={`rg-chip${cardType === "all" ? " on" : ""}`} onClick={() => setCardType("all")}>הכל</button>
+              <button type="button" aria-pressed={cardType === "all"} className={`chip clickable${cardType === "all" ? " on" : ""}`} onClick={() => setCardType("all")}>הכל</button>
               {types.map((t) => (
-                <button key={t.roomTypeId ?? "—"} className={`rg-chip${cardType === (t.roomTypeId ?? "—") ? " on" : ""}`} onClick={() => setCardType(t.roomTypeId ?? "—")}>
+                <button
+                  key={t.roomTypeId ?? "—"} type="button"
+                  aria-pressed={cardType === (t.roomTypeId ?? "—")}
+                  className={`chip clickable${cardType === (t.roomTypeId ?? "—") ? " on" : ""}`}
+                  onClick={() => setCardType(t.roomTypeId ?? "—")}
+                >
                   {t.roomTypeName}
                 </button>
               ))}
-              <button data-testid="gu-selectall" className="rg-chip" onClick={() => setSelected(new Set(cards.map((c) => c.id)))}>בחר הכל</button>
-              <button data-testid="gu-clear" className="rg-chip" onClick={() => setSelected(new Set())}>נקה</button>
+              {/* commands, not filters — §4 buttons (a .chip.clickable never enters
+                  `.on`, so as a command it would render borderless muted text) */}
+              <button type="button" data-testid="gu-selectall" className="btn btn-secondary" onClick={() => setSelected(new Set(cards.map((c) => c.id)))}>בחר הכל</button>
+              <button type="button" data-testid="gu-clear" className="btn btn-secondary" onClick={() => setSelected(new Set())}>נקה</button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
               {cards.map((c) => {
@@ -258,21 +269,24 @@ export function GroupUpdatePanel({
                 return (
                   <button
                     key={c.id}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
                     data-su={c.id}
                     onClick={() => toggleSel(c.id)}
-                    className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border-[1.5px] text-right ${on ? "border-[var(--color-primary)] bg-[var(--color-primary-050)]" : "border-[#e4e8f0] bg-white hover:bg-[#f7f9fc]"}`}
+                    className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-[12px] border-[1.5px] text-start ${on ? "border-primary bg-primary-050" : "border-line bg-surface hover:bg-hover"}`}
                   >
                     <span className="min-w-0">
                       <span className="flex items-center gap-1.5">
-                        <b className="text-[15px] text-[var(--color-ink)]">{c.code}</b>
-                        {c.pooled && <span className="rg-pool">מאגר · {c.rooms}</span>}
+                        <b className="text-[15px] text-ink">{c.code}</b>
+                        {c.pooled && <span className="chip chip-neutral">מאגר · {c.rooms}</span>}
                       </span>
-                      <span className="block text-[11px] font-bold text-[var(--color-faint)] truncate">{c.typeName}</span>
+                      <span className="t-label block truncate">{c.typeName}</span>
                     </span>
                     <span className="flex items-center gap-2 flex-none">
-                      <span className="text-[12px] font-bold text-[var(--color-muted)]">₪{Math.round(c.basePrice)}</span>
-                      <span className={`w-5 h-5 rounded-md border-[1.5px] flex items-center justify-center ${on ? "bg-[var(--color-primary)] border-[var(--color-primary)] text-white" : "border-[#cfd6e4]"}`}>
-                        {on && <Icon name="check" size={13} />}
+                      <span className="t-label ltr-num">₪{Math.round(c.basePrice)}</span>
+                      <span className={`w-5 h-5 rounded-[7px] border-[1.5px] flex items-center justify-center ${on ? "bg-primary border-primary text-white" : "border-line"}`}>
+                        {on && <Icon name="check" size={13.5} />}
                       </span>
                     </span>
                   </button>
@@ -283,40 +297,48 @@ export function GroupUpdatePanel({
 
           {/* 2 — Dates */}
           <Section n={2} title="תאריכים" badge={`${effectiveDates.length} לילות`}>
-            <div className="flex items-center gap-2 flex-wrap mb-3">
-              <label className="text-[12px] font-bold text-[var(--color-muted)]">טווח</label>
-              <input data-testid="gu-date-from" type="date" value={dateFrom} min={minDate} max={maxDate} onChange={(e) => setDateFrom(clampDate(e.target.value))} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white outline-none" />
-              <span className="text-[var(--color-faint)]">–</span>
-              <input data-testid="gu-date-to" type="date" value={dateTo} min={dateFrom} max={maxDate} onChange={(e) => setDateTo(clampDate(e.target.value))} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white outline-none" />
-              <span className="mx-1 w-px h-6 bg-[#e4e8f0]" />
+            <div className="flex items-end gap-2 flex-wrap mb-3">
+              <div className="field">
+                <label className="field-label" htmlFor="gu-from">מתאריך</label>
+                <input id="gu-from" data-testid="gu-date-from" type="date" dir="ltr" value={dateFrom} min={minDate} max={maxDate} onChange={(e) => setDateFrom(clampDate(e.target.value))} className="field-input ltr-num" />
+              </div>
+              <div className="field">
+                <label className="field-label" htmlFor="gu-to">עד תאריך</label>
+                <input id="gu-to" data-testid="gu-date-to" type="date" dir="ltr" value={dateTo} min={dateFrom} max={maxDate} onChange={(e) => setDateTo(clampDate(e.target.value))} className="field-input ltr-num" />
+              </div>
+              <span className="mx-1 h-6 w-px bg-line" />
+              {/* quick-range COMMANDS (§4 buttons), aligned with the 44px date fields */}
               {([7, 14, 30] as const).map((n) => (
-                <button key={n} className="rg-chip" onClick={() => setDateTo(earlier(addDays(dateFrom, n - 1), maxDate))}>{n} ימים</button>
+                <button type="button" key={n} className="btn btn-secondary" onClick={() => setDateTo(earlier(addDays(dateFrom, n - 1), maxDate))}>{n} ימים</button>
               ))}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[12px] font-bold text-[var(--color-muted)]">ימים בשבוע</span>
+              <span className="field-label">ימים בשבוע</span>
               {[0, 1, 2, 3, 4, 5, 6].map((d) => (
                 <button
+                  type="button"
                   key={d}
+                  aria-pressed={weekdays.has(d)}
+                  aria-label={`יום ${HEBREW_DAY_LETTERS[d]}`}
                   onClick={() => toggleWeekday(d)}
-                  className={`w-9 h-9 rounded-full text-[13px] font-extrabold ${weekdays.has(d) ? "bg-[var(--color-primary)] text-white" : "bg-[#eef1f6] text-[#5b6478]"}`}
+                  className={`icon-btn text-[13.5px] font-extrabold ${weekdays.has(d) ? "bg-primary text-white" : "bg-hover text-muted"}`}
                 >
                   {HEBREW_DAY_LETTERS[d].replace("'", "")}
                 </button>
               ))}
-              <span className="mx-1 w-px h-6 bg-[#e4e8f0]" />
-              <button className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]))}>הכל</button>
-              <button className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4]))}>אמצע שבוע</button>
-              <button className="rg-tlink" onClick={() => setWeekdays(new Set([5, 6]))}>סוף שבוע</button>
+              <span className="mx-1 h-6 w-px bg-line" />
+              <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]))}>הכל</button>
+              <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4]))}>אמצע שבוע</button>
+              <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([5, 6]))}>סוף שבוע</button>
             </div>
           </Section>
 
           {/* 3 — Changes (partial: only marked fields update) */}
           <Section n={3} title="שינויים לביצוע" hint="רק שדות מסומנים יעודכנו — השאר יישארו ללא שינוי">
-            <div className="flex flex-col divide-y divide-[#eef0f5]">
+            <div className="flex flex-col divide-y divide-line">
               <FieldRow icon="credit-card" title="מחיר ללילה" desc="החלפה, תוספת או שינוי באחוזים" on={priceOn} onToggle={() => setPriceOn((v) => !v)} testId="gu-price">
-                <input type="number" value={priceAmount} onChange={(e) => setPriceAmount(Number(e.target.value))} disabled={!priceOn} className="w-20 h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold text-center bg-white disabled:opacity-50 outline-none" />
-                <select value={priceMode} onChange={(e) => setPriceMode(e.target.value as PriceMode)} disabled={!priceOn} className="h-9 px-2 rounded-lg border-[1.5px] border-[#e4e8f0] text-[13px] font-bold bg-white disabled:opacity-50 outline-none">
+                <input type="number" dir="ltr" aria-label="ערך שינוי המחיר" value={priceAmount} onChange={(e) => setPriceAmount(Number(e.target.value))} disabled={!priceOn} className="field-input ltr-num w-20 text-center" />
+                <select aria-label="אופן שינוי המחיר" value={priceMode} onChange={(e) => setPriceMode(e.target.value as PriceMode)} disabled={!priceOn} className="field-input w-40">
                   {PRICE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </FieldRow>
@@ -355,25 +377,25 @@ export function GroupUpdatePanel({
               <Stat value={selected.size} label="יחידות" />
             </div>
             {sample && (
-              <p className="mt-3 text-[13px] font-bold text-[var(--color-muted)]">
-                דוגמה — {sample.typeName}: ₪{Math.round(sample.before)} <span className="text-[var(--color-faint)]">←</span> <b className="text-[var(--color-ink)]">₪{Math.round(sample.after)}</b>
+              <p className="mt-3 text-[13.5px] font-bold text-muted">
+                דוגמה — {sample.typeName}: <bdi className="ltr-num">₪{Math.round(sample.before)}</bdi> <span className="text-faint">←</span> <b className="text-ink"><bdi className="ltr-num">₪{Math.round(sample.after)}</bdi></b>
               </p>
             )}
             {cellCount > 0 && (stopSell !== "nochange" || preview.noInventory > 0 || preview.missingPrice > 0) && (
-              <div className="mt-3 text-[12.5px] font-bold text-[var(--color-muted)] flex flex-col gap-1">
+              <div className="mt-3 text-[12px] font-bold text-muted flex flex-col gap-1">
                 {stopSell === "no" && (
-                  <p><b className="text-[var(--color-status-success)]">{preview.willOpen}</b> תאים ייפתחו למכירה מסחרית{preview.noInventory > 0 && <> · <b className="text-[#a23b52]">{preview.noInventory}</b> מתוכם יישארו ללא מלאי פיזי (הפתיחה המסחרית אינה יוצרת זמינות)</>}</p>
+                  <p><b className="text-status-success ltr-num">{preview.willOpen}</b> תאים ייפתחו למכירה מסחרית{preview.noInventory > 0 && <> · <b className="text-status-danger ltr-num">{preview.noInventory}</b> מתוכם יישארו ללא מלאי פיזי (הפתיחה המסחרית אינה יוצרת זמינות)</>}</p>
                 )}
                 {stopSell === "yes" && (
-                  <p><b className="text-[#a23b52]">{preview.willClose}</b> תאים ייסגרו למכירה מסחרית · המלאי הפיזי אינו משתנה</p>
+                  <p><b className="text-status-danger ltr-num">{preview.willClose}</b> תאים ייסגרו למכירה מסחרית · המלאי הפיזי אינו משתנה</p>
                 )}
-                {preview.noInventory > 0 && stopSell !== "no" && <p><b className="text-[#a23b52]">{preview.noInventory}</b> מהתאים ללא מלאי פיזי</p>}
-                {preview.missingPrice > 0 && <p><b className="text-[#b4670a]">{preview.missingPrice}</b> מהתאים ללא מחיר אפקטיבי</p>}
+                {preview.noInventory > 0 && stopSell !== "no" && <p><b className="text-status-danger ltr-num">{preview.noInventory}</b> מהתאים ללא מלאי פיזי</p>}
+                {preview.missingPrice > 0 && <p><b className="text-status-warning ltr-num">{preview.missingPrice}</b> מהתאים ללא מחיר אפקטיבי</p>}
               </div>
             )}
           </Section>
 
-      {error && <p className="text-[13px] font-bold text-[var(--color-status-danger)]">{error}</p>}
+      {error && <p className="field-msg">{error}</p>}
     </SidePanel>
   );
 }
@@ -384,16 +406,18 @@ function earlier(a: DateOnly, b: DateOnly): DateOnly {
 
 function Section({ n, title, badge, hint, icon, children }: { n: number; title: string; badge?: string; hint?: string; icon?: "info"; children: ReactNode }) {
   return (
-    <section className="bg-white rounded-2xl border border-[#e8ebf2] p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="w-6 h-6 rounded-lg bg-[var(--color-primary-050)] text-[var(--color-primary)] text-[12px] font-extrabold flex items-center justify-center">
-          {icon ? <Icon name={icon} size={14} /> : n}
+    <section className="card">
+      {/* a real <h3> keeps the wizard's document outline / screen-reader heading
+          navigation; it inherits .card-hd's 17px/800 (§6) */}
+      <div className="card-hd">
+        <span className="flex h-6 w-6 items-center justify-center rounded-[7px] bg-primary-050 text-[12px] font-extrabold text-primary">
+          {icon ? <Icon name={icon} size={13.5} /> : n}
         </span>
-        <h3 className="text-[14.5px] font-extrabold text-[var(--color-ink)]">{title}</h3>
-        {badge && <span className="cb-count mr-auto">{badge}</span>}
-        {hint && <span className="text-[11.5px] font-medium text-[var(--color-faint)] mr-auto text-left">{hint}</span>}
+        <h3>{title}</h3>
+        {badge && <span className="chip chip-neutral ms-auto">{badge}</span>}
+        {hint && <span className="field-hint ms-auto text-end">{hint}</span>}
       </div>
-      {children}
+      <div className="card-bd">{children}</div>
     </section>
   );
 }
@@ -401,45 +425,58 @@ function Section({ n, title, badge, hint, icon, children }: { n: number; title: 
 function FieldRow({ icon, title, desc, on, onToggle, testId, children }: { icon: Parameters<typeof Icon>[0]["name"]; title: string; desc: string; on?: boolean; onToggle?: () => void; testId?: string; children: ReactNode }) {
   return (
     <div className="flex items-center gap-3 py-3">
-      <span className="w-8 h-8 rounded-lg bg-[#f2f4f8] text-[#5b6478] flex items-center justify-center flex-none"><Icon name={icon} size={16} /></span>
+      <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[7px] bg-field text-muted"><Icon name={icon} size={17} /></span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-[13.5px] font-extrabold text-[var(--color-ink)]">{title}</span>
+          <span className="text-[13.5px] font-extrabold text-ink">{title}</span>
+          {/* OFF track is a token-DERIVED darker mix (§1 color-mix) — a plain
+              --line track leaves the white knob at ~1.1:1, i.e. invisible */}
           {onToggle && (
-            <button data-testid={testId ? `${testId}-toggle` : undefined} onClick={onToggle} className={`w-9 h-5 rounded-full relative transition-colors ${on ? "bg-[var(--color-primary)]" : "bg-[#cfd6e4]"}`} aria-pressed={on} aria-label={title}>
-              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${on ? "left-0.5" : "right-0.5"}`} />
+            <button type="button" data-testid={testId ? `${testId}-toggle` : undefined} onClick={onToggle} className={`relative h-5 w-9 rounded-full transition-colors ${on ? "bg-primary" : "bg-[color-mix(in_srgb,var(--line)_65%,var(--faint))]"}`} aria-pressed={on} aria-label={title}>
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${on ? "end-0.5" : "start-0.5"}`} />
             </button>
           )}
         </div>
-        <p className="text-[11.5px] font-medium text-[var(--color-faint)]">{desc}</p>
+        <p className="field-hint">{desc}</p>
       </div>
-      <div className="flex items-center gap-2 flex-none">{children}</div>
+      <div className="flex flex-none items-center gap-2">{children}</div>
     </div>
   );
 }
 
 function Segmented({ value, onChange, yes, no, testId }: { value: TriState; onChange: (v: TriState) => void; yes: string; no: string; testId?: string }) {
   const opt = (v: TriState, label: string) => (
-    <button data-testid={testId ? `${testId}-${v}` : undefined} onClick={() => onChange(v)} className={`h-9 px-3 rounded-lg text-[12.5px] font-bold ${value === v ? "bg-[var(--color-primary)] text-white" : "bg-white border-[1.5px] border-[#e4e8f0] text-[#5b6478]"}`}>{label}</button>
+    <button
+      type="button" key={v} aria-pressed={value === v}
+      data-testid={testId ? `${testId}-${v}` : undefined}
+      onClick={() => onChange(v)}
+      className={`btn btn-sm ${value === v ? "btn-primary" : "btn-secondary"}`}
+    >
+      {label}
+    </button>
   );
-  return <div className="flex items-center gap-1.5">{opt("nochange", "ללא שינוי")}{opt("yes", yes)}{opt("no", no)}</div>;
+  /* segmented control: the 4px-padded TRACK renders 44px overall; the 36px
+     btn-sm items sit inside it (coordinator ruling on §4) */
+  return <div className="inline-flex items-center gap-1 rounded-[12px] bg-field p-1">{opt("nochange", "ללא שינוי")}{opt("yes", yes)}{opt("no", no)}</div>;
 }
 
 function Stepper({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
   return (
     <div className={`flex items-center gap-1 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
-      <button onClick={() => onChange(Math.max(0, value - 1))} className="w-8 h-8 rounded-lg border-[1.5px] border-[#e4e8f0] flex items-center justify-center text-[var(--color-muted)]"><Icon name="minus" size={15} /></button>
+      {/* border-solid is REQUIRED: .icon-btn resets `border: none` (style), so the
+          width/colour utilities alone would never paint the outline */}
+      <button type="button" aria-label="פחות" onClick={() => onChange(Math.max(0, value - 1))} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="minus" size={20} /></button>
       <span className="w-8 text-center text-[14px] font-extrabold tabular-nums">{value}</span>
-      <button onClick={() => onChange(value + 1)} className="w-8 h-8 rounded-lg border-[1.5px] border-[#e4e8f0] flex items-center justify-center text-[var(--color-muted)]"><Icon name="plus" size={15} /></button>
+      <button type="button" aria-label="עוד" onClick={() => onChange(value + 1)} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="plus" size={20} /></button>
     </div>
   );
 }
 
 function Stat({ value, label }: { value: number; label: string }) {
   return (
-    <div className="bg-[#f7f9fc] rounded-xl p-3 text-center">
-      <div className="text-[22px] font-extrabold text-[var(--color-ink)] tabular-nums">{value}</div>
-      <div className="text-[11.5px] font-bold text-[var(--color-faint)]">{label}</div>
+    <div className="rounded-[12px] bg-field p-3 text-center">
+      <div className="text-[21px] font-extrabold text-ink tabular-nums">{value}</div>
+      <div className="t-label">{label}</div>
     </div>
   );
 }

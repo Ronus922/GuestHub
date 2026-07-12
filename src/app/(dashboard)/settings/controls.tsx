@@ -1,19 +1,109 @@
 "use client";
 
 import { useEffect } from "react";
+import { Icon } from "@/components/shared/Icon";
 
-// Small shared form controls for the commercial-settings sections. Switch markup
-// mirrors the staff EmployeeSidePanel toggle (same design language, RTL-anchored).
+// Shared chrome for the settings subsystem. Every piece here CONSUMES a canonical
+// primitive from design-system.css (.card / .card-hd / .card-bd / .field /
+// .field-label / .icon-btn) — nothing re-declares one. Keeping them in one place
+// is what stops each settings screen from inventing its own card and field again
+// (iron rule #10).
+
+/** §6 card: 17px/800 header with its section icon, padded body. */
+export function SettingsCard({
+  icon,
+  title,
+  action,
+  children,
+}: {
+  icon: Parameters<typeof Icon>[0]["name"];
+  title: string;
+  /** trailing control on the header row (e.g. "הוסף מדיניות") */
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="card">
+      <header className="card-hd">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
+          <Icon name={icon} size={20} />
+        </span>
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {action}
+      </header>
+      <div className="card-bd">{children}</div>
+    </section>
+  );
+}
+
+/** §5 field: label ABOVE at 12px/700, 44px control underneath. */
+export function Field({
+  label,
+  required,
+  full,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  /** span the whole form grid */
+  full?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className={`field${full ? " sm:col-span-2" : ""}`}>
+      <span className="field-label">
+        {label}
+        {required && <span className="text-status-danger"> *</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+/** the two-column form grid every settings section uses */
+export function FormGrid({ children }: { children: React.ReactNode }) {
+  return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>;
+}
+
+/** §4 icon-only button: 36×36, radius 10, 20px icon — always with an accessible name. */
+export function IconBtn({
+  name,
+  label,
+  onClick,
+  disabled,
+  danger,
+}: {
+  name: Parameters<typeof Icon>[0]["name"];
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`icon-btn${danger ? " hover:text-status-danger" : ""}`}
+    >
+      <Icon name={name} size={20} />
+    </button>
+  );
+}
 
 export function Switch({
   checked,
   onChange,
   label,
+  title,
   disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
+  title?: string;
   disabled?: boolean;
 }) {
   return (
@@ -22,14 +112,17 @@ export function Switch({
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      title={title}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
         checked ? "bg-primary" : "bg-line"
       }`}
     >
+      {/* border-line keeps the knob visible on the OFF (bg-line) track — the
+          §1 two-shadow rule removed its drop shadow, tokens supply the edge */}
       <span
-        className={`absolute end-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+        className={`absolute end-0.5 top-0.5 h-5 w-5 rounded-full border border-line bg-white transition-transform ${
           checked ? "translate-x-0" : "translate-x-5"
         }`}
       />
@@ -54,14 +147,17 @@ export function ToggleRow({
     <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
       <div className="min-w-0">
         <p className="text-sm font-medium text-ink">{label}</p>
-        {hint ? <p className="text-xs text-faint">{hint}</p> : null}
+        {hint ? <p className="field-hint">{hint}</p> : null}
       </div>
       <Switch checked={checked} onChange={onChange} label={label} disabled={disabled} />
     </div>
   );
 }
 
-// Segmented single-choice control (RTL: options render right-to-left in source order).
+// Segmented single-choice control (RTL: options render right-to-left in source
+// order). Sanctioned segmented anatomy: the TRACK renders 44px overall — 36px
+// options inside a 4px-padded borderless track (bg-field, like the canonical
+// Tabs track) — which is how §4's 44px is satisfied for this control.
 export function Segmented<T extends string>({
   value,
   onChange,
@@ -74,7 +170,11 @@ export function Segmented<T extends string>({
   ariaLabel?: string;
 }) {
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className="inline-flex flex-row-reverse rounded-xl border border-line bg-surface p-1">
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      className="inline-flex flex-row-reverse rounded-xl bg-field p-1"
+    >
       {options.map((o) => {
         const on = o.value === value;
         return (
@@ -84,9 +184,7 @@ export function Segmented<T extends string>({
             role="radio"
             aria-checked={on}
             onClick={() => onChange(o.value)}
-            className={`min-h-9 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-              on ? "bg-primary text-white" : "text-text2 hover:bg-hover"
-            }`}
+            className={`btn btn-sm rounded-lg ${on ? "bg-primary text-white" : "text-text2 hover:bg-hover"}`}
           >
             {o.label}
           </button>

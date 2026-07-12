@@ -89,7 +89,7 @@ export function RateGridScreen({
       />
 
       {state.unitCount === 0 ? (
-        <div className="rg-card"><div className="rg-empty">לא הוגדרו יחידות מכירה</div></div>
+        <div className="card rg-card"><div className="empty-state"><span className="empty-t">לא הוגדרו יחידות מכירה</span></div></div>
       ) : (
         <RateGrid
           types={visibleTypes} dates={state.dates} today={today} can={can}
@@ -101,13 +101,13 @@ export function RateGridScreen({
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="rg-legend">
-          <span className="rg-leg"><span className="rg-sw" style={{ background: "#eef1fd" }} />היום</span>
-          <span className="rg-leg"><span className="rg-sw" style={{ background: "#eef1fb" }} />סוף שבוע</span>
+          <span className="rg-leg"><span className="rg-sw today" />היום</span>
+          <span className="rg-leg"><span className="rg-sw we" />סוף שבוע</span>
           <span className="rg-leg"><span className="rg-sw hatch" />לא זמין פיזית</span>
-          <span className="rg-leg"><Icon name="circle-slash" size={12} className="text-[#c0455b]" />סגור למכירה (מסחרי)</span>
-          <span className="rg-leg"><span className="rg-sw" style={{ background: "#fbeecd", border: "1px solid #f0d9a8" }} />חסר מחיר</span>
-          <span className="rg-leg"><Icon name="warning" size={12} className="text-[#c0455b]" />שגיאת מיפוי</span>
-          <span className="rg-leg"><span className="rg-price inherited">₪350</span>מחיר בסיס (מוסק)</span>
+          <span className="rg-leg"><Icon name="circle-slash" size={13.5} className="rg-err" />סגור למכירה (מסחרי)</span>
+          <span className="rg-leg"><span className="rg-sw noprice" />חסר מחיר</span>
+          <span className="rg-leg"><Icon name="warning" size={13.5} className="rg-err" />שגיאת מיפוי</span>
+          <span className="rg-leg"><span className="rg-price inherited ltr-num">₪350</span>מחיר בסיס (מוסק)</span>
         </div>
         <span className="rg-hint">לחיצה על תא לעריכה · Enter לשמירה · Esc לביטול</span>
       </div>

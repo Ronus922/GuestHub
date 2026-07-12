@@ -3,34 +3,32 @@
 import { useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
+import { IconBtn } from "./controls";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // Shared list chrome for the policy sections (cancellation / payment) — same card
-// language, default/active badges, edit + archive actions, empty state. Keeps the
-// two sections DRY (iron rule #10).
+// language, default/active chips, edit + archive actions, empty state. Keeps the
+// two sections DRY (iron rule #10). Every visual here is a canonical primitive.
 
 export function PolicyToolbar({ title, subtitle, onAdd }: { title: string; subtitle: string; onAdd: () => void }) {
   return (
     <div className="mb-4 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <span className="bw-hi">
-          <Icon name="documents" size={17} />
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
+          <Icon name="documents" size={20} />
         </span>
-        <div>
-          <p className="font-bold text-ink">{title}</p>
-          <p className="text-xs text-faint">{subtitle}</p>
+        <div className="min-w-0">
+          <p className="h4">{title}</p>
+          <p className="t-secondary">{subtitle}</p>
         </div>
       </div>
-      <button type="button" className="bw-btn bw-btn-primary" onClick={onAdd}>
-        <Icon name="plus" size={16} />
+      <button type="button" className="btn btn-primary shrink-0" onClick={onAdd}>
+        <Icon name="plus" size={20} />
         הוסף מדיניות
       </button>
     </div>
   );
 }
-
-const iconBtn =
-  "grid h-9 w-9 place-items-center rounded-lg text-text2 transition-colors hover:bg-hover disabled:opacity-50";
 
 export function PolicyCard({
   name,
@@ -66,24 +64,24 @@ export function PolicyCard({
   };
 
   return (
-    <div className="flex items-start justify-between gap-3 rounded-2xl border border-line bg-surface p-4">
+    <div className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-4">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <p className="font-bold text-ink">{name}</p>
-          {isDefault && <Badge tone="primary">ברירת מחדל</Badge>}
-          <Badge tone={isActive ? "green" : "muted"}>{isActive ? "פעיל" : "לא פעיל"}</Badge>
-          <span className="text-xs text-faint" dir="ltr">{code}</span>
+          <p className="t-body font-bold text-ink">{name}</p>
+          {/* not a §3.1 payment state — the canonical brand tag */}
+          {isDefault && <span className="chip chip-brand">ברירת מחדל</span>}
+          <span className={`chip ${isActive ? "chip-paid" : "chip-cancelled"}`}>
+            <span className="dot" />
+            {isActive ? "פעיל" : "לא פעיל"}
+          </span>
+          <span className="chip chip-neutral ltr-num">{code}</span>
         </div>
         <p className="mt-1 truncate text-sm text-text2">{title}</p>
-        <p className="mt-0.5 text-xs text-faint">{summary}</p>
+        <p className="field-hint mt-0.5">{summary}</p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        <button type="button" className={iconBtn} aria-label="עריכה" onClick={onEdit}>
-          <Icon name="edit" size={16} />
-        </button>
-        <button type="button" className={`${iconBtn} hover:text-status-danger`} aria-label="מחיקה" onClick={del} disabled={pending}>
-          <Icon name="trash" size={16} />
-        </button>
+        <IconBtn name="edit" label="עריכה" onClick={onEdit} />
+        <IconBtn name="trash" label="מחיקה" onClick={del} disabled={pending} danger />
       </div>
     </div>
   );
@@ -91,18 +89,8 @@ export function PolicyCard({
 
 export function EmptyState({ label }: { label: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line bg-surface p-8 text-center">
-      <p className="text-sm text-faint">{label}</p>
+    <div className="empty-state rounded-xl border border-dashed border-line bg-surface">
+      <span className="empty-s">{label}</span>
     </div>
   );
-}
-
-function Badge({ tone, children }: { tone: "primary" | "green" | "muted"; children: React.ReactNode }) {
-  const cls =
-    tone === "primary"
-      ? "bg-primary-050 text-primary"
-      : tone === "green"
-        ? "bg-status-success-050 text-status-success"
-        : "bg-hover text-faint";
-  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>{children}</span>;
 }

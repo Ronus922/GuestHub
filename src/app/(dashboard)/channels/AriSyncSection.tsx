@@ -55,8 +55,8 @@ function Row({ label, value, tone }: { label: string; value: string; tone?: "ok"
     tone === "ok" ? "text-status-success" : tone === "err" ? "text-status-danger" : tone === "warn" ? "text-status-warning" : "text-text2";
   return (
     <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <span className="text-sm text-muted">{label}</span>
-      <span className={`text-sm font-semibold ${color}`}>{value}</span>
+      <span className="t-secondary">{label}</span>
+      <span className={`t-secondary ${color}`}>{value}</span>
     </div>
   );
 }
@@ -91,38 +91,50 @@ function RunningPanel({ p, display }: { p: FullSyncProgress; display: AriSyncSta
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-sm font-bold text-ink">סנכרון מלא מתבצע — {p.percent}%</span>
-        <span className="text-xs text-muted">{live ?? display.startedAt}</span>
+        <span className="h4">
+          סנכרון מלא מתבצע — <bdi className="ltr-num">{p.percent}%</bdi>
+        </span>
+        <span className="t-label">
+          <bdi className="ltr-num">{live ?? display.startedAt}</bdi>
+        </span>
       </div>
 
       <ProgressBar percent={p.percent} label={PHASE_LABELS[p.phase]} tone="run" />
 
-      <p className="text-sm font-semibold text-text2">{PHASE_LABELS[p.phase]}</p>
+      <p className="t-secondary text-text2">{PHASE_LABELS[p.phase]}</p>
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted">
+      <dl className="t-label grid grid-cols-2 gap-x-4 gap-y-1">
         {p.roomsTotal > 0 && (
           <>
             <dt>חדרים</dt>
-            <dd className="text-end font-semibold text-text2">{p.roomsProjected}/{p.roomsTotal}</dd>
+            <dd className="text-end text-text2">
+              <bdi className="ltr-num">{p.roomsProjected}/{p.roomsTotal}</bdi>
+            </dd>
           </>
         )}
         {p.ratePlansTotal > 0 && (
           <>
             <dt>תוכניות תעריף</dt>
-            <dd className="text-end font-semibold text-text2">{p.ratePlansProjected}/{p.ratePlansTotal}</dd>
+            <dd className="text-end text-text2">
+              <bdi className="ltr-num">{p.ratePlansProjected}/{p.ratePlansTotal}</bdi>
+            </dd>
           </>
         )}
         {p.days > 0 && (
           <>
             <dt>טווח</dt>
-            <dd className="text-end font-semibold text-text2">{p.days} ימים</dd>
+            <dd className="text-end text-text2">
+              <bdi className="ltr-num">{p.days}</bdi> ימים
+            </dd>
           </>
         )}
         <dt>התחיל</dt>
-        <dd className="text-end font-semibold text-text2">{display.startedAt}</dd>
+        <dd className="text-end text-text2">
+          <bdi className="ltr-num">{display.startedAt}</bdi>
+        </dd>
       </dl>
 
-      <p className="text-xs text-faint">הסנכרון ממשיך ברקע גם אם תסגור את הדף.</p>
+      <p className="field-hint">הסנכרון ממשיך ברקע גם אם תסגור את הדף.</p>
     </div>
   );
 }
@@ -150,29 +162,34 @@ function FinishedPanel({
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
-      <span className={`text-sm font-bold ${success ? "text-status-success" : warned ? "text-status-warning" : "text-status-danger"}`}>
+      <span className={`h4 ${success ? "text-status-success" : warned ? "text-status-warning" : "text-status-danger"}`}>
         {title}
       </span>
 
       <ProgressBar percent={p.percent} label={PHASE_LABELS[p.phase]} tone={success ? "ok" : "err"} />
 
-      <ul className="flex flex-col gap-1 text-xs text-text2">
+      <ul className="t-label flex flex-col gap-1 text-text2">
         <li>{p.availabilitySubmitted ? "✓" : "✗"} זמינות נשלחה</li>
         <li>{p.restrictionsSubmitted ? "✓" : "✗"} מחירים והגבלות נשלחו</li>
-        <li>אזהרות: {p.warnings}</li>
+        <li>אזהרות: <bdi className="ltr-num">{p.warnings}</bdi></li>
         <li>סנכרון אוטומטי: {success ? "פעיל" : "לא הופעל"}</li>
-        {p.blocked > 0 && <li className="text-status-warning">שילובים ללא מחיר (נשלחו כסגורים למכירה): {p.blocked}</li>}
-        <li>זמן סיום: {display.finishedAt}</li>
-        {display.duration && <li>משך: {display.duration}</li>}
+        {p.blocked > 0 && (
+          <li className="text-status-warning">
+            שילובים ללא מחיר (נשלחו כסגורים למכירה): <bdi className="ltr-num">{p.blocked}</bdi>
+          </li>
+        )}
+        <li>זמן סיום: <bdi className="ltr-num">{display.finishedAt}</bdi></li>
+        {display.duration && <li>משך: <bdi className="ltr-num">{display.duration}</bdi></li>}
         {p.taskIds.length > 0 && (
-          <li className="font-mono text-[11px] text-muted">
-            מזהי משימה: {p.taskIds.map((t) => t.slice(0, 8)).join(", ")}
+          <li className="text-muted">
+            מזהי משימה:{" "}
+            <bdi className="ltr-num font-mono">{p.taskIds.map((t) => t.slice(0, 8)).join(", ")}</bdi>
           </li>
         )}
       </ul>
 
       {!success && p.message && (
-        <p role="alert" className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
+        <p role="alert" className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
           {p.message}
         </p>
       )}
@@ -240,16 +257,18 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-bold text-ink">סנכרון ARI</h2>
+      <h2 className="h3">סנכרון ARI</h2>
 
       {/* A run exists but the worker has not claimed it yet: honest 0%, no fake
           motion, and the same "keeps running if you close the page" promise. */}
       {running && !progress && (
         <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
-          <span className="text-sm font-bold text-ink">סנכרון מלא מתבצע — 0%</span>
+          <span className="h4">
+            סנכרון מלא מתבצע — <bdi className="ltr-num">0%</bdi>
+          </span>
           <ProgressBar percent={0} label="ממתין לעובד הרקע" tone="run" />
-          <p className="text-sm font-semibold text-text2">ממתין לעובד הרקע</p>
-          <p className="text-xs text-faint">הסנכרון ממשיך ברקע גם אם תסגור את הדף.</p>
+          <p className="t-secondary text-text2">ממתין לעובד הרקע</p>
+          <p className="field-hint">הסנכרון ממשיך ברקע גם אם תסגור את הדף.</p>
         </div>
       )}
       {running && progress && <RunningPanel p={progress} display={display} />}
@@ -277,7 +296,7 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
       {msg && (
         <p
           role="status"
-          className={`px-4 py-2 text-sm font-semibold ${
+          className={`t-secondary px-4 py-2 ${
             msg.tone === "ok" ? "text-status-success" : msg.tone === "warn" ? "text-status-warning" : "text-status-danger"
           }`}
         >
@@ -295,13 +314,15 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
             onClick={() => setConfirming(true)}
             disabled={busy}
             aria-disabled={busy}
-            className="flex items-center gap-2 rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+            // secondary weight, as the pre-migration control was — the PRIMARY
+            // action of this flow is the confirm button below, not the trigger
+            className="btn btn-secondary"
           >
             {running ? "סנכרון מלא כבר מתבצע" : "סנכרון מלא"}
           </button>
         ) : (
           <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
-            <p className="text-sm text-text2">
+            <p className="t-secondary text-text2">
               יישלחו לערוץ המחירים, ההגבלות והזמינות הקנוניים של 500 הימים הקרובים, כפי שהוגדרו ב&quot;עדכון קבוצתי&quot; וב&quot;תוכניות תעריף&quot;.
               הפעולה אינה משנה מחיר, חדר, תוכנית או הזמנה.
             </p>
@@ -311,7 +332,7 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
                 onClick={confirmFullSync}
                 disabled={busy}
                 aria-disabled={busy}
-                className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn btn-primary"
               >
                 בצע סנכרון מלא
               </button>
@@ -319,7 +340,7 @@ export function AriSyncSection({ connectionId, initial }: { connectionId: string
                 type="button"
                 onClick={() => setConfirming(false)}
                 disabled={pending}
-                className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-text2 transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn btn-secondary"
               >
                 ביטול
               </button>

@@ -8,6 +8,7 @@ import {
   formatMoney,
   formatTimestamp,
 } from "./booking-doc-data";
+import { DOC_COLORS } from "./doc-tokens";
 
 // ============================================================
 // Booking confirmation PDF (@react-pdf/renderer).
@@ -35,13 +36,15 @@ function ensureFonts(): void {
   fontsRegistered = true;
 }
 
+// GUIDELINES §1 — the document consumes the canonical tokens (DOC_COLORS reads
+// them from lib/colors + lib/status-colors); no colour is re-typed here.
 const COLORS = {
-  ink: "#1a1a1a",
-  muted: "#6b7280",
-  line: "#d1d5db",
-  soft: "#f3f4f6",
-  accent: "#111827",
-  credit: "#047857",
+  ink: DOC_COLORS.ink,
+  muted: DOC_COLORS.muted,
+  line: DOC_COLORS.line,
+  soft: DOC_COLORS.soft,
+  accent: DOC_COLORS.ink,
+  credit: DOC_COLORS.credit,
 };
 
 const styles = StyleSheet.create({

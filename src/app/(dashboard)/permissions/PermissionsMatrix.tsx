@@ -112,12 +112,13 @@ export function PermissionsMatrix({
       <div className="flex flex-none flex-wrap items-center gap-3">
         <div className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-extrabold tracking-tight text-ink">הרשאות</h1>
-            <span className="rounded-lg bg-primary-050 px-3 py-1 text-[13px] font-bold text-primary">
-              {permissions.length} הרשאות · {roles.length} תפקידים
+            <h1 className="h1">הרשאות</h1>
+            <span className="chip chip-neutral">
+              <bdi className="ltr-num">{permissions.length}</bdi> הרשאות ·{" "}
+              <bdi className="ltr-num">{roles.length}</bdi> תפקידים
             </span>
           </div>
-          <p className="text-[13px] font-medium text-muted">
+          <p className="t-secondary">
             מטריצת הרשאות לפי תפקיד. שינויים נכנסים לתוקף בבקשה הבאה של המשתמש, ללא צורך
             בהתחברות מחדש. עמודות מנהל-על ואדמין נעולות — גישה מלאה.
           </p>
@@ -125,25 +126,25 @@ export function PermissionsMatrix({
         <div className="relative ms-auto w-full sm:w-[300px]">
           <Icon
             name="search"
-            size={18}
+            size={20}
             className="pointer-events-none absolute start-0 top-1/2 ms-3 -translate-y-1/2 text-faint"
           />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="חיפוש הרשאה…"
-            className="field h-11 min-h-0 ps-11 pe-4 text-sm"
+            className="field-input ps-11 pe-4"
             aria-label="חיפוש הרשאה"
           />
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+      <div className="card flex min-h-0 flex-1 flex-col">
         <div className="thin-scroll min-h-0 flex-1 overflow-auto">
           <table className="w-full min-w-[860px] border-collapse text-sm">
             <thead>
               <tr>
-                <th className="sticky start-0 top-0 z-30 border-b border-e border-line bg-surface px-5 py-3 text-start align-bottom text-xs font-bold tracking-wide text-faint">
+                <th className="t-label sticky start-0 top-0 z-30 border-b border-e border-line bg-surface px-5 py-3 text-start align-bottom tracking-wide text-faint">
                   הרשאה
                 </th>
                 {roles.map((role) => (
@@ -153,19 +154,19 @@ export function PermissionsMatrix({
                   >
                     <div className="flex flex-col items-center gap-1.5">
                       <div>
-                        <div className="text-sm font-bold text-ink">{role.name}</div>
-                        <div className="text-[11px] font-medium text-faint">
-                          {roleSubtitle(role.key)}
-                        </div>
+                        <div className="t-secondary text-ink">{role.name}</div>
+                        <div className="t-label text-faint">{roleSubtitle(role.key)}</div>
                       </div>
                       {PROTECTED.has(role.key) ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-primary-050 px-2.5 py-0.5 text-[11px] font-bold text-primary">
-                          <Icon name="lock" size={11} strokeWidth={2.4} />
+                        <span className="chip chip-neutral bg-primary-050 text-primary">
+                          <Icon name="lock" size={13.5} />
                           גישה מלאה
                         </span>
                       ) : (
-                        <span className="rounded-full bg-appbg px-2.5 py-0.5 text-[11px] font-extrabold tabular-nums text-muted">
-                          {countByRole.get(role.id) ?? 0}/{permissions.length}
+                        <span className="chip chip-neutral">
+                          <bdi className="ltr-num">
+                            {countByRole.get(role.id) ?? 0}/{permissions.length}
+                          </bdi>
                         </span>
                       )}
                     </div>
@@ -178,7 +179,7 @@ export function PermissionsMatrix({
                 <tr>
                   <td
                     colSpan={roles.length + 1}
-                    className="px-5 py-10 text-center text-sm font-medium text-muted"
+                    className="t-secondary px-5 py-10 text-center text-muted"
                   >
                     אין הרשאות תואמות לחיפוש „{q.trim()}”
                   </td>
@@ -197,12 +198,12 @@ export function PermissionsMatrix({
                       className="group border-b border-line/70 last:border-0 hover:bg-hover"
                     >
                       <th className="sticky start-0 z-10 border-e border-line bg-surface px-5 py-2.5 text-start font-normal transition-colors group-hover:bg-hover">
-                        <div className="text-[13px] font-bold text-ink">
+                        <div className="t-secondary text-ink">
                           {perm.description ?? perm.key}
                         </div>
-                        <div dir="ltr" className="text-end text-[11px] font-medium tracking-wide text-faint">
+                        <bdi className="ltr-num t-label block text-end tracking-wide text-faint">
                           {perm.key}
-                        </div>
+                        </bdi>
                       </th>
                       {roles.map((role) => {
                         const key = `${role.id}:${role.key}:${perm.id}`;
@@ -235,20 +236,20 @@ export function PermissionsMatrix({
           </table>
         </div>
 
-        <div className="flex flex-none flex-wrap items-center gap-x-5 gap-y-2 border-t border-line bg-appbg/40 px-5 py-2.5 text-xs font-semibold text-muted">
+        <div className="t-label flex flex-none flex-wrap items-center gap-x-5 gap-y-2 border-t border-line bg-appbg/40 px-5 py-2.5 text-muted">
           <span className="inline-flex items-center gap-1.5">
-            <span className="grid h-4 w-4 place-items-center rounded-[5px] border-[1.5px] border-primary bg-primary text-white">
-              <Icon name="check" size={10} strokeWidth={3.5} />
+            <span className="grid h-4 w-4 place-items-center rounded-[7px] border-[1.5px] border-primary bg-primary text-white">
+              <Icon name="check" size={13.5} />
             </span>
             מוענק
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-4 w-4 rounded-[5px] border-[1.5px] border-faint/60 bg-surface" />
+            <span className="h-4 w-4 rounded-[7px] border-[1.5px] border-faint/60 bg-surface" />
             לא מוענק
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="grid h-4 w-4 place-items-center rounded-[5px] border-[1.5px] border-primary-100 bg-primary-100 text-primary/60">
-              <Icon name="check" size={10} strokeWidth={3.5} />
+            <span className="grid h-4 w-4 place-items-center rounded-[7px] border-[1.5px] border-primary-100 bg-primary-100 text-primary/60">
+              <Icon name="check" size={13.5} />
             </span>
             עמודה נעולה — גישה מלאה
           </span>
@@ -256,7 +257,7 @@ export function PermissionsMatrix({
             <span className="h-1.5 w-1.5 rounded-full bg-status-warning" />
             שינוי שטרם נשמר
           </span>
-          <span className="ms-auto font-medium text-faint">
+          <span className="ms-auto text-faint">
             שינויים נכנסים לתוקף בבקשה הבאה של המשתמש
           </span>
         </div>
@@ -281,8 +282,10 @@ function CategoryGroup({
       <tr>
         <td colSpan={colSpan} className="border-b border-line bg-appbg/50 px-5 py-2">
           <div className="flex items-baseline gap-2">
-            <span className="text-[13px] font-extrabold text-ink">{label}</span>
-            <span className="text-[11px] font-bold text-faint">{count} הרשאות</span>
+            <span className="text-[13.5px] font-extrabold text-ink">{label}</span>
+            <span className="t-label text-faint">
+              <bdi className="ltr-num">{count}</bdi> הרשאות
+            </span>
           </div>
         </td>
       </tr>
@@ -318,7 +321,7 @@ function Cell({
       disabled={!editable || busy}
       onClick={onToggle}
       title={protectedCol ? "גישה מלאה — לקריאה בלבד" : editable ? "" : "אין הרשאת עריכה"}
-      className={`relative mx-auto grid h-6 w-6 place-items-center rounded-lg border-[1.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 ${
+      className={`relative mx-auto grid h-6 w-6 place-items-center rounded-[7px] border-[1.5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-1 ${
         on
           ? protectedCol
             ? "border-primary-100 bg-primary-100 text-primary/60"
@@ -328,7 +331,7 @@ function Cell({
         busy ? "opacity-70" : ""
       }`}
     >
-      {on ? <Icon name="check" size={15} strokeWidth={3} /> : null}
+      {on ? <Icon name="check" size={13.5} /> : null}
       {busy ? (
         <span className="absolute -end-1 -top-1 h-1.5 w-1.5 rounded-full bg-status-warning" />
       ) : null}

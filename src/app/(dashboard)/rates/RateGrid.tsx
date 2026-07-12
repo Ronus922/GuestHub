@@ -95,7 +95,7 @@ export function RateGrid({
   const gridStyle = { minWidth: LABEL_W + dates.length * MIN_COL, "--rg-label": `${LABEL_W}px` } as CSSProperties;
 
   return (
-    <div className="rg-card">
+    <div className="card rg-card">
       <div className="rg-scroll">
         <div className="rg-grid" style={gridStyle}>
           {/* sticky header */}
@@ -130,7 +130,7 @@ export function RateGrid({
                 <div className="rg-row rg-band">
                   <div className="rg-lab">
                     <button type="button" className="rg-collapse" onClick={() => onToggleCollapse(tk)} aria-label={isCollapsed ? "הרחב" : "כווץ"}>
-                      <Icon name={isCollapsed ? "chevron-left" : "chevron"} size={15} />
+                      <Icon name={isCollapsed ? "chevron-left" : "chevron"} size={17} />
                     </button>
                     <span className="rg-tname">{band.roomTypeName}</span>
                     <span className="rg-tcount">· {band.units.length} יחידות</span>
@@ -139,7 +139,7 @@ export function RateGrid({
                     <span className="rg-tbase">מחיר בסיס <b>₪{Math.round(band.basePrice)}</b></span>
                     {can.bulk && (
                       <button type="button" className="rg-tlink" onClick={() => onGroupUpdateForType(band.unitIds)}>
-                        <Icon name="bulk-update" size={13} />עדכון קבוצתי לסוג
+                        <Icon name="bulk-update" size={13.5} />עדכון קבוצתי לסוג
                       </button>
                     )}
                   </div>
@@ -152,9 +152,17 @@ export function RateGrid({
                       <div className="rg-lab">
                         <span className="rg-unum">{unit.code}</span>
                         <span className="rg-utype">{unit.roomTypeName}</span>
-                        {unit.isPooled && <span className="rg-badge pool">מאגר · {unit.roomCount}</span>}
-                        {unit.closedCount > 0 && <span className="rg-badge closed">{unit.closedCount} סגורים</span>}
-                        {!unit.hasBasePlan && <span className="rg-badge warn">ללא תוכנית</span>}
+                        {/* dense-grid internal annotations — NOT chips (coordinator
+                            ruling): plain 12px/700 text labels (§12.2-class dense
+                            exception), so they can never overflow the 224px sticky
+                            label column the way 28px .chip elements did */}
+                        {(unit.isPooled || unit.closedCount > 0 || !unit.hasBasePlan) && (
+                          <span className="rg-utags">
+                            {unit.isPooled && <span className="rg-utag">מאגר · {unit.roomCount}</span>}
+                            {unit.closedCount > 0 && <span className="rg-utag closed">{unit.closedCount} סגורים</span>}
+                            {!unit.hasBasePlan && <span className="rg-utag noplan">ללא תוכנית</span>}
+                          </span>
+                        )}
                       </div>
                       <div className="rg-cells">
                         {unit.cells.map((cell, i) => <PriceCell key={cell.date} unit={unit} cell={cell} col={cols[i]} ctx={ctx} />)}

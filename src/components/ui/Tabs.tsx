@@ -1,7 +1,10 @@
 "use client";
 
-// Segmented control — DESIGN_SYSTEM Tabs "Variation 3": track bg #f4f2fc, active tab
-// white + primary text + shadow. Controlled.
+// Segmented control — THE canonical tabs component (there is no second one).
+// Token-only (GUIDELINES §1/§2/§4): the track is the field surface at radius 12
+// and renders 44px OVERALL — 36px items inside the 4px-padded track (the
+// approved segmented anatomy). The active tab is the white surface with the
+// brand text + the ONE card shadow. No invented colour, radius or shadow.
 export function Tabs<T extends string>({
   value,
   onChange,
@@ -12,7 +15,7 @@ export function Tabs<T extends string>({
   tabs: { value: T; label: string }[];
 }) {
   return (
-    <div className="inline-flex flex-wrap rounded-xl bg-[#f4f2fc] p-1" role="tablist">
+    <div className="inline-flex flex-wrap rounded-xl bg-field p-1" role="tablist">
       {tabs.map((t) => {
         const active = t.value === value;
         return (
@@ -22,10 +25,10 @@ export function Tabs<T extends string>({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(t.value)}
-            className={`min-h-11 rounded-lg px-4 py-1.5 text-sm transition-colors ${
+            className={`h-9 rounded-lg px-4 text-[15px] font-bold transition-colors ${
               active
-                ? "bg-white font-semibold text-primary shadow-sm"
-                : "font-medium text-muted hover:text-ink"
+                ? "bg-surface text-primary shadow-card"
+                : "text-muted hover:text-ink"
             }`}
           >
             {t.label}

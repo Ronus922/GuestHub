@@ -332,13 +332,23 @@ assert.ok(/\.cb-screen\s*\{[^}]*line-height:\s*normal/s.test(css),
 // a month boundary drawn three times from three differently-sized boxes).
 // ============================================================
 const popRule = rule(".cb-pop");
-assert.ok(/width: 366px/.test(popRule), "the invitation card is 366px wide (InvitationCard.png)");
-assert.ok(/border-radius: 18px/.test(popRule), "the card keeps the reference corner radius");
-assert.ok(/background: var\(--color-primary\)/.test(rule(".cb-pop-h")),
+// GUIDELINES §8 fixes every popover at 316px and cites the calendar's as the
+// example — it supersedes the 366px once measured off InvitationCard.png. The
+// width may live on .cb-pop itself or come composed from the canonical .popover.
+assert.ok(/const POP_W = 316/.test(tooltip) || /width: 316px/.test(popRule),
+  "the invitation card is the §8 canonical 316px popover");
+// GUIDELINES §1 supersedes the raw 18px measured off the PNG: the card wears the
+// nearest approved radius token (16px = --r-lg).
+assert.ok(/border-radius: var\(--r-lg\)/.test(popRule) || /className="popover cb-pop"/.test(tooltip),
+  "the card wears the approved --r-lg radius (own rule or composed from .popover)");
+assert.ok(/background: var\(--brand\)/.test(rule(".cb-pop-h")),
   "the card header is the brand-blue band of InvitationCard.png — NOT a white header");
 assert.ok(/color: #fff/.test(rule(".cb-pop-nm")), "the guest name is white on the blue header");
-assert.ok(/border-radius: 999px/.test(rule(".cb-pbadge")), "the payment chip is a pill, as in the reference");
-assert.ok(/color: var\(--color-primary\)/.test(rule(".cb-pop-hint")), "the footer stays the blue action line");
+// GUIDELINES §3 supersedes the pill shape measured off the PNG: the payment tag
+// is the ONE canonical chip (28px / r-sm / 13.5px/700), status class from §3.1.
+assert.ok(/className=\{`chip \$\{badge\.chip\}`\}/.test(tooltip),
+  "the payment tag is the canonical .chip wearing a §3.1 status class — no local badge");
+assert.ok(/color: var\(--brand\)/.test(rule(".cb-pop-hint")), "the footer stays the blue action line");
 // The approved card shows EXACTLY four body rows and NOTHING else. The earlier
 // pass kept a fifth row (reservation number + a second order-status chip) because
 // an intermediate spec said "do not remove currently available information" — the
@@ -376,7 +386,7 @@ assert.ok(/<bdi/.test(tooltip), "a Latin guest name / OTA source keeps its own d
 // which is why production shipped without a pointer).
 assert.ok(/\.cb-pop::after\s*\{[^}]*rotate\(45deg\)/s.test(css), "the pointer is a rotated pseudo-element");
 assert.ok(!/overflow:\s*hidden/.test(popRule), "the card must NOT clip its own pointer");
-assert.ok(/border-radius: 17px 17px 0 0/.test(rule(".cb-pop-h")),
+assert.ok(/border-radius: 16px 16px 0 0/.test(rule(".cb-pop-h")),
   "with no overflow clip, the blue header rounds its own top corners (no seam, no stray radius)");
 assert.ok(/--cb-caret/.test(css) && /--cb-caret/.test(tooltip),
   "the pointer is positioned under the pill it belongs to, surviving viewport clamping");

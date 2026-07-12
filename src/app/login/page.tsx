@@ -30,11 +30,12 @@ export default async function LoginPage({
     <div className="flex min-h-screen bg-surface">
       {/* פאנל מותג — צד ימין בדסקטופ, מוסתר במובייל */}
       <aside className="relative hidden w-[55%] overflow-hidden bg-primary lg:flex">
+        {/* decorative wash — derived from the brand token, never a new colour (§1) */}
         <div
           className="pointer-events-none absolute inset-0 opacity-70"
           style={{
             background:
-              "radial-gradient(120% 120% at 100% 0%, #2f4fe0 0%, #2540c8 45%, #1c2e9a 100%)",
+              "radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--brand) 85%, #fff) 0%, var(--brand) 45%, var(--brand-hover) 100%)",
           }}
         />
         {/* עיגולים דקורטיביים */}
@@ -43,12 +44,12 @@ export default async function LoginPage({
 
         <div className="relative z-10 flex w-full flex-col justify-center gap-10 px-16 py-14 text-white">
           <div className="grid h-16 w-16 place-items-center rounded-2xl bg-white/15 backdrop-blur">
-            <Icon name="building" size={30} className="text-white" />
+            <Icon name="building" size={24} className="text-white" />
           </div>
 
           <div className="flex flex-col gap-4">
-            <h1 className="text-5xl font-extrabold tracking-tight">GuestHub</h1>
-            <p className="max-w-md text-lg leading-relaxed text-white/85">
+            <h1 className="h1 tracking-tight text-white">GuestHub</h1>
+            <p className="max-w-md text-[17px] leading-relaxed text-white/85">
               מערכת ניהול מלונאות חכמה — לוח תפוסה, הזמנות, אורחים, ניקיון
               ותחזוקה. הכל במקום אחד.
             </p>
@@ -58,10 +59,10 @@ export default async function LoginPage({
             {FEATURES.map((f) => (
               <li key={f.title} className="flex items-center gap-4">
                 <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white/12">
-                  <Icon name={f.icon} size={22} className="text-white" />
+                  <Icon name={f.icon} size={24} className="text-white" />
                 </div>
                 <div>
-                  <p className="font-bold">{f.title}</p>
+                  <p className="text-[15px] font-bold">{f.title}</p>
                   <p className="text-sm text-white/70">{f.sub}</p>
                 </div>
               </li>
@@ -89,14 +90,14 @@ export default async function LoginPage({
         <div className="flex w-full max-w-[400px] flex-col gap-8">
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary">
-              <Icon name="building" size={22} className="text-white" />
+              <Icon name="building" size={24} className="text-white" />
             </div>
-            <span className="text-2xl font-extrabold text-ink">GuestHub</span>
+            <span className="h2 text-ink">GuestHub</span>
           </div>
 
           <div className="flex flex-col gap-2">
-            <h2 className="text-3xl font-extrabold text-ink">כניסה למערכת</h2>
-            <p className="text-muted">הזן את פרטי ההתחברות שלך כדי להמשיך</p>
+            <h2 className="h1">כניסה למערכת</h2>
+            <p className="t-body text-muted">הזן את פרטי ההתחברות שלך כדי להמשיך</p>
           </div>
 
           <LoginForm initialError={initialError} />

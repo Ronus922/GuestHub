@@ -4,7 +4,6 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
-import { Badge } from "@/components/ui/Badge";
 import { formatFullDate } from "@/lib/dates";
 import type { PlanKind } from "@/lib/pricing/resolve";
 import type { RatePlanDetail } from "@/lib/rate-plans/service";
@@ -108,31 +107,32 @@ export function RatePlansScreen({
     <div className="flex min-h-full flex-col gap-4 p-6 max-sm:p-4" dir="rtl">
       {/* header bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-bold text-ink">תוכניות תעריף</h1>
-        <Badge tone="brand">{plans.length} תוכניות</Badge>
+        <h1 className="h1">תוכניות תעריף</h1>
+        <span className="chip chip-neutral">{plans.length} תוכניות</span>
         <span className="flex-1" />
         <div className="relative w-64 max-sm:w-full">
           <Icon
             name="search"
-            size={18}
+            size={20}
             className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-faint"
           />
           <input
-            className="field min-h-11 py-2 ps-11"
+            className="field-input ps-11"
+            aria-label="חיפוש תוכנית תעריף"
             placeholder="חיפוש לפי שם או קוד…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         {can.simulate && (
-          <button type="button" className="btn btn-outline" onClick={() => setSimOpen(true)}>
-            <Icon name="calculator" size={17} />
+          <button type="button" className="btn btn-secondary" onClick={() => setSimOpen(true)}>
+            <Icon name="calculator" size={20} />
             סימולטור תמחור
           </button>
         )}
         {can.create && (
           <button type="button" className="btn btn-primary" onClick={() => setWizard({ detail: null })}>
-            <Icon name="plus" size={17} />
+            <Icon name="plus" size={20} />
             תוכנית חדשה
           </button>
         )}
@@ -140,19 +140,19 @@ export function RatePlansScreen({
 
       {/* uncovered-rooms warning */}
       {unitsWithoutPlan > 0 && hasActivePlan && (
-        <div className="flex items-center gap-3 rounded-card border border-status-warning/30 bg-status-warning-050 p-4 text-sm font-medium text-status-warning">
-          <Icon name="warning" size={18} className="shrink-0" />
+        <div className="flex items-center gap-3 rounded-card border border-status-warning/30 bg-status-warning-050 p-4 text-[14px] font-medium text-status-warning">
+          <Icon name="warning" size={20} className="shrink-0" />
           {unitsWithoutPlan} חדרים ללא תוכנית תעריף פעילה
         </div>
       )}
 
       {plans.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-card border border-dashed border-line bg-surface p-10 text-center">
-          <span className="grid h-14 w-14 place-items-center rounded-2xl bg-primary-050 text-primary">
-            <Icon name="tags" size={26} />
+          <span className="grid h-14 w-14 place-items-center rounded-[16px] bg-primary-050 text-primary">
+            <Icon name="tags" size={24} />
           </span>
-          <p className="text-base font-bold text-ink">טרם הוגדרו תוכניות תעריף</p>
-          <p className="max-w-md text-sm text-muted">
+          <p className="h4">טרם הוגדרו תוכניות תעריף</p>
+          <p className="max-w-md text-[14px] text-muted">
             תוכניות תעריף קובעות כיצד מתומחר כל חדר — מחיר בסיס, נגזרות אחוז או סכום, ותוכניות
             עצמאיות. צרו את התוכנית הראשונה כדי להתחיל.
           </p>
@@ -167,7 +167,7 @@ export function RatePlansScreen({
         <>
           {/* quick filter chips */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-muted">סטטוס:</span>
+            <span className="t-label">סטטוס:</span>
             {(
               [
                 { v: "all", label: "הכל" },
@@ -181,7 +181,7 @@ export function RatePlansScreen({
               </Chip>
             ))}
             <span className="h-6 w-px bg-line" />
-            <span className="text-sm font-medium text-muted">סוג:</span>
+            <span className="t-label">סוג:</span>
             <Chip on={kindF === "all"} onClick={() => setKindF("all")}>
               הכל
             </Chip>
@@ -191,7 +191,7 @@ export function RatePlansScreen({
               </Chip>
             ))}
             <span className="h-6 w-px bg-line" />
-            <span className="text-sm font-medium text-muted">החזר:</span>
+            <span className="t-label">החזר:</span>
             {(
               [
                 { v: "all", label: "הכל" },
@@ -232,7 +232,7 @@ export function RatePlansScreen({
               />
             ))}
             {filtered.length === 0 && (
-              <div className="rounded-card border border-dashed border-line bg-surface p-8 text-center text-sm text-muted">
+              <div className="rounded-card border border-dashed border-line bg-surface p-8 text-center text-[14px] text-muted">
                 לא נמצאו תוכניות תעריף תואמות לסינון
               </div>
             )}
@@ -298,34 +298,34 @@ function PlanCard({
       }`}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-bold text-ink">{p.name}</h2>
+        <h2 className="h4">{p.name}</h2>
         {p.public_name && p.public_name !== p.name && (
-          <span className="text-sm text-muted">({p.public_name})</span>
+          <span className="text-[14px] text-muted">({p.public_name})</span>
         )}
-        <span dir="ltr" className="rounded-md bg-hover px-2 py-0.5 font-mono text-xs text-text2">
-          {p.code}
-        </span>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-050 px-2.5 py-0.5 text-xs font-semibold text-primary">
-          <Icon name="percent" size={13} />
+        <span className="chip chip-neutral ltr-num font-mono">{p.code}</span>
+        <span className="chip chip-neutral">
+          <Icon name="percent" size={13.5} />
           {p.formula}
         </span>
         {p.is_archived ? (
-          <Badge tone="muted">ארכיון</Badge>
+          <span className="chip chip-cancelled">ארכיון</span>
         ) : p.is_active ? (
-          <Badge tone="success" dot>
+          <span className="chip chip-paid">
+            <span className="dot" />
             פעילה
-          </Badge>
+          </span>
         ) : (
-          <Badge tone="neutral" dot>
+          <span className="chip chip-neutral">
+            <span className="dot" />
             לא פעילה
-          </Badge>
+          </span>
         )}
-        <Badge tone={p.is_refundable ? "success" : "neutral"}>
+        <span className={`chip ${p.is_refundable ? "chip-paid" : "chip-neutral"}`}>
           {p.is_refundable ? "גמיש" : "ללא החזר"}
-        </Badge>
+        </span>
         {p.is_visible_website && (
-          <span className="text-primary" title="מוצג באתר" aria-label="מוצג באתר">
-            <Icon name="globe" size={16} />
+          <span className="text-primary" title="מוצג באתר">
+            <Icon name="globe" size={17} label="מוצג באתר" />
           </span>
         )}
         <span className="flex-1" />
@@ -369,41 +369,41 @@ function PlanCard({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[14px] text-muted">
         <span className="inline-flex items-center gap-1.5">
-          <Icon name="rooms" size={15} />
+          <Icon name="rooms" size={17} />
           {p.active_assigned_units} חדרים
         </span>
         {p.cancellation_policy_name && (
           <span className="inline-flex items-center gap-1.5">
-            <Icon name="circle-slash" size={15} />
+            <Icon name="circle-slash" size={17} />
             {p.cancellation_policy_name}
           </span>
         )}
         {(p.valid_from || p.valid_until) && (
           <span className="inline-flex items-center gap-1.5">
-            <Icon name="calendar" size={15} />
+            <Icon name="calendar" size={17} />
             בתוקף
             {p.valid_from && (
               <>
                 {" "}
-                מ־<span dir="ltr">{formatFullDate(p.valid_from)}</span>
+                מ־<bdi className="ltr-num">{formatFullDate(p.valid_from)}</bdi>
               </>
             )}
             {p.valid_until && (
               <>
                 {" "}
-                עד <span dir="ltr">{formatFullDate(p.valid_until)}</span>
+                עד <bdi className="ltr-num">{formatFullDate(p.valid_until)}</bdi>
               </>
             )}
           </span>
         )}
-        {p.override_rows > 0 && <Badge tone="brand">{p.override_rows} חריגות תאריך</Badge>}
+        {p.override_rows > 0 && <span className="chip chip-neutral">{p.override_rows} חריגות תאריך</span>}
         {p.incomplete.map((flag) => (
-          <Badge key={flag} tone="warning">
-            <Icon name="warning" size={12} />
+          <span key={flag} className="chip chip-approval">
+            <Icon name="warning" size={13.5} />
             {flag}
-          </Badge>
+          </span>
         ))}
       </div>
     </article>
@@ -422,16 +422,7 @@ function Chip({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={`inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
-        on
-          ? "border-primary bg-primary-050 text-primary"
-          : "border-line bg-surface text-text2 hover:bg-hover"
-      }`}
-    >
+    <button type="button" aria-pressed={on} onClick={onClick} className={`chip clickable${on ? " on" : ""}`}>
       {children}
     </button>
   );
@@ -453,15 +444,12 @@ function IconAction({
   return (
     <button
       type="button"
-      aria-label={label}
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className={`grid h-11 w-11 place-items-center rounded-xl transition-colors disabled:opacity-50 ${
-        danger ? "text-status-danger hover:bg-status-danger-050" : "text-text2 hover:bg-hover"
-      }`}
+      className={`icon-btn ${danger ? "text-status-danger hover:bg-status-danger-050" : ""}`}
     >
-      <Icon name={icon} size={18} />
+      <Icon name={icon} size={20} label={label} />
     </button>
   );
 }
@@ -496,11 +484,9 @@ function TwoClick({
           setArmed(false);
           onConfirm();
         }}
-        className={`inline-flex min-h-11 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors disabled:opacity-50 ${
-          danger ? "bg-status-danger-050 text-status-danger" : "bg-primary-050 text-primary"
-        }`}
+        className={`btn btn-sm ${danger ? "btn-danger" : "btn-secondary"}`}
       >
-        <Icon name={icon} size={15} />
+        <Icon name={icon} size={17} />
         {confirmLabel}
       </button>
     );

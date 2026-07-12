@@ -9,6 +9,7 @@ import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import { statusTintPalette } from "@/lib/colors";
+import { paymentTriplet } from "@/lib/status-colors";
 import {
   createReservationAction,
   searchGuestsAction,
@@ -307,7 +308,7 @@ export function BookingPanel({
       title="הקמת הזמנה חדשה"
       subtitle="אורח · שהות · תמחור · אישור"
       icon="reservations"
-      bodyClassName="bg-[#eef0f5] p-0"
+      bodyClassName="bg-appbg p-0"
       band={
         /* stepper band (reference .stp) — RTL: step 1 rightmost */
         <div className="bw-stp">
@@ -323,7 +324,7 @@ export function BookingPanel({
                 disabled={i > step}
               >
                 <span className="bw-stp-num">
-                  {i < step ? <Icon name="check" size={18} /> : i + 1}
+                  {i < step ? <Icon name="check" size={20} /> : i + 1}
                 </span>
                 <span className="bw-stp-lbl">{label}</span>
               </button>
@@ -333,57 +334,62 @@ export function BookingPanel({
       }
       footer={
         confirmDiscard ? (
-          /* dirty-state discard confirmation (existing inline-confirm pattern) */
-          <div className="flex items-center gap-3">
-            <Icon name="warning" size={17} className="text-status-danger" />
-            <span className="text-sm font-bold text-ink">יש שינויים שלא נשמרו — לסגור בכל זאת?</span>
-            <span className="flex-1" />
-            <button type="button" className="bw-btn bw-btn-o" onClick={() => setConfirmDiscard(false)}>
-              המשך עריכה
-            </button>
-            <button type="button" className="bw-btn bw-btn-danger" onClick={onClose}>
+          /* dirty-state discard confirmation. §7 via .dw-ft (row-reverse):
+             DOM order = visual left→right — the confirming action is FIRST
+             so it hugs the LEFT edge; the warning text sits at the far right. */
+          <>
+            <button type="button" className="btn btn-danger" onClick={onClose}>
               סגור בלי לשמור
             </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <button type="button" className="bw-btn bw-btn-ghost" onClick={requestClose}>
-              ביטול
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirmDiscard(false)}>
+              המשך עריכה
             </button>
             <span className="flex-1" />
-            <span className="bw-ft-step">
-              <Icon name="info" size={15} />
-              שלב {step + 1} מתוך {STEPS.length}
-            </span>
-            {step > 0 && (
-              <button type="button" className="bw-btn bw-btn-o" onClick={() => setStep((s) => s - 1)}>
-                הקודם
-                <Icon name="chevron-right" size={16} />
-              </button>
-            )}
+            <span className="text-sm font-bold text-ink">יש שינויים שלא נשמרו — לסגור בכל זאת?</span>
+            <Icon name="warning" size={17} className="text-status-danger" />
+          </>
+        ) : (
+          /* §7 via .dw-ft (row-reverse): DOM order = visual left→right — the
+             PRIMARY action is FIRST so it hugs the LEFT edge, "ביטול" to its
+             right; the step label is pushed to the far right. */
+          <>
             {step < 3 ? (
               <button
                 type="button"
-                className="bw-btn bw-btn-primary"
+                className="btn btn-primary"
                 disabled={!stepValid}
                 onClick={() => setStep((s) => s + 1)}
               >
-                <Icon name="chevron-left" size={16} />
+                <Icon name="chevron-left" size={20} />
                 הבא
               </button>
             ) : (
               <button
                 type="button"
-                className="bw-btn bw-btn-primary"
+                className="btn btn-primary"
                 disabled={saving || !staysValid || ccState === "invalid"}
                 title={ccState === "invalid" ? "פרטי הכרטיס שהוזנו אינם תקינים" : undefined}
                 onClick={submit}
               >
-                <Icon name="check" size={16} />
+                <Icon name="check" size={20} />
                 {saving ? "יוצר…" : "צור הזמנה"}
               </button>
             )}
-          </div>
+            {step > 0 && (
+              <button type="button" className="btn btn-secondary" onClick={() => setStep((s) => s - 1)}>
+                הקודם
+                <Icon name="chevron-right" size={20} />
+              </button>
+            )}
+            <button type="button" className="btn btn-tertiary" onClick={requestClose}>
+              ביטול
+            </button>
+            <span className="flex-1" />
+            <span className="bw-ft-step">
+              <Icon name="info" size={17} />
+              שלב {step + 1} מתוך {STEPS.length}
+            </span>
+          </>
         )
       }
     >
@@ -392,16 +398,15 @@ export function BookingPanel({
           {/* ---- step 1: guest ---- */}
           {step === 0 && (
             <>
-              <section className="bw-card">
-                <CardTitle icon="search" title="חיפוש אורח" />
+              <BookingCard icon="search" title="חיפוש אורח">
                 <div className="relative">
                   <Icon
                     name="search"
-                    size={18}
+                    size={17}
                     className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-faint"
                   />
                   <input
-                    className="bw-fld bw-search ps-11"
+                    className="field-input ps-11"
                     placeholder="חפש לפי שם, טלפון או אימייל…"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -429,7 +434,7 @@ export function BookingPanel({
                             }}
                           >
                             <span className="font-semibold text-ink">{g.full_name}</span>
-                            <span className="text-xs text-muted" dir="ltr">
+                            <span className="ltr-num text-xs text-muted">
                               {g.phone ?? g.email ?? ""}
                             </span>
                           </button>
@@ -438,31 +443,32 @@ export function BookingPanel({
                     </ul>
                   )}
                 </div>
-                <p className="bw-hint">מצא אורח קיים למילוי אוטומטי, או הזן את הפרטים ידנית למטה.</p>
-              </section>
+                <p className="field-hint mt-2">
+                  מצא אורח קיים למילוי אוטומטי, או הזן את הפרטים ידנית למטה.
+                </p>
+              </BookingCard>
 
-              <section className="bw-card">
-                <CardTitle icon="filter" title="מקור הזמנה" />
-                <div className="bw-fg">
-                  <span className="bw-lbl">
-                    מקור הזמנה <span className="bw-req">*</span>
-                  </span>
-                  <select className="bw-fld" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+              <BookingCard icon="filter" title="מקור הזמנה">
+                <Field label="מקור הזמנה" required>
+                  <select
+                    className="field-input"
+                    value={sourceId}
+                    onChange={(e) => setSourceId(e.target.value)}
+                  >
                     {bookingSources.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.label}
                       </option>
                     ))}
                   </select>
-                </div>
-              </section>
+                </Field>
+              </BookingCard>
 
-              <section className="bw-card">
-                <CardTitle icon="user" title="פרטי אורח" />
+              <BookingCard icon="user" title="פרטי אורח">
                 <div className="bw-grid2">
                   <Field label="שם פרטי" required>
                     <input
-                      className="bw-fld"
+                      className="field-input"
                       placeholder="שם פרטי"
                       value={guest.firstName}
                       onChange={(e) => setGuest({ ...guest, firstName: e.target.value, id: undefined })}
@@ -470,7 +476,7 @@ export function BookingPanel({
                   </Field>
                   <Field label="שם משפחה" required>
                     <input
-                      className="bw-fld"
+                      className="field-input"
                       placeholder="שם משפחה"
                       value={guest.lastName}
                       onChange={(e) => setGuest({ ...guest, lastName: e.target.value, id: undefined })}
@@ -478,7 +484,7 @@ export function BookingPanel({
                   </Field>
                   <Field label="טלפון" required>
                     <input
-                      className="bw-fld"
+                      className="field-input ltr-num"
                       placeholder="050-0000000"
                       dir="ltr"
                       value={guest.phone}
@@ -487,7 +493,7 @@ export function BookingPanel({
                   </Field>
                   <Field label="אימייל">
                     <input
-                      className="bw-fld"
+                      className="field-input"
                       placeholder="email@example.com"
                       dir="ltr"
                       type="email"
@@ -497,7 +503,7 @@ export function BookingPanel({
                   </Field>
                   <Field label="ת.ז / דרכון">
                     <input
-                      className="bw-fld"
+                      className="field-input ltr-num"
                       placeholder="מספר מזהה"
                       dir="ltr"
                       value={guest.idNumber}
@@ -506,7 +512,7 @@ export function BookingPanel({
                   </Field>
                   <Field label="שפה">
                     <select
-                      className="bw-fld"
+                      className="field-input"
                       value={guest.language}
                       onChange={(e) => setGuest({ ...guest, language: e.target.value })}
                     >
@@ -519,20 +525,19 @@ export function BookingPanel({
                   </Field>
                   <Field label="מדינה">
                     <input
-                      className="bw-fld"
+                      className="field-input"
                       value={guest.country}
                       onChange={(e) => setGuest({ ...guest, country: e.target.value })}
                     />
                   </Field>
                 </div>
-              </section>
+              </BookingCard>
             </>
           )}
 
           {/* ---- step 2: stays & rooms ---- */}
           {step === 1 && (
-            <section className="bw-card">
-              <CardTitle icon="rooms" title="שהות וחדרים" />
+            <BookingCard icon="rooms" title="שהות וחדרים">
               <div className="flex flex-col gap-4">
                 {stays.map((s, i) => (
                   <StayEditor
@@ -549,7 +554,7 @@ export function BookingPanel({
                 ))}
                 <button
                   type="button"
-                  className="bw-addroom"
+                  className="btn bw-addroom"
                   onClick={() =>
                     setStays((all) => [
                       ...all,
@@ -565,19 +570,18 @@ export function BookingPanel({
                     ])
                   }
                 >
-                  <Icon name="plus" size={16} />
+                  <Icon name="plus" size={20} />
                   הוסף חדר נוסף
                 </button>
               </div>
-            </section>
+            </BookingCard>
           )}
 
           {/* ---- step 3: pricing & payment (reference
                new-booking-step-3 + booking-window.html) ---- */}
           {step === 2 && (
             <>
-              <section className="bw-card">
-                <CardTitle icon="documents" title="פירוט תמחור" />
+              <BookingCard icon="documents" title="פירוט תמחור">
                 {stays.map((s, i) => {
                   const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
                   const q = quotes[s.key];
@@ -591,7 +595,7 @@ export function BookingPanel({
                         <div className="bw-plr">
                           {ratePlans.length > 0 && (
                             <select
-                              className="ml-2 rounded-lg border border-line px-2 py-1 text-xs font-semibold"
+                              className="field-input w-40"
                               aria-label="תוכנית תעריף"
                               value={s.ratePlanId ?? ""}
                               onChange={(e) =>
@@ -610,13 +614,14 @@ export function BookingPanel({
                               ))}
                             </select>
                           )}
-                          {nights} לילות × ₪
+                          <span className="ltr-num">{nights}</span> לילות × ₪
                           {canPriceOverride ? (
                             /* explicit operator edit = authorized manual override (§13) */
                             <input
                               type="number"
                               min={0}
-                              className="mx-1 w-24 rounded-lg border border-line px-2 py-1 text-center text-xs font-semibold"
+                              aria-label="מחיר ללילה"
+                              className="field-input ltr-num w-24 text-center"
                               value={s.isManualRate ? (s.ratePerNight ?? 0) : autoRate}
                               onChange={(e) =>
                                 setStays((all) =>
@@ -629,13 +634,15 @@ export function BookingPanel({
                               }
                             />
                           ) : (
-                            <b className="mx-1">{(s.isManualRate ? (s.ratePerNight ?? 0) : autoRate).toLocaleString()}</b>
+                            <b className="ltr-num">
+                              {(s.isManualRate ? (s.ratePerNight ?? 0) : autoRate).toLocaleString()}
+                            </b>
                           )}
                           / לילה
                           {s.isManualRate && (
                             <button
                               type="button"
-                              className="mr-2 text-xs font-semibold text-brand underline"
+                              className="text-xs font-semibold text-primary underline"
                               onClick={() =>
                                 setStays((all) =>
                                   all.map((x) =>
@@ -649,42 +656,35 @@ export function BookingPanel({
                           )}
                         </div>
                       </div>
-                      <b dir="ltr">₪{lineTotal.toLocaleString()}</b>
+                      <b className="ltr-num">₪{lineTotal.toLocaleString()}</b>
                     </div>
                   );
                 })}
                 {discount > 0 && (
                   <div className="bw-price-line">
                     <span className="bw-plr">הנחה</span>
-                    <b dir="ltr" style={{ color: "#B4231F" }}>
-                      -₪{discount.toLocaleString()}
-                    </b>
+                    <b className="ltr-num text-status-danger">-₪{discount.toLocaleString()}</b>
                   </div>
                 )}
                 {/* informational only — the TENANT VAT rate (Settings), already included in the total */}
                 <div className="bw-price-line">
-                  <span className="bw-plr" style={{ fontSize: 14 }}>
-                    מע״מ ({formatVatRate(vatRate)}%) — כלול
-                  </span>
-                  <b dir="ltr" style={{ color: "#6B7385" }}>
+                  <span className="bw-plr">מע״מ ({formatVatRate(vatRate)}%) — כלול</span>
+                  <b className="ltr-num text-muted">
                     ₪{includedVatAmount(total, vatRate).toLocaleString()}
                   </b>
                 </div>
                 <div className="bw-price-total">
                   <span>סה״כ לתשלום</span>
-                  <span className="bw-amt" dir="ltr">
-                    ₪{total.toLocaleString()}
-                  </span>
+                  <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
                 </div>
-              </section>
+              </BookingCard>
 
-              <section className="bw-card">
-                <CardTitle icon="finance" title="סטטוס תשלום" />
+              <BookingCard icon="finance" title="סטטוס תשלום">
                 {/* the chips drive REAL fields only: paid amount / draft
                     status — the shown state is always the derived one */}
-                <div className="bw-chips-row">
+                <div className="flex flex-wrap gap-2.5">
                   <PayChip
-                    kind="pc-unpaid"
+                    state="unpaid"
                     label="ממתין לתשלום"
                     on={!asDraft && payState === "unpaid"}
                     onClick={() => {
@@ -693,7 +693,7 @@ export function BookingPanel({
                     }}
                   />
                   <PayChip
-                    kind="pc-partial"
+                    state="partial"
                     label="שולם חלקית"
                     on={!asDraft && payState === "partial"}
                     onClick={() => {
@@ -702,7 +702,7 @@ export function BookingPanel({
                     }}
                   />
                   <PayChip
-                    kind="pc-paid"
+                    state="paid"
                     label="שולם מלא"
                     on={!asDraft && payState === "paid"}
                     onClick={() => {
@@ -711,7 +711,7 @@ export function BookingPanel({
                     }}
                   />
                   <PayChip
-                    kind="pc-pending"
+                    state="pending"
                     label="ממתין לאישור"
                     on={asDraft}
                     onClick={() => setAsDraft(true)}
@@ -720,7 +720,7 @@ export function BookingPanel({
                 <div className="bw-grid3 mt-5">
                   <Field label="אמצעי תשלום">
                     <select
-                      className="bw-fld"
+                      className="field-input"
                       value={method}
                       onChange={(e) => {
                         setMethod(e.target.value);
@@ -741,7 +741,7 @@ export function BookingPanel({
                       ref={paidRef}
                       type="number"
                       min={0}
-                      className="bw-fld"
+                      className="field-input ltr-num"
                       value={paid || ""}
                       placeholder="0"
                       onChange={(e) => setPaid(Math.max(0, Number(e.target.value) || 0))}
@@ -751,7 +751,7 @@ export function BookingPanel({
                     <input
                       type="number"
                       min={0}
-                      className="bw-fld"
+                      className="field-input ltr-num"
                       value={discount || ""}
                       placeholder="0"
                       onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))}
@@ -769,36 +769,37 @@ export function BookingPanel({
                     disabled={method !== "credit_card"}
                   />
                 ) : (
-                  <p className="bw-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
+                  <p className="field-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
                 )}
-              </section>
+              </BookingCard>
             </>
           )}
 
           {/* ---- step 4: summary ---- */}
           {step === 3 && (
-            <section className="bw-card">
-              <CardTitle icon="check" title="סיכום ואישור" />
+            <BookingCard icon="check" title="סיכום ואישור">
               <div className="bw-grid2">
                 <Field label="אורח">
-                  <div className="bw-fld flex items-center font-bold">{guestDisplay}</div>
+                  <div className="field-input bw-ro flex items-center font-bold">{guestDisplay}</div>
                 </Field>
                 <Field label="מקור הזמנה">
-                  <div className="bw-fld flex items-center font-bold">{sourceLabel ?? "—"}</div>
+                  <div className="field-input bw-ro flex items-center font-bold">{sourceLabel ?? "—"}</div>
                 </Field>
                 {workflowStatuses.length > 0 && (
                   <Field label="סטטוס הזמנה">
                     {/* "" = the tenant's default status, applied server-side (§11).
                         A chosen status tints the select with its configured color
-                        family (D77.1) — same language as the calendar pill. */}
+                        family (D77.1) — same language as the calendar pill.
+                        backgroundColor (not the `background` shorthand) keeps the
+                        canonical select chevron image alive. */}
                     <select
-                      className="bw-fld"
+                      className="field-input"
                       style={(() => {
                         if (!workflowStatusId) return undefined;
                         const t = statusTintPalette(
                           workflowStatuses.find((w) => w.id === workflowStatusId)?.color,
                         );
-                        return { background: t.bg, borderColor: t.bd, color: t.tx, fontWeight: 700 };
+                        return { backgroundColor: t.bg, borderColor: t.bd, color: t.tx, fontWeight: 700 };
                       })()}
                       value={workflowStatusId}
                       onChange={(e) => setWorkflowStatusId(e.target.value)}
@@ -819,58 +820,58 @@ export function BookingPanel({
                   const q = quotes[s.key];
                   const lineTotal = s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
                   return (
-                    <div key={s.key} className="bw-price-line" style={{ borderBottom: "none", padding: "11px 13px", background: "#F8F9FC", borderRadius: 11 }}>
+                    <div key={s.key} className="bw-price-line bw-price-flat">
                       <div>
                         <b>חדר {i + 1}</b>
                         <div className="bw-plr">
-                          {formatFullDate(s.checkIn)} – {formatFullDate(s.checkOut)} · {nights} לילות ·{" "}
-                          {s.adults + s.children + s.infants} אורחים
+                          <bdi className="ltr-num">
+                            {formatFullDate(s.checkIn)} – {formatFullDate(s.checkOut)}
+                          </bdi>
+                          · {nights} לילות · {s.adults + s.children + s.infants} אורחים
                         </div>
                       </div>
-                      <b dir="ltr" style={{ color: "var(--color-primary)" }}>
-                        ₪{lineTotal.toLocaleString()}
-                      </b>
+                      <b className="ltr-num text-primary">₪{lineTotal.toLocaleString()}</b>
                     </div>
                   );
                 })}
               </div>
-              <div className="bw-fg mt-4">
-                <span className="bw-lbl">{"שעת צ'ק-אין צפויה"}</span>
-                <input
-                  type="time"
-                  className="bw-fld"
-                  dir="ltr"
-                  value={arrivalTime}
-                  onChange={(e) => setArrivalTime(e.target.value)}
-                />
-              </div>
-              <div className="bw-fg full mt-4">
-                <span className="bw-lbl">הערות להזמנה</span>
-                <textarea
-                  className="bw-fld"
-                  placeholder="בקשות מיוחדות…"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                />
+              <div className="mt-4 flex flex-col gap-4">
+                <Field label="שעת צ'ק-אין צפויה">
+                  <input
+                    type="time"
+                    className="field-input ltr-num"
+                    dir="ltr"
+                    value={arrivalTime}
+                    onChange={(e) => setArrivalTime(e.target.value)}
+                  />
+                </Field>
+                <Field label="הערות להזמנה">
+                  <textarea
+                    className="field-input"
+                    placeholder="בקשות מיוחדות…"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                  />
+                </Field>
               </div>
               <div className="bw-price-total mt-2">
                 <span>סה״כ לתשלום</span>
-                <span className="bw-amt" dir="ltr">
-                  ₪{total.toLocaleString()}
-                </span>
+                <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
               </div>
-            </section>
+            </BookingCard>
           )}
         </div>
 
         {/* ---- summary sidebar (reference .sum) ---- */}
         <aside className="bw-col-side max-lg:hidden">
-          <div className="bw-sum">
-            <div className="bw-sum-h">
-              <Icon name="reservations" size={18} className="text-primary" />
+          <div className="card">
+            <div className="card-hd">
+              <span className="bw-hi">
+                <Icon name="reservations" size={17} />
+              </span>
               סיכום הזמנה
             </div>
-            <div className="bw-sum-b">
+            <div className="card-bd bw-sum-b">
               <div className="bw-sum-guest">
                 <span className="bw-sum-ava">{(guest.firstName || "א").slice(0, 1)}</span>
                 <div className="min-w-0">
@@ -891,19 +892,17 @@ export function BookingPanel({
                           <div className="bw-sum-rt">
                             <span>חדר {i + 1}</span>
                             {lineTotal != null && (
-                              <span className="bw-p" dir="ltr">
-                                ₪{lineTotal.toLocaleString()}
-                              </span>
+                              <span className="bw-p ltr-num">₪{lineTotal.toLocaleString()}</span>
                             )}
                           </div>
                           <div className="bw-sum-rd">
-                            <Icon name="calendar" size={14} />
-                            <span dir="ltr">
+                            <Icon name="calendar" size={13.5} />
+                            <bdi className="ltr-num">
                               {formatFullDate(s.checkIn)} – {formatFullDate(s.checkOut)}
-                            </span>
-                            <Icon name="moon" size={14} />
+                            </bdi>
+                            <Icon name="moon" size={13.5} />
                             <span>{nights} ל׳</span>
-                            <Icon name="users-round" size={14} />
+                            <Icon name="users-round" size={13.5} />
                             <span>{s.adults + s.children + s.infants} אורחים</span>
                           </div>
                         </div>
@@ -914,20 +913,18 @@ export function BookingPanel({
               <div className="bw-sum-sec">
                 <div className="bw-sum-line">
                   <span>לילות סה״כ</span>
-                  <span>{totalNights}</span>
+                  <span className="ltr-num">{totalNights}</span>
                 </div>
                 <div className="bw-sum-line">
                   <span>אורחים</span>
-                  <span>{totalGuests}</span>
+                  <span className="ltr-num">{totalGuests}</span>
                 </div>
               </div>
               <div className="bw-sum-total">
                 <span className="bw-l">סה״כ</span>
-                <span className="bw-v" dir="ltr">
-                  ₪{total.toLocaleString()}
-                </span>
+                <span className="bw-v ltr-num">₪{total.toLocaleString()}</span>
               </div>
-              <div className="bw-sum-pay">
+              <div className="bw-sum-line">
                 <span>סטטוס תשלום</span>
                 <PaymentBadge state={payState} />
               </div>
@@ -939,32 +936,50 @@ export function BookingPanel({
   );
 }
 
-export function CardTitle({
+// A booking section = the canonical card (§6): `.card` shell, `.card-hd`
+// heading (17px/800), `.card-bd` body. Every section of both booking panels
+// goes through this one component — there is no second card anatomy.
+export function BookingCard({
   icon,
   title,
   chip,
+  tone,
+  sectionRef,
+  children,
 }: {
-  icon: Parameters<typeof Icon>[0]["name"];
-  title: string;
-  /** trailing chip pushed to the card-title end (V2 .chg — e.g. "שונה") */
+  icon?: Parameters<typeof Icon>[0]["name"];
+  title?: string;
+  /** trailing chip pushed to the heading's end (e.g. "שונה") */
   chip?: React.ReactNode;
+  /** whole-card state tint, derived from the status tokens */
+  tone?: "danger" | "warn";
+  sectionRef?: React.Ref<HTMLElement>;
+  children: React.ReactNode;
 }) {
   return (
-    <div className="bw-card-h">
-      <span className="bw-hi">
-        <Icon name={icon} size={17} />
-      </span>
-      {title}
-      {chip ? (
-        <>
-          <span className="bw-sp" />
-          {chip}
-        </>
+    <section ref={sectionRef} className={`card${tone ? ` bw-card-${tone}` : ""}`}>
+      {title ? (
+        <div className="card-hd">
+          {icon ? (
+            <span className="bw-hi">
+              <Icon name={icon} size={17} />
+            </span>
+          ) : null}
+          {title}
+          {chip ? (
+            <>
+              <span className="bw-sp" />
+              {chip}
+            </>
+          ) : null}
+        </div>
       ) : null}
-    </div>
+      <div className="card-bd">{children}</div>
+    </section>
   );
 }
 
+// The canonical field (§5): label ABOVE at 12px/700, 44px control.
 export function Field({
   label,
   required,
@@ -973,13 +988,13 @@ export function Field({
 }: {
   label: string;
   required?: boolean;
-  /** span the whole form grid (V2 .fg.full) */
+  /** span the whole form grid */
   full?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <label className={`bw-fg${full ? " full" : ""}`}>
-      <span className="bw-lbl">
+    <label className={`field${full ? " bw-full" : ""}`}>
+      <span className="field-label">
         {label} {required && <span className="bw-req">*</span>}
       </span>
       {children}
@@ -987,44 +1002,54 @@ export function Field({
   );
 }
 
-// Selectable payment-status chip (reference .paychip, step 3).
-function PayChip({
-  kind,
+// Selectable payment-status chip (§3): the canonical `.chip`. Selected wears
+// the §3.1 triplet of the state; unselected is the neutral counting chip with
+// the state's dot. Colours come from paymentTriplet — never re-typed here.
+export function PayChip({
+  state,
   label,
   on,
+  disabled,
+  title,
   onClick,
 }: {
-  kind: "pc-unpaid" | "pc-partial" | "pc-paid" | "pc-pending";
+  state: PaymentState | "pending";
   label: string;
   on: boolean;
-  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  onClick?: () => void;
 }) {
+  const t = paymentTriplet(state);
   return (
     <button
       type="button"
-      className={`bw-paychip ${kind} ${on ? "on" : ""}`}
+      className={`chip ${on ? t.chip : "chip-neutral"} cursor-pointer disabled:cursor-not-allowed disabled:opacity-60`}
       aria-pressed={on}
+      disabled={disabled}
+      title={title}
       onClick={onClick}
     >
-      <span className="bw-d" />
+      <span className="dot" style={on ? undefined : { background: t.dot }} />
       {label}
     </button>
   );
 }
 
-// Payment badge — reference edit-modal chip palette (unpaid red / partial
-// orange / paid green / overpaid teal = fully paid + customer credit, D52 §7).
+// Payment badge — the same §3.1 triplet as the chip above and as the calendar
+// bar (unpaid / partial / paid / overpaid = fully paid + a customer credit).
+const PAYMENT_LABEL: Record<PaymentState, string> = {
+  unpaid: "ממתין לתשלום",
+  partial: "שולם חלקית",
+  paid: "שולם מלא",
+  overpaid: "שולם ביתר",
+};
+
 export function PaymentBadge({ state }: { state: PaymentState }) {
-  const map = {
-    unpaid: { label: "ממתין לתשלום", bg: "#FDECEC", bd: "#F4B9B9", tx: "#B4231F", dot: "#DC2626" },
-    partial: { label: "שולם חלקית", bg: "#FDF2E1", bd: "#EBC078", tx: "#B4670A", dot: "#EA9314" },
-    paid: { label: "שולם מלא", bg: "#E7F6EC", bd: "#AADDB7", tx: "#15803D", dot: "#16A34A" },
-    overpaid: { label: "שולם ביתר", bg: "#DCF1F4", bd: "#8FD3DC", tx: "#0B6E7A", dot: "#0E8A99" },
-  }[state];
   return (
-    <span className="bw-badge" style={{ background: map.bg, borderColor: map.bd, color: map.tx }}>
-      <span className="bw-d" style={{ background: map.dot }} />
-      {map.label}
+    <span className={`chip ${paymentTriplet(state).chip}`}>
+      <span className="dot" />
+      {PAYMENT_LABEL[state]}
     </span>
   );
 }

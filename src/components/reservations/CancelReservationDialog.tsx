@@ -112,25 +112,25 @@ export function CancelReservationDialog({
 
   return (
     <div className="bk-cmp" role="dialog" aria-label="ביטול הזמנה">
-      <header className="bk-cmp-h" style={{ background: "var(--color-status-danger)" }}>
+      <header className="bk-cmp-h danger">
         <button type="button" className="bk-cmp-back" onClick={onClose} aria-label="חזרה להזמנה">
-          <Icon name="chevron-right" size={18} />
+          <Icon name="chevron-right" size={20} />
         </button>
-        <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/15">
-          <Icon name="circle-slash" size={18} />
+        <span className="bk-cmp-icon">
+          <Icon name="circle-slash" size={20} />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-base font-bold">ביטול הזמנה</p>
-          <p className="truncate text-xs text-white/80">
-            #{detail.reservation_number} · {guestName}
+          <p className="h2 truncate">ביטול הזמנה</p>
+          <p className="truncate text-sm font-semibold text-white/80">
+            <bdi className="ltr-num">#{detail.reservation_number}</bdi> · {guestName}
           </p>
         </div>
       </header>
 
       <div className="bk-cmp-body thin-scroll">
         {/* booking facts — what exactly is being cancelled */}
-        <section className="bw-card">
-          <div className="bw-grid2">
+        <section className="card">
+          <div className="card-bd bw-grid2">
             <FactRow label="מס׳ הזמנה" value={`#${detail.reservation_number}`} ltr />
             <FactRow label="אורח" value={guestName} />
             <FactRow
@@ -149,18 +149,17 @@ export function CancelReservationDialog({
             />
             <FactRow label="מקור" value={detail.source_label ?? "הזמנה ישירה"} />
             {detail.ota?.otaReservationCode && (
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-bold text-muted">קוד הזמנה בערוץ</span>
+              <div className="field">
+                <span className="field-label">קוד הזמנה בערוץ</span>
                 <span className="flex items-center gap-2">
-                  <b dir="ltr" className="text-sm text-ink">{detail.ota.otaReservationCode}</b>
+                  <b className="ltr-num text-sm text-ink">{detail.ota.otaReservationCode}</b>
                   <button
                     type="button"
-                    className="bw-btn bw-btn-ghost px-2 py-1"
+                    className="icon-btn"
                     title="העתקת קוד"
-                    aria-label="העתקת קוד ההזמנה"
                     onClick={copyOtaCode}
                   >
-                    <Icon name="copy" size={14} />
+                    <Icon name="copy" size={20} label="העתקת קוד ההזמנה" />
                   </button>
                 </span>
               </div>
@@ -169,8 +168,8 @@ export function CancelReservationDialog({
         </section>
 
         {pendingExternal && (
-          <section className="bw-card" style={{ borderColor: "#F1C21B", background: "#FFF9E8" }}>
-            <p className="text-sm font-bold text-ink">
+          <section className="card bw-card-warn">
+            <p className="card-bd text-sm font-bold text-ink">
               נשלחה בקשת ביטול לערוץ — ההזמנה תבוטל אוטומטית כשהערוץ יאשר. החדרים לא שוחררו עדיין.
             </p>
           </section>
@@ -179,8 +178,8 @@ export function CancelReservationDialog({
         {activeOta ? (
           <>
             {/* honest generic-cancel message (§9) */}
-            <section className="bw-card" style={{ borderColor: "#E8B4B0", background: "#FDF6F5" }}>
-              <p className="text-sm font-bold leading-relaxed text-ink">
+            <section className="card bw-card-danger">
+              <p className="card-bd text-sm font-bold leading-relaxed text-ink">
                 לא ניתן לבטל הזמנת {detail.ota?.otaName === "BookingCom" ? "Booking.com" : "ערוץ"}{" "}
                 באופן כללי דרך מנהל הערוצים.
                 <br />
@@ -191,11 +190,9 @@ export function CancelReservationDialog({
 
             {/* provider actions that ARE genuinely available */}
             {ota?.provider === "booking_com" && (
-              <section className="bw-card">
-                <h4 className="mb-3 text-sm font-extrabold text-ink">
-                  פעולות Booking.com זמינות
-                </h4>
-                <div className="flex flex-col gap-3">
+              <section className="card">
+                <div className="card-hd">פעולות Booking.com זמינות</div>
+                <div className="card-bd flex flex-col gap-3">
                   <ProviderAction
                     title="דיווח על כרטיס לא תקין"
                     description="Booking.com יבקש מהאורח לעדכן פרטי כרטיס. ההזמנה אינה מבוטלת."
@@ -249,49 +246,50 @@ export function CancelReservationDialog({
               </section>
             )}
             {detail.ota && ota?.provider === null && (
-              <section className="bw-card">
-                <p className="text-sm font-semibold text-muted">
+              <section className="card">
+                <p className="card-bd text-sm font-semibold text-muted">
                   לערוץ זה אין פעולות דיווח נתמכות דרך GuestHub.
                 </p>
               </section>
             )}
             {otaError && (
-              <section className="bw-card">
-                <p className="text-sm font-semibold text-status-danger">{otaError}</p>
+              <section className="card">
+                <p className="card-bd text-sm font-semibold text-status-danger">{otaError}</p>
               </section>
             )}
           </>
         ) : (
-          <section className="bw-card">
+          <section className="card card-bd">
             <p className="mb-3 text-sm font-bold leading-relaxed text-ink">
               ההזמנה תבוטל ותוסר מיומן התפוסה, והחדרים ישוחררו למכירה מיידית בכל הערוצים.
               ההזמנה, התשלומים וההיסטוריה יישמרו לצפייה תחת ״בוטלו״. לא יבוצע החזר כספי אוטומטי.
             </p>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-muted">
-                סיבת ביטול <span className="text-status-danger">*</span>
+            <label className="field">
+              <span className="field-label">
+                סיבת ביטול <span className="bw-req">*</span>
               </span>
               <textarea
-                className="bw-fld"
+                className="field-input"
                 rows={3}
                 value={reason}
                 placeholder="למשל: ביטול לבקשת האורח / כפילות / טעות הזנה…"
                 onChange={(e) => setReason(e.target.value)}
               />
             </label>
+            {/* §7 — RTL: the last child sits at the left edge */}
             <div className="mt-4 flex items-center gap-3">
+              <span className="flex-1" />
+              <button type="button" className="btn btn-tertiary" onClick={onClose}>
+                חזרה
+              </button>
               <button
                 type="button"
-                className="bw-btn"
-                style={{ background: "var(--color-status-danger)", color: "#fff" }}
+                className="btn btn-danger"
                 disabled={busy || reason.trim().length === 0}
                 onClick={doLocalCancel}
               >
-                <Icon name="circle-slash" size={15} />
+                <Icon name="circle-slash" size={20} />
                 {busy ? "מבטל…" : "אישור ביטול ההזמנה"}
-              </button>
-              <button type="button" className="bw-btn bw-btn-ghost" onClick={onClose}>
-                חזרה
               </button>
             </div>
           </section>
@@ -303,11 +301,9 @@ export function CancelReservationDialog({
 
 function FactRow({ label, value, ltr }: { label: string; value: string; ltr?: boolean }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-xs font-bold text-muted">{label}</span>
-      <b className="text-sm text-ink" dir={ltr ? "ltr" : undefined} style={ltr ? { textAlign: "right" } : undefined}>
-        {value}
-      </b>
+    <div className="field">
+      <span className="field-label">{label}</span>
+      <b className={`text-sm text-ink${ltr ? " ltr-num text-end" : ""}`}>{value}</b>
     </div>
   );
 }
@@ -337,7 +333,7 @@ function ProviderAction({
           <p className="mt-1 text-xs font-semibold leading-relaxed text-muted">{description}</p>
           {!eligible && blockedReason && (
             <p className="mt-2 flex items-center gap-1 text-xs font-bold text-status-danger">
-              <Icon name="warning" size={13} />
+              <Icon name="warning" size={13.5} />
               {blockedReason}
             </p>
           )}
@@ -345,7 +341,7 @@ function ProviderAction({
         </div>
         <button
           type="button"
-          className="bw-btn bw-btn-o shrink-0"
+          className="btn btn-secondary shrink-0"
           disabled={!eligible || busy}
           onClick={onRun}
         >

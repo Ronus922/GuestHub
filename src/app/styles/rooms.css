@@ -1,10 +1,12 @@
 /* ============================================================
-   Rooms & Areas styles — ported 1:1 from the rendered references
-   ref/html/RoomsAndAreas.html + ref/screens/RoomsAndAreas.png
-   ref/html/WindowNewRoom.html  + ref/screens/WindowAddRoom.png
-   ref/html/WindowNewArea.html  + ref/screens/NewArea.png
-   (D49 visual pass). rm- prefix; colors map to base.css tokens
-   (--brand ≡ --color-primary #2540C8, --line ≡ #E4E8F0 family).
+   Rooms & Areas — SCREEN LAYOUT ONLY.
+   Source of truth: /var/www/guesthub/GUIDELINES.md.
+
+   Every primitive (button, field, chip, card, popover, toast) lives in
+   design-system.css and is CONSUMED here — nothing below re-declares one.
+   What remains is genuinely screen-specific: the wizard steps strip, the board
+   grid/cards, the SEO previews, the numeric stepper and the status popover
+   rows. All colours, radii, shadows and font sizes come from the tokens.
    ============================================================ */
 
 @layer components {
@@ -17,8 +19,8 @@
   justify-content: center;
   gap: 0;
   padding: 14px 20px;
-  background: #fff;
-  border-bottom: 1px solid #e4e8f0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
 }
 .rm-stp {
   display: flex;
@@ -29,18 +31,18 @@
   font-family: inherit;
   cursor: pointer;
   padding: 6px 10px;
-  border-radius: 11px;
+  border-radius: var(--r-md);
 }
 .rm-stp:hover {
-  background: #f5f7fb;
+  background: var(--surface-hover);
 }
 .rm-stp .rm-n {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #e9ecf3;
-  color: #5b6478;
-  font-size: 13px;
+  background: var(--line);
+  color: var(--muted);
+  font-size: 13.5px;
   font-weight: 800;
   display: flex;
   align-items: center;
@@ -50,132 +52,50 @@
 .rm-stp .rm-l {
   font-size: 13.5px;
   font-weight: 700;
-  color: #5b6478;
+  color: var(--muted);
   white-space: nowrap;
 }
 .rm-stp.on .rm-n {
-  background: var(--color-primary);
+  background: var(--brand);
   color: #fff;
 }
 .rm-stp.on .rm-l {
-  color: var(--color-primary);
+  color: var(--brand);
   font-weight: 800;
 }
 .rm-stp.done .rm-n {
-  background: var(--color-primary-100);
-  color: var(--color-primary);
+  background: var(--brand-line);
+  color: var(--brand);
 }
 .rm-stln {
   width: 56px;
   height: 2px;
-  background: #e1e5ee;
-  border-radius: 2px;
+  background: var(--line);
+  border-radius: 999px;
   margin: 0 4px;
   flex: none;
 }
 .rm-stln.done {
-  background: var(--color-primary-100);
+  background: var(--brand-line);
 }
 
-/* ---------- section card ---------- */
-.rm-card {
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03), 0 8px 22px rgba(16, 24, 40, 0.05);
-}
-.rm-ch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 15px 20px;
-  border-bottom: 1px solid #eef0f5;
-  flex-wrap: wrap;
-}
-.rm-ch svg {
-  color: var(--color-primary);
-  flex: none;
-}
-.rm-ct {
-  font-size: 15.5px;
+/* ---------- form layout (the field anatomy itself is .field/.field-input) ---------- */
+.rm-req {
+  color: var(--danger);
   font-weight: 800;
-  color: var(--color-ink);
-}
-.rm-cd {
-  font-size: 12px;
-  color: var(--color-faint);
-  font-weight: 500;
-  margin-inline-start: auto;
-}
-.rm-cb {
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-}
-
-/* ---------- form fields ---------- */
-.rm-fg {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.rm-lbl {
-  font-size: 12px;
-  font-weight: 700;
-  color: #6b7385;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.rm-lbl .rm-req {
-  color: #e5484d;
-  font-weight: 800;
-}
-.rm-hint {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-faint);
 }
 .rm-cnt {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--color-faint);
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
+/* the two states are DERIVED from the status tokens — no new colour (§1) */
 .rm-cnt.warn {
-  color: #b4670a;
+  color: color-mix(in srgb, var(--warn) 62%, var(--ink));
 }
 .rm-cnt.ok {
-  color: #0f6b3c;
-}
-.rm-fld {
-  height: 40px;
-  background: #fff;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 11px;
-  padding: 0 12px;
-  font-family: inherit;
-  font-size: 13.5px;
-  color: var(--color-ink);
-  outline: none;
-  width: 100%;
-}
-.rm-fld:focus {
-  border-color: var(--color-primary);
-}
-.rm-fld::placeholder {
-  color: #a6adc0;
-}
-textarea.rm-fld {
-  padding: 10px 12px;
-  resize: vertical;
-  line-height: 1.5;
-  height: auto;
-}
-select.rm-fld {
-  cursor: pointer;
+  color: color-mix(in srgb, var(--ok) 68%, var(--ink));
 }
 .rm-frow {
   display: grid;
@@ -194,77 +114,53 @@ select.rm-fld {
   }
 }
 
-/* ---------- language chips + room-level link buttons ---------- */
-.rm-lchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 13px;
-  border-radius: 10px;
-  border: 1.5px solid #e4e8f0;
-  background: #fff;
-  color: #4b5266;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
+.rm-fld:focus {
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
 }
-.rm-lchip .rm-cc {
-  font-size: 10px;
+.rm-fld::placeholder {
+  color: var(--faint);
+}
+textarea.rm-fld {
+  height: auto;
+  min-height: 88px;
+  padding: 12px 14px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.rm-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+/* .chip-brand is CANONICAL in design-system.css (§3) — the local copy that
+   used to live here was deleted; never re-declare it per-screen (§0.2). */
+
+/* ---------- option pickers on WHITE card bodies ----------
+   The canonical .chip.clickable RESTS transparent — correct on the board's
+   --bg, invisible on a white .card-bd (amenity / language / area-type pickers,
+   "קבע כראשית"). .rm-opt adds ONLY the resting boundary, from the §1 tokens;
+   the ON state stays the canonical inset brand ring (design-system.css §3).
+   A surface adaptation of the ONE chip anatomy — not a new chip family. If a
+   second screen needs it, promote it to design-system.css. */
+.rm-opt.chip.clickable {
+  background: var(--surface);
+  border-color: var(--line);
+}
+.rm-opt.chip.clickable:hover {
+  background: var(--surface-hover);
+}
+.rm-opt.chip.clickable.on {
+  border-color: transparent;
+}
+
+/* country-code tag inside a language chip / language card */
+.rm-cc {
+  font-size: 12px;
   font-weight: 800;
-  color: var(--color-faint);
+  color: var(--faint);
   letter-spacing: 0.04em;
-}
-.rm-lchip:hover {
-  background: #f5f7fb;
-}
-.rm-lchip.on {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-.rm-lchip.on .rm-cc {
-  color: rgba(255, 255, 255, 0.8);
-}
-.rm-lnk {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--color-primary-050);
-  border: 1.5px solid var(--color-primary-100);
-  color: var(--color-primary-dark);
-  font-family: inherit;
-  font-size: 13.5px;
-  font-weight: 800;
-  cursor: pointer;
-  padding: 0 16px;
-  height: 40px;
-  border-radius: 11px;
-}
-.rm-lnk:hover {
-  background: var(--color-primary-100);
-  border-color: var(--color-primary);
-}
-.rm-lnkd {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: #fdf1f0;
-  border: 1.5px solid #f0c4c1;
-  color: #b4231f;
-  font-family: inherit;
-  font-size: 13.5px;
-  font-weight: 800;
-  cursor: pointer;
-  padding: 0 16px;
-  height: 40px;
-  border-radius: 11px;
-}
-.rm-lnkd:hover {
-  background: #fbe3e1;
-  border-color: #dc2626;
 }
 
 /* ---------- rich-text toolbar over the description ---------- */
@@ -272,76 +168,64 @@ select.rm-fld {
   display: flex;
   align-items: center;
   gap: 2px;
-  border: 1.5px solid #e4e8f0;
+  border: 1.5px solid var(--line);
   border-bottom: none;
-  border-radius: 11px 11px 0 0;
-  background: #fbfcfe;
-  padding: 6px 8px;
-}
-.rm-rtb button {
-  width: 30px;
-  height: 30px;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  color: #5b6478;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.rm-rtb button:hover {
-  background: #eef1f6;
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: var(--field-bg);
+  padding: 4px 8px;
 }
 .rm-rtb .rm-sep {
   width: 1px;
   height: 18px;
-  background: #e4e8f0;
+  background: var(--line);
   margin: 0 5px;
 }
 .rm-rtxt {
-  border-radius: 0 0 11px 11px !important;
+  border-radius: 0 0 var(--r-md) var(--r-md) !important;
 }
 
 /* ---------- numeric stepper (add | value | remove) ---------- */
 .rm-step {
   display: inline-flex;
   align-items: center;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 11px;
+  height: 44px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
 }
 .rm-step button {
-  width: 34px;
-  height: 38px;
+  width: 40px;
+  height: 44px;
   border: none;
   background: transparent;
-  color: #4b5266;
+  color: var(--muted);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
+  font-family: inherit;
 }
 .rm-step button:hover {
-  background: #f5f7fb;
+  background: var(--surface-hover);
 }
 .rm-step .rm-v {
   min-width: 46px;
   text-align: center;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
+  direction: ltr;
   font-variant-numeric: tabular-nums;
-  border-inline: 1.5px solid #eef0f5;
-  height: 38px;
+  border-inline: 1.5px solid var(--line);
+  height: 44px;
   flex: 1;
   background: transparent;
   border-top: none;
   border-bottom: none;
   outline: none;
   font-family: inherit;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .rm-occg {
   display: flex;
@@ -359,19 +243,19 @@ select.rm-fld {
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
 }
 .rm-swt {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.2;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .rm-swd {
-  font-size: 11px;
-  color: var(--color-faint);
-  font-weight: 500;
+  font-size: 12px;
+  color: var(--faint);
+  font-weight: 600;
   margin-top: 1px;
 }
 
@@ -381,40 +265,40 @@ select.rm-fld {
   align-items: center;
   gap: 12px;
   padding: 12px 0;
-  border-bottom: 1px dashed #eef0f5;
+  border-bottom: 1px dashed var(--line);
 }
 .rm-swline:last-of-type {
   border-bottom: none;
 }
 .rm-swic {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 10px;
-  background: #f4f6fb;
-  color: #5b6478;
+  background: var(--field-bg);
+  color: var(--muted);
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
 }
 
-/* ---------- search field ---------- */
+/* ---------- search (COMPOSED: .field-input wrapper + a leading icon) ----------
+   The wrapper WEARS the canonical .field-input in the JSX ("field-input
+   rm-search") — height/border/radius/padding/background are §5's anatomy from
+   design-system.css, declared exactly once. Only what a search box genuinely
+   adds lives here: the flex row for the icon, the :focus-within ring (a div
+   wrapper can never :focus itself) and the unstyled inner input. */
 .rm-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  background: #fff;
-  border: 1.5px solid #e4e8f0;
-  border-radius: 11px;
-  padding: 0 11px;
-  color: var(--color-muted);
 }
 .rm-search:focus-within {
-  border-color: var(--color-primary);
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
 }
-.rm-search svg {
-  color: var(--color-faint);
+.rm-search .ms-icon {
+  color: var(--faint);
   flex: none;
 }
 .rm-search input {
@@ -422,78 +306,37 @@ select.rm-fld {
   background: transparent;
   outline: none;
   font-family: inherit;
-  font-size: 13.5px;
-  color: var(--color-ink);
+  font-size: 15px;
+  color: var(--ink);
   width: 100%;
+  padding: 0;
+}
+/* the :focus-within ring on the wrapper REPLACES base.css's per-input ring —
+   suppressing it here is not an a11y loss, the wrapper ring is the indicator */
+.rm-search input:focus-visible {
+  box-shadow: none;
+}
+.rm-search input::placeholder {
+  color: var(--faint);
 }
 
 /* ---------- amenities ---------- */
 .rm-agrp {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 800;
-  color: var(--color-faint);
+  color: var(--faint);
   letter-spacing: 0.03em;
   margin: 4px 0 -6px;
 }
 .rm-achips {
   display: flex;
-  gap: 7px;
+  gap: 8px;
   flex-wrap: wrap;
-}
-.rm-achip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 13px;
-  border-radius: 999px;
-  border: 1.5px solid #e4e8f0;
-  background: #fff;
-  color: #4b5266;
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.rm-achip svg {
-  color: #8a91a3;
-  flex: none;
-}
-.rm-achip:hover {
-  background: #f5f7fb;
-}
-.rm-achip.on {
-  background: var(--color-primary-050);
-  border-color: var(--color-primary);
-  color: var(--color-primary-dark);
-}
-.rm-achip.on svg {
-  color: var(--color-primary);
 }
 .rm-addrow {
   display: flex;
   gap: 9px;
   align-items: center;
-}
-.rm-addbtn {
-  height: 40px;
-  padding: 0 16px;
-  border: none;
-  border-radius: 11px;
-  background: var(--color-primary-100);
-  color: var(--color-primary-dark);
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  flex: none;
-}
-.rm-addbtn:hover {
-  background: #cfd9f8;
 }
 
 /* ---------- images ---------- */
@@ -508,9 +351,9 @@ select.rm-fld {
   }
 }
 .rm-imgnote {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--color-faint);
+  color: var(--faint);
   text-align: center;
 }
 .rm-imgslot {
@@ -520,39 +363,70 @@ select.rm-fld {
   justify-content: center;
   gap: 6px;
   min-height: 140px;
-  border: 2px dashed #d3dae6;
-  border-radius: 14px;
-  background: #fbfcfe;
-  color: var(--color-faint);
-  font-size: 12.5px;
+  border: 2px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+  color: var(--faint);
+  font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
   padding: 12px;
   font-family: inherit;
 }
 .rm-imgslot:hover:not(:disabled) {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  border-color: var(--brand);
+  color: var(--brand);
 }
 .rm-imgslot:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.rm-imgtile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 12px;
+}
+.rm-imgtile img {
+  height: 128px;
+  width: 100%;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+}
+.rm-imgtiles {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 640px) {
+  .rm-imgtiles {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.rm-imgacts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 
 /* ---------- SEO previews ---------- */
 .rm-pvsite {
-  border: 1.5px solid #e4e8f0;
-  border-radius: 14px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
 }
 .rm-pvsite .rm-im {
   height: 170px;
-  background: #eef1f6;
+  background: var(--field-bg);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #c6cbd6;
+  color: var(--faint);
   overflow: hidden;
 }
 .rm-pvsite .rm-im img {
@@ -561,16 +435,16 @@ select.rm-fld {
   object-fit: cover;
 }
 .rm-pvsite .rm-bd {
-  padding: 13px 16px;
+  padding: 14px 16px;
 }
 .rm-pvsite .rm-nm {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .rm-pvsite .rm-ds {
-  font-size: 12.5px;
-  color: var(--color-muted);
+  font-size: 14px;
+  color: var(--muted);
   font-weight: 500;
   margin-top: 3px;
   min-height: 17px;
@@ -582,36 +456,36 @@ select.rm-fld {
   margin-top: 9px;
   font-size: 12px;
   font-weight: 700;
-  color: #4b5266;
+  color: var(--muted);
 }
-.rm-pvsite .rm-mt svg {
-  color: #8a91a3;
+.rm-pvsite .rm-mt .ms-icon {
+  color: var(--faint);
 }
 .rm-pvg {
-  border: 1.5px solid #e4e8f0;
-  border-radius: 14px;
-  padding: 13px 16px;
-  background: #fff;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  background: var(--surface);
 }
 .rm-pvg .rm-u {
   font-size: 12px;
-  color: #0e7a3d;
+  color: var(--ok);
   font-weight: 600;
   direction: ltr;
-  text-align: right;
+  text-align: end;
 }
 .rm-pvg .rm-t {
-  font-size: 16px;
-  color: #1a0dab;
+  font-size: 17px;
+  color: var(--brand);
   font-weight: 600;
   margin-top: 2px;
 }
 .rm-pvg .rm-d {
-  font-size: 12.5px;
-  color: #4d5156;
+  font-size: 13.5px;
+  color: var(--muted);
   font-weight: 500;
   margin-top: 2px;
-  line-height: 1.45;
+  line-height: 1.6;
 }
 
 /* ---------- language completion cards ---------- */
@@ -626,46 +500,43 @@ select.rm-fld {
   }
 }
 .rm-lst {
-  border: 1.5px solid #e4e8f0;
-  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
   padding: 11px 13px;
   text-align: center;
   cursor: pointer;
-  background: #fff;
+  background: var(--surface);
   font-family: inherit;
 }
 .rm-lst:hover {
-  border-color: #c9d2e4;
+  border-color: var(--brand-line);
 }
 .rm-lst.on {
-  border-color: var(--color-primary);
-  background: var(--color-primary-050);
+  border-color: var(--brand);
+  background: var(--brand-soft);
 }
 .rm-lst .rm-cc {
-  font-size: 10px;
-  font-weight: 800;
-  color: var(--color-faint);
   letter-spacing: 0.06em;
 }
 .rm-lst .rm-nm {
   font-size: 14px;
   font-weight: 800;
   margin-top: 2px;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .rm-lst .rm-st {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   margin-top: 3px;
 }
 .rm-lst .rm-st.ok {
-  color: #0f6b3c;
+  color: color-mix(in srgb, var(--ok) 68%, var(--ink));
 }
 .rm-lst .rm-st.mid {
-  color: #b4670a;
+  color: color-mix(in srgb, var(--warn) 62%, var(--ink));
 }
 .rm-lst .rm-st.no {
-  color: var(--color-faint);
+  color: var(--faint);
 }
 
 /* ---------- validation summary items ---------- */
@@ -679,88 +550,30 @@ select.rm-fld {
   align-items: center;
   gap: 9px;
   padding: 9px 13px;
-  border-radius: 11px;
-  font-size: 13px;
+  border-radius: var(--r-md);
+  font-size: 13.5px;
   font-weight: 700;
 }
 .rm-vitem.w {
-  background: #fdf6e4;
-  color: #8a5207;
+  background: color-mix(in srgb, var(--warn) 14%, #fff);
+  color: color-mix(in srgb, var(--warn) 62%, var(--ink));
 }
 .rm-vitem.ok {
-  background: #e9f7ee;
-  color: #0f6b3c;
+  background: color-mix(in srgb, var(--ok) 12%, #fff);
+  color: color-mix(in srgb, var(--ok) 68%, var(--ink));
 }
 
-/* ---------- panel footer buttons ---------- */
+/* ---------- panel footer note ---------- */
 .rm-ftnote {
   font-size: 12px;
-  color: var(--color-faint);
+  color: var(--faint);
   font-weight: 600;
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.rm-btn {
-  height: 44px;
-  padding: 0 22px;
-  border: none;
-  border-radius: 12px;
-  background: var(--color-primary);
-  color: #fff;
-  font-family: inherit;
-  font-size: 14.5px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(37, 64, 200, 0.22);
-}
-.rm-btn:hover {
-  background: var(--color-primary-dark);
-}
-.rm-btn.dis,
-.rm-btn:disabled {
-  opacity: 0.45;
-  pointer-events: none;
-}
-.rm-btnsec {
-  height: 44px;
-  padding: 0 18px;
-  border-radius: 12px;
-  background: #fff;
-  color: #2c3446;
-  border: 1.5px solid #e4e8f0;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
-}
-.rm-btnsec:hover {
-  background: #f5f7fb;
-}
-.rm-btng {
-  height: 44px;
-  padding: 0 18px;
-  border-radius: 12px;
-  background: transparent;
-  color: #4b5266;
-  border: none;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.rm-btng:hover {
-  background: #f2f4f8;
-}
 
-/* ---------- area window: two columns + type chips + preview ---------- */
+/* ---------- area window: two columns + preview ---------- */
 .rm-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 296px;
@@ -790,44 +603,13 @@ select.rm-fld {
 }
 .rm-tchips {
   display: flex;
-  gap: 7px;
+  gap: 8px;
   flex-wrap: wrap;
 }
-.rm-tchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 13px;
-  border-radius: 10px;
-  border: 1.5px solid #e4e8f0;
-  background: #fff;
-  color: #4b5266;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.rm-tchip svg {
-  color: #8a91a3;
-  flex: none;
-}
-.rm-tchip:hover {
-  background: #f5f7fb;
-}
-.rm-tchip.on {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-.rm-tchip.on svg {
-  color: #fff;
-}
 .rm-pvnote {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--color-faint);
+  color: var(--faint);
   padding: 0 4px;
 }
 .rm-chklist {
@@ -840,18 +622,18 @@ select.rm-fld {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 600;
-  color: #4b5266;
+  color: var(--muted);
 }
-.rm-chki svg {
+.rm-chki .ms-icon {
   flex: none;
 }
-.rm-chki.ok svg {
-  color: #16a34a;
+.rm-chki.ok .ms-icon {
+  color: var(--ok);
 }
-.rm-chki.no svg {
-  color: #c9cfdc;
+.rm-chki.no .ms-icon {
+  color: var(--faint);
 }
 
 /* ---------- board: header + quick filters ---------- */
@@ -863,69 +645,11 @@ select.rm-fld {
   padding: 20px 26px 0;
   flex-wrap: wrap;
 }
-.rm-hd-t {
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.4px;
-  color: var(--color-ink);
-}
-.rm-hd-count {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--color-primary);
-  background: var(--color-primary-050);
-  padding: 4px 11px;
-  border-radius: 9px;
-  white-space: nowrap;
-}
 .rm-hd-sp {
   flex: 1;
 }
 .rm-hd .rm-search {
   width: 280px;
-  height: 42px;
-  border-radius: 12px;
-  padding: 0 12px;
-}
-.rm-btn-primary {
-  height: 42px;
-  padding: 0 18px;
-  border: none;
-  border-radius: 12px;
-  background: var(--color-primary);
-  color: #fff;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(37, 64, 200, 0.22);
-}
-.rm-btn-primary:hover {
-  background: var(--color-primary-dark);
-}
-.rm-btn-secondary {
-  height: 42px;
-  padding: 0 18px;
-  border: 1.5px solid var(--color-primary-100);
-  border-radius: 12px;
-  background: #fff;
-  color: var(--color-primary);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  cursor: pointer;
-}
-.rm-btn-secondary:hover {
-  background: var(--color-primary-050);
-  border-color: var(--color-primary);
 }
 .rm-quick {
   flex: none;
@@ -936,53 +660,16 @@ select.rm-fld {
   padding: 16px 26px 0;
 }
 .rm-quick-l {
-  font-size: 12.5px;
-  color: var(--color-muted);
+  font-size: 12px;
+  color: var(--muted);
   font-weight: 700;
   margin-inline-end: 2px;
 }
 .rm-vsep {
   width: 1px;
   height: 24px;
-  background: #e4e8f0;
+  background: var(--line);
   margin: 0 8px;
-}
-.rm-qchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 14px;
-  border-radius: 10px;
-  border: 1.5px solid #e4e8f0;
-  background: #fff;
-  color: #4b5266;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.rm-qchip:hover {
-  background: #f5f7fb;
-}
-.rm-qchip.on {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: #fff;
-}
-.rm-qchip svg {
-  color: #8a91a3;
-  flex: none;
-}
-.rm-qchip.on svg {
-  color: #fff;
-}
-.rm-qchip .rm-d {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: none;
 }
 
 /* ---------- board: sections + cards ---------- */
@@ -996,50 +683,48 @@ select.rm-fld {
   gap: 9px;
   padding: 18px 2px 10px;
 }
-.rm-sech svg {
-  color: var(--color-faint);
+.rm-sech .ms-icon {
+  color: var(--faint);
   flex: none;
 }
 .rm-sech .rm-t {
   font-size: 15px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .rm-sech .rm-c {
   font-size: 12px;
   font-weight: 700;
-  color: var(--color-faint);
+  color: var(--faint);
 }
 .rm-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(276px, 1fr));
   gap: 12px;
 }
 .rm-empty {
   padding: 40px;
   text-align: center;
-  color: var(--color-faint);
+  color: var(--faint);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 15px;
 }
+/* board card (COMPOSED: the JSX wears "card rm-bcard") — background/border/
+   radius/shadow/overflow are §6's .card from design-system.css; only the
+   button reset, the reference padding and the hover accent live here. */
 .rm-bcard {
   position: relative;
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 14px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
-  padding: 13px 18px 12px 14px;
+  padding: 14px 16px;
+  padding-inline-start: 20px;
   cursor: pointer;
-  overflow: hidden;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition: border-color 0.12s;
   text-align: start;
   font-family: inherit;
   display: block;
   width: 100%;
 }
 .rm-bcard:hover {
-  border-color: #b9c4ea;
-  box-shadow: 0 6px 18px rgba(16, 24, 40, 0.08);
+  border-color: var(--brand);
 }
 .rm-strip {
   position: absolute;
@@ -1057,56 +742,29 @@ select.rm-fld {
   font-size: 19px;
   font-weight: 800;
   letter-spacing: -0.2px;
-  line-height: 1.1;
-  color: var(--color-ink);
+  line-height: 1.15;
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rm-kind {
-  font-size: 10px;
-  font-weight: 800;
-  padding: 2.5px 8px;
-  border-radius: 7px;
-  letter-spacing: 0.02em;
-  flex: none;
-}
-.rm-kind.room {
-  background: var(--color-primary-050);
-  color: var(--color-primary);
-}
-.rm-kind.area {
-  background: #f2ecfd;
-  color: #6b27d6;
-}
 .rm-csp {
   flex: 1;
-}
-.rm-stbadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border-radius: 8px;
-  font-size: 11.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  flex: none;
 }
 .rm-cr2 {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
-  font-size: 12.5px;
+  margin-top: 8px;
+  font-size: 13.5px;
   font-weight: 700;
-  color: #4b5266;
+  color: var(--muted);
 }
 .rm-cr2 .rm-cap {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-faint);
+  color: var(--faint);
   font-weight: 700;
   font-size: 12px;
 }
@@ -1114,7 +772,7 @@ select.rm-fld {
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #c9cfdc;
+  background: var(--faint);
   flex: none;
 }
 .rm-cr3 {
@@ -1122,68 +780,40 @@ select.rm-fld {
   align-items: center;
   gap: 6px;
   margin-top: 7px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--color-faint);
+  color: var(--faint);
   min-height: 16px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.rm-cr3 svg {
-  color: #b0b6c6;
+.rm-cr3 .ms-icon {
+  color: var(--faint);
   flex: none;
 }
 
-/* ---------- board: status popover ---------- */
+/* ---------- board: status popover (shell = the canonical .popover) ---------- */
 .rm-pov {
   position: fixed;
   inset: 0;
   z-index: 55;
 }
-.rm-pop {
-  position: fixed;
-  width: 264px;
-  background: #fff;
-  border: 1px solid #e4e8f0;
-  border-radius: 16px;
-  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.26);
-  z-index: 60;
-  direction: rtl;
-  overflow: hidden;
-}
 .rm-pop-h {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 13px 16px 11px;
-  border-bottom: 1px solid #eef0f5;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
   font-size: 13.5px;
   font-weight: 800;
-  color: var(--color-ink);
+  color: var(--ink);
 }
 .rm-pop-h .rm-sub {
-  font-size: 11px;
-  color: var(--color-faint);
+  font-size: 12px;
+  color: var(--faint);
   font-weight: 600;
   margin-top: 1px;
-}
-.rm-pop-x {
-  margin-inline-start: auto;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: var(--color-faint);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.rm-pop-x:hover {
-  background: #f2f4f8;
-  color: var(--color-ink);
 }
 .rm-pop-b {
   padding: 8px;
@@ -1193,43 +823,44 @@ select.rm-fld {
   align-items: center;
   gap: 9px;
   width: 100%;
-  padding: 8px 10px;
+  height: 36px;
+  padding: 0 10px;
   border: none;
   background: transparent;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
-  color: #2c3446;
+  color: var(--ink);
   cursor: pointer;
-  text-align: right;
+  text-align: start;
 }
 .rm-stopt:hover:not(:disabled) {
-  background: #f5f7fb;
+  background: var(--surface-hover);
 }
 .rm-stopt.cur {
-  background: var(--color-primary-050);
+  background: var(--brand-soft);
 }
 .rm-stopt:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.rm-stopt .rm-d {
-  width: 9px;
-  height: 9px;
+.rm-stopt .dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex: none;
 }
 .rm-stopt .rm-chk {
   margin-inline-start: auto;
-  color: var(--color-primary);
+  color: var(--brand);
   opacity: 0;
 }
 .rm-stopt.cur .rm-chk {
   opacity: 1;
 }
 .rm-pop-edit {
-  border-top: 1px solid #eef0f5;
+  border-top: 1px solid var(--line);
   margin-top: 6px;
   padding-top: 6px;
 }

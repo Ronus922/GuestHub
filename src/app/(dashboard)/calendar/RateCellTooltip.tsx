@@ -19,7 +19,10 @@ export type CellTipTarget = {
   anchor: { x: number; top: number; bottom: number };
 };
 
-const TIP_W = 252;
+// §8: the ONE canonical popover width (.popover in design-system.css). The
+// clamp math below derives from this constant, so it MUST mirror the CSS.
+const TIP_W = 316;
+const MARGIN = 12; // §8 viewport margin
 const DASH = "—";
 
 export function RateCellTooltip({
@@ -44,12 +47,15 @@ export function RateCellTooltip({
     const h = ref.current.offsetHeight;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const left = Math.min(Math.max(target.anchor.x - TIP_W / 2, 8), vw - TIP_W - 8);
+    const left = Math.min(
+      Math.max(target.anchor.x - TIP_W / 2, MARGIN),
+      vw - TIP_W - MARGIN,
+    );
     let place: "above" | "below" = "above";
     let top = target.anchor.top - h - 10;
-    if (top < 8) {
+    if (top < MARGIN) {
       place = "below";
-      top = Math.min(target.anchor.bottom + 10, vh - h - 8);
+      top = Math.min(target.anchor.bottom + 10, vh - h - MARGIN);
     }
     setPos({ top, left, place });
   }, [target]);
@@ -68,7 +74,7 @@ export function RateCellTooltip({
   return (
     <div
       ref={ref}
-      className={`cb-rtip ${closed ? "cl-card" : ""}`}
+      className={`popover cb-rtip ${closed ? "cl-card" : ""}`}
       role="tooltip"
       aria-label={`תעריף · חדר ${room.room_number} · ${formatFullDate(date)}`}
       data-place={pos?.place ?? "above"}
@@ -90,9 +96,7 @@ export function RateCellTooltip({
       <div className="cb-rtip-b">
         <div className="cb-rtip-row">
           <span className="cb-rtip-k">מחיר</span>
-          <span className="cb-rtip-v" dir="ltr">
-            ₪{Math.round(price).toLocaleString()}
-          </span>
+          <span className="cb-rtip-v ltr-num">₪{Math.round(price).toLocaleString()}</span>
         </div>
         <div className="cb-rtip-row">
           <span className="cb-rtip-k">מינימום לילות</span>
@@ -113,7 +117,7 @@ export function RateCellTooltip({
       </div>
 
       <div className={`cb-rtip-f ${closed ? "cl" : "op"}`}>
-        <Icon name={closed ? "circle-slash" : "check"} size={13} />
+        <Icon name={closed ? "circle-slash" : "check"} size={13.5} />
         {closed ? "סגור למכירה" : "פתוח למכירה"}
       </div>
     </div>
