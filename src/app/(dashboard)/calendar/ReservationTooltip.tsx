@@ -8,7 +8,12 @@ import { statusTintPalette } from "@/lib/colors";
 import { PAY_STYLE } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
-// Reservation HOVER tooltip (reference rooms-calendar .pop / Tooltip.png) —
+// Reservation HOVER tooltip — the invitation card of
+// ref/screens/InvitationCard.png (D88): brand-blue header, avatar + guest name +
+// room/type/floor sub-line, payment chip on the far side, hairline divider, one
+// icon+text row per fact, blue action line at the foot. D87 had replaced it with
+// a white header taken from a different reference bundle.
+//
 // INFORMATIONAL ONLY and NON-INTERACTIVE (D41/D44): `pointer-events: none` (see
 // .cb-pop) means it can NEVER capture pointerdown/up/click/drag, never become a
 // drop target, and never sits "on top of" the pill for input — so it can never
@@ -22,7 +27,7 @@ export type TooltipTarget = {
   anchor: { x: number; top: number; bottom: number };
 };
 
-const POP_W = 316;
+const POP_W = 366; // InvitationCard.png, measured on the reference render
 const GAP = 10; // px gap between the pill edge and the tooltip (§1: 8–12px)
 
 function hebDayMonth(d: string): string {
@@ -77,9 +82,9 @@ export function ReservationTooltip({
     .slice(0, 2)
     .map((w) => w[0] ?? "")
     .join("");
-  // draft (pending-approval) shows its status badge, like Tooltip.png; otherwise
-  // the payment state. The header is now WHITE (GuesthubCalandrUpdate.html), so
-  // the chip carries its own tint — a white chip would vanish against it.
+  // draft (pending-approval) shows its status badge; otherwise the payment state.
+  // The chip carries its own tint either way — payment state and reservation
+  // status are two axes and neither may repaint the other.
   const PAY_LABEL: Record<CalendarStay["payment"], string> = {
     paid: "שולם מלא",
     overpaid: "שולם ביתר",
@@ -93,11 +98,8 @@ export function ReservationTooltip({
   // canonical balance (D52 §7): NOT floored — a credit is shown as a credit,
   // never as a zero balance. Shared formatter, one semantics everywhere.
   const bal = formatBalance(stay.total_price, stay.paid_amount);
-  const sub = [
-    `חדר ${room.room_number}`,
-    room.room_type_name,
-    room.floor ? `קומה ${room.floor}` : null,
-  ]
+  // sub-line: the room number bold, type and floor muted beside it (reference)
+  const subRest = [room.room_type_name, room.floor ? `קומה ${room.floor}` : null]
     .filter(Boolean)
     .join(" · ");
 
@@ -121,13 +123,17 @@ export function ReservationTooltip({
         <div className="min-w-0">
           <p className="cb-pop-nm">
             {stay.is_vip && <Icon name="star" size={13} className="cb-vip" />}
-            <span className="truncate">{stay.guest_name}</span>
+            {/* a Latin guest name keeps its own direction inside the RTL card */}
+            <bdi className="truncate">{stay.guest_name}</bdi>
           </p>
-          <p className="cb-pop-sub">{sub}</p>
+          <p className="cb-pop-sub">
+            חדר <b>{room.room_number}</b>
+            {subRest && ` · ${subRest}`}
+          </p>
         </div>
         <span className="cb-pbadge" style={{ color: badge.tx, background: badge.bg }}>
-          <span className="cb-d" style={{ background: badge.tx }} />
           {badge.label}
+          <span className="cb-d" style={{ background: badge.tx }} />
         </span>
       </div>
 
@@ -148,7 +154,10 @@ export function ReservationTooltip({
         <p className="cb-pl">
           <Icon name="calendar" size={17} className="cb-pli" />
           <span>
-            {hebDayMonth(stay.check_in)} – {hebDayMonth(stay.check_out)} {stay.check_out.slice(0, 4)}
+            <b>
+              {hebDayMonth(stay.check_in)} – {hebDayMonth(stay.check_out)}
+            </b>{" "}
+            {stay.check_out.slice(0, 4)}
           </span>
         </p>
         <p className="cb-pl">
@@ -181,7 +190,12 @@ export function ReservationTooltip({
         {stay.source_label && (
           <p className="cb-pl">
             <Icon name="channels" size={17} className="cb-pli" />
-            <span>מקור: {stay.source_label}</span>
+            <span>
+              מקור:{" "}
+              <b>
+                <bdi>{stay.source_label}</bdi>
+              </b>
+            </span>
           </p>
         )}
       </div>

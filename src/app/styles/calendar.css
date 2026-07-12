@@ -300,12 +300,46 @@
   cursor: ew-resize;
 }
 
+/* ---------- month separator — ONE line, one implementation ----------
+   A month boundary is drawn ONCE per boundary, by a positioned line over the
+   canonical column edge, in the header block and in the body block (two nodes,
+   same class, same geometry). It used to be a `border-inline-start` on the month
+   segment AND on the day cell AND on the body cell — three boxes that size
+   themselves differently: the month band takes a PERCENTAGE of the strip, the
+   cells are `flex: 1 1 0` whose border sits OUTSIDE the zero basis. So the border
+   made the month-start column 3px wider than every other column and left the
+   header line ~3px off the body line (the visible jog at the day header). The
+   line now hangs off the same fraction the cells divide by, so it cannot drift,
+   double up or thicken. `--cb-sep` = boundary day index / total days. */
+.cb-msep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: calc(var(--cb-room-col) + (100% - var(--cb-room-col)) * var(--cb-sep));
+  width: 3px;
+  background: #b9c2d8;
+  pointer-events: none;
+}
+
 /* ---------- sticky header (month row + day row) ---------- */
 .cb-chead {
   position: sticky;
   top: 0;
   z-index: 6;
   background: #fff;
+}
+/* above the header cells, BELOW the sticky room corner (z 7), which must still
+   cover the line when the board is scrolled sideways */
+.cb-chead .cb-msep {
+  z-index: 5;
+}
+/* the body block: above the row cells, below the sticky room labels (z 3) and
+   below the pills (z 2) — the line runs under a reservation, never over it */
+.cb-cbody {
+  position: relative;
+}
+.cb-cbody .cb-msep {
+  z-index: 1;
 }
 .cb-hrow {
   display: flex;
@@ -333,14 +367,10 @@
   height: var(--cb-month-h);
   background: #fbfcfe;
   border-bottom: 1px solid #eef0f5;
-  border-inline-start: 3px solid #b9c2d8;
   display: flex;
   align-items: center;
   overflow: hidden;
   flex: none;
-}
-.cb-mseg:first-child {
-  border-inline-start: none;
 }
 .cb-mseg .cb-min {
   font-size: 17px;
@@ -400,9 +430,6 @@
 }
 .cb-dcell.we .cb-dw {
   color: #b4670a;
-}
-.cb-dcell.ms {
-  border-inline-start: 3px solid #b9c2d8;
 }
 .cb-dcell .cb-dw {
   font-size: 16px;
@@ -516,9 +543,6 @@
 }
 .cb-rcell.td {
   background: #eef1fd;
-}
-.cb-rcell.ms {
-  border-inline-start: 3px solid #b9c2d8;
 }
 .cb-rcell.blocked {
   background-image: repeating-linear-gradient(
@@ -827,17 +851,21 @@
   white-space: nowrap;
 }
 
-/* ---------- reservation hover tooltip ----------
-   Light card, per GuesthubCalandrUpdate.html: white header separated by a hair
-   line (not the D77.2 dark gradient), a round brand-050 avatar, faint sub-text.
-   The payment badge keeps its own tinted background — payment and reservation
+/* ---------- reservation hover tooltip (invitation card) ----------
+   ref/screens/InvitationCard.png is the source of truth (D88), measured on the
+   reference render: a 366px card, r18, a brand-blue header band carrying a
+   translucent avatar square, the payment chip on the far side, a hairline
+   divider, icon rows on a 33px rhythm, and a blue action line. D87 had replaced
+   it with a white header taken from GuesthubCalandrUpdate.html — the owner's
+   approved card is this one.
+   The payment chip keeps its own tint (PAY_STYLE): payment state and reservation
    status stay two separate axes and are never merged. */
 .cb-pop {
   position: fixed;
-  width: 316px;
+  width: 366px;
   background: #fff;
   border: 1px solid #e4e8f0;
-  border-radius: 16px;
+  border-radius: 18px;
   box-shadow: 0 24px 60px rgba(16, 24, 40, 0.26);
   z-index: 60;
   direction: rtl;
@@ -854,9 +882,10 @@
     transform: translateY(4px);
   }
 }
-/* anchor caret: a rotated square on the edge facing the pill. The card is white
-   on both edges now, so the caret is white either way; the hairline border is
-   carried on the two outward faces so it reads as part of the card. */
+/* anchor caret: a rotated square on the edge facing the pill. It wears the color
+   of the face it grows out of — the white foot when the card sits above the
+   pill, the blue header when it flips below — so it always reads as part of the
+   card. */
 .cb-pop::after {
   content: "";
   position: absolute;
@@ -873,51 +902,58 @@
 }
 .cb-pop[data-place="below"]::after {
   top: -6px;
-  border-inline-start: 1px solid #e4e8f0;
-  border-top: 1px solid #e4e8f0;
+  background: var(--color-primary);
 }
 .cb-pop-h {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid #eef0f5;
+  gap: 12px;
+  padding: 15px 16px;
+  background: var(--color-primary);
 }
 .cb-pav {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
   font-weight: 800;
-  font-size: 13.5px;
+  font-size: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  background: var(--color-primary-050);
-  color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
 .cb-pop-nm {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 800;
-  line-height: 1.15;
+  line-height: 1.2;
   display: flex;
   align-items: center;
   gap: 5px;
-  color: var(--color-ink);
+  color: #fff;
 }
 .cb-pop-sub {
-  font-size: 12px;
-  color: var(--color-faint);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
   font-weight: 600;
-  margin-top: 1px;
+  line-height: 1.35;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-pop-sub b {
+  color: #fff;
+  font-weight: 800;
 }
 .cb-pbadge {
   margin-inline-start: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 7px;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 999px;
   font-size: 12.5px;
   font-weight: 700;
   white-space: nowrap;
@@ -926,36 +962,46 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  flex: none;
 }
 .cb-pop-b {
-  padding: 11px 16px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 13px;
 }
 .cb-pl {
   display: flex;
   align-items: center;
-  gap: 9px;
-  font-size: 13px;
+  gap: 10px;
+  font-size: 14px;
   font-weight: 600;
-  color: #2c3446;
+  line-height: 1.4;
+  color: var(--color-muted);
 }
+.cb-pl > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the icon comes first in the DOM = the far (right) edge in RTL, text beside it */
 .cb-pl .cb-pli {
-  color: #8a91a3;
+  color: var(--color-faint);
   flex: none;
 }
 .cb-pl b {
+  color: var(--color-ink);
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
 /* D44: footer edit button removed — the tooltip is informational only, so the
    whole card is pointer-events:none. Editing happens by clicking the pill.
    InvitationCard.png: the hint reads as a blue action line. */
 .cb-pop-hint {
-  padding: 10px 16px 13px;
+  padding: 13px 16px 15px;
   border-top: 1px solid #eef0f5;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--color-primary);
   text-align: center;
 }
