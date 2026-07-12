@@ -1,14 +1,22 @@
 /* ============================================================
-   GuestHub · /reservations + /guests list shell
+   GuestHub · list shells
    GUIDELINES.md is the ONLY source of truth for every value below.
-   The screen consumes the canonical primitives from design-system.css
-   (.h1 .t-secondary .btn .chip .field .card .empty-state .ltr-num); what lives
-   here is ONLY what the primitives cannot express: the list layout, the table
-   grid and the cell typography.
-   Prefix: rl-
+
+   Two screens live here:
+   · rl- — the /guests list shell (grid table, toolbar search)
+   · rv- — the redesigned /reservations screen, 1:1 to the RENDER of
+     ref/html/Orders.html: header row (title+count / search), filters card,
+     one merged tabs+quick-filters bar, semantic <table> with sticky head and
+     sortable columns, pinned footer with count + pagination.
+   Both consume the canonical primitives from design-system.css
+   (.h1 .t-secondary .btn .chip .field .card .empty-state .ltr-num); what
+   lives here is ONLY what the primitives cannot express.
    ============================================================ */
 
 @layer components {
+  /* ============================================================
+     rl- · /guests shell
+     ============================================================ */
   .rl-app {
     min-height: 100%;
     display: flex;
@@ -18,7 +26,6 @@
     background: var(--bg);
   }
 
-  /* ---------- header (.h1 + .t-secondary come from design-system.css) ---------- */
   .rl-hd {
     display: flex;
     align-items: flex-end;
@@ -29,7 +36,6 @@
     padding-bottom: 6px;
   }
 
-  /* ---------- toolbar: tabs (right) + search (left) ---------- */
   .rl-toolbar {
     display: flex;
     align-items: center;
@@ -38,20 +44,6 @@
   }
   .rl-sp {
     flex: 1;
-  }
-  .rl-tabs {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background: #fff;
-    border: 1.5px solid var(--line);
-    border-radius: var(--r-lg);
-    padding: 5px;
-  }
-  /* a tab IS a button (§4): .btn + .btn-primary / .btn-tertiary. Only the
-     tighter padding of a segmented control lives here. */
-  .rl-tab {
-    padding: 0 15px;
   }
 
   /* the search box wears .field-input (§5); the wrapper only lays the icon out */
@@ -85,44 +77,7 @@
     font-weight: 500;
   }
 
-  /* ---------- filters card (.card + .card-bd) ---------- */
-  .rl-filters {
-    margin-bottom: 16px;
-  }
-  .rl-fbar {
-    display: flex;
-    align-items: flex-end;
-    gap: 13px;
-    flex-wrap: wrap;
-  }
-  /* a filter control is a .field; only its track width lives here */
-  .rl-fld {
-    min-width: 158px;
-  }
-  .rl-fld.narrow {
-    min-width: 110px;
-  }
-  .rl-fbar input[type="date"].field-input {
-    text-align: end;
-  }
-
-  /* quick-filter chips are .chip.clickable (§3) — no local chip styling */
-  .rl-quick {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 15px;
-    padding-top: 15px;
-    border-top: 1px solid var(--line);
-  }
-  .rl-quick-lbl {
-    font-size: 13.5px;
-    font-weight: 700;
-    color: var(--muted);
-  }
-
-  /* ---------- table card (CSS grid, not <table>) ---------- */
+  /* ---------- guests table card (CSS grid, not <table>) ---------- */
   .rl-card {
     display: flex;
     flex-direction: column;
@@ -133,15 +88,6 @@
     flex: 1;
     overflow: auto;
     min-height: 0;
-  }
-  /* RTL: first column = rightmost. Reference 10-col grid + מקור + טיפול;
-     the cancelled tab swaps תשלום for פרטי ביטול. */
-  .rl-rowg {
-    display: grid;
-    grid-template-columns:
-      minmax(186px, 1.5fr) minmax(140px, 1.05fr) 108px 128px 118px 86px 86px 64px
-      118px 122px 132px 132px;
-    align-items: center;
   }
   .rl-thead {
     position: sticky;
@@ -180,22 +126,6 @@
   }
   .rl-trow:hover {
     background-color: var(--surface-hover);
-  }
-  /* an unpaid row carries a soft danger stripe on its inline-start edge (§11).
-     It is an absolutely-positioned ::before — a border would eat 3px of the
-     grid track and knock the row out of alignment with the header, and an
-     absolute box never becomes a grid item. */
-  .rl-trow.unpaid {
-    position: relative;
-  }
-  .rl-trow.unpaid::before {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    inset-inline-start: 0;
-    width: 3px;
-    background: color-mix(in srgb, var(--danger) 45%, #fff);
-    pointer-events: none;
   }
   .rl-td {
     padding: 14px;
@@ -237,9 +167,6 @@
     font-weight: 800;
     color: var(--brand);
   }
-  .rl-trow:hover .rl-resno {
-    color: var(--brand-hover);
-  }
   .rl-otacode {
     display: block;
     font-size: 12px;
@@ -251,72 +178,17 @@
     font-weight: 600;
     color: var(--muted);
   }
-  /* the room label rides inside a .chip.chip-neutral — this only lets a long
-     multi-room label truncate instead of bursting the cell */
-  .rl-room {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .rl-date {
     font-size: 14px;
     font-weight: 700;
     color: var(--ink);
   }
-  .rl-nights {
-    font-size: 15px;
-    font-weight: 800;
-    color: var(--ink);
-  }
-  .rl-src {
-    font-size: 13.5px;
-    font-weight: 700;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* the lifecycle tag is a .chip (§3) wearing a canonical family from
-     design-system.css (.chip-brand / §3.1 triplets) — the mapping lives in
-     LIFECYCLE_PILL (ReservationsScreen.tsx). No local chip colour here. */
 
   /* workflow tag: a .chip whose tint family is DB-driven (statusTintPalette,
      lib/colors.ts) — this only bounds it inside the cell */
   .rl-wf {
     max-width: 100%;
     overflow: hidden;
-  }
-
-  .rl-balance {
-    display: block;
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--danger);
-  }
-  .rl-total {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 6px;
-    font-size: 15px;
-    font-weight: 800;
-    color: var(--brand);
-  }
-  .rl-total .ms-icon {
-    color: var(--faint);
-  }
-  .rl-cancelinfo {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--danger);
-    line-height: 1.35;
-  }
-  .rl-cancelinfo small {
-    display: block;
-    color: var(--muted);
-    font-size: 12px;
   }
 
   .rl-truncated {
@@ -328,7 +200,6 @@
     border-top: 1px solid var(--line);
   }
 
-  /* responsive — the wide grid scrolls inside the card, never the page */
   @media (max-width: 1200px) {
     .rl-app {
       padding: 16px;
@@ -336,8 +207,352 @@
     .rl-toolbar {
       flex-wrap: wrap;
     }
-    .rl-rowg {
-      min-width: 1280px;
+  }
+
+  /* ============================================================
+     rv- · /reservations — 1:1 to the ref/html/Orders.html render
+     ============================================================ */
+
+  /* the app column is viewport-bound like the reference (.app{height:100vh}):
+     header/filters/tabs are fixed, ONLY the table scrolls, footer is pinned */
+  .rv-app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    direction: rtl;
+    gap: 14px;
+    padding: 20px 26px 14px;
+    background: var(--bg);
+  }
+
+  /* ---------- header: title + count (right) · search (left) ---------- */
+  .rv-hd {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .rv-hd-tw {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .rv-h1 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .rv-sp {
+    flex: 1;
+  }
+  .rv-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    max-width: 600px;
+  }
+  .rv-search:focus-within {
+    border-color: var(--brand);
+    box-shadow: var(--focus-ring);
+  }
+  .rv-search .ms-icon {
+    color: var(--faint);
+  }
+  .rv-search input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 15px;
+    color: var(--ink);
+  }
+  .rv-search input::placeholder {
+    color: var(--faint);
+  }
+
+  /* ---------- filters card: 7 equal tracks like the reference ---------- */
+  .rv-fcard {
+    flex: none;
+  }
+  .rv-fgrid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 12px;
+    align-items: end;
+  }
+  .rv-fgrid .field {
+    min-width: 0;
+  }
+  .rv-fgrid input[type="date"].field-input {
+    text-align: end;
+  }
+
+  /* ---------- one merged bar: lifecycle tabs · divider · quick filters ----------
+     a tab IS a button (§4): .btn + .btn-primary / .btn-tertiary — only the
+     tighter padding of a segmented control lives here. A quick filter IS a
+     chip (§3): canonical .chip.clickable, nothing local. */
+  .rv-tabsbar {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: 5px;
+  }
+  .rv-tab {
+    padding: 0 15px;
+  }
+  .rv-tabdiv {
+    width: 1px;
+    height: 24px;
+    background: var(--line);
+    margin: 0 4px;
+    flex: none;
+  }
+
+  /* ---------- table card: semantic <table>, sticky head ---------- */
+  .rv-tblwrap {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+  .rv-tbl {
+    width: 100%;
+    min-width: 1150px;
+    border-collapse: collapse;
+  }
+  .rv-tbl thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--field-bg);
+    text-align: start;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+    user-select: none;
+    cursor: pointer;
+  }
+  .rv-tbl thead th:hover {
+    color: var(--ink);
+  }
+  .rv-tbl thead th.active {
+    color: var(--brand);
+  }
+  .rv-th-in {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .rv-sort {
+    opacity: 0;
+  }
+  .rv-tbl thead th.active .rv-sort {
+    opacity: 1;
+  }
+  .rv-tbl th.num,
+  .rv-tbl td.num {
+    text-align: center;
+  }
+  .rv-tbl td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .rv-tbl tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .rv-tbl tbody tr {
+    cursor: pointer;
+    transition: background-color 0.1s;
+  }
+  .rv-tbl tbody tr:hover {
+    background: var(--surface-hover);
+  }
+
+  /* ---------- cells ---------- */
+  .rv-guest {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    min-width: 0;
+  }
+  .rv-av {
+    width: 36px;
+    height: 36px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-size: 13.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+  .rv-vip {
+    color: var(--vip);
+  }
+  /* the ONE visible reservation number (OTA code, else #internal) */
+  .rv-rid {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--brand);
+  }
+  .rv-tbl tbody tr:hover .rv-rid {
+    text-decoration: underline;
+  }
+  .rv-src {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    display: inline-block;
+  }
+  .rv-phone,
+  .rv-date {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .rv-nights {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .rv-room {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* color comes inline from STATUS_COLORS.unpaid.tx — the §3.1 text token */
+  .rv-bal {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    margin-block-start: 3px;
+  }
+  .rv-price {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--brand);
+  }
+  .rv-cancelinfo {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--danger);
+    line-height: 1.35;
+  }
+  .rv-cancelinfo small {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  /* ---------- pinned footer: count (right) · pagination (left) ---------- */
+  .rv-ft {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 4px;
+  }
+  .rv-ft-c {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .rv-ft-c b {
+    color: var(--ink);
+  }
+  .rv-pg {
+    display: flex;
+    gap: 6px;
+  }
+  .rv-pg-b {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .rv-pg-b:hover {
+    background: var(--surface-hover);
+  }
+  .rv-pg-b.on {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+  .rv-pg-b:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  /* ---------- responsive ----------
+     ≤1280: fewer filter tracks; the table scrolls INSIDE its card.
+     ≤900: the page flows and scrolls naturally (no pinned footer), the
+     table keeps its inner horizontal scroll — same single visible-number
+     rule at every width. */
+  @media (max-width: 1280px) {
+    .rv-fgrid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+  @media (max-width: 900px) {
+    .rv-app {
+      height: auto;
+      min-height: 100%;
+      padding: 16px 16px 14px;
+    }
+    .rv-hd {
+      flex-wrap: wrap;
+    }
+    .rv-search {
+      flex-basis: 100%;
+      max-width: none;
+    }
+    .rv-tblwrap {
+      flex: none;
+      max-height: none;
+    }
+    .rv-ft {
+      flex-wrap: wrap;
+    }
+  }
+  @media (max-width: 640px) {
+    .rv-fgrid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+  /* a 2-col grid clips select values below ~440px — stack instead */
+  @media (max-width: 440px) {
+    .rv-fgrid {
+      grid-template-columns: 1fr;
     }
   }
 }

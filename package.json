@@ -55,7 +55,8 @@
     "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs",
     "check:status-default": "node scripts/check-status-default.mjs",
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
-    "check:design": "node scripts/check-design-system.mjs"
+    "check:design": "node scripts/check-design-system.mjs",
+    "check:reservations-ui": "node scripts/check-reservations-ui.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

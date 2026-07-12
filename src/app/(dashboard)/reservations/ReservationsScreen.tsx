@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { statusTintPalette } from "@/lib/colors";
-import { paymentTriplet } from "@/lib/status-colors";
+import { paymentTriplet, STATUS_COLORS } from "@/lib/status-colors";
+import { getVisibleReservationNumber } from "@/lib/reservations/visible-number";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type {
@@ -16,32 +17,35 @@ import type {
 } from "./data";
 
 // ============================================================
-// /reservations — רשימת הזמנות (D77 §17/§18), 1:1 to ref/html/Orders.html +
-// ref/screens/Orders.png. Server-driven filtering: every control writes the
-// URL (router.replace) and the force-dynamic page re-queries — so realtime
-// router.refresh() (RealtimeProvider) keeps the list AND the tab counts live
-// with no second data path. Row click opens the EXISTING reservation
-// SidePanel — never a second editor.
+// /reservations — רשימת הזמנות, 1:1 to the RENDER of ref/html/Orders.html:
+// title+count / search header, filters card, ONE merged tabs+quick bar,
+// semantic <table> with sticky head, client-side sort + pagination over the
+// server page, pinned footer. Server-driven filtering is unchanged: every
+// control writes the URL (router.replace) and the force-dynamic page
+// re-queries — realtime router.refresh() keeps rows AND counts live with no
+// second data path. Row click opens the EXISTING reservation SidePanel by the
+// INTERNAL id — the visible number (OTA code, else #internal — see
+// lib/reservations/visible-number) is presentation only.
 // ============================================================
 
-const TABS: { key: ListTab; label: string }[] = [
-  { key: "all", label: "הכל" },
-  { key: "confirmed", label: "מאושר" },
-  { key: "inhouse", label: "In House" },
-  { key: "out", label: "יצא" },
-  { key: "cancelled", label: "בוטל" },
-  { key: "noshow", label: "No Show" },
+const TABS: { key: ListTab; label: string; icon: IconName }[] = [
+  { key: "all", label: "הכל", icon: "list-alt" },
+  { key: "confirmed", label: "מאושרות", icon: "check-circle" },
+  { key: "inhouse", label: "שוהים", icon: "hotel" },
+  { key: "out", label: "עזבו", icon: "door-open" },
+  { key: "cancelled", label: "בוטלו", icon: "cancel" },
+  { key: "noshow", label: "לא הגיעו", icon: "person-off" },
 ];
 
 const QUICK_CHIPS: { key: QuickFilter; label: string; icon: IconName }[] = [
-  { key: "created24", label: "נוצרו ב-24 שעות", icon: "refresh" },
+  { key: "created24", label: "נוצרו ב-24 שעות", icon: "attendance" },
   { key: "arrivals", label: "הגעות היום", icon: "login" },
   { key: "arrivals24", label: "הגעות ב-24 שעות", icon: "calendar-plus" },
   { key: "departures", label: "עזיבות היום", icon: "logout" },
   { key: "inhouse", label: "שוהים", icon: "hotel" },
-  { key: "unpaid", label: "הזמנות שלא שולמו", icon: "finance" },
+  { key: "unpaid", label: "לא שולמו", icon: "money-off" },
   { key: "partial", label: "שולם חלקית", icon: "percent" },
-  { key: "pending", label: "הזמנות ממתינות", icon: "moon" },
+  { key: "pending", label: "ממתינות לאישור", icon: "hourglass" },
   { key: "missing_docs", label: "חסר מסמכים", icon: "documents" },
   { key: "invalid_card", label: "כרטיס לא עבר", icon: "credit-card" },
   { key: "cancelled24", label: "בוטלו ביממה האחרונה", icon: "circle-slash" },
@@ -49,28 +53,22 @@ const QUICK_CHIPS: { key: QuickFilter; label: string; icon: IconName }[] = [
   { key: "noshow_candidates", label: "מועמדי No-show", icon: "warning" },
 ];
 
-// the stay lifecycle wears the SAME chip anatomy as everything else (§3): the
-// approved §3.1 families, plus the brand family for "מאושר".
-//
-// Families are chosen so no stay family collides with a payment family inside
-// one row — the payment column only ever wears unpaid/partial/paid/transfer
-// (PaymentState; overpaid → transfer). So: no_show does NOT wear the transfer
-// purple (that is "שולם ביתר"), and "בוטל" wears the crimson "נכשל" family so
-// a cancelled stay keeps its red operational signal and never melts into the
-// checked-out/blocked greys. cancelled and no_show never share a row with any
-// other stay state, so failed/approval stay unambiguous per row.
-const LIFECYCLE_PILL: Record<string, { label: string; cls: string; icon: IconName }> = {
-  confirmed: { label: "מאושר", cls: "chip-brand", icon: "check" },
-  checked_in: { label: "In House", cls: "chip-paid", icon: "hotel" },
-  checked_out: { label: "צ׳ק אאוט", cls: "chip-refunded", icon: "logout" },
-  cancelled: { label: "בוטל", cls: "chip-failed", icon: "circle-slash" },
-  draft: { label: "טיוטה", cls: "chip-approval", icon: "moon" },
-  no_show: { label: "No Show", cls: "chip-approval", icon: "warning" },
-  blocked: { label: "חסום", cls: "chip-refunded", icon: "lock" },
+// the stay lifecycle wears the SAME chip anatomy as everything else (§3),
+// with the family each state wears in the reference render: confirmed=brand,
+// in-house=paid green, checked-out=refunded grey-blue, cancelled=the §3.1
+// בוטל grey, no-show=the crimson נכשל family.
+const LIFECYCLE_PILL: Record<string, { label: string; cls: string }> = {
+  confirmed: { label: "מאושרת", cls: "chip-brand" },
+  checked_in: { label: "שוהה", cls: "chip-paid" },
+  checked_out: { label: "עזב", cls: "chip-refunded" },
+  cancelled: { label: "בוטלה", cls: "chip-cancelled" },
+  draft: { label: "טיוטה", cls: "chip-approval" },
+  no_show: { label: "לא הגיע", cls: "chip-failed" },
+  blocked: { label: "חסום", cls: "chip-refunded" },
 };
 
 const PAY_LABEL: Record<string, string> = {
-  unpaid: "ממתין לתשלום",
+  unpaid: "לא שולם",
   partial: "שולם חלקית",
   paid: "שולם מלא",
   overpaid: "שולם ביתר",
@@ -88,7 +86,8 @@ const CANCEL_ORIGIN_SHORT: Record<string, string> = {
   system: "מערכת",
 };
 
-const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+const ddmmyy = (iso: string) =>
+  `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}`;
 const money = (n: number, currency: string) => {
   const sym = currency === "ILS" ? "₪" : currency === "USD" ? "$" : currency === "EUR" ? "€" : `${currency} `;
   const rounded = Math.round(n * 100) / 100;
@@ -97,6 +96,49 @@ const money = (n: number, currency: string) => {
     : rounded.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${sym}${s}`;
 };
+/** two-letter avatar initials like the reference ("נועה גל" → "נג") */
+const initials = (name: string) => {
+  const w = name.trim().split(/\s+/);
+  return `${w[0]?.[0] ?? "א"}${w[1]?.[0] ?? ""}`;
+};
+
+const PAGE_SIZE = 50;
+
+type SortKey =
+  | "guest" | "number" | "source" | "phone" | "room" | "checkin" | "checkout"
+  | "nights" | "status" | "workflow" | "payment" | "total";
+
+const COLS: { key: SortKey; label: string; num?: boolean }[] = [
+  { key: "guest", label: "אורח" },
+  { key: "number", label: "מס׳ הזמנה" },
+  { key: "source", label: "מקור" },
+  { key: "phone", label: "טלפון" },
+  { key: "room", label: "חדר" },
+  { key: "checkin", label: "כניסה" },
+  { key: "checkout", label: "יציאה" },
+  { key: "nights", label: "לילות", num: true },
+  { key: "status", label: "סטטוס" },
+  { key: "workflow", label: "טיפול" },
+  { key: "payment", label: "תשלום" },
+  { key: "total", label: "סה״כ" },
+];
+
+function sortVal(r: ListRow, k: SortKey, cancelledTab: boolean): string | number {
+  switch (k) {
+    case "guest": return r.guest_name;
+    case "number": return getVisibleReservationNumber(r);
+    case "source": return r.source_label ?? (r.is_ota ? r.ota_name ?? "" : "ישיר");
+    case "phone": return r.guest_phone ?? "";
+    case "room": return r.rooms_label ?? "";
+    case "checkin": return r.check_in;
+    case "checkout": return r.check_out;
+    case "nights": return r.nights;
+    case "status": return LIFECYCLE_PILL[r.status]?.label ?? r.status;
+    case "workflow": return cancelledTab ? (r.cancelled_at ?? "") : (r.workflow_label ?? "");
+    case "payment": return PAY_LABEL[r.payment];
+    case "total": return r.total_price;
+  }
+}
 
 export function ReservationsScreen({
   data,
@@ -133,12 +175,21 @@ export function ReservationsScreen({
   // local echo of the search box — the URL updates debounced
   const [q, setQ] = useState(filters.q);
   const qTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => setQ(filters.q), [filters.q]);
 
+  // a filter change re-queries the server — restart at the first page
+  const filtersKey = JSON.stringify(filters);
+  useEffect(() => {
+    setPage(1);
+    setSort(null);
+  }, [filtersKey]);
+
   const apply = (patch: Partial<ListFilters>) => {
     const next = { ...filters, ...patch };
-    // the cancellation-origin control exists only on the בוטל tab — leaving
+    // the cancellation-origin control exists only on the בוטלו tab — leaving
     // it must drop the filter, or other tabs silently show nothing
     if (next.tab !== "cancelled") next.cancellationOrigin = null;
     const p = new URLSearchParams();
@@ -176,33 +227,51 @@ export function ReservationsScreen({
 
   const cancelledTab = filters.tab === "cancelled";
 
-  return (
-    <div className="rl-app">
-      {/* ---- header ---- */}
-      <div className="rl-hd">
-        <h1 className="h1">הזמנות</h1>
-        <p className="t-secondary">רשימת ההזמנות הפעילות והסגורות במלון</p>
-      </div>
+  // client-side sort over the fetched page; null = server order (check-in
+  // desc — the reference's default active column)
+  const sorted = useMemo(() => {
+    if (!sort) return data.rows;
+    const rs = [...data.rows];
+    rs.sort((a, b) => {
+      const va = sortVal(a, sort.key, cancelledTab);
+      const vb = sortVal(b, sort.key, cancelledTab);
+      const c =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb), "he", { numeric: true });
+      return sort.dir * c;
+    });
+    return rs;
+  }, [data.rows, sort, cancelledTab]);
 
-      {/* ---- tabs (right) + search (left) ---- */}
-      <div className="rl-toolbar">
-        <div className="rl-tabs" role="tablist" aria-label="סטטוס הזמנה">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              aria-selected={filters.tab === t.key}
-              className={`btn rl-tab ${filters.tab === t.key ? "btn-primary" : "btn-tertiary"}`}
-              onClick={() => apply({ tab: t.key })}
-            >
-              {t.label}
-              <span className="chip chip-neutral ltr-num">{data.counts[t.key]}</span>
-            </button>
-          ))}
+  const pages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const cur = Math.min(page, pages);
+  const pageRows = sorted.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
+  const totalMatching = data.rows.length + data.truncatedBy;
+
+  const onSort = (k: SortKey) =>
+    setSort((s) => (s && s.key === k ? { key: k, dir: -s.dir as 1 | -1 } : { key: k, dir: 1 }));
+
+  // the sort marker: an explicit user sort wins; otherwise the server order
+  // (כניסה desc; the בוטלו tab is served by cancellation time instead)
+  const activeCol = sort?.key ?? (cancelledTab ? null : "checkin");
+  const activeDir = sort?.dir ?? -1;
+
+  return (
+    <div className="rv-app">
+      {/* ---- header: title + count (right) · search (left) ---- */}
+      <div className="rv-hd">
+        <div className="rv-hd-tw">
+          <h1 className="h1 rv-h1">
+            הזמנות
+            <span className="chip chip-neutral">
+              <bdi className="ltr-num">{data.counts.all}</bdi> הזמנות
+            </span>
+          </h1>
+          <p className="t-secondary">רשימת ההזמנות הפעילות והסגורות במלון</p>
         </div>
-        <span className="rl-sp" />
-        <label className="rl-search field-input">
+        <span className="rv-sp" />
+        <label className="rv-search field-input">
           <Icon name="search" size={20} />
           <input
             value={q}
@@ -213,10 +282,10 @@ export function ReservationsScreen({
       </div>
 
       {/* ---- filters card ---- */}
-      <div className="card rl-filters">
+      <div className="card rv-fcard">
         <div className="card-bd">
-          <div className="rl-fbar">
-            <label className="field rl-fld">
+          <div className="rv-fgrid">
+            <label className="field">
               <span className="field-label">סוג תאריך</span>
               <select
                 className="field-input"
@@ -228,7 +297,7 @@ export function ReservationsScreen({
                 <option value="created">תאריך הזמנה</option>
               </select>
             </label>
-            <label className="field rl-fld">
+            <label className="field">
               <span className="field-label">מתאריך</span>
               <input
                 type="date"
@@ -237,7 +306,7 @@ export function ReservationsScreen({
                 onChange={(e) => apply({ from: e.target.value || null })}
               />
             </label>
-            <label className="field rl-fld">
+            <label className="field">
               <span className="field-label">עד תאריך</span>
               <input
                 type="date"
@@ -246,14 +315,14 @@ export function ReservationsScreen({
                 onChange={(e) => apply({ to: e.target.value || null })}
               />
             </label>
-            <label className="field rl-fld">
-              <span className="field-label">סוכן</span>
+            <label className="field">
+              <span className="field-label">מקור</span>
               <select
                 className="field-input"
                 value={filters.sourceId ?? ""}
                 onChange={(e) => apply({ sourceId: e.target.value || null })}
               >
-                <option value="">כל הסוכנים</option>
+                <option value="">כל המקורות</option>
                 {bookingSources.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.label}
@@ -261,7 +330,7 @@ export function ReservationsScreen({
                 ))}
               </select>
             </label>
-            <label className="field rl-fld">
+            <label className="field">
               <span className="field-label">סטטוס הזמנה</span>
               <select
                 className="field-input"
@@ -276,7 +345,7 @@ export function ReservationsScreen({
                 ))}
               </select>
             </label>
-            <label className="field rl-fld">
+            <label className="field">
               <span className="field-label">תשלום</span>
               <select
                 className="field-input"
@@ -286,12 +355,12 @@ export function ReservationsScreen({
                 }
               >
                 <option value="">כל התשלומים</option>
-                <option value="unpaid">ממתין לתשלום</option>
+                <option value="unpaid">לא שולם</option>
                 <option value="partial">שולם חלקית</option>
                 <option value="paid">שולם מלא</option>
               </select>
             </label>
-            <label className="field rl-fld narrow">
+            <label className="field">
               <span className="field-label">חדר</span>
               <select
                 className="field-input"
@@ -307,7 +376,7 @@ export function ReservationsScreen({
               </select>
             </label>
             {cancelledTab && (
-              <label className="field rl-fld">
+              <label className="field">
                 <span className="field-label">מקור ביטול</span>
                 <select
                   className="field-input"
@@ -348,63 +417,135 @@ export function ReservationsScreen({
               </button>
             )}
           </div>
-          <div className="rl-quick">
-            <span className="rl-quick-lbl">סינון מהיר:</span>
-            {QUICK_CHIPS.map((c) => (
-              <button
-                key={c.key}
-                type="button"
-                aria-pressed={filters.quick === c.key}
-                className={`chip clickable ${filters.quick === c.key ? "on" : ""}`}
-                onClick={() => apply({ quick: filters.quick === c.key ? null : c.key })}
-              >
-                <Icon name={c.icon} size={13.5} />
-                {c.label}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
+      {/* ---- one bar: lifecycle tabs · divider · quick filters ---- */}
+      {/* a tab IS a button (§4): .btn + .btn-primary / .btn-tertiary; a quick
+          filter IS a chip (§3): canonical .chip.clickable — same anatomy as
+          every other סינון chip in the system */}
+      <div className="rv-tabsbar" aria-label="סינון הזמנות">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            aria-pressed={filters.tab === t.key}
+            className={`btn rv-tab ${filters.tab === t.key ? "btn-primary" : "btn-tertiary"}`}
+            onClick={() => apply({ tab: t.key })}
+          >
+            <Icon name={t.icon} size={17} />
+            {t.label}
+            <span className="chip chip-neutral ltr-num">{data.counts[t.key]}</span>
+          </button>
+        ))}
+        <span className="rv-tabdiv" />
+        {QUICK_CHIPS.map((c) => (
+          <button
+            key={c.key}
+            type="button"
+            aria-pressed={filters.quick === c.key}
+            className={`chip clickable ${filters.quick === c.key ? "on" : ""}`}
+            onClick={() => apply({ quick: filters.quick === c.key ? null : c.key })}
+          >
+            <Icon name={c.icon} size={13.5} />
+            {c.label}
+            <bdi className="ltr-num">{data.quickCounts[c.key]}</bdi>
+          </button>
+        ))}
+      </div>
+
       {/* ---- table card ---- */}
-      <div className="card rl-card">
-        <div className="rl-twrap thin-scroll">
-          <div className="rl-thead rl-rowg">
-            <div className="rl-th start">אורח</div>
-            <div className="rl-th start">מס׳ הזמנה</div>
-            <div className="rl-th">מקור</div>
-            <div className="rl-th">טלפון</div>
-            <div className="rl-th">חדר</div>
-            <div className="rl-th">כניסה</div>
-            <div className="rl-th">יציאה</div>
-            <div className="rl-th">לילות</div>
-            <div className="rl-th">סטטוס</div>
-            <div className="rl-th">{cancelledTab ? "ביטול" : "טיפול"}</div>
-            <div className="rl-th">תשלום</div>
-            <div className="rl-th end">סה״כ</div>
+      <div className="card rv-tblwrap thin-scroll">
+        {pageRows.length === 0 ? (
+          <div className="empty-state">
+            <Icon name="search" size={24} />
+            <p className="empty-t">לא נמצאו הזמנות</p>
+            <p className="empty-s">נסו לשנות את הסינון או את מונח החיפוש</p>
           </div>
-          {data.rows.length === 0 ? (
-            <div className="empty-state">
-              <Icon name="search" size={24} />
-              <p className="empty-t">לא נמצאו הזמנות</p>
-              <p className="empty-s">נסו לשנות את הסינון או את מונח החיפוש</p>
-            </div>
-          ) : (
-            data.rows.map((row) => (
-              <ReservationRow
-                key={row.id}
-                row={row}
-                cancelledTab={cancelledTab}
-                onOpen={() => can.viewReservation && setPanelId(row.id)}
-              />
-            ))
-          )}
-        </div>
+        ) : (
+          <table className="rv-tbl">
+            <thead>
+              <tr>
+                {COLS.map((c) => (
+                  <th
+                    key={c.key}
+                    className={`${c.num ? "num" : ""} ${activeCol === c.key ? "active" : ""}`}
+                    aria-sort={
+                      activeCol === c.key ? (activeDir === 1 ? "ascending" : "descending") : undefined
+                    }
+                    onClick={() => onSort(c.key)}
+                  >
+                    <span className="rv-th-in">
+                      {c.key === "workflow" && cancelledTab ? "ביטול" : c.label}
+                      <Icon
+                        name={activeCol === c.key && activeDir === 1 ? "arrow-up" : "arrow-down"}
+                        size={13.5}
+                        className="rv-sort"
+                      />
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((row) => (
+                <ReservationRow
+                  key={row.id}
+                  row={row}
+                  cancelledTab={cancelledTab}
+                  onOpen={() => can.viewReservation && setPanelId(row.id)}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
         {data.truncatedBy > 0 && (
           <p className="rl-truncated">
-            מוצגות {data.rows.length} הזמנות; עוד {data.truncatedBy} תואמות את הסינון — צמצמו את
+            נטענו {data.rows.length} הזמנות; עוד {data.truncatedBy} תואמות את הסינון — צמצמו את
             הסינון או השתמשו בחיפוש
           </p>
+        )}
+      </div>
+
+      {/* ---- pinned footer: count · pagination ---- */}
+      <div className="rv-ft">
+        <p className="rv-ft-c">
+          מציג <b className="ltr-num">{pageRows.length}</b> מתוך{" "}
+          <b className="ltr-num">{totalMatching}</b> הזמנות
+        </p>
+        <span className="rv-sp" />
+        {pages > 1 && (
+          <div className="rv-pg">
+            <button
+              type="button"
+              className="rv-pg-b"
+              aria-label="עמוד קודם"
+              disabled={cur <= 1}
+              onClick={() => setPage(cur - 1)}
+            >
+              <Icon name="chevron-right" size={17} />
+            </button>
+            {Array.from({ length: pages }, (_, i) => i + 1).map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`rv-pg-b ltr-num ${p === cur ? "on" : ""}`}
+                aria-current={p === cur ? "page" : undefined}
+                onClick={() => setPage(p)}
+              >
+                {p}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="rv-pg-b"
+              aria-label="עמוד הבא"
+              disabled={cur >= pages}
+              onClick={() => setPage(cur + 1)}
+            >
+              <Icon name="chevron-left" size={17} />
+            </button>
+          </div>
         )}
       </div>
 
@@ -437,15 +578,9 @@ function ReservationRow({
   cancelledTab: boolean;
   onOpen: () => void;
 }) {
-  const pill = LIFECYCLE_PILL[row.status] ?? {
-    label: row.status,
-    cls: "chip-refunded",
-    icon: "info" as IconName,
-  };
-  const initial = (row.guest_name || "א").slice(0, 1);
+  const pill = LIFECYCLE_PILL[row.status] ?? { label: row.status, cls: "chip-refunded" };
   return (
-    <div
-      className={`rl-rowg rl-trow ${row.payment === "unpaid" && row.status !== "cancelled" ? "unpaid" : ""}`}
+    <tr
       role="button"
       tabIndex={0}
       onClick={onOpen}
@@ -456,52 +591,58 @@ function ReservationRow({
         }
       }}
     >
-      <div className="rl-td rl-guest">
-        <span className="rl-av">{initial}</span>
-        <span className="rl-gname">{row.guest_name}</span>
-        {row.is_vip && (
-          <Icon name="star" size={20} className="rl-star" label="אורח VIP" />
-        )}
-      </div>
-      <div className="rl-td start">
-        <span className="rl-resno ltr-num">#{row.reservation_number}</span>
-        {row.ota_reservation_code && (
-          <span className="rl-otacode ltr-num">{row.ota_reservation_code}</span>
-        )}
-      </div>
-      <div className="rl-td">
-        <span className="rl-src">{row.source_label ?? (row.is_ota ? row.ota_name : "ישיר")}</span>
-      </div>
-      <div className="rl-td">
-        <span className="rl-phone ltr-num">{row.guest_phone ?? "—"}</span>
-      </div>
-      <div className="rl-td">
-        <span className="chip chip-neutral">
-          <bdi className="rl-room ltr-num">{row.rooms_label ?? "—"}</bdi>
+      <td>
+        <span className="rv-guest">
+          <span className="rv-av">{initials(row.guest_name || "אורח")}</span>
+          <span className="rl-gname">
+            {row.guest_name}
+            {row.is_vip && (
+              <>
+                {" "}
+                <Icon name="star" size={13.5} className="rv-vip" label="אורח VIP" />
+              </>
+            )}
+          </span>
         </span>
-      </div>
-      <div className="rl-td">
-        <span className="rl-date ltr-num">{ddmm(row.check_in)}</span>
-      </div>
-      <div className="rl-td">
-        <span className="rl-date ltr-num">{ddmm(row.check_out)}</span>
-      </div>
-      <div className="rl-td">
-        <span className="rl-nights ltr-num">{row.nights}</span>
-      </div>
-      <div className="rl-td">
+      </td>
+      <td>
+        {/* the ONE visible number: OTA code when the channel supplied one,
+            else the internal #number — never both */}
+        <span className="rv-rid ltr-num">{getVisibleReservationNumber(row)}</span>
+      </td>
+      <td>
+        <bdi className="rv-src">{row.source_label ?? (row.is_ota ? row.ota_name : "ישיר")}</bdi>
+      </td>
+      <td>
+        <span className="rv-phone ltr-num">{row.guest_phone ?? "—"}</span>
+      </td>
+      <td>
+        <span className="chip chip-neutral">
+          <bdi className="rv-room ltr-num">{row.rooms_label ?? "—"}</bdi>
+        </span>
+      </td>
+      <td>
+        <span className="rv-date ltr-num">{ddmmyy(row.check_in)}</span>
+      </td>
+      <td>
+        <span className="rv-date ltr-num">{ddmmyy(row.check_out)}</span>
+      </td>
+      <td className="num">
+        <span className="rv-nights ltr-num">{row.nights}</span>
+      </td>
+      <td>
         <span className={`chip ${pill.cls}`}>
-          <Icon name={pill.icon} size={13.5} />
+          <span className="dot" />
           {pill.label}
         </span>
-      </div>
-      <div className="rl-td">
+      </td>
+      <td>
         {cancelledTab ? (
-          <span className="rl-cancelinfo">
+          <span className="rv-cancelinfo">
             {CANCEL_ORIGIN_SHORT[row.cancellation_origin ?? ""] ?? "—"}
             <small>
               {row.cancelled_at
-                ? `${ddmm(row.cancelled_at)} ${row.cancelled_at.slice(11, 16)}`
+                ? `${ddmmyy(row.cancelled_at)} ${row.cancelled_at.slice(11, 16)}`
                 : ""}
               {row.cancelled_by_name ? ` · ${row.cancelled_by_name}` : ""}
             </small>
@@ -518,26 +659,24 @@ function ReservationRow({
             {row.workflow_label}
           </span>
         ) : (
-          <span className="rl-src">—</span>
+          <span className="rv-src">—</span>
         )}
-      </div>
-      <div className="rl-td">
+      </td>
+      <td>
         <span className={`chip ${paymentTriplet(row.payment).chip}`}>
           <span className="dot" />
           {PAY_LABEL[row.payment]}
         </span>
         {row.balance > 0 && row.payment !== "paid" && row.status !== "cancelled" && (
-          <span className="rl-balance">
-            יתרה <bdi className="ltr-num">{money(row.balance, row.currency)}</bdi>
+          /* §3.1 לא שולם TEXT token — the dot token fails AA at 12px */
+          <span className="rv-bal" style={{ color: STATUS_COLORS.unpaid.tx }}>
+            יתרה לתשלום: <bdi className="ltr-num">{money(row.balance, row.currency)}</bdi>
           </span>
         )}
-      </div>
-      <div className="rl-td end">
-        <span className="rl-total ltr-num">
-          {money(row.total_price, row.currency)}
-          <Icon name="finance" size={17} />
-        </span>
-      </div>
-    </div>
+      </td>
+      <td>
+        <span className="rv-price ltr-num">{money(row.total_price, row.currency)}</span>
+      </td>
+    </tr>
   );
 }

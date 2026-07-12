@@ -85,12 +85,15 @@ export type ListRow = {
 };
 
 export type TabCounts = Record<ListTab, number>;
+export type QuickCounts = Record<QuickFilter, number>;
 
 export type ReservationsListData = {
   rows: ListRow[];
   /** matching rows beyond LIST_LIMIT — 0 means the list is complete */
   truncatedBy: number;
   counts: TabCounts;
+  /** chip badges — same predicates as the quick filters, counted tenant-wide */
+  quickCounts: QuickCounts;
   today: DateOnly;
   currency: string;
 };
@@ -228,6 +231,36 @@ export async function getReservationsList(
     SELECT status, COUNT(*)::int AS n FROM guesthub.reservations
     WHERE tenant_id = ${tenantId}
     GROUP BY status`;
+
+  // quick-chip badges — the SAME predicates as the quick filters above,
+  // aggregated tenant-wide in one scan (reference shows a count on every chip)
+  const [qc] = await sql<Record<QuickFilter, number>[]>`
+    SELECT
+      COUNT(*) FILTER (WHERE res.created_at > now() - interval '24 hours')::int AS created24,
+      COUNT(*) FILTER (WHERE res.status = 'cancelled'
+                         AND res.cancelled_at > now() - interval '24 hours')::int AS cancelled24,
+      COUNT(*) FILTER (WHERE res.status = 'draft')::int AS pending,
+      COUNT(*) FILTER (WHERE res.paid_amount <= 0 AND res.total_price > 0
+                         AND res.status <> 'cancelled')::int AS unpaid,
+      COUNT(*) FILTER (WHERE res.paid_amount > 0
+                         AND res.paid_amount < res.total_price)::int AS partial,
+      COUNT(*) FILTER (WHERE res.status = 'checked_in')::int AS inhouse,
+      COUNT(*) FILTER (WHERE res.check_in = ${today}
+                         AND res.status <> 'cancelled')::int AS arrivals,
+      COUNT(*) FILTER (WHERE res.check_in >= ${today} AND res.check_in < ${dayAfter}
+                         AND res.status <> 'cancelled')::int AS arrivals24,
+      COUNT(*) FILTER (WHERE res.check_out = ${today}
+                         AND res.status <> 'cancelled')::int AS departures,
+      COUNT(*) FILTER (WHERE wf.key = 'missing_docs')::int AS missing_docs,
+      COUNT(*) FILTER (WHERE res.invalid_card_reported_at IS NOT NULL
+                         OR wf.key = 'card_declined')::int AS invalid_card,
+      COUNT(*) FILTER (WHERE res.status = 'cancelled'
+                         AND (res.cancelled_at AT TIME ZONE ${tz})::date = ${today})::int AS cancelled_today,
+      COUNT(*) FILTER (WHERE res.status = 'confirmed'
+                         AND res.check_in <= ${today})::int AS noshow_candidates
+    FROM guesthub.reservations res
+    LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
+    WHERE res.tenant_id = ${tenantId}`;
   const byStatus = new Map(countRows.map((r) => [r.status, r.n]));
   const counts: TabCounts = {
     all: countRows.reduce((s, r) => s + r.n, 0),
@@ -246,6 +279,7 @@ export async function getReservationsList(
     })),
     truncatedBy: Math.max(0, totalMatching - rows.length),
     counts,
+    quickCounts: qc,
     today,
     currency: tenant?.currency || "ILS",
   };

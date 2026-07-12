@@ -117,6 +117,12 @@ const ICONS = {
   whatsapp: "chat",
   send: "send",
   save: "save",
+  "list-alt": "list_alt",
+  "door-open": "door_open",
+  "person-off": "person_off",
+  "money-off": "money_off",
+  hourglass: "hourglass_top",
+  cancel: "cancel",
 } as const;
 
 export type IconName = keyof typeof ICONS;
