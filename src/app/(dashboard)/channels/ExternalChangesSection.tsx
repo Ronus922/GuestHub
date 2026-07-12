@@ -2,8 +2,11 @@
 
 import { useState, useTransition } from "react";
 import {
+  approveExternalChangeAction,
   getExternalChangesAction,
   reconcileExternalChangeAction,
+  rejectExternalChangeAction,
+  retryExternalChangeEmailAction,
   setOpsRecipientAction,
   type ExternalChangesData,
   type ExternalChangeView,
@@ -20,21 +23,44 @@ type Msg = { tone: "ok" | "err"; text: string } | null;
 
 const EMAIL_LABEL: Record<ExternalChangeView["emailStatus"], string> = {
   pending: "מייל ממתין",
+  sending: "מייל בשליחה…",
   sent: "מייל נשלח",
-  failed: "שליחת מייל נכשלה",
-  skipped: "מייל לא נשלח — לא הוגדר נמען",
+  failed: "שליחת מייל נכשלה — ניתן לנסות שוב",
+  skipped: "מייל לא נשלח — חסרה הגדרה, ניתן לנסות שוב",
+};
+
+const APPLY_PILL: Record<
+  ExternalChangeView["applyStatus"],
+  { label: string; cls: string }
+> = {
+  pending_approval: { label: "ממתין לאישור", cls: "bg-status-warning-050 text-status-warning" },
+  applied: { label: "אושר והוחל בלוח השנה", cls: "bg-status-success-050 text-status-success" },
+  rejected: { label: "נדחה — נשמרו התאריכים הקיימים", cls: "bg-status-danger-050 text-status-danger" },
+  conflict: { label: "התנגשות — לא הוחל", cls: "bg-status-danger-050 text-status-danger" },
+  superseded: { label: "הוחלף ברוויזיה חדשה יותר", cls: "bg-hover text-muted" },
 };
 
 function ChangeCard({
   change,
+  onApprove,
+  onReject,
   onReconcile,
+  onRetryEmail,
   busy,
 }: {
   change: ExternalChangeView;
+  onApprove?: (id: string) => void;
+  onReject?: (id: string) => void;
   onReconcile?: (id: string) => void;
+  onRetryEmail?: (id: string) => void;
   busy: boolean;
 }) {
-  const applied = change.applyStatus === "applied";
+  const pill = APPLY_PILL[change.applyStatus];
+  const awaiting = change.applyStatus === "pending_approval";
+  const nightsLabel =
+    change.nightsDiff === 0
+      ? "ללא שינוי במספר הלילות"
+      : `הפרש לילות: ${change.nightsDiff > 0 ? "+" : ""}${change.nightsDiff}`;
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -42,26 +68,48 @@ function ChangeCard({
           {change.otaName ?? "ערוץ"} · הזמנה {change.otaReservationCode ?? "—"}
           {change.reservationNumber ? ` · GuestHub ${change.reservationNumber}` : ""}
         </span>
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-            applied ? "bg-status-success-050 text-status-success" : "bg-status-danger-050 text-status-danger"
-          }`}
-        >
-          {applied ? "הוחל בלוח השנה" : "התנגשות — לא הוחל"}
+        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${pill.cls}`}>
+          {pill.label}
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-4 text-sm text-text2">
         <span>חדר: {change.roomLabels.length > 0 ? change.roomLabels.join(", ") : "—"}</span>
         <span>
-          תאריכים קודמים: {change.oldCheckIn} ← {change.oldCheckOut}
+          תאריכים נוכחיים: {change.oldCheckIn} ← {change.oldCheckOut}
         </span>
         <span className="font-semibold text-ink">
-          תאריכים חדשים: {change.newCheckIn} ← {change.newCheckOut}
+          תאריכים מוצעים: {change.newCheckIn} ← {change.newCheckOut}
         </span>
+        <span>{nightsLabel}</span>
         <span>התקבל: {change.receivedAtDisplay}</span>
       </div>
-      {!applied && change.conflictDetail && (
+      {change.applyStatus === "conflict" && change.conflictDetail && (
         <p className="text-sm font-semibold text-status-danger">{change.conflictDetail}</p>
+      )}
+      {awaiting && onApprove && onReject && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onApprove(change.id)}
+            disabled={busy}
+            aria-disabled={busy}
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            אישור השינוי
+          </button>
+          <button
+            type="button"
+            onClick={() => onReject(change.id)}
+            disabled={busy}
+            aria-disabled={busy}
+            className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-status-danger transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            דחייה — שמירת התאריכים הקיימים
+          </button>
+          <span className="text-xs text-muted">
+            הלוח ממשיך להציג את התאריכים הנוכחיים עד להחלטה. דחייה אינה מבטלת את השינוי מול הערוץ.
+          </span>
+        </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span
@@ -74,9 +122,23 @@ function ChangeCard({
           }`}
         >
           {EMAIL_LABEL[change.emailStatus]}
+          {change.emailStatus === "sent" && change.emailSentAtDisplay
+            ? ` · ${change.emailSentAtDisplay}`
+            : ""}
           {change.emailDetail ? ` · ${change.emailDetail}` : ""}
         </span>
-        {onReconcile && (
+        {onRetryEmail && change.emailRetryable && (
+          <button
+            type="button"
+            onClick={() => onRetryEmail(change.id)}
+            disabled={busy}
+            aria-disabled={busy}
+            className="rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            נסה לשלוח שוב
+          </button>
+        )}
+        {onReconcile && !awaiting && (
           <button
             type="button"
             onClick={() => onReconcile(change.id)}
@@ -112,6 +174,49 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
     });
   }
 
+  function approve(id: string) {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await approveExternalChangeAction({ id });
+      setMsg(
+        res.success
+          ? { tone: "ok", text: "השינוי אושר — התאריכים החדשים הוחלו בלוח השנה" }
+          : { tone: "err", text: res.error },
+      );
+      await reload();
+    });
+  }
+
+  function reject(id: string) {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await rejectExternalChangeAction({ id });
+      setMsg(
+        res.success
+          ? { tone: "ok", text: "השינוי נדחה — התאריכים הקיימים נשמרו" }
+          : { tone: "err", text: res.error },
+      );
+      await reload();
+    });
+  }
+
+  function retryEmail(id: string) {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await retryExternalChangeEmailAction({ id });
+      if (res.success && res.data) {
+        setMsg(
+          res.data.emailStatus === "sent"
+            ? { tone: "ok", text: "המייל נשלח בהצלחה" }
+            : { tone: "err", text: res.data.detail ?? "השליחה לא הצליחה" },
+        );
+      } else if (!res.success) {
+        setMsg({ tone: "err", text: res.error });
+      }
+      await reload();
+    });
+  }
+
   function saveRecipient() {
     setMsg(null);
     startTransition(async () => {
@@ -129,8 +234,9 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
     <section className="flex flex-col gap-3">
       <h2 className="text-lg font-bold text-ink">שינויים חיצוניים מהערוצים</h2>
       <p className="text-sm text-muted">
-        שינויי תאריכים שהתקבלו מהערוץ להזמנות קיימות. הערוץ מחשיב את השינוי כמאושר — הסימון כאן
-        הוא תיאום תפעולי בלבד ואינו מבטל את השינוי מול הערוץ.
+        שינויי תאריכים שהתקבלו מהערוץ להזמנות קיימות ממתינים לאישורכם — הלוח ממשיך להציג את
+        התאריכים הנוכחיים עד להחלטה. שימו לב: הערוץ מחשיב את השינוי כמאושר מצדו; דחייה היא
+        החלטה מקומית בלבד ואינה מבטלת את השינוי מול הערוץ.
       </p>
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-surface p-4">
@@ -173,7 +279,15 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
       ) : (
         <div className="flex flex-col gap-2">
           {data.pending.map((c) => (
-            <ChangeCard key={c.id} change={c} onReconcile={reconcile} busy={pending} />
+            <ChangeCard
+              key={c.id}
+              change={c}
+              onApprove={approve}
+              onReject={reject}
+              onReconcile={reconcile}
+              onRetryEmail={retryEmail}
+              busy={pending}
+            />
           ))}
         </div>
       )}
@@ -185,7 +299,7 @@ export function ExternalChangesSection({ initial }: { initial: ExternalChangesDa
           </summary>
           <div className="mt-2 flex flex-col gap-2">
             {data.recentReconciled.map((c) => (
-              <ChangeCard key={c.id} change={c} busy={pending} />
+              <ChangeCard key={c.id} change={c} onRetryEmail={retryEmail} busy={pending} />
             ))}
           </div>
         </details>

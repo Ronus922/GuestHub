@@ -4,6 +4,8 @@ import { sql } from "@/lib/db";
 import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit } from "@/lib/audit";
+import { retryExternalChangeEmail } from "./external-changes";
+import { approveExternalChange, rejectExternalChange } from "./booking-import";
 
 // ============================================================
 // External change notifications — server actions for /channels (D82).
@@ -46,11 +48,14 @@ export type ExternalChangeView = {
   oldCheckOut: string;
   newCheckIn: string;
   newCheckOut: string;
-  applyStatus: "applied" | "conflict";
+  nightsDiff: number;
+  applyStatus: "applied" | "conflict" | "pending_approval" | "rejected" | "superseded";
   conflictDetail: string | null;
   status: "pending" | "reconciled";
-  emailStatus: "pending" | "sent" | "failed" | "skipped";
+  emailStatus: "pending" | "sending" | "sent" | "failed" | "skipped";
   emailDetail: string | null;
+  emailSentAtDisplay: string | null;
+  emailRetryable: boolean;
   receivedAtDisplay: string;
 };
 
@@ -70,13 +75,17 @@ type ChangeRow = {
   old_check_out: string;
   new_check_in: string;
   new_check_out: string;
-  apply_status: "applied" | "conflict";
+  apply_status: "applied" | "conflict" | "pending_approval" | "rejected" | "superseded";
   conflict_detail: string | null;
   status: "pending" | "reconciled";
-  email_status: "pending" | "sent" | "failed" | "skipped";
+  email_status: "pending" | "sending" | "sent" | "failed" | "skipped";
   email_detail: string | null;
+  email_sent_at: Date | null;
   created_at: Date;
 };
+
+const MS_PER_NIGHT = 24 * 60 * 60 * 1000;
+const nightsOf = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / MS_PER_NIGHT);
 
 function toView(r: ChangeRow): ExternalChangeView {
   return {
@@ -89,32 +98,40 @@ function toView(r: ChangeRow): ExternalChangeView {
     oldCheckOut: r.old_check_out,
     newCheckIn: r.new_check_in,
     newCheckOut: r.new_check_out,
+    nightsDiff: nightsOf(r.new_check_in, r.new_check_out) - nightsOf(r.old_check_in, r.old_check_out),
     applyStatus: r.apply_status,
     conflictDetail: r.conflict_detail,
     status: r.status,
     emailStatus: r.email_status,
     emailDetail: r.email_detail,
+    emailSentAtDisplay: r.email_sent_at ? HE_DATE_TIME.format(r.email_sent_at) : null,
+    emailRetryable: r.email_status === "failed" || r.email_status === "skipped",
     receivedAtDisplay: HE_DATE_TIME.format(r.created_at),
   };
 }
 
 const CHANGE_COLUMNS = sql`
-  id, ota_reservation_code, ota_name, reservation_number, room_labels,
-  old_check_in::text AS old_check_in, old_check_out::text AS old_check_out,
-  new_check_in::text AS new_check_in, new_check_out::text AS new_check_out,
-  apply_status, conflict_detail, status, email_status, email_detail, created_at`;
+  c.id, c.ota_reservation_code, c.ota_name, c.reservation_number, c.room_labels,
+  c.old_check_in::text AS old_check_in, c.old_check_out::text AS old_check_out,
+  c.new_check_in::text AS new_check_in, c.new_check_out::text AS new_check_out,
+  c.apply_status, c.conflict_detail, c.status, c.email_status, c.email_detail,
+  om.submitted_at AS email_sent_at, c.created_at`;
+
+const CHANGE_FROM = sql`
+  guesthub.channel_external_changes c
+  LEFT JOIN guesthub.outbound_messages om ON om.id = c.outbound_message_id`;
 
 export async function getExternalChangesAction(): Promise<Result<ExternalChangesData>> {
   try {
     const actor = await requireChannelAdmin();
     const pending = await sql<ChangeRow[]>`
-      SELECT ${CHANGE_COLUMNS} FROM guesthub.channel_external_changes
-      WHERE tenant_id = ${actor.tenantId} AND status = 'pending'
-      ORDER BY created_at DESC LIMIT 50`;
+      SELECT ${CHANGE_COLUMNS} FROM ${CHANGE_FROM}
+      WHERE c.tenant_id = ${actor.tenantId} AND c.status = 'pending'
+      ORDER BY c.created_at DESC LIMIT 50`;
     const reconciled = await sql<ChangeRow[]>`
-      SELECT ${CHANGE_COLUMNS} FROM guesthub.channel_external_changes
-      WHERE tenant_id = ${actor.tenantId} AND status = 'reconciled'
-      ORDER BY reconciled_at DESC LIMIT 5`;
+      SELECT ${CHANGE_COLUMNS} FROM ${CHANGE_FROM}
+      WHERE c.tenant_id = ${actor.tenantId} AND c.status = 'reconciled'
+      ORDER BY c.reconciled_at DESC LIMIT 5`;
     const [tenant] = await sql<{ recipient: string | null }[]>`
       SELECT settings->>'ops_notification_email' AS recipient
       FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
@@ -126,6 +143,48 @@ export async function getExternalChangesAction(): Promise<Result<ExternalChanges
         opsRecipient: tenant?.recipient ?? null,
       },
     };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// APPROVE a held external date change (037): applies the revision atomically
+// server-side (availability re-validated, own rows excluded); on conflict the
+// transaction aborts and the request stays pending. Calendar refreshes via the
+// committed NOTIFY. Never messages the OTA.
+export async function approveExternalChangeAction(input: { id: string }): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    const result = await approveExternalChange(sql, actor.tenantId, input.id, actor.userId);
+    if (!result.ok) return { success: false, error: result.error };
+    await writeAudit(actor, {
+      entityType: "channel_external_change",
+      entityId: input.id,
+      action: "external_change_approve",
+      after: { apply_status: "applied", reservation_id: result.reservationId },
+    });
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// REJECT a held external date change: the local dates stay; the exact revision
+// is marked rejected (terminal — duplicate delivery can never recreate it).
+// This is a LOCAL decision only: nothing is sent to the OTA, and the channel
+// still regards its own modification as effective.
+export async function rejectExternalChangeAction(input: { id: string }): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    const result = await rejectExternalChange(sql, actor.tenantId, input.id, actor.userId);
+    if (!result.ok) return { success: false, error: result.error };
+    await writeAudit(actor, {
+      entityType: "channel_external_change",
+      entityId: input.id,
+      action: "external_change_reject",
+      after: { apply_status: "rejected", reservation_id: result.reservationId },
+    });
+    return { success: true };
   } catch (e) {
     return failFrom(e);
   }
@@ -153,6 +212,34 @@ export async function reconcileExternalChangeAction(input: {
       after: { status: "reconciled" },
     });
     return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// Explicit email retry (D83): allowed only for a failed / skipped email; the
+// claim inside retryExternalChangeEmail guarantees one revision can never end
+// up with two successful logical emails, even against the worker dispatcher.
+// Every retry attempt is audited with its prior and resulting state.
+export async function retryExternalChangeEmailAction(input: {
+  id: string;
+}): Promise<Result<{ emailStatus: "sent" | "failed" | "skipped"; detail: string | null }>> {
+  try {
+    const actor = await requireChannelAdmin();
+    const [before] = await sql<{ email_status: string; email_detail: string | null }[]>`
+      SELECT email_status, email_detail FROM guesthub.channel_external_changes
+      WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
+    if (!before) return { success: false, error: "ההתראה אינה קיימת" };
+    const result = await retryExternalChangeEmail(sql, actor.tenantId, input.id);
+    if (!result.ok) return { success: false, error: result.error };
+    await writeAudit(actor, {
+      entityType: "channel_external_change",
+      entityId: input.id,
+      action: "external_change_email_retry",
+      before: { email_status: before.email_status, email_detail: before.email_detail },
+      after: { email_status: result.emailStatus, email_detail: result.detail },
+    });
+    return { success: true, data: { emailStatus: result.emailStatus, detail: result.detail } };
   } catch (e) {
     return failFrom(e);
   }

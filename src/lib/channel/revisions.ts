@@ -213,11 +213,14 @@ export async function markRevisionFailed(
 // Mark imported — call ONLY inside the transaction that created the local
 // reservation/inventory hold, so "imported" implies durably saved. When a local
 // reservation exists and the revision staged a card, the card is attached to it.
+// attachCard=false is for a STALE revision recorded as processed without
+// applying anything — its card must not overwrite a newer one.
 export async function markRevisionImported(
   tx: TransactionSql,
   tenantId: string,
   revisionId: string,
   localReservationId: string | null,
+  attachCard = true,
 ): Promise<void> {
   const [rev] = await tx<
     {
@@ -230,7 +233,7 @@ export async function markRevisionImported(
       mapping_error = NULL
     WHERE id = ${revisionId}
     RETURNING card_pan_encrypted, card_meta`;
-  if (localReservationId && rev?.card_pan_encrypted && rev.card_meta) {
+  if (attachCard && localReservationId && rev?.card_pan_encrypted && rev.card_meta) {
     await attachStagedCard(
       tx,
       tenantId,
@@ -241,9 +244,39 @@ export async function markRevisionImported(
   }
 }
 
+// HELD for operator approval (037): the revision is durably persisted and one
+// pending review exists — but NOTHING was applied to the reservation. The
+// entire revision (dates AND metadata AND card) applies only on approval,
+// atomically; rejection applies none of it.
+export async function markRevisionHeld(
+  tx: TransactionSql,
+  revisionId: string,
+  localReservationId: string | null,
+): Promise<void> {
+  await tx`
+    UPDATE guesthub.channel_booking_revisions SET
+      import_status = 'awaiting_approval', local_reservation_id = ${localReservationId},
+      mapping_error = NULL
+    WHERE id = ${revisionId}`;
+}
+
+// Operator rejection (037): terminal. The revision row stays as the durable
+// record; duplicate delivery finds it and can never recreate the review.
+export async function markRevisionRejected(
+  db: Sql | TransactionSql,
+  revisionId: string,
+): Promise<void> {
+  await db`
+    UPDATE guesthub.channel_booking_revisions SET
+      import_status = 'rejected'
+    WHERE id = ${revisionId} AND import_status = 'awaiting_approval'`;
+}
+
 // Acknowledgement gate (§X): a revision may be acknowledged only AFTER its
-// local transaction committed with import_status='imported'. The WHERE clause
-// makes early acknowledgement structurally impossible.
+// local transaction committed with import_status='imported' — or, since 037,
+// 'awaiting_approval': the revision + its pending review are durably ours, so
+// upstream ack loses nothing (the feed would expire it in ~30 min anyway).
+// The WHERE clause makes early acknowledgement structurally impossible.
 export async function markRevisionAcknowledged(
   db: Sql | TransactionSql,
   revisionId: string,
@@ -252,7 +285,7 @@ export async function markRevisionAcknowledged(
     UPDATE guesthub.channel_booking_revisions SET
       ack_status = 'acknowledged', acknowledged_at = now()
     WHERE id = ${revisionId}
-      AND import_status = 'imported'
+      AND import_status IN ('imported', 'awaiting_approval')
       AND ack_status = 'unacknowledged'
     RETURNING id`;
   return rows.length > 0;

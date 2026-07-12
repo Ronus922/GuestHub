@@ -13,7 +13,9 @@ import type { ChannexReqOpts } from "./channex-http";
 import {
   markRevisionAcknowledged,
   markRevisionFailed,
+  markRevisionHeld,
   markRevisionImported,
+  markRevisionRejected,
   persistBookingRevision,
   quarantineRevision,
 } from "./revisions";
@@ -74,6 +76,8 @@ export type InboundPullSummary = {
   pulled: number;
   imported: number;
   alreadyImported: number;
+  /** persisted + pending operator approval (037) — nothing applied yet */
+  held: number;
   quarantined: number;
   failed: number;
   acked: number;
@@ -370,6 +374,7 @@ type ExistingReservation = {
   primary_guest_id: string | null;
   check_in: string;
   check_out: string;
+  external_revision_id: string | null;
   external_cancellation_requested_at: string | null;
 };
 
@@ -381,6 +386,7 @@ async function lockExternalReservation(
   const [existing] = await tx<ExistingReservation[]>`
     SELECT id, reservation_number, status, primary_guest_id,
            check_in::text AS check_in, check_out::text AS check_out,
+           external_revision_id,
            external_cancellation_requested_at::text AS external_cancellation_requested_at
     FROM guesthub.reservations
     WHERE tenant_id = ${conn.tenant_id}
@@ -478,6 +484,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export type ImportOutcome =
   | { status: "imported"; reservationId: string | null }
   | { status: "already"; reservationId: string | null }
+  | { status: "held"; reservationId: string | null }
   | { status: "quarantined"; reason: string }
   | { status: "failed"; error: string };
 
@@ -492,11 +499,30 @@ type RevisionRow = {
   local_reservation_id: string | null;
 };
 
+type ApplyResult = { reservationId: string; disposition: "applied" | "held" | "stale" };
+
+// The at-source timestamp of the revision CURRENTLY applied to the
+// reservation — the ordering baseline for "an older revision can never
+// overwrite a newer accepted one".
+async function appliedRevisionInsertedAt(
+  tx: TransactionSql,
+  conn: InboundConnection,
+  providerRevisionId: string | null,
+): Promise<string | null> {
+  if (!providerRevisionId) return null;
+  const [row] = await tx<{ inserted_at: string | null }[]>`
+    SELECT payload->>'inserted_at' AS inserted_at
+    FROM guesthub.channel_booking_revisions
+    WHERE connection_id = ${conn.id} AND provider_revision_id = ${providerRevisionId}`;
+  return row?.inserted_at ?? null;
+}
+
 async function applyLiveRevision(
   tx: TransactionSql,
   conn: InboundConnection,
   norm: NormalizedRevision,
-): Promise<string> {
+  opts?: { approvedChangeId?: string },
+): Promise<ApplyResult> {
   const liveRooms = norm.rooms.filter((r) => !r.isCancelled);
   const stays = await resolveStays(tx, conn, liveRooms);
   const agg = aggregate(stays);
@@ -508,9 +534,60 @@ async function applyLiveRevision(
     norm.bookingId,
   );
 
+  const roomIds = [...new Set(stays.map((s) => s.roomId))];
+
+  // ---- approval gate (037) ----
+  // A revision that MOVES an existing reservation (dates or room allocation)
+  // is never applied silently: it is HELD, and one pending review row is
+  // created for the operator. Runs BEFORE the availability check on purpose —
+  // a conflicting proposal still becomes a reviewable request; the conflict
+  // blocks at approval time. Only the explicit approval path (approvedChangeId)
+  // passes through.
+  if (existing && !opts?.approvedChangeId && existing.status !== "cancelled") {
+    const dateChanged =
+      existing.check_in !== agg.checkIn || existing.check_out !== agg.checkOut;
+    const roomsChanged =
+      oldRoomIds.length > 0 &&
+      (oldRoomIds.length !== roomIds.length ||
+        !oldRoomIds.every((id) => roomIds.includes(id)));
+    if (dateChanged || roomsChanged) {
+      // ordering: a revision at-or-before the applied one is STALE — recorded
+      // as processed, applies nothing, creates no review
+      const appliedAt = await appliedRevisionInsertedAt(tx, conn, existing.external_revision_id);
+      // STRICTLY older — an equal channel timestamp is not "older" and must
+      // still surface as a reviewable request
+      if (appliedAt && norm.insertedAt && norm.insertedAt < appliedAt) {
+        return { reservationId: existing.id, disposition: "stale" };
+      }
+      // one pending review per reservation: a newer proposal supersedes any
+      // earlier undecided one (full history retained)
+      await tx`
+        UPDATE guesthub.channel_external_changes
+        SET apply_status = 'superseded', updated_at = now()
+        WHERE tenant_id = ${conn.tenant_id} AND reservation_id = ${existing.id}
+          AND apply_status = 'pending_approval'`;
+      await recordExternalDateChange(tx, {
+        tenantId: conn.tenant_id,
+        connectionId: conn.id,
+        providerRevisionId: norm.revisionId,
+        providerBookingId: norm.bookingId,
+        otaReservationCode: norm.otaReservationCode,
+        otaName: norm.otaName,
+        reservationId: existing.id,
+        reservationNumber: existing.reservation_number,
+        oldCheckIn: existing.check_in,
+        oldCheckOut: existing.check_out,
+        newCheckIn: agg.checkIn,
+        newCheckOut: agg.checkOut,
+        roomLabels: await roomLabelsFor(tx, conn.tenant_id, roomIds),
+        applyStatus: "pending_approval",
+      });
+      return { reservationId: existing.id, disposition: "held" };
+    }
+  }
+
   // serialize against local writers, then enforce the SAME availability rule
   // every local write goes through — excluding only this reservation's rows
-  const roomIds = [...new Set(stays.map((s) => s.roomId))];
   await lockRooms(tx, conn.tenant_id, roomIds);
   for (const stay of stays) {
     const conflicts = await checkRoomAvailability(tx, {
@@ -649,27 +726,6 @@ async function applyLiveRevision(
     norm.otaName,
   );
 
-  // an external revision MOVED an existing stay → one reconcilable
-  // notification per revision, riding this transaction (exists iff durable)
-  if (existing && (existing.check_in !== agg.checkIn || existing.check_out !== agg.checkOut)) {
-    await recordExternalDateChange(tx, {
-      tenantId: conn.tenant_id,
-      connectionId: conn.id,
-      providerRevisionId: norm.revisionId,
-      providerBookingId: norm.bookingId,
-      otaReservationCode: norm.otaReservationCode,
-      otaName: norm.otaName,
-      reservationId: existing.id,
-      reservationNumber: existing.reservation_number,
-      oldCheckIn: existing.check_in,
-      oldCheckOut: existing.check_out,
-      newCheckIn: agg.checkIn,
-      newCheckOut: agg.checkOut,
-      roomLabels: await roomLabelsFor(tx, conn.tenant_id, roomIds),
-      applyStatus: "applied",
-    });
-  }
-
   // consumed (and, on modification, released) nights → outbound ARI stays true
   const dirtyRoomIds = [...new Set([...oldRoomIds, ...roomIds])];
   const from = existing && existing.check_in < agg.checkIn ? existing.check_in : agg.checkIn;
@@ -693,7 +749,7 @@ async function applyLiveRevision(
     dateTo: to,
   });
 
-  return reservationId;
+  return { reservationId, disposition: "applied" };
 }
 
 async function applyCancellation(
@@ -783,6 +839,12 @@ export async function importRevisionRow(
   if (!rev) return { status: "failed", error: "רשומת רוויזיה לא נמצאה" };
   if (rev.import_status === "imported")
     return { status: "already", reservationId: rev.local_reservation_id };
+  // duplicate delivery of a revision that is already held for approval or was
+  // rejected: nothing is re-created, nothing is re-applied
+  if (rev.import_status === "awaiting_approval")
+    return { status: "held", reservationId: rev.local_reservation_id };
+  if (rev.import_status === "rejected")
+    return { status: "already", reservationId: rev.local_reservation_id };
 
   const norm = normalizeBookingRevision(rev.payload);
   if (!norm.ok) {
@@ -812,15 +874,30 @@ export async function importRevisionRow(
   }
 
   try {
-    const reservationId = await db.begin(async (tx) => {
-      const id =
-        norm.value.kind === "cancelled"
-          ? await applyCancellation(tx, conn, norm.value)
-          : await applyLiveRevision(tx, conn, norm.value);
-      await markRevisionImported(tx, conn.tenant_id, rev.id, id);
-      return id;
+    const outcome = await db.begin(async (tx): Promise<ImportOutcome> => {
+      if (norm.value.kind === "cancelled") {
+        const id = await applyCancellation(tx, conn, norm.value);
+        await markRevisionImported(tx, conn.tenant_id, rev.id, id);
+        return { status: "imported", reservationId: id ?? null };
+      }
+      const applied = await applyLiveRevision(tx, conn, norm.value);
+      if (applied.disposition === "held") {
+        // persisted + one pending review; NOTHING applied until approval
+        await markRevisionHeld(tx, rev.id, applied.reservationId);
+        return { status: "held", reservationId: applied.reservationId };
+      }
+      // 'stale' — an out-of-order older revision: processed, applies nothing,
+      // and its staged card must not overwrite the newer state
+      await markRevisionImported(
+        tx,
+        conn.tenant_id,
+        rev.id,
+        applied.reservationId,
+        applied.disposition !== "stale",
+      );
+      return { status: "imported", reservationId: applied.reservationId };
     });
-    return { status: "imported", reservationId: reservationId ?? null };
+    return outcome;
   } catch (e) {
     if (e instanceof QuarantineError) {
       await quarantineRevision(db, rev.id, e.message);
@@ -950,6 +1027,7 @@ async function processFeedRevision(
   const outcome = await importRevisionRow(db, conn, rowId);
   if (outcome.status === "imported") summary.imported += 1;
   else if (outcome.status === "already") summary.alreadyImported += 1;
+  else if (outcome.status === "held") summary.held += 1;
   else if (outcome.status === "quarantined") {
     summary.quarantined += 1;
     summary.errors.push(outcome.reason);
@@ -984,7 +1062,8 @@ async function reacknowledgeImported(
   const rows = await db<{ id: string; provider_revision_id: string }[]>`
     SELECT id, provider_revision_id FROM guesthub.channel_booking_revisions
     WHERE connection_id = ${conn.id}
-      AND ack_status = 'unacknowledged' AND import_status = 'imported'
+      AND ack_status = 'unacknowledged'
+      AND import_status IN ('imported', 'awaiting_approval', 'rejected')
     ORDER BY created_at
     LIMIT ${REACK_BATCH}`;
   for (const row of rows) {
@@ -1010,6 +1089,7 @@ export async function runInboundPull(
     pulled: 0,
     imported: 0,
     alreadyImported: 0,
+    held: 0,
     quarantined: 0,
     failed: 0,
     acked: 0,
@@ -1065,4 +1145,185 @@ export async function runInboundPull(
       WHERE id = ${conn.id}`;
   }
   return summary;
+}
+
+// ---------------------------------------------------------------
+// operator decision on a HELD external change (037)
+// ---------------------------------------------------------------
+
+type HeldReview = {
+  id: string;
+  tenant_id: string;
+  connection_id: string;
+  provider_revision_id: string;
+  reservation_id: string | null;
+  apply_status: string;
+  old_check_in: string;
+  old_check_out: string;
+  new_check_in: string;
+  new_check_out: string;
+};
+
+async function lockHeldReview(
+  tx: TransactionSql,
+  tenantId: string,
+  changeId: string,
+): Promise<HeldReview | null> {
+  const [row] = await tx<HeldReview[]>`
+    SELECT id, tenant_id, connection_id, provider_revision_id, reservation_id,
+           apply_status,
+           old_check_in::text AS old_check_in, old_check_out::text AS old_check_out,
+           new_check_in::text AS new_check_in, new_check_out::text AS new_check_out
+    FROM guesthub.channel_external_changes
+    WHERE id = ${changeId} AND tenant_id = ${tenantId}
+    FOR UPDATE`;
+  return row ?? null;
+}
+
+async function connectionById(
+  db: Sql | TransactionSql,
+  connectionId: string,
+): Promise<InboundConnection | null> {
+  const [row] = await db<InboundConnection[]>`
+    SELECT id, tenant_id, environment, channex_property_id, api_key_ciphertext
+    FROM guesthub.channel_connections WHERE id = ${connectionId}`;
+  return row ?? null;
+}
+
+export type DecisionResult =
+  | { ok: true; reservationId: string | null }
+  | { ok: false; error: string };
+
+// APPROVE: apply the held revision's stay changes — the ENTIRE revision
+// (dates, rooms, metadata, staged card) applies atomically through the same
+// applyLiveRevision every import uses; availability is re-validated inside
+// (excluding this reservation's own rows) and a conflict aborts the whole
+// transaction, leaving the review pending for manual handling. The committed
+// NOTIFY refreshes open calendars immediately.
+export async function approveExternalChange(
+  db: Sql,
+  tenantId: string,
+  changeId: string,
+  decidedBy: string | null,
+): Promise<DecisionResult> {
+  try {
+    return await db.begin(async (tx): Promise<DecisionResult> => {
+      const review = await lockHeldReview(tx, tenantId, changeId);
+      if (!review) return { ok: false, error: "בקשת השינוי אינה קיימת" };
+      if (review.apply_status !== "pending_approval")
+        return { ok: false, error: "הבקשה כבר הוכרעה או הוחלפה ברוויזיה חדשה יותר" };
+      const conn = await connectionById(tx, review.connection_id);
+      if (!conn) return { ok: false, error: "חיבור הערוץ אינו קיים" };
+      const [rev] = await tx<RevisionRow[]>`
+        SELECT id, tenant_id, provider_booking_id, provider_revision_id,
+               revision_kind, payload, import_status, local_reservation_id
+        FROM guesthub.channel_booking_revisions
+        WHERE connection_id = ${conn.id}
+          AND provider_revision_id = ${review.provider_revision_id}
+        FOR UPDATE`;
+      if (!rev || rev.import_status !== "awaiting_approval")
+        return { ok: false, error: "הרוויזיה אינה ממתינה לאישור" };
+      const norm = normalizeBookingRevision(rev.payload);
+      if (!norm.ok) return { ok: false, error: norm.error };
+      // latest-applicable guard: the reservation may have accepted a newer
+      // revision since this review was created
+      if (review.reservation_id) {
+        const [cur] = await tx<{ external_revision_id: string | null }[]>`
+          SELECT external_revision_id FROM guesthub.reservations
+          WHERE id = ${review.reservation_id} AND tenant_id = ${tenantId}`;
+        const appliedAt = await appliedRevisionInsertedAt(
+          tx,
+          conn,
+          cur?.external_revision_id ?? null,
+        );
+        if (appliedAt && norm.value.insertedAt && norm.value.insertedAt < appliedAt)
+          return { ok: false, error: "רוויזיה חדשה יותר כבר הוחלה על ההזמנה — הבקשה אינה תקפה" };
+      }
+      const applied = await applyLiveRevision(tx, conn, norm.value, {
+        approvedChangeId: review.id,
+      });
+      await markRevisionImported(tx, conn.tenant_id, rev.id, applied.reservationId);
+      await tx`
+        UPDATE guesthub.channel_external_changes
+        SET apply_status = 'applied',
+            decided_at = now(), decided_by = ${decidedBy},
+            status = 'reconciled', reconciled_at = now(), reconciled_by = ${decidedBy},
+            updated_at = now()
+        WHERE id = ${review.id}`;
+      await channelAudit(
+        tx,
+        conn.tenant_id,
+        applied.reservationId,
+        "external_change_approved",
+        {
+          change_id: review.id,
+          revision_id: review.provider_revision_id,
+          old_check_in: review.old_check_in,
+          old_check_out: review.old_check_out,
+          new_check_in: review.new_check_in,
+          new_check_out: review.new_check_out,
+          decided_by: decidedBy,
+        },
+        norm.value.otaName,
+      );
+      return { ok: true, reservationId: applied.reservationId };
+    });
+  } catch (e) {
+    // a QuarantineError here is an availability conflict at approval time:
+    // the transaction rolled back — no partial change, review still pending
+    if (e instanceof QuarantineError)
+      return { ok: false, error: `לא ניתן לאשר: ${e.message} — הבקשה נותרה ממתינה לטיפול ידני` };
+    return { ok: false, error: e instanceof Error ? e.message : "אישור השינוי נכשל" };
+  }
+}
+
+// REJECT: keep the local dates; mark the exact revision rejected (terminal).
+// This is a LOCAL decision only — nothing is sent to the OTA, and Booking.com
+// still regards its own modification as effective.
+export async function rejectExternalChange(
+  db: Sql,
+  tenantId: string,
+  changeId: string,
+  decidedBy: string | null,
+): Promise<DecisionResult> {
+  try {
+    return await db.begin(async (tx): Promise<DecisionResult> => {
+      const review = await lockHeldReview(tx, tenantId, changeId);
+      if (!review) return { ok: false, error: "בקשת השינוי אינה קיימת" };
+      if (review.apply_status !== "pending_approval")
+        return { ok: false, error: "הבקשה כבר הוכרעה או הוחלפה ברוויזיה חדשה יותר" };
+      const [rev] = await tx<{ id: string }[]>`
+        SELECT id FROM guesthub.channel_booking_revisions
+        WHERE connection_id = ${review.connection_id}
+          AND provider_revision_id = ${review.provider_revision_id}
+        FOR UPDATE`;
+      if (rev) await markRevisionRejected(tx, rev.id);
+      await tx`
+        UPDATE guesthub.channel_external_changes
+        SET apply_status = 'rejected',
+            decided_at = now(), decided_by = ${decidedBy},
+            status = 'reconciled', reconciled_at = now(), reconciled_by = ${decidedBy},
+            updated_at = now()
+        WHERE id = ${review.id}`;
+      await channelAudit(
+        tx,
+        tenantId,
+        review.reservation_id ?? review.id,
+        "external_change_rejected",
+        {
+          change_id: review.id,
+          revision_id: review.provider_revision_id,
+          kept_check_in: review.old_check_in,
+          kept_check_out: review.old_check_out,
+          proposed_check_in: review.new_check_in,
+          proposed_check_out: review.new_check_out,
+          decided_by: decidedBy,
+        },
+        null,
+      );
+      return { ok: true, reservationId: review.reservation_id };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "דחיית השינוי נכשלה" };
+  }
 }

@@ -232,7 +232,7 @@ export async function getInboundStatusAction(): Promise<Result<InboundStatusView
     if ((counts?.quarantined ?? 0) > 0)
       alerts.push("רוויזיות בהסגר ממתינות לטיפול (מיפוי חדר / התנגשות)");
     if ((pendingChanges?.n ?? 0) > 0)
-      alerts.push("שינויי תאריכים חיצוניים ממתינים לטיפול — ראו \"שינויים חיצוניים מהערוצים\"");
+      alerts.push("שינויי תאריכים מהערוץ ממתינים לאישור — ראו \"שינויים חיצוניים מהערוצים\"");
     if ((jobStats?.dead_letter ?? 0) > 0)
       alerts.push("קיימות משימות שנכשלו סופית (dead-letter) — בדקו ונסו שוב");
     if ((rangeStats?.oldest_pending_secs ?? 0) > 300)
