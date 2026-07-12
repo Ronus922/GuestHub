@@ -173,7 +173,9 @@ assert.ok(!/updateReservationAction|createReservationAction|cancelReservationAct
 assert.ok(!/useTransition|toast\./.test(tooltip), "tooltip has no mutation/loading state");
 assert.ok(/role="tooltip"/.test(tooltip), "accessibility role preserved");
 assert.ok(/draft/.test(tooltip), "pending/draft badge stays as informational content");
-assert.ok(/room_count > 1/.test(tooltip), "multi-room information preserved");
+// (the old "multi-room information preserved" invariant is gone: the approved
+// card — InvitationCard.png — carries four rows and no multi-room row. The D88
+// structure block below is the authority on what the card shows.)
 // D44 §1/§7: the tooltip cannot be a pointer/click/drag target at all
 const cssPop = readFileSync("src/app/styles/calendar.css", "utf8")
   .match(/\.cb-pop\s*\{[^}]*\}/);
@@ -337,16 +339,49 @@ assert.ok(/background: var\(--color-primary\)/.test(rule(".cb-pop-h")),
 assert.ok(/color: #fff/.test(rule(".cb-pop-nm")), "the guest name is white on the blue header");
 assert.ok(/border-radius: 999px/.test(rule(".cb-pbadge")), "the payment chip is a pill, as in the reference");
 assert.ok(/color: var\(--color-primary\)/.test(rule(".cb-pop-hint")), "the footer stays the blue action line");
-// every fact the card carried before the redesign is still on it
-for (const [what, re] of [
-  ["reservation number", /reservation_number/],
-  ["order status", /WorkflowChip/],
-  ["stay dates", /hebDayMonth\(stay\.check_in\)/],
-  ["nights + room + status", /nights.*<\/b> לילות/s],
-  ["total + balance", /total_price\.toLocaleString\(\)/],
-  ["booking source", /source_label/],
-]) assert.ok(re.test(tooltip), `the card still shows the ${what}`);
-assert.ok(/<bdi/.test(tooltip), "a Latin guest name / source keeps its own direction inside the RTL card");
+// The approved card shows EXACTLY four body rows and NOTHING else. The earlier
+// pass kept a fifth row (reservation number + a second order-status chip) because
+// an intermediate spec said "do not remove currently available information" — the
+// reference never had that row, and the reference wins. This locks the structure
+// so the row cannot come back.
+const body = tooltip.slice(tooltip.indexOf('<div className="cb-pop-b">'), tooltip.indexOf('cb-pop-hint'));
+const rows = body.match(/<p className="cb-pl">/g) ?? [];
+assert.equal(rows.length, 4, "the card body has EXACTLY four rows (dates, nights+room, money, source)");
+const rowOrder = [
+  ["stay dates", /name="calendar"[\s\S]*?hebDayMonth\(stay\.check_in\)/],
+  ["nights + room + status", /name="moon"[\s\S]*?<b>\{nights\}<\/b> לילות · חדר/],
+  ["total + balance", /name="finance"[\s\S]*?total_price\.toLocaleString\(\)/],
+  ["booking source", /name="channels"[\s\S]*?source_label/],
+];
+let cursor = 0;
+for (const [what, re] of rowOrder) {
+  const m = body.slice(cursor).match(re);
+  assert.ok(m, `body row missing: ${what}`);
+  cursor += m.index + 1;
+}
+assert.ok(/<div className="cb-pop-b">\s*<p className="cb-pl">\s*<Icon name="calendar"/.test(
+  body.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")),
+  "the FIRST body row is the stay-date row — no reservation-number row above it");
+// the forbidden row, in every shape it could come back as
+assert.ok(!/הזמנה <b>#/.test(tooltip) && !/#\{stay\.reservation_number\}/.test(tooltip),
+  "the reservation-number row is GONE (and was not smuggled into another row)");
+assert.ok(!/WorkflowChip|workflow_label|workflow_color/.test(tooltip),
+  "there is NO second order-status chip anywhere on the card");
+assert.ok(!/room_count/.test(tooltip), "no extra multi-room row — the reference has four rows");
+assert.ok(/<bdi/.test(tooltip), "a Latin guest name / OTA source keeps its own direction inside the RTL card");
+
+// ---- the speech-bubble pointer ----
+// It is a pseudo-element welded to the card edge — not a glyph, not an SVG, not a
+// separate node — and the card may NOT clip it (overflow:hidden did exactly that,
+// which is why production shipped without a pointer).
+assert.ok(/\.cb-pop::after\s*\{[^}]*rotate\(45deg\)/s.test(css), "the pointer is a rotated pseudo-element");
+assert.ok(!/overflow:\s*hidden/.test(popRule), "the card must NOT clip its own pointer");
+assert.ok(/border-radius: 17px 17px 0 0/.test(rule(".cb-pop-h")),
+  "with no overflow clip, the blue header rounds its own top corners (no seam, no stray radius)");
+assert.ok(/--cb-caret/.test(css) && /--cb-caret/.test(tooltip),
+  "the pointer is positioned under the pill it belongs to, surviving viewport clamping");
+assert.ok(/bottom: -8px/.test(css) && /top: -8px/.test(css),
+  "the pointer hangs OUTSIDE the card box (adds nothing to its height), above and below");
 
 // ---- one separator, one implementation ----
 // The three old borders sized their own boxes differently (percent month band vs

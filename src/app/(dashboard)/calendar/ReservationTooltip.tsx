@@ -4,7 +4,6 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
 import { formatBalance } from "@/lib/inventory-rules";
-import { statusTintPalette } from "@/lib/colors";
 import { PAY_STYLE } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
@@ -42,7 +41,12 @@ export function ReservationTooltip({
   statusLabel: Map<string, string>;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; place: "above" | "below" } | null>(null);
+  const [pos, setPos] = useState<{
+    top: number;
+    left: number;
+    place: "above" | "below";
+    caret: number;
+  } | null>(null);
 
   // position after render (needs the measured height): prefer ABOVE the pill
   // with a visible gap, flip BELOW when there is not enough room above; clamp
@@ -67,7 +71,11 @@ export function ReservationTooltip({
       place = "below";
       top = Math.min(target.anchor.bottom + GAP, vh - h - 8);
     }
-    setPos({ top, left, place });
+    // the speech-bubble pointer stays under the pill it belongs to, even after
+    // the card is clamped away from the viewport edge (kept off the rounded
+    // corners)
+    const caret = Math.min(Math.max(target.anchor.x - left, 26), POP_W - 26);
+    setPos({ top, left, place, caret });
   }, [target]);
 
   if (!target) return null;
@@ -114,7 +122,12 @@ export function ReservationTooltip({
       // inset would mirror the computed viewport-clamped position
       style={
         pos
-          ? { top: pos.top, left: pos.left, visibility: "visible" }
+          ? ({
+              top: pos.top,
+              left: pos.left,
+              visibility: "visible",
+              "--cb-caret": `${pos.caret}px`,
+            } as React.CSSProperties)
           : { top: 0, left: 0, visibility: "hidden" }
       }
     >
@@ -137,20 +150,10 @@ export function ReservationTooltip({
         </span>
       </div>
 
+      {/* the approved body: FOUR compact rows — dates, nights+room, money,
+          source. The reservation number and the order-status chip are NOT on
+          this card (InvitationCard.png); they live in the editor. */}
       <div className="cb-pop-b">
-        <p className="cb-pl">
-          <Icon name="reservations" size={17} className="cb-pli" />
-          <span>
-            הזמנה <b>#{stay.reservation_number}</b>
-            {stay.workflow_label && stay.workflow_color && (
-              /* the order status — the SAME tint family the pill wears (D77.1) */
-              <>
-                {" "}
-                <WorkflowChip color={stay.workflow_color} label={stay.workflow_label} />
-              </>
-            )}
-          </span>
-        </p>
         <p className="cb-pl">
           <Icon name="calendar" size={17} className="cb-pli" />
           <span>
@@ -181,12 +184,6 @@ export function ReservationTooltip({
             )}
           </span>
         </p>
-        {stay.room_count > 1 && (
-          <p className="cb-pl">
-            <Icon name="link" size={17} className="cb-pli" />
-            <span>הזמנה מרובת חדרים ({stay.room_count} חדרים)</span>
-          </p>
-        )}
         {stay.source_label && (
           <p className="cb-pl">
             <Icon name="channels" size={17} className="cb-pli" />
@@ -201,17 +198,5 @@ export function ReservationTooltip({
       </div>
       <p className="cb-pop-hint">לחצו על ההזמנה לעריכה · גררו להזזה</p>
     </div>
-  );
-}
-
-function WorkflowChip({ color, label }: { color: string; label: string }) {
-  const t = statusTintPalette(color);
-  return (
-    <span
-      className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-bold"
-      style={{ background: t.bg, borderColor: t.bd, color: t.tx }}
-    >
-      {label}
-    </span>
   );
 }

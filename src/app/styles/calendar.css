@@ -869,11 +869,13 @@
   box-shadow: 0 24px 60px rgba(16, 24, 40, 0.26);
   z-index: 60;
   direction: rtl;
-  overflow: hidden;
+  /* NO overflow:hidden — it clipped the speech-bubble pointer off the card
+     (D88.1). The header rounds its own top corners instead. */
   animation: cb-pop-in 0.14s ease-out;
   /* D44: informational only — it must NEVER intercept a pointer, capture a
      click, or become a drag/drop target, so it can never cover or block the
-     reservation pill or its resize handles. */
+     reservation pill or its resize handles. `pointer-events` is about the MOUSE;
+     it has nothing to do with the visible pointer below. */
   pointer-events: none;
 }
 @keyframes cb-pop-in {
@@ -882,26 +884,29 @@
     transform: translateY(4px);
   }
 }
-/* anchor caret: a rotated square on the edge facing the pill. It wears the color
-   of the face it grows out of — the white foot when the card sits above the
-   pill, the blue header when it flips below — so it always reads as part of the
-   card. */
+/* the speech-bubble pointer (InvitationCard.png): a rotated square welded to the
+   edge facing the pill, wearing the color of the face it grows out of — the white
+   foot when the card sits above the pill, the blue header when it flips below. It
+   sits OUTSIDE the box, so it adds nothing to the card height, and `--cb-caret`
+   (physical px from the card's left edge, set by the component) keeps it under the
+   reservation it belongs to after the card is clamped to the viewport. */
 .cb-pop::after {
   content: "";
   position: absolute;
-  inset-inline-start: 50%;
-  width: 12px;
-  height: 12px;
+  left: var(--cb-caret, 50%);
+  width: 16px;
+  height: 16px;
   background: #fff;
-  transform: translateX(50%) rotate(45deg);
+  transform: translateX(-50%) rotate(45deg);
 }
 .cb-pop[data-place="above"]::after {
-  bottom: -6px;
-  border-inline-end: 1px solid #e4e8f0;
-  border-bottom: 1px solid #e4e8f0;
+  bottom: -8px;
+  border-inline-end: 1px solid #eef0f5;
+  border-bottom: 1px solid #eef0f5;
+  box-shadow: 3px 3px 7px rgba(16, 24, 40, 0.07);
 }
 .cb-pop[data-place="below"]::after {
-  top: -6px;
+  top: -8px;
   background: var(--color-primary);
 }
 .cb-pop-h {
@@ -910,6 +915,9 @@
   gap: 12px;
   padding: 15px 16px;
   background: var(--color-primary);
+  /* the header rounds its own top corners (the card no longer clips), and stays
+     square where it meets the white body — no seam, no gap, no stray radius */
+  border-radius: 17px 17px 0 0;
 }
 .cb-pav {
   width: 42px;
