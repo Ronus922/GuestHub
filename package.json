@@ -52,7 +52,8 @@
     "check:channels-fullsync-ui": "node scripts/check-channels-fullsync-ui.mjs",
     "check:rates-sync": "node scripts/check-rates-sync.mjs",
     "check:realtime": "node scripts/check-realtime-cancellation.mjs",
-    "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs"
+    "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs",
+    "check:status-default": "node scripts/check-status-default.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
