@@ -323,4 +323,50 @@ assert.ok(/:root\s*\{[^}]*--font-sans:\s*var\(--font-assistant\)/s.test(base),
 assert.ok(/\.cb-screen\s*\{[^}]*line-height:\s*normal/s.test(css),
   "the calendar matches the reference's `line-height: normal`, not Tailwind's 1.5");
 
+// ============================================================
+// D88 — the invitation card (ref/screens/InvitationCard.png) and the ONE month
+// separator. Both were regressions of the same kind: a second implementation of
+// something that already existed (a light-header card taken from another bundle;
+// a month boundary drawn three times from three differently-sized boxes).
+// ============================================================
+const popRule = rule(".cb-pop");
+assert.ok(/width: 366px/.test(popRule), "the invitation card is 366px wide (InvitationCard.png)");
+assert.ok(/border-radius: 18px/.test(popRule), "the card keeps the reference corner radius");
+assert.ok(/background: var\(--color-primary\)/.test(rule(".cb-pop-h")),
+  "the card header is the brand-blue band of InvitationCard.png — NOT a white header");
+assert.ok(/color: #fff/.test(rule(".cb-pop-nm")), "the guest name is white on the blue header");
+assert.ok(/border-radius: 999px/.test(rule(".cb-pbadge")), "the payment chip is a pill, as in the reference");
+assert.ok(/color: var\(--color-primary\)/.test(rule(".cb-pop-hint")), "the footer stays the blue action line");
+// every fact the card carried before the redesign is still on it
+for (const [what, re] of [
+  ["reservation number", /reservation_number/],
+  ["order status", /WorkflowChip/],
+  ["stay dates", /hebDayMonth\(stay\.check_in\)/],
+  ["nights + room + status", /nights.*<\/b> לילות/s],
+  ["total + balance", /total_price\.toLocaleString\(\)/],
+  ["booking source", /source_label/],
+]) assert.ok(re.test(tooltip), `the card still shows the ${what}`);
+assert.ok(/<bdi/.test(tooltip), "a Latin guest name / source keeps its own direction inside the RTL card");
+
+// ---- one separator, one implementation ----
+// The three old borders sized their own boxes differently (percent month band vs
+// `flex: 1 1 0` cells whose border sits OUTSIDE the zero basis), so the header
+// line landed ~3px off the body line AND the month-start column came out 3px
+// wider than every other column. Nothing may draw a month boundary as a border
+// again.
+assert.ok(!/border-inline-start: 3px solid #b9c2d8/.test(css),
+  "no cell/segment draws the month boundary as its own border — that is what broke the line");
+const sepRule = rule(".cb-msep");
+assert.ok(/position: absolute/.test(sepRule) && /width: 3px/.test(sepRule),
+  ".cb-msep is ONE positioned line, not a border");
+assert.ok(/var\(--cb-room-col\)/.test(sepRule) && /var\(--cb-sep\)/.test(sepRule),
+  ".cb-msep hangs off the canonical column boundary (room column + fraction of the strip)");
+assert.ok(/\.cb-chead \.cb-msep/.test(css) && /\.cb-cbody \.cb-msep/.test(css),
+  "the same separator class serves the header and the body — no parallel implementation");
+assert.ok(/{monthSeparators}/.test(gridSrc) && (gridSrc.match(/\{monthSeparators\}/g) ?? []).length === 2,
+  "the header block and the body block render the SAME separator nodes");
+assert.ok(/"--cb-sep": day \/ data\.days/.test(gridSrc),
+  "the separator fraction is the same number the day cells divide by");
+assert.ok(!/\$\{monthStart \? "ms" : ""\}/.test(gridSrc), "the obsolete month-start cell class is gone");
+
 console.log("check-calendar-ui: all interaction/geometry rules hold ✔");

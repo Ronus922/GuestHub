@@ -847,6 +847,31 @@ export function CalendarGrid({
     return segs;
   }, [dates]);
 
+  // A month boundary is drawn ONCE per boundary, as a full-height line over the
+  // canonical column edge — never as a border on the month segment AND on the day
+  // cell AND on the body cell. Those three sized their own boxes differently (a
+  // percentage-wide month band vs `flex: 1 1 0` cells, whose border sits OUTSIDE
+  // the zero basis), so the header line landed ~3px away from the body line and
+  // the month-start column came out 3px wider than every other column.
+  const monthBounds = useMemo(() => {
+    const out: number[] = [];
+    let at = 0;
+    for (const seg of monthSegs.slice(0, -1)) {
+      at += seg.days;
+      out.push(at);
+    }
+    return out;
+  }, [monthSegs]);
+  const monthSeparators = monthBounds.map((day) => (
+    <span
+      key={day}
+      className="cb-msep"
+      aria-hidden
+      // fraction of the day strip — the SAME number the cells divide by
+      style={{ "--cb-sep": day / data.days } as React.CSSProperties}
+    />
+  ));
+
   const floorCount = useMemo(
     () => new Set(data.rooms.map((r) => r.floor).filter(Boolean)).size,
     [data.rooms],
@@ -885,13 +910,14 @@ export function CalendarGrid({
           >
             {/* ===== sticky header: month band + day band ===== */}
             <div className="cb-chead">
+              {monthSeparators}
               <div className="cb-hrow cb-mrow">
                 <div className="cb-hcorn" style={{ width: ROOM_COL }} />
                 <div className="cb-hcells">
-                  {monthSegs.map((seg, i) => (
+                  {monthSegs.map((seg) => (
                     <div
                       key={seg.label}
-                      className={`cb-mseg ${i > 0 ? "ms" : ""}`}
+                      className="cb-mseg"
                       style={{ width: `${(seg.days / data.days) * 100}%` }}
                     >
                       <span className="cb-min">{seg.label}</span>
@@ -911,11 +937,10 @@ export function CalendarGrid({
                   {dates.map((d) => {
                     const dow = dayOfWeek(d);
                     const weekend = dow === 5 || dow === 6;
-                    const monthStart = d.slice(8, 10) === "01" && d !== data.from;
                     return (
                       <div
                         key={d}
-                        className={`cb-dcell ${weekend ? "we" : ""} ${d === data.today ? "td" : ""} ${monthStart ? "ms" : ""}`}
+                        className={`cb-dcell ${weekend ? "we" : ""} ${d === data.today ? "td" : ""}`}
                       >
                         <span className="cb-dw">יום {HEBREW_DAY_LETTERS[dow]}</span>
                         <span className="cb-dn">{Number(d.slice(8, 10))}</span>
@@ -925,6 +950,11 @@ export function CalendarGrid({
                 </div>
               </div>
             </div>
+
+            {/* ===== grid body: ONE positioned block, so a month separator runs
+                 through every lane as a single line ===== */}
+            <div className="cb-cbody">
+              {monthSeparators}
 
             {/* ===== unassigned external-booking lane (renders only when
                  active holds exist, §R) ===== */}
@@ -1039,6 +1069,7 @@ export function CalendarGrid({
                     written imperatively per frame, never via React */}
                 <span ref={gnRef} className="cb-gn" />
               </div>
+            </div>
             </div>
           </div>
         </div>
@@ -1266,8 +1297,7 @@ const RoomRow = memo(function RoomRow({
         {dates.map((d) => {
           const dow = dayOfWeek(d);
           const weekend = dow === 5 || dow === 6;
-          const monthStart = d.slice(8, 10) === "01" && d !== from;
-          const rate = cellRate(room, d);
+            const rate = cellRate(room, d);
           const price = rate?.price != null ? Number(rate.price) : room.base_price;
           const minN = rate?.min_nights ?? null;
           const closed = rate?.closed ?? false;
@@ -1275,7 +1305,7 @@ const RoomRow = memo(function RoomRow({
           return (
             <div
               key={d}
-              className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${monthStart ? "ms" : ""} ${!sellable ? "blocked" : ""} ${creatable ? "cr" : ""}`}
+              className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${!sellable ? "blocked" : ""} ${creatable ? "cr" : ""}`}
               onPointerDown={
                 creatable ? (e) => onCellPointerDown(e, roomIndex, d, minN ?? 1) : undefined
               }
