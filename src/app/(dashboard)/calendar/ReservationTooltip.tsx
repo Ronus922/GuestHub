@@ -77,9 +77,9 @@ export function ReservationTooltip({
     .slice(0, 2)
     .map((w) => w[0] ?? "")
     .join("");
-  // draft (pending-approval) shows its status badge, like Tooltip.png;
-  // otherwise the payment state. InvitationCard.png: a WHITE chip on the dark
-  // header — colored dot + colored text, background stays white.
+  // draft (pending-approval) shows its status badge, like Tooltip.png; otherwise
+  // the payment state. The header is now WHITE (GuesthubCalandrUpdate.html), so
+  // the chip carries its own tint — a white chip would vanish against it.
   const PAY_LABEL: Record<CalendarStay["payment"], string> = {
     paid: "שולם מלא",
     overpaid: "שולם ביתר",
@@ -88,8 +88,8 @@ export function ReservationTooltip({
   };
   const badge =
     stay.status === "draft"
-      ? { label: statusLabel.get("draft") ?? "ממתין לאישור", tx: "#B4670A" }
-      : { label: PAY_LABEL[stay.payment] ?? "ממתין לתשלום", tx: pal.tx };
+      ? { label: statusLabel.get("draft") ?? "ממתין לאישור", tx: "#B4670A", bg: "#FDF2E1" }
+      : { label: PAY_LABEL[stay.payment] ?? "ממתין לתשלום", tx: pal.tx, bg: pal.bg };
   // canonical balance (D52 §7): NOT floored — a credit is shown as a credit,
   // never as a zero balance. Shared formatter, one semantics everywhere.
   const bal = formatBalance(stay.total_price, stay.paid_amount);
@@ -125,7 +125,7 @@ export function ReservationTooltip({
           </p>
           <p className="cb-pop-sub">{sub}</p>
         </div>
-        <span className="cb-pbadge" style={{ color: badge.tx }}>
+        <span className="cb-pbadge" style={{ color: badge.tx, background: badge.bg }}>
           <span className="cb-d" style={{ background: badge.tx }} />
           {badge.label}
         </span>

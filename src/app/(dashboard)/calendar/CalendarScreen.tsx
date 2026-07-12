@@ -99,7 +99,7 @@ export function CalendarScreen({
   const rangeEnd = addDays(data.from, data.days - 1);
 
   return (
-    <div className="flex h-full flex-col" dir="rtl">
+    <div className="cb-screen flex h-full flex-col" dir="rtl">
       {/* ---- toolbar (reference .hd) ---- */}
       <div className="flex flex-wrap items-center gap-3 px-[26px] pt-[18px]">
         <h1 className="cb-title">יומן חדרים</h1>

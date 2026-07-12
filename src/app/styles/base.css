@@ -34,8 +34,6 @@
   --color-status-info: #2540c8;
   --color-status-purple: #7c3aed;
 
-  --font-sans: var(--font-assistant), system-ui, sans-serif;
-
   --radius-card: 16px;
   --radius-panel: 0.65rem;
 
@@ -46,6 +44,16 @@
 
 :root {
   color-scheme: light;
+
+  /* --font-sans MUST live here, not in @theme (D2 — Assistant).
+     Tailwind v4 tree-shakes theme variables that no utility class references.
+     Nothing in this app uses a `font-sans` utility, so while this lived in
+     @theme it was never emitted: `var(--font-sans)` resolved to nothing,
+     `body { font-family: var(--font-sans) }` collapsed, and the ENTIRE app
+     silently rendered in Tailwind's ui-sans-serif fallback instead of
+     Assistant — for every screen, since day one. Declared on :root it is
+     always emitted. --font-assistant itself is set on <body> by next/font. */
+  --font-sans: var(--font-assistant), system-ui, sans-serif;
 }
 
 html,
