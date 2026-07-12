@@ -48,3 +48,7 @@ next-env.d.ts
 
 # channel worker build output (npm postbuild → tsconfig.worker.json)
 /dist/
+
+# design references (screenshots, PDFs, HTML bundles) — the repo is PUBLIC;
+# app screenshots and reference assets must never be committed (D87 rule)
+/ref/
