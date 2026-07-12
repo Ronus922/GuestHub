@@ -7,6 +7,16 @@
 
 @layer components {
 
+/* The reference renders at `line-height: normal`; the app inherits Tailwind's
+   1.5, which inflated every label, price and pill row by ~2px and broke the
+   vertical rhythm against the reference. Elements needing a specific leading
+   still declare their own.
+   (The font itself is Assistant app-wide — see the --font-sans note in
+   base.css for why it has to be declared on :root and not in @theme.) */
+.cb-screen {
+  line-height: normal;
+}
+
 /* ---------- toolbar ---------- */
 .cb-title {
   font-size: 24px;
@@ -187,7 +197,7 @@
   min-width: 0;
 }
 .cb-kpi-l {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--color-muted);
   font-weight: 700;
   white-space: nowrap;
@@ -201,7 +211,7 @@
   color: var(--color-ink);
 }
 .cb-kpi-v .cb-u {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--color-faint);
   font-weight: 700;
 }
@@ -218,7 +228,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   border-radius: 7px;
   padding: 2px 7px;
@@ -236,7 +246,7 @@
   border: none;
   background: transparent;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   color: #5b6478;
   cursor: pointer;
@@ -314,16 +324,16 @@
   min-width: 0;
 }
 .cb-mrow {
-  height: 28px;
+  height: var(--cb-month-h);
 }
 .cb-mrow .cb-hcorn {
   border-bottom: 1px solid #eef0f5;
 }
 .cb-mseg {
-  height: 28px;
+  height: var(--cb-month-h);
   background: #fbfcfe;
   border-bottom: 1px solid #eef0f5;
-  border-inline-start: 1.5px solid #e1e5ee;
+  border-inline-start: 3px solid #b9c2d8;
   display: flex;
   align-items: center;
   overflow: hidden;
@@ -333,14 +343,22 @@
   border-inline-start: none;
 }
 .cb-mseg .cb-min {
-  font-size: 11.5px;
+  font-size: 17px;
   font-weight: 800;
-  color: #4b5266;
-  padding: 0 10px;
+  color: var(--color-ink);
+  letter-spacing: -0.2px;
+  padding: 0 12px;
   white-space: nowrap;
+  /* The reference only ever shows one month, so it never has to survive a
+     narrow segment. A real range straddles months, and at 17px a one-day tail
+     segment hard-clips mid-glyph ("אוגוסט 2"). Ellipsise instead — the normal,
+     wide segment is unaffected. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .cb-drow {
-  height: 64px;
+  height: var(--cb-day-h);
 }
 .cb-drow .cb-hcorn {
   background: #fff;
@@ -352,12 +370,12 @@
   padding: 0 14px;
 }
 .cb-drow .cb-hcorn .cb-t {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--color-ink);
 }
 .cb-drow .cb-hcorn .cb-cnt {
-  font-size: 10.5px;
+  font-size: 12.5px;
   color: var(--color-faint);
   font-weight: 700;
 }
@@ -367,7 +385,7 @@
 .cb-dcell {
   flex: 1 1 0;
   min-width: 0;
-  height: 64px;
+  height: var(--cb-day-h);
   background: #fff;
   border-bottom: 1px solid #e4e8f0;
   border-inline-end: 1px solid #f3f5f9;
@@ -384,23 +402,21 @@
   color: #b4670a;
 }
 .cb-dcell.ms {
-  border-inline-start: 1.5px solid #e1e5ee;
+  border-inline-start: 3px solid #b9c2d8;
 }
 .cb-dcell .cb-dw {
-  font-size: 11.5px;
+  font-size: 16px;
   font-weight: 700;
-  color: var(--color-faint);
-  line-height: 1.1;
+  color: var(--color-muted);
   white-space: nowrap;
 }
 .cb-dcell .cb-dn {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 800;
-  color: #3a4257;
+  color: var(--color-ink);
   font-variant-numeric: tabular-nums;
-  line-height: 1;
-  min-width: 34px;
-  height: 30px;
+  min-width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -426,11 +442,11 @@
   inset-inline-start: 0;
   z-index: 3;
   background: #fff;
-  height: 56px;
+  height: var(--cb-row-h);
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   padding: 0 14px;
   border-bottom: 1px solid #f1f3f7;
   border-inline-end: 1px solid #e4e8f0;
@@ -439,18 +455,19 @@
 .cb-rl1 {
   display: flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
 }
 .cb-rnum {
-  font-size: 15px;
+  font-size: 19px;
   font-weight: 800;
   color: var(--color-ink);
+  letter-spacing: -0.2px;
 }
 .cb-rtype {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
-  color: var(--color-faint);
+  color: var(--color-muted);
   letter-spacing: 0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -460,7 +477,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 700;
   color: var(--color-faint);
 }
@@ -472,7 +489,7 @@
 }
 .cb-rstrip {
   flex: 1;
-  height: 56px;
+  height: var(--cb-row-h);
   position: relative;
   border-bottom: 1px solid #f1f3f7;
   min-width: 0;
@@ -501,7 +518,7 @@
   background: #eef1fd;
 }
 .cb-rcell.ms {
-  border-inline-start: 1.5px solid #e1e5ee;
+  border-inline-start: 3px solid #b9c2d8;
 }
 .cb-rcell.blocked {
   background-image: repeating-linear-gradient(
@@ -512,10 +529,14 @@
     #f1f3f6 12px
   );
 }
+/* #7e7e7e is the reference's RENDERED price colour, not the one its stylesheet
+   declares (a later rule overrides `var(--ink)`); all 252 price cells in the
+   bundle compute to it, and the approved PNG shows grey prices. Read from the
+   browser, not from the rule. */
 .cb-rcell .cb-pr {
-  font-size: 11.5px;
+  font-size: 14.5px;
   font-weight: 800;
-  color: #3a4257;
+  color: #7e7e7e;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -523,7 +544,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   color: #a6adc0;
   font-variant-numeric: tabular-nums;
@@ -554,14 +575,14 @@
 /* ---------- reservation pill ---------- */
 .cb-resbar {
   position: absolute;
-  top: 9px;
-  height: 38px;
+  top: var(--cb-bar-top);
+  height: var(--cb-bar-h);
   border-radius: 11px;
   display: flex;
   align-items: center;
   gap: 6px;
   padding-inline: 12px 13px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   cursor: grab;
   overflow: hidden;
@@ -604,7 +625,7 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 800;
   opacity: 0.8;
   flex: none;
@@ -655,8 +676,8 @@
 .cb-rh::after {
   content: "";
   position: absolute;
-  top: 11px;
-  bottom: 11px;
+  top: 12px;
+  bottom: 12px;
   inset-inline-end: 4px;
   width: 3px;
   border-radius: 2px;
@@ -672,8 +693,8 @@
 /* ---------- closures / blocks ---------- */
 .cb-blockbar {
   position: absolute;
-  top: 9px;
-  height: 38px;
+  top: var(--cb-bar-top);
+  height: var(--cb-bar-h);
   border-radius: 11px;
   display: flex;
   align-items: center;
@@ -694,8 +715,8 @@
 /* ---------- unassigned holds lane ---------- */
 .cb-holdbar {
   position: absolute;
-  top: 9px;
-  height: 38px;
+  top: var(--cb-bar-top);
+  height: var(--cb-bar-h);
   border-radius: 11px;
   display: flex;
   align-items: center;
@@ -717,7 +738,7 @@
   position: absolute;
   top: 0;
   left: 0;
-  height: 38px;
+  height: var(--cb-bar-h);
   border-radius: 11px;
   display: none;
   align-items: center;
@@ -806,17 +827,21 @@
   white-space: nowrap;
 }
 
-/* ---------- reservation hover tooltip (InvitationCard.png, D77.2) ----------
-   Invitation-card look: dark brand gradient header (white name, square white
-   avatar, white payment chip), white body rows, blue action hint. */
+/* ---------- reservation hover tooltip ----------
+   Light card, per GuesthubCalandrUpdate.html: white header separated by a hair
+   line (not the D77.2 dark gradient), a round brand-050 avatar, faint sub-text.
+   The payment badge keeps its own tinted background — payment and reservation
+   status stay two separate axes and are never merged. */
 .cb-pop {
   position: fixed;
   width: 316px;
   background: #fff;
-  border-radius: 18px;
-  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.3);
+  border: 1px solid #e4e8f0;
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(16, 24, 40, 0.26);
   z-index: 60;
   direction: rtl;
+  overflow: hidden;
   animation: cb-pop-in 0.14s ease-out;
   /* D44: informational only — it must NEVER intercept a pointer, capture a
      click, or become a drag/drop target, so it can never cover or block the
@@ -829,43 +854,46 @@
     transform: translateY(4px);
   }
 }
-/* anchor caret: a rotated square on the edge facing the pill — white against
-   the body (above), header-blue against the gradient (below) */
+/* anchor caret: a rotated square on the edge facing the pill. The card is white
+   on both edges now, so the caret is white either way; the hairline border is
+   carried on the two outward faces so it reads as part of the card. */
 .cb-pop::after {
   content: "";
   position: absolute;
   inset-inline-start: 50%;
   width: 12px;
   height: 12px;
+  background: #fff;
   transform: translateX(50%) rotate(45deg);
 }
 .cb-pop[data-place="above"]::after {
   bottom: -6px;
-  background: #fff;
+  border-inline-end: 1px solid #e4e8f0;
+  border-bottom: 1px solid #e4e8f0;
 }
 .cb-pop[data-place="below"]::after {
   top: -6px;
-  background: #2a44cb;
+  border-inline-start: 1px solid #e4e8f0;
+  border-top: 1px solid #e4e8f0;
 }
 .cb-pop-h {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 16px 13px;
-  background: linear-gradient(180deg, #2a44cb, #1c2e9a);
-  border-radius: 18px 18px 0 0;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #eef0f5;
 }
 .cb-pav {
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
   font-weight: 800;
-  font-size: 14px;
+  font-size: 13.5px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  background: #fff;
+  background: var(--color-primary-050);
   color: var(--color-primary);
 }
 .cb-pop-nm {
@@ -875,13 +903,13 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #fff;
+  color: var(--color-ink);
 }
 .cb-pop-sub {
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  color: var(--color-faint);
   font-weight: 600;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 .cb-pbadge {
   margin-inline-start: auto;
@@ -889,11 +917,10 @@
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 99px;
-  font-size: 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
   font-weight: 700;
   white-space: nowrap;
-  background: #fff;
 }
 .cb-pbadge .cb-d {
   width: 7px;
@@ -1237,9 +1264,25 @@
 
 /* ---------- hint ---------- */
 .cb-hint {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-faint);
+}
+
+/* ---------- calendar-scoped toolbar sizes ----------
+   .cb-seg / .cb-todaybtn / .cb-rangebox are SHARED with /rates (RateToolbar).
+   The reference's sizes for them differ from what /rates renders today, so they
+   are scoped to .cb-screen — the calendar matches its reference, and the rates
+   board keeps its own toolbar byte-for-byte unchanged. */
+.cb-screen .cb-seg button {
+  font-size: 13.5px;
+}
+.cb-screen .cb-todaybtn {
+  font-size: 14px;
+}
+.cb-screen .cb-rangebox .cb-rl {
+  font-size: 14px;
+  padding: 0 6px;
 }
 
 } /* @layer components */

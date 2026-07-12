@@ -194,10 +194,16 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.ok(/requestClose/.test(s) && /confirmDiscard/.test(s), `${name} has dirty-state close protection`);
 }
 
-// one open panel at a time — a single source of truth on the screen
+// one open panel at a time — a single source of truth on the screen.
+// New booking is NOT a calendar-local panel: since D48 it goes through the ONE
+// shared BookingPanel behind useNewReservation() (mounted once in the Shell), so
+// the sidebar and the calendar open the very same editor. The calendar's own
+// PanelState therefore covers edit + closure only.
 const screen = src("src/app/(dashboard)/calendar/CalendarScreen.tsx");
-assert.ok(/PanelState/.test(screen) && /setPanel\(\{ kind: "edit"/.test(screen) &&
-  /setPanel\(\{ kind: "booking"/.test(screen), "booking/edit/closure share ONE panel state");
+assert.ok(/PanelState/.test(screen) && /setPanel\(\{ kind: "edit"/.test(screen),
+  "edit/closure share ONE calendar panel state");
+assert.ok(/useNewReservation\(\)/.test(screen) && !/setPanel\(\{ kind: "booking"/.test(screen),
+  "new booking goes through the shared global BookingPanel — never a calendar-local duplicate");
 assert.ok(!/FullWindow/.test(screen), "the calendar screen never opens a full-screen window");
 
 // the panel stacks above every calendar layer (tooltip 60, date picker 80)
@@ -261,5 +267,60 @@ assert.ok(!/rescheduleReservationRoomAction/.test(dialog),
   "7. rejecting/mounting the dialog never persists (no commit action inside it)");
 assert.ok(/e\.key === "Escape"/.test(dialog) && /onReject\(\)/.test(dialog), "Escape rejects");
 assert.ok(/onClick=\{onReject\}/.test(dialog), "outside (backdrop) click rejects");
+
+// ---- reference-redesign invariants ----
+// Geometry is ONE source. The drag math needs numbers, the stylesheet needs
+// lengths; before the redesign the same pixels were hand-copied into both, so a
+// row-height change silently desynced the grid from its drop target. The grid
+// now publishes the constants as custom properties and the CSS consumes them.
+const gridSrc = src("src/app/(dashboard)/calendar/CalendarGrid.tsx");
+const css = src("src/app/styles/calendar.css");
+
+assert.ok(/const BAR_H = ROW_H - BAR_TOP \* 2;/.test(gridSrc),
+  "pill height is DERIVED from the row height and inset — never a third hardcoded number");
+assert.ok(/GEOMETRY_VARS/.test(gridSrc) && /style=\{GEOMETRY_VARS\}/.test(gridSrc),
+  "the geometry constants are published to CSS as custom properties on .cb-calin");
+for (const v of ["--cb-row-h", "--cb-bar-top", "--cb-bar-h", "--cb-day-h", "--cb-month-h"]) {
+  assert.ok(gridSrc.includes(v), `GEOMETRY_VARS publishes ${v}`);
+  assert.ok(css.includes(`var(${v})`), `calendar.css consumes ${v} instead of a hardcoded pixel value`);
+}
+// The row/pill pixels must exist in exactly ONE place — the TS constants. Every
+// rule that spans a row or floats a bar inside one has to read the vars, or the
+// grid and its drop target silently drift apart again. (Checked per-rule, not
+// file-wide: 38px is also the tooltip avatar, which is unrelated.)
+const rule = (sel) => {
+  const i = css.indexOf(`\n${sel} {`);
+  assert.ok(i >= 0, `calendar.css is missing ${sel}`);
+  return css.slice(i, css.indexOf("}", i));
+};
+for (const sel of [".cb-rlabel", ".cb-rstrip"]) {
+  assert.ok(/height: var\(--cb-row-h\)/.test(rule(sel)),
+    `${sel} must take its height from --cb-row-h, not a hardcoded pixel value`);
+}
+for (const sel of [".cb-resbar", ".cb-blockbar", ".cb-holdbar"]) {
+  const r = rule(sel);
+  assert.ok(/top: var\(--cb-bar-top\)/.test(r) && /height: var\(--cb-bar-h\)/.test(r),
+    `${sel} must float on --cb-bar-top/--cb-bar-h — a bar that drifts from the row is a wrong drop target`);
+}
+assert.ok(/height: var\(--cb-bar-h\)/.test(rule(".cb-ghost")),
+  ".cb-ghost (the drag preview) must be the same height as the pill it previews");
+for (const [sel, v] of [[".cb-dcell", "--cb-day-h"], [".cb-mseg", "--cb-month-h"]]) {
+  assert.ok(new RegExp(`height: var\\(${v}\\)`).test(rule(sel)), `${sel} must read ${v}`);
+}
+
+// §13 — the calendar renders in Assistant. This only holds because --font-sans
+// is declared on :root: Tailwind v4 tree-shakes @theme variables that no
+// utility class references, and nothing here uses a `font-sans` utility, so
+// while it lived in @theme it was never emitted and the WHOLE app silently fell
+// back to ui-sans-serif. Moving it back into @theme would break the font again,
+// invisibly, everywhere — so pin it.
+const base = src("src/app/styles/base.css");
+const themeBlock = base.slice(base.indexOf("@theme"), base.indexOf(":root"));
+assert.ok(!/--font-sans:/.test(themeBlock),
+  "--font-sans must NOT live in @theme — Tailwind tree-shakes it and the app loses Assistant");
+assert.ok(/:root\s*\{[^}]*--font-sans:\s*var\(--font-assistant\)/s.test(base),
+  "--font-sans is declared on :root so it is always emitted (Assistant, D2)");
+assert.ok(/\.cb-screen\s*\{[^}]*line-height:\s*normal/s.test(css),
+  "the calendar matches the reference's `line-height: normal`, not Tailwind's 1.5");
 
 console.log("check-calendar-ui: all interaction/geometry rules hold ✔");

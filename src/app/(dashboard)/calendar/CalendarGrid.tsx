@@ -53,10 +53,28 @@ import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
 import { RateCellTooltip, type CellTipTarget } from "./RateCellTooltip";
 
-// ---- geometry (reference: 176px room column, 56px rows, 38px pills) ----
-const ROOM_COL = 176;
-const ROW_H = 56;
-const BAR_TOP = 9;
+// ---- geometry — the ONE source (reference: GuesthubCalandrUpdate.html) ----
+// These numbers drive BOTH the drag math (which needs them as numbers) and the
+// stylesheet (which needs them as lengths). They used to be duplicated: the
+// constants here and the same pixel values hand-copied into calendar.css, so a
+// row-height change silently desynced the grid from the drop target. Now the
+// constants are published as custom properties on .cb-calin (see GEOMETRY_VARS)
+// and calendar.css consumes them — change a value here and both follow.
+const ROOM_COL = 176; // sticky room column
+const ROW_H = 64; // room row
+const BAR_TOP = 11; // pill inset inside the row
+const BAR_H = ROW_H - BAR_TOP * 2; // 42 — pill height falls out of the inset
+const DAY_H = 58; // day-header row
+const MONTH_H = 40; // month band
+
+const GEOMETRY_VARS = {
+  "--cb-room-col": `${ROOM_COL}px`,
+  "--cb-row-h": `${ROW_H}px`,
+  "--cb-bar-top": `${BAR_TOP}px`,
+  "--cb-bar-h": `${BAR_H}px`,
+  "--cb-day-h": `${DAY_H}px`,
+  "--cb-month-h": `${MONTH_H}px`,
+} as React.CSSProperties;
 
 // Payment-state pill palettes — extracted from the rendered reference
 // (ref/html/rooms-calendar.html): bg / border / text per family.
@@ -854,6 +872,7 @@ export function CalendarGrid({
       ) : (
         <div className="cb-calwrap thin-scroll" dir="rtl">
           <div
+            style={GEOMETRY_VARS}
             className={`cb-calin ${
               dragUi
                 ? dragUi.mode === "move"
