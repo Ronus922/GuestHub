@@ -1,0 +1,375 @@
+/* /rates — canonical in-page Group Update drawer. */
+
+/* Reference-specific shell geometry is opt-in via SidePanel.visualVariant;
+   other canonical drawers continue to use the shared .dw-hd dimensions. */
+.gu-side-panel .dw-hd {
+  padding: 16px 20px;
+}
+
+.gu-side-panel .dw-sub {
+  line-height: 1.25;
+}
+
+.gu-side-panel .card-hd {
+  line-height: 1.15;
+}
+
+.gu-body {
+  container-type: inline-size;
+  padding: 16px;
+}
+
+.gu-layout,
+.gu-main,
+.gu-summary,
+.gu-room-tools,
+.gu-filter-row,
+.gu-room-commands,
+.gu-date-tools,
+.gu-presets,
+.gu-weekdays,
+.gu-weekday-shortcuts,
+.gu-stats,
+.gu-preview {
+  display: flex;
+  gap: 12px;
+}
+
+.gu-layout,
+.gu-main,
+.gu-summary,
+.gu-preview {
+  flex-direction: column;
+}
+
+.gu-layout {
+  gap: 14px;
+}
+
+.gu-main {
+  min-width: 0;
+  gap: 16px;
+}
+
+.gu-field-row {
+  min-width: 0;
+}
+
+.gu-field-row > :last-child {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.gu-summary {
+  min-width: 0;
+  align-self: start;
+}
+
+.gu-summary > .card {
+  width: 100%;
+}
+
+.gu-room-tools {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-block-end: 16px;
+}
+
+.gu-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 185px;
+  height: 44px;
+  padding-inline: 14px;
+  color: var(--faint);
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.gu-search:focus-within {
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
+
+.gu-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+}
+
+.gu-filter-row,
+.gu-room-commands {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gu-room-commands {
+  margin-inline-start: auto;
+}
+
+.gu-room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
+  gap: 10px;
+}
+
+.gu-room-card {
+  min-height: 58px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: start;
+  cursor: pointer;
+}
+
+.gu-room-card:hover {
+  background: var(--field-bg);
+}
+
+.gu-room-card:focus-visible {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
+
+.gu-room-card.is-selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.gu-room-copy,
+.gu-room-title,
+.gu-room-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gu-room-copy {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.gu-room-title b {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.gu-room-copy .t-label {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gu-room-meta {
+  flex: none;
+  gap: 8px;
+}
+
+.gu-price {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.gu-checkbox {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-xs);
+  color: var(--surface);
+}
+
+.gu-room-card.is-selected .gu-checkbox {
+  border-color: var(--brand);
+  background: var(--brand);
+}
+
+.gu-date-tools {
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding-block-end: 16px;
+}
+
+.gu-range-field {
+  min-height: 44px;
+  min-width: min(100%, 360px);
+  padding-inline: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--faint);
+}
+
+.gu-range-field:focus-within {
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
+
+.gu-range-field label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gu-range-field input {
+  min-width: 112px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.gu-range-separator {
+  color: var(--faint);
+}
+
+.gu-presets,
+.gu-weekdays,
+.gu-weekday-shortcuts {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gu-presets {
+  margin-inline-start: auto;
+}
+
+.gu-weekday-shortcuts {
+  padding-inline-start: 8px;
+  border-inline-start: 1px solid var(--line);
+}
+
+.gu-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gu-stat {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+  text-align: center;
+}
+
+.gu-stat-value {
+  color: var(--ink);
+  font-size: 21px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.gu-example,
+.gu-preview,
+.gu-sync-note {
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.gu-example,
+.gu-preview {
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.gu-example + .gu-preview {
+  margin-block-start: 12px;
+}
+
+.gu-apply,
+.gu-cancel {
+  width: 100%;
+}
+
+.gu-sync-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+}
+
+/* The approved reference keeps the 300px summary beside the form at its
+   1338px viewport even though the 60vw drawer itself is only ~803px wide.
+   Stack only at the supported narrow viewport breakpoint. */
+@media (min-width: 981px) {
+  .gu-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    align-items: start;
+  }
+
+  .gu-summary {
+    position: sticky;
+    top: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .gu-body {
+    padding: 16px;
+  }
+
+  .gu-room-grid,
+  .gu-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .gu-range-field {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-block: 10px;
+  }
+
+  .gu-range-separator {
+    display: none;
+  }
+
+  .gu-field-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .gu-field-row > :last-child {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

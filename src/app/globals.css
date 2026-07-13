@@ -4,6 +4,7 @@
 @import "./styles/base.css";
 @import "./styles/calendar.css";
 @import "./styles/rate-grid.css";
+@import "./styles/group-update.css";
 @import "./styles/booking-window.css";
 @import "./styles/rooms.css";
 @import "./styles/reservations-list.css";

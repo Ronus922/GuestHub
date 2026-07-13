@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { addYears, clampRatesFrom, RATES_HORIZON_YEARS, type DateOnly } from "@/lib/dates";
 import type { RatesSyncStatus } from "@/lib/channel/sync-state";
@@ -24,7 +24,6 @@ export function RateGridScreen({
   syncStatus: RatesSyncStatus;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -32,22 +31,34 @@ export function RateGridScreen({
   // control refetches the persisted status and narrates it (Phase 5 feedback).
   const [savePulse, setSavePulse] = useState(0);
   const onSaved = useCallback(() => setSavePulse((p) => p + 1), []);
-  // Group Update open/close is the canonical panel opened over this same grid;
-  // its state lives in the URL (?panel=group-update) so the sidebar active
-  // highlight, deep-links and Back/Forward all work. from/view are preserved.
-  const groupOpen = can.bulk && searchParams.get("panel") === "group-update";
+  // Group Update is an in-page surface. Local state deliberately keeps opening,
+  // closing and browser Back independent from routing, so the mounted grid keeps
+  // filters, disclosures, scroll position and pending cell UI intact.
+  const [groupOpen, setGroupOpen] = useState(false);
   const [preset, setPreset] = useState<string[]>(() => state.types.flatMap((t) => t.unitIds));
-  const panelHref = (open: boolean) => {
-    const p = new URLSearchParams(searchParams.toString());
-    if (open) p.set("panel", "group-update"); else p.delete("panel");
-    const q = p.toString();
-    return q ? `${pathname}?${q}` : pathname;
-  };
-  const openGroupUpdate = (units: string[]) => { setPreset(units); router.push(panelHref(true)); };
+  const openGroupUpdate = (units: string[]) => { setPreset(units); setGroupOpen(true); };
   const closeGroupUpdate = () => {
+    setGroupOpen(false);
     setPreset(state.types.flatMap((t) => t.unitIds));
-    router.push(panelHref(false));
   };
+
+  // Backward compatibility only: old links used panel/group query keys. Strip
+  // those keys without opening anything and without a Next navigation. Legitimate
+  // date/view parameters remain byte-for-byte represented by URLSearchParams.
+  const query = searchParams.toString();
+  useEffect(() => {
+    const params = new URLSearchParams(query);
+    const hadLegacyPanel = params.has("panel") || params.has("group");
+    if (!hadLegacyPanel) return;
+    params.delete("panel");
+    params.delete("group");
+    const cleanQuery = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      cleanQuery ? `/rates?${cleanQuery}` : "/rates",
+    );
+  }, [query]);
 
   // Navigation is clamped to [today, today+horizon] so the grid never opens on a
   // past window (Step 6). horizonLatest bounds the Group Update date pickers.

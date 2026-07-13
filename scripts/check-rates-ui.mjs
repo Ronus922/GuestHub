@@ -24,7 +24,13 @@ const grid = read(`${RATES}/RateGrid.tsx`);
 const cells = read(`${RATES}/RateCells.tsx`);
 const screen = read(`${RATES}/RateGridScreen.tsx`);
 const toolbar = read(`${RATES}/RateToolbar.tsx`);
+const groupUpdate = read(`${RATES}/GroupUpdatePanel.tsx`);
+const actions = read(`${RATES}/actions.ts`);
+const service = read("src/lib/rates/service.ts");
+const nav = read("src/components/layout/nav-items.ts");
+const sidebar = read("src/components/layout/Sidebar.tsx");
 const css = read("src/app/styles/rate-grid.css");
+const groupCss = read("src/app/styles/group-update.css");
 
 let n = 0;
 const ok = (cond, msg) => { assert.ok(cond, msg); n++; };
@@ -131,5 +137,36 @@ ok(/dow === 5 \|\| dow === 6/.test(grid),
 // paragraph reorders (the day number is torn off its month).
 ok(/\.rg-wrap\s+\.cb-rangebox\s+\.cb-rl\s*\{[^}]*direction:\s*rtl/s.test(css),
   "the /rates date range keeps an RTL base direction (scoped, so /calendar keeps the LTR it needs)");
+
+// ---- 12. ONE Rates category and a local-state Group Update panel ----
+const navRateItems = [...nav.matchAll(/\{\s*label:\s*"([^"]+)",[^}]*href:\s*"\/rates(?:\?[^"}]*)?"[^}]*\}/g)];
+ok(navRateItems.length === 1, `the sidebar exposes exactly one Rates category (found ${navRateItems.length})`);
+ok(navRateItems[0]?.[1] === "עדכון קבוצתי", "the single Rates category is labelled exactly עדכון קבוצתי");
+ok(/label:\s*"עדכון קבוצתי"[^}]*href:\s*"\/rates"[^}]*permission:\s*"rates\.view"/.test(nav),
+  "the category opens the grid first and remains visible to every rates viewer");
+ok(!nav.includes("/rates?panel=") && !nav.includes("רשת תעריפים"),
+  "no query-backed or second Rates navigation item survives");
+ok(/useState\(false\)/.test(screen) && /setGroupOpen\(true\)/.test(screen) && /setGroupOpen\(false\)/.test(screen),
+  "Group Update open/close is component-local UI state");
+ok(!/searchParams\.get\(["']panel/.test(screen) && !/panelHref|router\.(?:push|replace)\([^\n]*panel/.test(screen),
+  "panel state never comes from a query and never invokes route navigation");
+ok(/history\.replaceState/.test(screen) && /params\.delete\("panel"\)/.test(screen) && /params\.delete\("group"\)/.test(screen),
+  "legacy panel/group keys normalize in place without opening a second screen");
+ok(/function isNavActive\([^)]*pathname[^)]*\)/.test(sidebar) && !/curPanel/.test(sidebar),
+  "sidebar active state is path-based and query-independent");
+
+// ---- 13. the canonical update engine, data order and reference panel layout ----
+ok(/types\.flatMap\(\(t\)\s*=>\s*t\.units\.map/.test(groupUpdate),
+  "room cards derive from canonical grid types[].units data");
+ok(/compareRoomNumber\(a\.code,\s*b\.code\)/.test(groupUpdate),
+  "room cards reuse the canonical numeric room comparator");
+ok(/await bulkUpdateRatesAction\(/.test(groupUpdate) && /await writeRateCells\(/.test(actions),
+  "a valid panel submission reaches the existing bulk action and canonical cell writer");
+ok(!/writeRateCells/.test(groupUpdate) && /pricing_plan_rates/.test(service),
+  "the panel does not duplicate the server update engine");
+ok(/widthClassName="w-\[60vw\]/.test(groupUpdate) && /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/.test(groupCss),
+  "the panel uses the required 60vw shell and main + 300px summary layout");
+ok(/<RateGrid[\s\S]*<GroupUpdatePanel/.test(screen),
+  "the grid stays mounted underneath the locally controlled panel");
 
 console.log(`check:rates-ui — the /rates board matches the approved architecture ✔ (${n} checks)`);
