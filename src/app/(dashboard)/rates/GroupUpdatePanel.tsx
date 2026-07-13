@@ -160,7 +160,14 @@ export function GroupUpdatePanel({
         if (c.stopSell) currentlyClosed++; else currentlyOpen++;
       }
     }
-    return { noInventory, missingPrice, willOpen: currentlyClosed, willClose: currentlyOpen, unknown };
+    return {
+      noInventory,
+      missingPrice,
+      willOpen: currentlyClosed,
+      willClose: currentlyOpen,
+      unknown,
+      known: currentlyClosed + currentlyOpen,
+    };
   }, [selected, effectiveDates, cellIndex]);
 
   const anyFieldSelected =
@@ -404,10 +411,12 @@ export function GroupUpdatePanel({
             )}
             {cellCount > 0 && (stopSell !== "nochange" || preview.noInventory > 0 || preview.missingPrice > 0 || preview.unknown > 0) && (
               <div className="gu-preview">
-                {stopSell === "no" && (
+                {/* a count is only worth printing when SOME selected cell has a
+                    known state — otherwise "0 ייסגרו" contradicts the line below */}
+                {stopSell === "no" && preview.known > 0 && (
                   <p><b className="text-status-success ltr-num">{preview.willOpen}</b> תאים ייפתחו למכירה מסחרית{preview.noInventory > 0 && <> · <b className="text-status-danger ltr-num">{preview.noInventory}</b> מתוכם יישארו ללא מלאי פיזי (הפתיחה המסחרית אינה יוצרת זמינות)</>}</p>
                 )}
-                {stopSell === "yes" && (
+                {stopSell === "yes" && preview.known > 0 && (
                   <p><b className="text-status-danger ltr-num">{preview.willClose}</b> תאים ייסגרו למכירה מסחרית · המלאי הפיזי אינו משתנה</p>
                 )}
                 {/* dates outside the grid's loaded window have no known current
