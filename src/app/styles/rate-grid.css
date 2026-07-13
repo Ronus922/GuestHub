@@ -173,7 +173,9 @@
    חדר פותחת מגבלות") — a real <button> so it is keyboard- and SR-reachable. */
 .rg-rlabel {
   z-index: 3; height: var(--rg-price-h); background: var(--surface);
-  display: flex; align-items: center; gap: 7px; padding: 0 10px 0 8px;
+  /* inline-start 8px / inline-end 10px — the reference's rendered inset (it was
+     transcribed mirrored, pushing the chevron 2px off the column's leading edge) */
+  display: flex; align-items: center; gap: 7px; padding: 0 8px 0 10px;
   border-bottom: 1px solid var(--grid-line);
   cursor: pointer; user-select: none; font-family: inherit; text-align: start; width: 100%;
   border-top: none; border-inline-start: none;
@@ -216,8 +218,24 @@
    The reference tints the weekend/today DAY HEADER only — no body cell carries
    a `we`/`td` background — so the board reads as one clean field and the tints
    stay a column-heading affordance. */
-.rg-cell { height: var(--rg-price-h); font-size: 15px; font-weight: 800; color: var(--ink); }
+/* min-width:0 + overflow let a cell CONTAIN its content. Without them a flex
+   child never shrinks below its content, so an unusually long value (a 6-figure
+   price) rendered wider than the 46px column floor, bled across the 1px column
+   separator into its neighbour's digits, and inflated the scrollport by a few px
+   (a horizontal scrollbar on a board with nothing left to scroll). The reference
+   never meets this because its sample data is only ever 3 digits. The exact value
+   is never lost — it stays one hover away in the cell tooltip and the cell panel. */
+.rg-cell {
+  height: var(--rg-price-h); font-size: 15px; font-weight: 800; color: var(--ink);
+  min-width: 0; overflow: hidden;
+}
 .rg-cell.sub { height: var(--rg-metric-h); font-size: 14px; font-weight: 700; }
+/* an over-long value is ELLIPSISED, never silently clipped mid-digit — a cropped
+   "100000" that reads as "10000" would be worse than no number at all. */
+.rg-price, .rg-num {
+  min-width: 0; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .rg-cell.ms { border-inline-start: 1.5px solid var(--line); }
 .rg-cell.editable { cursor: pointer; }
 .rg-cell.editable:hover { box-shadow: inset 0 0 0 1.5px var(--brand); border-radius: var(--r-xs); z-index: 1; }
@@ -245,11 +263,18 @@
 .rg-flag.cta { color: color-mix(in srgb, var(--warn) 75%, var(--ink)); background: color-mix(in srgb, var(--warn) 14%, #fff); }
 .rg-flag.ctd { color: color-mix(in srgb, var(--info) 80%, var(--ink)); background: color-mix(in srgb, var(--info) 12%, #fff); }
 
+/* The editor is an <input type="number">, so Chromium paints its spin arrows
+   INSIDE the box and steals ~13px of a ~37px field — enough that the value you
+   are typing is clipped from 3 digits up. Reset the spinner (the reference's own
+   editor does exactly this) and let the field use the full cell width. */
 .rg-input {
-  width: 82%; height: 26px; border: 1.5px solid var(--brand); border-radius: var(--r-sm);
+  width: calc(100% - 6px); height: 26px; border: 1.5px solid var(--brand); border-radius: var(--r-sm);
   text-align: center; font-family: inherit; font-size: 14px; font-weight: 800;
   font-variant-numeric: tabular-nums; color: var(--ink); outline: none; padding: 0;
+  appearance: textfield;
 }
+.rg-input::-webkit-outer-spin-button,
+.rg-input::-webkit-inner-spin-button { appearance: none; margin: 0; }
 
 /* ---------- legend + hint ----------
    the legend is the CARD FOOTER (reference): a bordered bar pinned under the
