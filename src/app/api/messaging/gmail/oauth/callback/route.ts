@@ -105,17 +105,18 @@ export async function GET(request: Request) {
     return settings("gmail=error_no_refresh");
   }
 
-  // Best-effort: read the connected mailbox address for the sender config.
+  // Best-effort: read the connected mailbox address for the sender config. Uses
+  // userinfo (granted by our userinfo.email scope) — the Gmail profile endpoint
+  // needs a READ scope we deliberately never request.
   let emailAddress: string | null = null;
   if (accessToken) {
     try {
-      const profile = await fetch(
-        "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
+      const profile = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
       if (profile.ok) {
-        const pj = (await profile.json()) as { emailAddress?: string };
-        emailAddress = pj.emailAddress ?? null;
+        const pj = (await profile.json()) as { email?: string };
+        emailAddress = pj.email ?? null;
       }
     } catch {
       emailAddress = null;

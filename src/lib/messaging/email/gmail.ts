@@ -11,6 +11,10 @@ import type { EmailProvider, EmailMessage, GmailConfig, GmailSecrets, SendResult
 
 const OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+// The account probe. NOT gmail/v1/users/me/profile — that needs a Gmail READ
+// scope, and we deliberately ask for send-only. userinfo is what our
+// userinfo.email scope actually grants.
+const USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
 
 // RFC 2047 encoded-word for non-ASCII headers (Hebrew subject / display name).
 function encodeHeader(value: string): string {
@@ -95,10 +99,10 @@ export class GmailOAuthProvider implements EmailProvider {
   async testConnection(): Promise<TestResult> {
     try {
       const token = await accessTokenFromRefresh(this.secrets);
-      const res = await fetch(`${GMAIL_API}/profile`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(USERINFO_URL, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) return { ok: false, detail: "אימות מול Gmail נכשל — בדוק את פרטי ה-OAuth" };
-      const j = (await res.json()) as { emailAddress?: string };
-      return { ok: true, detail: "החיבור ל-Gmail תקין", account: j.emailAddress ?? this.config.senderEmail };
+      const j = (await res.json()) as { email?: string };
+      return { ok: true, detail: "החיבור ל-Gmail תקין", account: j.email ?? this.config.senderEmail };
     } catch {
       return { ok: false, detail: "אימות מול Gmail נכשל — בדוק את פרטי ה-OAuth" };
     }
