@@ -58,9 +58,32 @@ export function RateGridScreen({
     () => (typeFilter === "all" ? state.types : state.types.filter((t) => (t.roomTypeId ?? "—") === typeFilter)),
     [state.types, typeFilter],
   );
-  const allCollapsed = collapsed.size >= state.types.length && state.types.length > 0;
-  const toggleCollapse = (tk: string) =>
-    setCollapsed((s) => { const n = new Set(s); if (n.has(tk)) n.delete(tk); else n.add(tk); return n; });
+  // Collapse is per ROOM (reference: "לחיצה על שורת חדר פותחת מגבלות") — a room
+  // row hides/shows its own six restriction rows. The toolbar's "כווץ הכול"
+  // drives the same set, so one control and one state, never two.
+  //
+  // It is scoped to the rooms ON THE BOARD (visibleTypes), not to every room:
+  // derived from all of them, the control lied under an active type filter —
+  // with every visible room collapsed it still read "כווץ הכול", and pressing it
+  // collapsed the hidden rooms too, so expanding what you could see took two
+  // presses. What the button says must be true of what you are looking at.
+  const visibleUnitIds = useMemo(() => visibleTypes.flatMap((t) => t.unitIds), [visibleTypes]);
+  const allCollapsed =
+    visibleUnitIds.length > 0 && visibleUnitIds.every((id) => collapsed.has(id));
+  // collapse/expand only what is on the board; rooms hidden by the filter keep
+  // whatever state they had, so switching filters never surprises you.
+  const toggleCollapseAll = () =>
+    setCollapsed((s) => {
+      const n = new Set(s);
+      if (allCollapsed) visibleUnitIds.forEach((id) => n.delete(id));
+      else visibleUnitIds.forEach((id) => n.add(id));
+      return n;
+    });
+  // Group Update keeps its existing scope (every room, not just the filtered
+  // view) — that is pre-existing behaviour and out of a visual redesign's remit.
+  const allUnitIds = useMemo(() => state.types.flatMap((t) => t.unitIds), [state.types]);
+  const toggleCollapse = (unitId: string) =>
+    setCollapsed((s) => { const n = new Set(s); if (n.has(unitId)) n.delete(unitId); else n.add(unitId); return n; });
 
   // Cell action popover (§8): store only the (unit, date) key so that after a
   // router.refresh() the panel re-reads the FRESH cell from the new server state
@@ -76,6 +99,22 @@ export function RateGridScreen({
     return null;
   }, [detailKey, state.types]);
 
+  // The legend is the board card's FOOTER (reference). It documents every state
+  // the grid can actually paint — the reference mock shows only 5 because its
+  // demo data never produces the physical / no-price / mapping-error cells.
+  const legend = (
+    <>
+      <span className="rg-leg"><span className="rg-sw today" />היום</span>
+      <span className="rg-leg"><span className="rg-sw we" />סוף שבוע</span>
+      <span className="rg-leg"><span className="rg-sw hatch" />לא זמין פיזית</span>
+      <span className="rg-leg"><Icon name="circle-slash" size={13.5} className="rg-err" />סגור למכירה (מסחרי)</span>
+      <span className="rg-leg"><span className="rg-sw noprice" />חסר מחיר</span>
+      <span className="rg-leg"><Icon name="warning" size={13.5} className="rg-err" />שגיאת מיפוי</span>
+      <span className="rg-leg"><span className="rg-price inherited ltr-num">₪350</span>מחיר בסיס (מוסק)</span>
+      <span className="rg-hint">לחיצה על שורת חדר פותחת מגבלות · Enter לשמירה, Esc לביטול</span>
+    </>
+  );
+
   return (
     <div className="rg-wrap">
       <RateToolbar
@@ -83,34 +122,22 @@ export function RateGridScreen({
         typeFilter={typeFilter} allCollapsed={allCollapsed}
         syncStatus={syncStatus} savePulse={savePulse}
         onFilter={setTypeFilter}
-        onToggleCollapseAll={() => setCollapsed(allCollapsed ? new Set() : new Set(state.types.map((t) => t.roomTypeId ?? "—")))}
+        onToggleCollapseAll={toggleCollapseAll}
         onNavigate={navigate}
-        onGroupUpdate={() => openGroupUpdate(state.types.flatMap((t) => t.unitIds))}
+        onGroupUpdate={() => openGroupUpdate(allUnitIds)}
       />
 
       {state.unitCount === 0 ? (
-        <div className="card rg-card"><div className="empty-state"><span className="empty-t">לא הוגדרו יחידות מכירה</span></div></div>
+        <div className="card rg-card"><div className="empty-state"><span className="empty-t">לא הוגדרו חדרים</span></div></div>
       ) : (
         <RateGrid
           types={visibleTypes} dates={state.dates} today={today} can={can}
-          collapsed={collapsed} onToggleCollapse={toggleCollapse} onGroupUpdateForType={openGroupUpdate}
+          collapsed={collapsed} legend={legend}
+          onToggleCollapse={toggleCollapse} onGroupUpdateForType={openGroupUpdate}
           onOpenDetail={(u, c) => setDetailKey({ unitId: u.sellableUnitId, date: c.date })}
           onSaved={onSaved}
         />
       )}
-
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="rg-legend">
-          <span className="rg-leg"><span className="rg-sw today" />היום</span>
-          <span className="rg-leg"><span className="rg-sw we" />סוף שבוע</span>
-          <span className="rg-leg"><span className="rg-sw hatch" />לא זמין פיזית</span>
-          <span className="rg-leg"><Icon name="circle-slash" size={13.5} className="rg-err" />סגור למכירה (מסחרי)</span>
-          <span className="rg-leg"><span className="rg-sw noprice" />חסר מחיר</span>
-          <span className="rg-leg"><Icon name="warning" size={13.5} className="rg-err" />שגיאת מיפוי</span>
-          <span className="rg-leg"><span className="rg-price inherited ltr-num">₪350</span>מחיר בסיס (מוסק)</span>
-        </div>
-        <span className="rg-hint">לחיצה על תא לעריכה · Enter לשמירה · Esc לביטול</span>
-      </div>
 
       <GroupUpdatePanel
         open={groupOpen}

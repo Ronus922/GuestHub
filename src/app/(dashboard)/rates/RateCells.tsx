@@ -77,7 +77,7 @@ export function MetricCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit
   const k = ctx.key(unit.sellableUnitId, cell.date, field);
   const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === field && ctx.editing.date === cell.date;
   const value = cell[field] as number | null;
-  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   if (isEditing) {
     return (
       <div className={className}>
@@ -107,7 +107,7 @@ export function MetricCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit
 export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; cell: RateCellState; col: ColGeom; field: BoolField; ctx: CellCtx }) {
   const k = ctx.key(unit.sellableUnitId, cell.date, field);
   const on = cell[field] as boolean;
-  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   const iconName = field === "stopSell" ? "circle-slash" : field === "closedToArrival" ? "login" : "logout";
   return (
     <div
@@ -116,7 +116,9 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
       onClick={ctx.editable ? () => ctx.toggleBool(unit, field, cell.date, on) : undefined}
       title={on ? "פעיל · לחיצה לביטול" : ctx.editable ? "לחיצה להפעלה" : undefined}
     >
-      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={13.5} /></span> : <span className="rg-dash">—</span>}
+      {/* 17px, not 13.5: the reference draws an 18px glyph in this same 22×22
+          tile, and 17 is the nearest icon size GUIDELINES §10 allows. */}
+      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={17} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }
@@ -125,9 +127,18 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
 // styled to the reference .rm window (tonnage.png / Calendar messages.html):
 // brand header (unit · date), divided rows, full-width sale-state band.
 export function CellTip({ x, y, unit, cell }: { x: number; y: number; unit: RateGridUnit; cell: RateCellState }) {
-  const left = Math.min(x + 14, (typeof window !== "undefined" ? window.innerWidth : 9999) - 266);
+  // The tip is position:fixed, so it is never clipped by the board's overflow —
+  // but it CAN run off the viewport. Clamp on both axes and flip above the
+  // cursor in the lower half, so a cell in the last row is still fully readable
+  // (rows near the bottom edge otherwise pushed the tip off-screen).
+  const vw = typeof window !== "undefined" ? window.innerWidth : 9999;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 9999;
+  const left = Math.max(12, Math.min(x + 14, vw - 264));
+  const vertical = y > vh / 2
+    ? { bottom: Math.max(12, vh - y + 16) }
+    : { top: Math.max(12, y + 16) };
   return (
-    <div className="rg-tip" style={{ left, top: y + 16 }}>
+    <div className="rg-tip" role="tooltip" style={{ left, ...vertical }}>
       <div className="rg-tip-h">
         <span className="rg-tip-t">{unit.code}</span>
         <span className="rg-tip-dt">{cell.date}</span>
@@ -178,12 +189,16 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
   const k = ctx.key(unit.sellableUnitId, cell.date, "stopSell");
   const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === "stopSell" && ctx.editing.date === cell.date;
   const closed = cell.stopSell;
-  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   if (isEditing) {
+    // Escape cancels, exactly as it does for the numeric restriction editors —
+    // and exactly as the board's own footer hint promises ("Esc לביטול"). Without
+    // it this editor had no non-writing way out: both of its buttons persist, so
+    // a mis-click could only be escaped by committing something.
     return (
-      <div className={className}>
+      <div className={className} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); ctx.cancel(); } }}>
         <div className="rg-ss-edit">
-          <button data-testid="ss-open" className={`rg-ss-b open${!closed ? " on" : ""}`} title="פתוח למכירה"
+          <button data-testid="ss-open" className={`rg-ss-b open${!closed ? " on" : ""}`} title="פתוח למכירה" autoFocus
             onClick={() => ctx.setBool(unit, "stopSell", cell.date, false)}><Icon name="check" size={13.5} /></button>
           <button data-testid="ss-close" className={`rg-ss-b close${closed ? " on" : ""}`} title="סגור למכירה"
             onClick={() => ctx.setBool(unit, "stopSell", cell.date, true)}><Icon name="circle-slash" size={13.5} /></button>
@@ -198,7 +213,7 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
       onClick={ctx.editable ? () => ctx.startEdit(unit.sellableUnitId, "stopSell", cell.date) : undefined}
       title={closed ? "סגור למכירה · לחיצה לפתיחה" : ctx.editable ? "פתוח למכירה · לחיצה לסגירה" : "פתוח למכירה"}
     >
-      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={13.5} /></span> : <span className="rg-dash">—</span>}
+      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={17} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }

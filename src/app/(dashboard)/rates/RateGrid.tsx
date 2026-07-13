@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { dayOfWeek, HEBREW_DAY_LETTERS, hebrewMonthYear, type DateOnly } from "@/lib/dates";
@@ -8,10 +8,7 @@ import { upsertRateCellAction } from "./actions";
 import type { RateCan, RateCellState, RateGridType, RateGridUnit } from "./types";
 import { BoolCell, CellTip, MetricCell, PriceCell, StopSellCell, type BoolField, type CellCtx, type ColGeom, type NumField } from "./RateCells";
 
-const LABEL_W = 224;
-const MIN_COL = 46;
-
-// The six restriction rows under each SU price row (reference order).
+// The six restriction rows under each room price row (reference order).
 type MetricDef =
   | { field: NumField; kind: "num"; label: string; tag: string }
   | { field: BoolField; kind: "bool"; label: string; tag: string };
@@ -31,14 +28,17 @@ type CellPatch = {
 const cellKey = (u: string, d: string, f: string) => `${u}|${d}|${f}`;
 
 export function RateGrid({
-  types, dates, today, can, collapsed, onToggleCollapse, onGroupUpdateForType, onOpenDetail, onSaved,
+  types, dates, today, can, collapsed, legend, onToggleCollapse, onGroupUpdateForType, onOpenDetail, onSaved,
 }: {
   types: RateGridType[];
   dates: DateOnly[];
   today: DateOnly;
   can: RateCan;
+  /** room ids whose restriction rows are hidden (the room row is the disclosure) */
   collapsed: Set<string>;
-  onToggleCollapse: (typeKey: string) => void;
+  /** the card's footer bar (reference: the legend is part of the board card) */
+  legend: ReactNode;
+  onToggleCollapse: (sellableUnitId: string) => void;
   onGroupUpdateForType: (unitIds: string[]) => void;
   onOpenDetail: (unit: RateGridUnit, cell: RateCellState) => void;
   onSaved: () => void;
@@ -60,7 +60,16 @@ export function RateGrid({
     if (last && last.label === label) last.span++;
     else bands.push({ label, span: 1 });
   }
-  const dw = (d: DateOnly) => HEBREW_DAY_LETTERS[(dayOfWeek(d) + 6) % 7];
+  // The reference spells the weekday out ("יום ש"), not the calendar's "ש'" —
+  // the day column is wide enough for it, unlike a calendar cell.
+  // Index with dayOfWeek() DIRECTLY: it returns getUTCDay() (0=Sunday) and
+  // HEBREW_DAY_LETTERS is Sunday-first, so the two already align — exactly as
+  // CalendarGrid and GroupUpdatePanel index it. The old `(dow + 6) % 7` rotated
+  // every label back one day, which stayed invisible while the label was a bare
+  // glyph ("א'") but printed the wrong weekday once it was spelled out — and it
+  // disagreed with the weekend tint on the same cell, which is keyed off the
+  // very same dayOfWeek() (dow === 5 || dow === 6).
+  const dw = (d: DateOnly) => `יום ${HEBREW_DAY_LETTERS[dayOfWeek(d)].replace("'", "")}`;
 
   const submit = useCallback(async (unit: RateGridUnit, date: DateOnly, patch: CellPatch) => {
     const k = cellKey(unit.sellableUnitId, date, Object.keys(patch)[0]);
@@ -92,104 +101,114 @@ export function RateGrid({
     leave: () => setTip(null),
   };
 
-  const gridStyle = { minWidth: LABEL_W + dates.length * MIN_COL, "--rg-label": `${LABEL_W}px` } as CSSProperties;
+  // ONE grid: a 250px sticky label track + one stretch-to-fit track per day.
+  // `minmax(--rg-col, 1fr)` is the whole responsive rule — the tracks fill the
+  // card when it is wide and clamp to the 46px floor (scrolling) when it is not.
+  //
+  // minWidth is what keeps the label column PINNED. A sticky item can only
+  // travel inside its containing block, which is the grid BOX — so with
+  // `width:100%` alone the box stays at the card's width while the tracks
+  // overflow it, and the sticky labels run out of box and slide away (then get
+  // clipped) as soon as the board is scrolled past `cardWidth − 250px`. Sizing
+  // the box to the full track span gives sticky the whole scroll range, so the
+  // labels stay pinned at every offset — while `1fr` still stretches the day
+  // columns whenever the card is wider than that span.
+  const gridStyle = {
+    gridTemplateColumns: `var(--rg-label) repeat(${dates.length}, minmax(var(--rg-col), 1fr))`,
+    minWidth: `calc(var(--rg-label) + ${dates.length} * var(--rg-col))`,
+  } as CSSProperties;
+  const fullRow = { gridColumn: `span ${dates.length}` } as CSSProperties;
+  // the board counts ROOMS (D74: the room is the canonical identity), which is
+  // not the SU count — a pooled unit stands for several rooms.
+  const roomCount = (band: RateGridType) => band.units.reduce((n, u) => n + u.roomCount, 0);
+  const roomTotal = types.reduce((n, t) => n + roomCount(t), 0);
 
   return (
     <div className="card rg-card">
       <div className="rg-scroll">
         <div className="rg-grid" style={gridStyle}>
-          {/* sticky header */}
-          <div className="rg-head">
-            <div className="rg-row rg-mrow">
-              <div className="rg-lab" />
-              <div className="rg-cells">
-                {bands.map((b, i) => (
-                  <div className="rg-mseg" key={i} style={{ flexGrow: b.span }}><span>{b.label}</span></div>
-                ))}
-              </div>
-            </div>
-            <div className="rg-row rg-drow">
-              <div className="rg-lab"><span className="rg-htitle">יחידות מכירה</span><span className="rg-hsub">{dates.length} ימים</span></div>
-              <div className="rg-cells">
-                {cols.map((c) => (
-                  <div className={`rg-dcell${c.weekend ? " we" : ""}${c.today ? " td" : ""}${c.monthStart ? " ms" : ""}`} key={c.date}>
-                    <span className="rg-dw">{dw(c.date)}</span>
-                    <span className="rg-dn">{Number(c.date.slice(8, 10))}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {/* row 1 — month band */}
+          <div className="rg-corner mo" />
+          {bands.map((b, i) => (
+            <div className="rg-mseg" key={i} style={{ gridColumn: `span ${b.span}` }}><span>{b.label}</span></div>
+          ))}
+
+          {/* row 2 — day header */}
+          <div className="rg-corner dy">
+            חדרים
+            <span className="rg-cnt">{roomTotal} חדרים · ₪ ללילה</span>
           </div>
+          {cols.map((c) => (
+            <div className={`rg-dcell${c.weekend ? " we" : ""}${c.today ? " td" : ""}${c.monthStart ? " ms" : ""}`} key={c.date}>
+              <span className="rg-dw">{dw(c.date)}</span>
+              <span className="rg-dn">{Number(c.date.slice(8, 10))}</span>
+            </div>
+          ))}
 
-          {/* type bands */}
-          {types.map((band) => {
-            const tk = band.roomTypeId ?? "—";
-            const isCollapsed = collapsed.has(tk);
-            return (
-              <Fragment key={tk}>
-                <div className="rg-row rg-band">
-                  <div className="rg-lab">
-                    <button type="button" className="rg-collapse" onClick={() => onToggleCollapse(tk)} aria-label={isCollapsed ? "הרחב" : "כווץ"}>
-                      <Icon name={isCollapsed ? "chevron-left" : "chevron"} size={17} />
+          {/* one band per room type, then its rooms */}
+          {types.map((band) => (
+            <Fragment key={band.roomTypeId ?? "—"}>
+              <div className="rg-glabel">
+                {band.roomTypeName}
+                <span className="rg-gc">{roomCount(band)} חדרים</span>
+              </div>
+              <div className="rg-gstrip" style={fullRow}>
+                <span className="rg-gs-in">
+                  <span className="rg-tbase">מחיר בסיס <b>₪{Math.round(band.basePrice)}</b></span>
+                  {can.bulk && (
+                    <button type="button" className="rg-tlink" onClick={() => onGroupUpdateForType(band.unitIds)}>
+                      <Icon name="bulk-update" size={13.5} />עדכון קבוצתי לסוג
                     </button>
-                    <span className="rg-tname">{band.roomTypeName}</span>
-                    <span className="rg-tcount">· {band.units.length} יחידות</span>
-                  </div>
-                  <div className="rg-bandinfo">
-                    <span className="rg-tbase">מחיר בסיס <b>₪{Math.round(band.basePrice)}</b></span>
-                    {can.bulk && (
-                      <button type="button" className="rg-tlink" onClick={() => onGroupUpdateForType(band.unitIds)}>
-                        <Icon name="bulk-update" size={13.5} />עדכון קבוצתי לסוג
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  )}
+                </span>
+              </div>
 
-                {!isCollapsed && band.units.map((unit) => (
-                  <div className="rg-unit" key={unit.sellableUnitId}>
-                    {/* price row */}
-                    <div className="rg-row rg-prow">
-                      <div className="rg-lab">
-                        <span className="rg-unum">{unit.code}</span>
-                        <span className="rg-utype">{unit.roomTypeName}</span>
-                        {/* dense-grid internal annotations — NOT chips (coordinator
-                            ruling): plain 12px/700 text labels (§12.2-class dense
-                            exception), so they can never overflow the 224px sticky
-                            label column the way 28px .chip elements did */}
-                        {(unit.isPooled || unit.closedCount > 0 || !unit.hasBasePlan) && (
-                          <span className="rg-utags">
-                            {unit.isPooled && <span className="rg-utag">מאגר · {unit.roomCount}</span>}
-                            {unit.closedCount > 0 && <span className="rg-utag closed">{unit.closedCount} סגורים</span>}
-                            {!unit.hasBasePlan && <span className="rg-utag noplan">ללא תוכנית</span>}
-                          </span>
-                        )}
-                      </div>
-                      <div className="rg-cells">
-                        {unit.cells.map((cell, i) => <PriceCell key={cell.date} unit={unit} cell={cell} col={cols[i]} ctx={ctx} />)}
-                      </div>
-                    </div>
-                    {/* six restriction rows */}
-                    {METRICS.map((m) => (
-                      <div className="rg-row rg-mrow2" key={m.field}>
-                        <div className="rg-lab"><span className="rg-mname">{m.label}</span>{m.tag && <span className="rg-mtag">{m.tag}</span>}</div>
-                        <div className="rg-cells">
-                          {unit.cells.map((cell, i) =>
-                            m.kind === "num"
-                              ? <MetricCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />
-                              : m.field === "stopSell"
-                                ? <StopSellCell key={cell.date} unit={unit} cell={cell} col={cols[i]} ctx={ctx} />
-                                : <BoolCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />,
-                          )}
+              {band.units.map((unit) => {
+                const open = !collapsed.has(unit.sellableUnitId);
+                return (
+                  <Fragment key={unit.sellableUnitId}>
+                    {/* the room row: its label is the disclosure control for the
+                        six restriction rows (reference behaviour) */}
+                    <button
+                      type="button" className="rg-rlabel" aria-expanded={open}
+                      onClick={() => onToggleCollapse(unit.sellableUnitId)}
+                    >
+                      <Icon name="chevron" size={20} className="rg-rchev" />
+                      <span className="rg-unum">{unit.code}</span>
+                      <span className="rg-utype">{unit.roomTypeName}</span>
+                      {(unit.isPooled || unit.closedCount > 0 || !unit.hasBasePlan) && (
+                        <span className="rg-utags">
+                          {unit.isPooled && <span className="rg-utag">מאגר · {unit.roomCount}</span>}
+                          {unit.closedCount > 0 && <span className="rg-utag">{unit.closedCount} סגורים</span>}
+                          {!unit.hasBasePlan && <span className="rg-utag noplan">ללא תוכנית</span>}
+                        </span>
+                      )}
+                    </button>
+                    {unit.cells.map((cell, i) => <PriceCell key={cell.date} unit={unit} cell={cell} col={cols[i]} ctx={ctx} />)}
+
+                    {open && METRICS.map((m) => (
+                      <Fragment key={m.field}>
+                        <div className="rg-slabel">
+                          {m.label}
+                          {m.tag && <span className="rg-mtag">{m.tag}</span>}
                         </div>
-                      </div>
+                        {unit.cells.map((cell, i) =>
+                          m.kind === "num"
+                            ? <MetricCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />
+                            : m.field === "stopSell"
+                              ? <StopSellCell key={cell.date} unit={unit} cell={cell} col={cols[i]} ctx={ctx} />
+                              : <BoolCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />,
+                        )}
+                      </Fragment>
                     ))}
-                  </div>
-                ))}
-              </Fragment>
-            );
-          })}
+                  </Fragment>
+                );
+              })}
+            </Fragment>
+          ))}
         </div>
       </div>
+      <div className="rg-legend">{legend}</div>
       {tip && <CellTip x={tip.x} y={tip.y} unit={tip.unit} cell={tip.cell} />}
     </div>
   );
