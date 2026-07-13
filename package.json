@@ -56,7 +56,7 @@
     "check:status-default": "node scripts/check-status-default.mjs",
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:design": "node scripts/check-design-system.mjs",
-    "check:reservations-ui": "node scripts/check-reservations-ui.mjs"
+    "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

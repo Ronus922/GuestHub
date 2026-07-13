@@ -4,7 +4,7 @@ import { sql } from "@/lib/db";
 import { isDateOnly } from "@/lib/dates";
 import { listBookableRatePlans } from "@/lib/rate-plans/service";
 import { getTenantVatRate } from "@/lib/settings";
-import { getReservationsList, type ListFilters, type ListTab, type QuickFilter } from "./data";
+import { getReservationsList, isListTab, type ListFilters } from "./data";
 import { ReservationsScreen } from "./ReservationsScreen";
 
 export const dynamic = "force-dynamic";
@@ -12,13 +12,9 @@ export const dynamic = "force-dynamic";
 // /reservations — הזמנות (D77 §17/§18). URL-driven filters: every control
 // writes searchParams and this force-dynamic page re-queries, so the realtime
 // router.refresh() keeps rows + tab counts live without a client data path.
-
-const TAB_KEYS: ListTab[] = ["all", "confirmed", "inhouse", "out", "cancelled", "noshow"];
-const QUICK_KEYS: QuickFilter[] = [
-  "created24", "cancelled24", "pending", "unpaid", "partial", "inhouse",
-  "arrivals", "arrivals24", "departures", "missing_docs", "invalid_card",
-  "cancelled_today", "noshow_candidates",
-];
+//
+// The unified tab bar has exactly ONE param: ?tab=. There is no second
+// (quick-filter) axis — an unknown value falls back to "all".
 
 // uuid-typed params are validated HERE — a mistyped/malicious filter link
 // must fall back to "no filter", never crash the page with a 22P02
@@ -28,7 +24,7 @@ const ORIGIN_RE = /^[a-z_]{1,40}$/;
 
 function parseFilters(p: Record<string, string | undefined>): ListFilters {
   return {
-    tab: TAB_KEYS.includes(p.tab as ListTab) ? (p.tab as ListTab) : "all",
+    tab: isListTab(p.tab) ? p.tab : "all",
     q: (p.q ?? "").slice(0, 120),
     dateType:
       p.dtype === "checkout" || p.dtype === "created" ? p.dtype : "checkin",
@@ -40,7 +36,6 @@ function parseFilters(p: Record<string, string | undefined>): ListFilters {
       p.pay === "unpaid" || p.pay === "partial" || p.pay === "paid" ? p.pay : null,
     roomId: uuidOrNull(p.room),
     cancellationOrigin: p.corigin && ORIGIN_RE.test(p.corigin) ? p.corigin : null,
-    quick: QUICK_KEYS.includes(p.quick as QuickFilter) ? (p.quick as QuickFilter) : null,
   };
 }
 

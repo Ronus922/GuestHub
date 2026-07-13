@@ -291,30 +291,42 @@
     text-align: end;
   }
 
-  /* ---------- one merged bar: lifecycle tabs · divider · quick filters ----------
-     a tab IS a button (§4): .btn + .btn-primary / .btn-tertiary — only the
-     tighter padding of a segmented control lives here. A quick filter IS a
-     chip (§3): canonical .chip.clickable, nothing local. */
+  /* ---------- the ONE unified tab bar ----------
+     Every item is the same control — a button (§4): .btn + .btn-primary
+     (active, solid brand) / .btn-tertiary (neutral). Nothing here restyles a
+     primitive; only the segmented-control padding and the single-row track
+     live in this file.
+
+     ONE row, always: the bar never wraps (a second row would read as a second
+     toolbar). When 13 tabs exceed the width, the bar scrolls horizontally
+     INSIDE its own rounded container — the page itself never scrolls sideways
+     and the RTL order is preserved (scrolling starts at the right/הכל). */
   .rv-tabsbar {
     flex: none;
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 6px;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-md);
     padding: 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    /* the scrollbar is hidden, not the scrolling: a visible bar would add its
+       own height to the toolbar (the very thing that must not grow) and sit
+       inside the white pill. Wheel/trackpad/drag still scroll, and focusing a
+       tab with the keyboard scrolls it into view. Same treatment the reference
+       gives its scroll containers. */
+    scrollbar-width: none;
+  }
+  .rv-tabsbar::-webkit-scrollbar {
+    display: none;
   }
   .rv-tab {
     padding: 0 15px;
-  }
-  .rv-tabdiv {
-    width: 1px;
-    height: 24px;
-    background: var(--line);
-    margin: 0 4px;
-    flex: none;
+    flex: none; /* a tab keeps its natural width — labels never squeeze */
   }
 
   /* ---------- table card: semantic <table>, sticky head ---------- */

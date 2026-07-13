@@ -1,7 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import type { Actor } from "@/lib/auth/actor";
-import { addDays, todayInTz, type DateOnly } from "@/lib/dates";
+import { todayInTz, type DateOnly } from "@/lib/dates";
 import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 
 // ============================================================
@@ -15,30 +15,32 @@ import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 
 export const LIST_LIMIT = 300;
 
-/** lifecycle tabs (reference: הכל/מאושר/In House/יצא/בוטל + brief: No Show) */
-export type ListTab = "all" | "confirmed" | "inhouse" | "out" | "cancelled" | "noshow";
-const TAB_STATUS: Record<Exclude<ListTab, "all">, string> = {
-  confirmed: "confirmed",
-  inhouse: "checked_in",
-  out: "checked_out",
-  cancelled: "cancelled",
-  noshow: "no_show",
-};
+// ---- the ONE tab axis ----
+// Lifecycle tabs and the old "quick filters" are the SAME control now: one
+// unified bar, one selection, one URL param (?tab=). There is no second
+// filter state — selecting a tab replaces the previous one, and `all` clears.
+// Every tab below is exactly one predicate over canonical state (TAB_WHERE),
+// and its badge is counted from that same predicate (no parallel count path).
+export const TABS = [
+  "all",
+  "inhouse",
+  "cancelled",
+  "noshow",
+  "created24",
+  "arrivals",
+  "departures",
+  "cancelled24",
+  "unpaid",
+  "partial",
+  "pending",
+  "missing_docs",
+  "invalid_card",
+] as const;
 
-export type QuickFilter =
-  | "created24"
-  | "cancelled24"
-  | "pending"
-  | "unpaid"
-  | "partial"
-  | "inhouse"
-  | "arrivals"
-  | "arrivals24"
-  | "departures"
-  | "missing_docs"
-  | "invalid_card"
-  | "cancelled_today"
-  | "noshow_candidates";
+export type ListTab = (typeof TABS)[number];
+
+export const isListTab = (v: string | undefined): v is ListTab =>
+  !!v && (TABS as readonly string[]).includes(v);
 
 export type ListFilters = {
   tab: ListTab;
@@ -51,7 +53,6 @@ export type ListFilters = {
   payment: "unpaid" | "partial" | "paid" | null;
   roomId: string | null;
   cancellationOrigin: string | null;
-  quick: QuickFilter | null;
 };
 
 export type ListRow = {
@@ -85,18 +86,43 @@ export type ListRow = {
 };
 
 export type TabCounts = Record<ListTab, number>;
-export type QuickCounts = Record<QuickFilter, number>;
 
 export type ReservationsListData = {
   rows: ListRow[];
   /** matching rows beyond LIST_LIMIT — 0 means the list is complete */
   truncatedBy: number;
+  /** one badge per tab — counted from the SAME predicate that filters the list */
   counts: TabCounts;
-  /** chip badges — same predicates as the quick filters, counted tenant-wide */
-  quickCounts: QuickCounts;
   today: DateOnly;
   currency: string;
 };
+
+// ---- the ONE predicate per tab ----
+// Used TWICE and defined ONCE: it filters the list (WHERE) and it counts the
+// badge (COUNT(*) FILTER). A tab therefore cannot show a badge that disagrees
+// with the rows it opens. `all` has no predicate — it IS the unfiltered query.
+// `wf` is the workflow-status join present in both queries below.
+function tabPredicates(today: DateOnly) {
+  return {
+    all: null,
+    inhouse: sql`res.status = 'checked_in'`,
+    cancelled: sql`res.status = 'cancelled'`,
+    noshow: sql`res.status = 'no_show'`,
+    created24: sql`res.created_at > now() - interval '24 hours'`,
+    arrivals: sql`res.check_in = ${today} AND res.status <> 'cancelled'`,
+    departures: sql`res.check_out = ${today} AND res.status <> 'cancelled'`,
+    // rolling 24-hour window — NOT "since midnight"
+    cancelled24: sql`res.status = 'cancelled'
+                     AND res.cancelled_at > now() - interval '24 hours'`,
+    unpaid: sql`res.paid_amount <= 0 AND res.total_price > 0
+                AND res.status <> 'cancelled'`,
+    partial: sql`res.paid_amount > 0 AND res.paid_amount < res.total_price`,
+    pending: sql`res.status = 'draft'`,
+    missing_docs: sql`wf.key = 'missing_docs'`,
+    invalid_card: sql`(res.invalid_card_reported_at IS NOT NULL
+                       OR wf.key = 'card_declined')`,
+  } satisfies Record<ListTab, ReturnType<typeof sql> | null>;
+}
 
 export async function getReservationsList(
   actor: Actor,
@@ -107,7 +133,7 @@ export async function getReservationsList(
     SELECT timezone, currency FROM guesthub.tenants WHERE id = ${tenantId}`;
   const tz = tenant?.timezone || "Asia/Jerusalem";
   const today = todayInTz(tz);
-  const dayAfter = addDays(today, 2);
+  const P = tabPredicates(today);
 
   const like = f.q.trim() ? `%${f.q.trim()}%` : null;
   // timestamptz → date must happen in the PROPERTY timezone (the session is
@@ -120,40 +146,11 @@ export async function getReservationsList(
         ? sql`(res.created_at AT TIME ZONE ${tz})::date`
         : sql`res.check_in`;
 
-  // quick filters — each one is a single honest predicate over canonical state
-  const quick =
-    f.quick === "created24"
-      ? sql`AND res.created_at > now() - interval '24 hours'`
-      : f.quick === "cancelled24"
-        ? sql`AND res.status = 'cancelled' AND res.cancelled_at > now() - interval '24 hours'`
-        : f.quick === "pending"
-          ? sql`AND res.status = 'draft'`
-          : f.quick === "unpaid"
-            ? sql`AND res.paid_amount <= 0 AND res.total_price > 0 AND res.status <> 'cancelled'`
-            : f.quick === "partial"
-              ? sql`AND res.paid_amount > 0 AND res.paid_amount < res.total_price`
-              : f.quick === "inhouse"
-                ? sql`AND res.status = 'checked_in'`
-                : f.quick === "arrivals"
-                  ? sql`AND res.check_in = ${today} AND res.status <> 'cancelled'`
-                  : f.quick === "arrivals24"
-                    ? sql`AND res.check_in >= ${today} AND res.check_in < ${dayAfter} AND res.status <> 'cancelled'`
-                    : f.quick === "departures"
-                      ? sql`AND res.check_out = ${today} AND res.status <> 'cancelled'`
-                      : f.quick === "missing_docs"
-                        ? sql`AND wf.key = 'missing_docs'`
-                        : f.quick === "invalid_card"
-                          ? sql`AND (res.invalid_card_reported_at IS NOT NULL OR wf.key = 'card_declined')`
-                          : f.quick === "cancelled_today"
-                            ? sql`AND res.status = 'cancelled'
-                                  AND (res.cancelled_at AT TIME ZONE ${tz})::date = ${today}`
-                            : f.quick === "noshow_candidates"
-                              ? sql`AND res.status = 'confirmed' AND res.check_in <= ${today}`
-                              : sql``;
+  const tab = P[f.tab];
 
   const where = sql`
     res.tenant_id = ${tenantId}
-    ${f.tab !== "all" ? sql`AND res.status = ${TAB_STATUS[f.tab]}` : sql``}
+    ${tab ? sql`AND (${tab})` : sql``}
     ${
       like
         ? sql`AND (res.reservation_number ILIKE ${like}
@@ -187,8 +184,7 @@ export async function getReservationsList(
                            WHERE rr3.reservation_id = res.id AND rr3.room_id = ${f.roomId})`
         : sql``
     }
-    ${f.cancellationOrigin ? sql`AND res.cancellation_origin = ${f.cancellationOrigin}` : sql``}
-    ${quick}`;
+    ${f.cancellationOrigin ? sql`AND res.cancellation_origin = ${f.cancellationOrigin}` : sql``}`;
 
   const rows = await sql<(Omit<ListRow, "payment" | "balance"> & { total_count: number })[]>`
     SELECT res.id, res.reservation_number, res.status,
@@ -226,50 +222,27 @@ export async function getReservationsList(
 
   const totalMatching = rows[0]?.total_count ?? 0;
 
-  // tab counts — always over the FULL tenant dataset (reference behavior)
-  const countRows = await sql<{ status: string; n: number }[]>`
-    SELECT status, COUNT(*)::int AS n FROM guesthub.reservations
-    WHERE tenant_id = ${tenantId}
-    GROUP BY status`;
-
-  // quick-chip badges — the SAME predicates as the quick filters above,
-  // aggregated tenant-wide in one scan (reference shows a count on every chip)
-  const [qc] = await sql<Record<QuickFilter, number>[]>`
+  // ONE badge aggregate for the ONE bar — every tab counted from the SAME
+  // predicate that filters it (P above), tenant-wide, in a single scan.
+  // `all` is COUNT(*) — by construction the total of the unfiltered query.
+  const [counts] = await sql<TabCounts[]>`
     SELECT
-      COUNT(*) FILTER (WHERE res.created_at > now() - interval '24 hours')::int AS created24,
-      COUNT(*) FILTER (WHERE res.status = 'cancelled'
-                         AND res.cancelled_at > now() - interval '24 hours')::int AS cancelled24,
-      COUNT(*) FILTER (WHERE res.status = 'draft')::int AS pending,
-      COUNT(*) FILTER (WHERE res.paid_amount <= 0 AND res.total_price > 0
-                         AND res.status <> 'cancelled')::int AS unpaid,
-      COUNT(*) FILTER (WHERE res.paid_amount > 0
-                         AND res.paid_amount < res.total_price)::int AS partial,
-      COUNT(*) FILTER (WHERE res.status = 'checked_in')::int AS inhouse,
-      COUNT(*) FILTER (WHERE res.check_in = ${today}
-                         AND res.status <> 'cancelled')::int AS arrivals,
-      COUNT(*) FILTER (WHERE res.check_in >= ${today} AND res.check_in < ${dayAfter}
-                         AND res.status <> 'cancelled')::int AS arrivals24,
-      COUNT(*) FILTER (WHERE res.check_out = ${today}
-                         AND res.status <> 'cancelled')::int AS departures,
-      COUNT(*) FILTER (WHERE wf.key = 'missing_docs')::int AS missing_docs,
-      COUNT(*) FILTER (WHERE res.invalid_card_reported_at IS NOT NULL
-                         OR wf.key = 'card_declined')::int AS invalid_card,
-      COUNT(*) FILTER (WHERE res.status = 'cancelled'
-                         AND (res.cancelled_at AT TIME ZONE ${tz})::date = ${today})::int AS cancelled_today,
-      COUNT(*) FILTER (WHERE res.status = 'confirmed'
-                         AND res.check_in <= ${today})::int AS noshow_candidates
+      COUNT(*)::int                                     AS "all",
+      COUNT(*) FILTER (WHERE ${P.inhouse})::int         AS inhouse,
+      COUNT(*) FILTER (WHERE ${P.cancelled})::int       AS cancelled,
+      COUNT(*) FILTER (WHERE ${P.noshow})::int          AS noshow,
+      COUNT(*) FILTER (WHERE ${P.created24})::int       AS created24,
+      COUNT(*) FILTER (WHERE ${P.arrivals})::int        AS arrivals,
+      COUNT(*) FILTER (WHERE ${P.departures})::int      AS departures,
+      COUNT(*) FILTER (WHERE ${P.cancelled24})::int     AS cancelled24,
+      COUNT(*) FILTER (WHERE ${P.unpaid})::int          AS unpaid,
+      COUNT(*) FILTER (WHERE ${P.partial})::int         AS partial,
+      COUNT(*) FILTER (WHERE ${P.pending})::int         AS pending,
+      COUNT(*) FILTER (WHERE ${P.missing_docs})::int    AS missing_docs,
+      COUNT(*) FILTER (WHERE ${P.invalid_card})::int    AS invalid_card
     FROM guesthub.reservations res
     LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
     WHERE res.tenant_id = ${tenantId}`;
-  const byStatus = new Map(countRows.map((r) => [r.status, r.n]));
-  const counts: TabCounts = {
-    all: countRows.reduce((s, r) => s + r.n, 0),
-    confirmed: byStatus.get("confirmed") ?? 0,
-    inhouse: byStatus.get("checked_in") ?? 0,
-    out: byStatus.get("checked_out") ?? 0,
-    cancelled: byStatus.get("cancelled") ?? 0,
-    noshow: byStatus.get("no_show") ?? 0,
-  };
 
   return {
     rows: rows.map((r) => ({
@@ -279,7 +252,6 @@ export async function getReservationsList(
     })),
     truncatedBy: Math.max(0, totalMatching - rows.length),
     counts,
-    quickCounts: qc,
     today,
     currency: tenant?.currency || "ILS",
   };

@@ -8,49 +8,40 @@ import { paymentTriplet, STATUS_COLORS } from "@/lib/status-colors";
 import { getVisibleReservationNumber } from "@/lib/reservations/visible-number";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
-import type {
-  ListFilters,
-  ListRow,
-  ListTab,
-  QuickFilter,
-  ReservationsListData,
-} from "./data";
+import type { ListFilters, ListRow, ListTab, ReservationsListData } from "./data";
 
 // ============================================================
 // /reservations — רשימת הזמנות, 1:1 to the RENDER of ref/html/Orders.html:
-// title+count / search header, filters card, ONE merged tabs+quick bar,
-// semantic <table> with sticky head, client-side sort + pagination over the
-// server page, pinned footer. Server-driven filtering is unchanged: every
-// control writes the URL (router.replace) and the force-dynamic page
-// re-queries — realtime router.refresh() keeps rows AND counts live with no
-// second data path. Row click opens the EXISTING reservation SidePanel by the
-// INTERNAL id — the visible number (OTA code, else #internal — see
-// lib/reservations/visible-number) is presentation only.
+// title+count / search header, filters card, ONE unified tab bar (lifecycle +
+// the former quick filters are the same control, one selection, one ?tab=
+// param, one predicate map in data.ts), semantic <table> with sticky head,
+// client-side sort + pagination over the server page, pinned footer.
+// Server-driven filtering: every control writes the URL (router.replace) and
+// the force-dynamic page re-queries — realtime router.refresh() keeps rows AND
+// counts live with no second data path. Row click opens the EXISTING
+// reservation SidePanel by the INTERNAL id — the visible number (OTA code,
+// else #internal — see lib/reservations/visible-number) is presentation only.
 // ============================================================
 
-const TABS: { key: ListTab; label: string; icon: IconName }[] = [
+// ---- the ONE tab configuration ----
+// Lifecycle tabs and the former "quick filters" are ONE control: one bar, one
+// component (.btn), one selection, one URL param (?tab=, resolved by ONE
+// predicate map in data.ts). Rendered right-to-left in this exact order; each
+// key appears exactly once, so "שוהים" cannot be rendered twice.
+const TAB_ITEMS: { key: ListTab; label: string; icon: IconName }[] = [
   { key: "all", label: "הכל", icon: "list-alt" },
-  { key: "confirmed", label: "מאושרות", icon: "check-circle" },
   { key: "inhouse", label: "שוהים", icon: "hotel" },
-  { key: "out", label: "עזבו", icon: "door-open" },
   { key: "cancelled", label: "בוטלו", icon: "cancel" },
   { key: "noshow", label: "לא הגיעו", icon: "person-off" },
-];
-
-const QUICK_CHIPS: { key: QuickFilter; label: string; icon: IconName }[] = [
-  { key: "created24", label: "נוצרו ב-24 שעות", icon: "attendance" },
+  { key: "created24", label: "נוצרו ב־24 שעות", icon: "attendance" },
   { key: "arrivals", label: "הגעות היום", icon: "login" },
-  { key: "arrivals24", label: "הגעות ב-24 שעות", icon: "calendar-plus" },
   { key: "departures", label: "עזיבות היום", icon: "logout" },
-  { key: "inhouse", label: "שוהים", icon: "hotel" },
+  { key: "cancelled24", label: "בוטלו ב־24 השעות האחרונות", icon: "circle-slash" },
   { key: "unpaid", label: "לא שולמו", icon: "money-off" },
   { key: "partial", label: "שולם חלקית", icon: "percent" },
   { key: "pending", label: "ממתינות לאישור", icon: "hourglass" },
   { key: "missing_docs", label: "חסר מסמכים", icon: "documents" },
   { key: "invalid_card", label: "כרטיס לא עבר", icon: "credit-card" },
-  { key: "cancelled24", label: "בוטלו ביממה האחרונה", icon: "circle-slash" },
-  { key: "cancelled_today", label: "בוטלו היום", icon: "circle-slash" },
-  { key: "noshow_candidates", label: "מועמדי No-show", icon: "warning" },
 ];
 
 // the stay lifecycle wears the SAME chip anatomy as everything else (§3),
@@ -203,7 +194,6 @@ export function ReservationsScreen({
     if (next.payment) p.set("pay", next.payment);
     if (next.roomId) p.set("room", next.roomId);
     if (next.cancellationOrigin) p.set("corigin", next.cancellationOrigin);
-    if (next.quick) p.set("quick", next.quick);
     const qs = p.toString();
     router.replace(qs ? `/reservations?${qs}` : "/reservations");
   };
@@ -222,8 +212,7 @@ export function ReservationsScreen({
     filters.workflowId !== null ||
     filters.payment !== null ||
     filters.roomId !== null ||
-    filters.cancellationOrigin !== null ||
-    filters.quick !== null;
+    filters.cancellationOrigin !== null;
 
   const cancelledTab = filters.tab === "cancelled";
 
@@ -407,7 +396,6 @@ export function ReservationsScreen({
                     payment: null,
                     roomId: null,
                     cancellationOrigin: null,
-                    quick: null,
                     dateType: "checkin",
                   });
                 }}
@@ -420,38 +408,28 @@ export function ReservationsScreen({
         </div>
       </div>
 
-      {/* ---- one bar: lifecycle tabs · divider · quick filters ---- */}
-      {/* a tab IS a button (§4): .btn + .btn-primary / .btn-tertiary; a quick
-          filter IS a chip (§3): canonical .chip.clickable — same anatomy as
-          every other סינון chip in the system */}
-      <div className="rv-tabsbar" aria-label="סינון הזמנות">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            aria-pressed={filters.tab === t.key}
-            className={`btn rv-tab ${filters.tab === t.key ? "btn-primary" : "btn-tertiary"}`}
-            onClick={() => apply({ tab: t.key })}
-          >
-            <Icon name={t.icon} size={17} />
-            {t.label}
-            <span className="chip chip-neutral ltr-num">{data.counts[t.key]}</span>
-          </button>
-        ))}
-        <span className="rv-tabdiv" />
-        {QUICK_CHIPS.map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            aria-pressed={filters.quick === c.key}
-            className={`chip clickable ${filters.quick === c.key ? "on" : ""}`}
-            onClick={() => apply({ quick: filters.quick === c.key ? null : c.key })}
-          >
-            <Icon name={c.icon} size={13.5} />
-            {c.label}
-            <bdi className="ltr-num">{data.quickCounts[c.key]}</bdi>
-          </button>
-        ))}
+      {/* ---- the unified tab bar ---- */}
+      {/* ONE unified tab bar — every item is the same control (§4: a tab IS a
+          button), one selection at a time; "הכל" clears the filter. No second
+          group, no divider, no second state. */}
+      <div className="rv-tabsbar" role="tablist" aria-label="סינון הזמנות">
+        {TAB_ITEMS.map((t) => {
+          const on = filters.tab === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              className={`btn rv-tab ${on ? "btn-primary" : "btn-tertiary"}`}
+              onClick={() => apply({ tab: t.key })}
+            >
+              <Icon name={t.icon} size={17} />
+              {t.label}
+              <span className="chip chip-neutral ltr-num">{data.counts[t.key]}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* ---- table card ---- */}
