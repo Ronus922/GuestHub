@@ -191,10 +191,14 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
   const closed = cell.stopSell;
   const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   if (isEditing) {
+    // Escape cancels, exactly as it does for the numeric restriction editors —
+    // and exactly as the board's own footer hint promises ("Esc לביטול"). Without
+    // it this editor had no non-writing way out: both of its buttons persist, so
+    // a mis-click could only be escaped by committing something.
     return (
-      <div className={className}>
+      <div className={className} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); ctx.cancel(); } }}>
         <div className="rg-ss-edit">
-          <button data-testid="ss-open" className={`rg-ss-b open${!closed ? " on" : ""}`} title="פתוח למכירה"
+          <button data-testid="ss-open" className={`rg-ss-b open${!closed ? " on" : ""}`} title="פתוח למכירה" autoFocus
             onClick={() => ctx.setBool(unit, "stopSell", cell.date, false)}><Icon name="check" size={13.5} /></button>
           <button data-testid="ss-close" className={`rg-ss-b close${closed ? " on" : ""}`} title="סגור למכירה"
             onClick={() => ctx.setBool(unit, "stopSell", cell.date, true)}><Icon name="circle-slash" size={13.5} /></button>

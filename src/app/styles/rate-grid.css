@@ -130,7 +130,11 @@
    today's included — the today affordance is the brand pill on the number
    alone. (The reference stylesheet tints today's label brand; its own inline
    overrides beat that rule, and the PNG is the pixel source of truth.) */
-.rg-dw { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 1; }
+/* `normal` = the font's natural line box (19px at 15px), which is exactly what
+   the reference renders. `line-height: 1` (15px) shortened the stack and lifted
+   the day pill 2px in the same 52px cell; inheriting the app's 1.6 body value
+   (24px) overshoots it the other way. */
+.rg-dw { font-size: 15px; font-weight: 800; color: var(--ink); line-height: normal; }
 .rg-dn {
   font-size: 15px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums;
   min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
@@ -231,10 +235,15 @@
 }
 .rg-cell.sub { height: var(--rg-metric-h); font-size: 14px; font-weight: 700; }
 /* an over-long value is ELLIPSISED, never silently clipped mid-digit — a cropped
-   "100000" that reads as "10000" would be worse than no number at all. */
+   "100000" that reads as "10000" would be worse than no number at all.
+   direction/isolate is §12 numeric isolation, and it is what makes the ellipsis
+   honest: in the inherited RTL base the ellipsis fell on the LEADING digits
+   ("…000" for 100000, i.e. it ate the most significant ones). LTR-isolated, the
+   truncation falls at the tail ("1000…"), which reads as a number that continues. */
 .rg-price, .rg-num {
   min-width: 0; max-width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: ltr; unicode-bidi: isolate;
 }
 .rg-cell.ms { border-inline-start: 1.5px solid var(--line); }
 .rg-cell.editable { cursor: pointer; }
@@ -291,8 +300,11 @@
   background: color-mix(in srgb, var(--warn) 22%, #fff);
   border: 1px solid color-mix(in srgb, var(--warn) 40%, #fff);
 }
+/* the swatch must paint the SAME hatch the board paints (--line), or the key is
+   lying about the thing it is a key for. Only the pitch is tightened (3/6 vs
+   5/10), so the pattern still reads inside a 14px chip. */
 .rg-leg .rg-sw.hatch {
-  background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--faint) 3px, var(--faint) 6px);
+  background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--line) 3px, var(--line) 6px);
   border: 1px solid var(--line);
 }
 .rg-hint { margin-inline-start: auto; font-size: 12px; font-weight: 600; color: var(--faint); }

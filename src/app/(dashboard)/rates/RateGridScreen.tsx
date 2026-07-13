@@ -61,8 +61,27 @@ export function RateGridScreen({
   // Collapse is per ROOM (reference: "לחיצה על שורת חדר פותחת מגבלות") — a room
   // row hides/shows its own six restriction rows. The toolbar's "כווץ הכול"
   // drives the same set, so one control and one state, never two.
+  //
+  // It is scoped to the rooms ON THE BOARD (visibleTypes), not to every room:
+  // derived from all of them, the control lied under an active type filter —
+  // with every visible room collapsed it still read "כווץ הכול", and pressing it
+  // collapsed the hidden rooms too, so expanding what you could see took two
+  // presses. What the button says must be true of what you are looking at.
+  const visibleUnitIds = useMemo(() => visibleTypes.flatMap((t) => t.unitIds), [visibleTypes]);
+  const allCollapsed =
+    visibleUnitIds.length > 0 && visibleUnitIds.every((id) => collapsed.has(id));
+  // collapse/expand only what is on the board; rooms hidden by the filter keep
+  // whatever state they had, so switching filters never surprises you.
+  const toggleCollapseAll = () =>
+    setCollapsed((s) => {
+      const n = new Set(s);
+      if (allCollapsed) visibleUnitIds.forEach((id) => n.delete(id));
+      else visibleUnitIds.forEach((id) => n.add(id));
+      return n;
+    });
+  // Group Update keeps its existing scope (every room, not just the filtered
+  // view) — that is pre-existing behaviour and out of a visual redesign's remit.
   const allUnitIds = useMemo(() => state.types.flatMap((t) => t.unitIds), [state.types]);
-  const allCollapsed = collapsed.size >= allUnitIds.length && allUnitIds.length > 0;
   const toggleCollapse = (unitId: string) =>
     setCollapsed((s) => { const n = new Set(s); if (n.has(unitId)) n.delete(unitId); else n.add(unitId); return n; });
 
@@ -103,7 +122,7 @@ export function RateGridScreen({
         typeFilter={typeFilter} allCollapsed={allCollapsed}
         syncStatus={syncStatus} savePulse={savePulse}
         onFilter={setTypeFilter}
-        onToggleCollapseAll={() => setCollapsed(allCollapsed ? new Set() : new Set(allUnitIds))}
+        onToggleCollapseAll={toggleCollapseAll}
         onNavigate={navigate}
         onGroupUpdate={() => openGroupUpdate(allUnitIds)}
       />
