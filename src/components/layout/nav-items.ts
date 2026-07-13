@@ -26,13 +26,15 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "דשבורד", icon: "dashboard", href: "/dashboard", permission: "dashboard.view" },
       { label: "תפוסה", icon: "calendar", href: "/calendar", permission: "calendar.view" },
+      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?panel=group-update", permission: "rates.bulk_update" },
       { label: "רשת תעריפים", icon: "credit-card", href: "/rates", permission: "rates.view" },
       { label: "תוכניות תעריף", icon: "tags", href: "/rate-plans", permission: "rate_plans.view" },
       { label: "הזמנות", icon: "reservations", href: "/reservations", permission: "reservations.view" },
-      { label: "אורחים", icon: "guests", href: "/guests", permission: "guests.view" },
+      // אורחים — hidden from the nav by owner request; /guests itself still works
+      // (the route and its permission are untouched, it is only unlisted).
+      { label: "אורחים", icon: "guests", href: "/guests", permission: "guests.view", hidden: true },
       { label: "חדרים", icon: "rooms", href: "/rooms", permission: "rooms.view" },
       { label: "חסימות חדרים", icon: "room-blocks", permission: "rooms.view", hidden: true },
-      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?panel=group-update", permission: "rates.bulk_update" },
     ],
   },
   {
