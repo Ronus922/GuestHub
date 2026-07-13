@@ -169,4 +169,18 @@ ok(/widthClassName="w-\[60vw\]/.test(groupUpdate) && /grid-template-columns:\s*m
 ok(/<RateGrid[\s\S]*<GroupUpdatePanel/.test(screen),
   "the grid stays mounted underneath the locally controlled panel");
 
+// ---- 14. room order: the board reads by ROOM NUMBER, not by base price ----
+// Bands are ordered by their lowest-numbered room and the rooms inside a band
+// ascend numerically (926 → 1000 → 1006 → 1102), through the ONE canonical
+// comparator the calendar already uses (D86) — never a second sort rule.
+const gridState = read("src/lib/rates/grid-state.ts");
+ok(/from "@\/lib\/rooms\/sort"/.test(gridState),
+  "the rates grid orders through the canonical room comparator, not its own rule");
+ok(/band\.units = order/.test(gridState) && /compareRoomNumber\(a\.code, b\.code\)/.test(gridState),
+  "rooms ascend numerically inside every room-type band");
+ok(/types\.sort\(\(a, b\) => compareRoomNumber\(a\.units\[0\]\?\.code/.test(gridState),
+  "the bands themselves are ordered by their lowest-numbered room");
+ok(/band\.unitIds = order\.map/.test(gridState),
+  "unitIds follow the visible order — Group Update presets can never disagree with the board");
+
 console.log(`check:rates-ui — the /rates board matches the approved architecture ✔ (${n} checks)`);
