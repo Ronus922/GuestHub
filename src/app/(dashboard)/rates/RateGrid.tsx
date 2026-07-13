@@ -60,9 +60,16 @@ export function RateGrid({
     if (last && last.label === label) last.span++;
     else bands.push({ label, span: 1 });
   }
-  // the reference spells the weekday out ("יום ש"), not the calendar's "ש'" —
+  // The reference spells the weekday out ("יום ש"), not the calendar's "ש'" —
   // the day column is wide enough for it, unlike a calendar cell.
-  const dw = (d: DateOnly) => `יום ${HEBREW_DAY_LETTERS[(dayOfWeek(d) + 6) % 7].replace("'", "")}`;
+  // Index with dayOfWeek() DIRECTLY: it returns getUTCDay() (0=Sunday) and
+  // HEBREW_DAY_LETTERS is Sunday-first, so the two already align — exactly as
+  // CalendarGrid and GroupUpdatePanel index it. The old `(dow + 6) % 7` rotated
+  // every label back one day, which stayed invisible while the label was a bare
+  // glyph ("א'") but printed the wrong weekday once it was spelled out — and it
+  // disagreed with the weekend tint on the same cell, which is keyed off the
+  // very same dayOfWeek() (dow === 5 || dow === 6).
+  const dw = (d: DateOnly) => `יום ${HEBREW_DAY_LETTERS[dayOfWeek(d)].replace("'", "")}`;
 
   const submit = useCallback(async (unit: RateGridUnit, date: DateOnly, patch: CellPatch) => {
     const k = cellKey(unit.sellableUnitId, date, Object.keys(patch)[0]);
@@ -97,8 +104,18 @@ export function RateGrid({
   // ONE grid: a 250px sticky label track + one stretch-to-fit track per day.
   // `minmax(--rg-col, 1fr)` is the whole responsive rule — the tracks fill the
   // card when it is wide and clamp to the 46px floor (scrolling) when it is not.
+  //
+  // minWidth is what keeps the label column PINNED. A sticky item can only
+  // travel inside its containing block, which is the grid BOX — so with
+  // `width:100%` alone the box stays at the card's width while the tracks
+  // overflow it, and the sticky labels run out of box and slide away (then get
+  // clipped) as soon as the board is scrolled past `cardWidth − 250px`. Sizing
+  // the box to the full track span gives sticky the whole scroll range, so the
+  // labels stay pinned at every offset — while `1fr` still stretches the day
+  // columns whenever the card is wider than that span.
   const gridStyle = {
     gridTemplateColumns: `var(--rg-label) repeat(${dates.length}, minmax(var(--rg-col), 1fr))`,
+    minWidth: `calc(var(--rg-label) + ${dates.length} * var(--rg-col))`,
   } as CSSProperties;
   const fullRow = { gridColumn: `span ${dates.length}` } as CSSProperties;
   // the board counts ROOMS (D74: the room is the canonical identity), which is

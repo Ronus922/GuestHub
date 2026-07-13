@@ -116,7 +116,9 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
       onClick={ctx.editable ? () => ctx.toggleBool(unit, field, cell.date, on) : undefined}
       title={on ? "פעיל · לחיצה לביטול" : ctx.editable ? "לחיצה להפעלה" : undefined}
     >
-      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={13.5} /></span> : <span className="rg-dash">—</span>}
+      {/* 17px, not 13.5: the reference draws an 18px glyph in this same 22×22
+          tile, and 17 is the nearest icon size GUIDELINES §10 allows. */}
+      {on ? <span className={`rg-flag ${field === "stopSell" ? "sell" : field === "closedToArrival" ? "cta" : "ctd"}`}><Icon name={iconName} size={17} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }
@@ -125,9 +127,18 @@ export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; 
 // styled to the reference .rm window (tonnage.png / Calendar messages.html):
 // brand header (unit · date), divided rows, full-width sale-state band.
 export function CellTip({ x, y, unit, cell }: { x: number; y: number; unit: RateGridUnit; cell: RateCellState }) {
-  const left = Math.min(x + 14, (typeof window !== "undefined" ? window.innerWidth : 9999) - 266);
+  // The tip is position:fixed, so it is never clipped by the board's overflow —
+  // but it CAN run off the viewport. Clamp on both axes and flip above the
+  // cursor in the lower half, so a cell in the last row is still fully readable
+  // (rows near the bottom edge otherwise pushed the tip off-screen).
+  const vw = typeof window !== "undefined" ? window.innerWidth : 9999;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 9999;
+  const left = Math.max(12, Math.min(x + 14, vw - 264));
+  const vertical = y > vh / 2
+    ? { bottom: Math.max(12, vh - y + 16) }
+    : { top: Math.max(12, y + 16) };
   return (
-    <div className="rg-tip" style={{ left, top: y + 16 }}>
+    <div className="rg-tip" role="tooltip" style={{ left, ...vertical }}>
       <div className="rg-tip-h">
         <span className="rg-tip-t">{unit.code}</span>
         <span className="rg-tip-dt">{cell.date}</span>
@@ -198,7 +209,7 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
       onClick={ctx.editable ? () => ctx.startEdit(unit.sellableUnitId, "stopSell", cell.date) : undefined}
       title={closed ? "סגור למכירה · לחיצה לפתיחה" : ctx.editable ? "פתוח למכירה · לחיצה לסגירה" : "פתוח למכירה"}
     >
-      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={13.5} /></span> : <span className="rg-dash">—</span>}
+      {closed ? <span className="rg-flag sell"><Icon name="circle-slash" size={17} /></span> : <span className="rg-dash">—</span>}
     </div>
   );
 }

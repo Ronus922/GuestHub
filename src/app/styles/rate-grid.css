@@ -64,6 +64,15 @@
 .rg-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rg-flabl { font-size: 12px; font-weight: 700; color: var(--faint); }
 
+/* The date range shares /calendar's range box, but NOT its text shape: the
+   calendar's label is numeric-only ("13/07/2026 – 11/08/2026"), for which the
+   shared `.cb-rl { direction: ltr }` is right. This one is Hebrew + numbers
+   ("13 יולי – 11 אוגוסט 2026"), and an LTR base paragraph reorders it — the
+   leading day number is torn off its month and reflowed next to the year
+   ("יולי – 11 אוגוסט 2026 13"). Restore the RTL base the reference's own range
+   label uses. Scoped to .rg-wrap so /calendar keeps the LTR it needs. */
+.rg-wrap .cb-rangebox .cb-rl { direction: rtl; }
+
 /* ---------- board card + scroll ----------
    the card chrome (bg / border / radius 16 / shadow) comes from `.card` (§6);
    this class only makes it a scrolling flex column inside the page. The legend
@@ -220,7 +229,10 @@
 .rg-price { font-size: 15px; font-weight: 800; color: var(--ink); }
 .rg-price.inherited { color: var(--faint); font-weight: 700; }
 .rg-price.notsell { color: var(--danger); }
-.rg-num { font-size: 14px; font-weight: 700; color: var(--muted); }
+/* the reference paints a restriction VALUE the same near-black it paints the day
+   number (sampled identical in the PNG) — not the muted grey of the row's label.
+   --ink is the nearest token, and is already what the day number resolves to. */
+.rg-num { font-size: 14px; font-weight: 700; color: var(--ink); }
 .rg-dash { color: color-mix(in srgb, var(--faint) 45%, #fff); font-size: 14px; font-weight: 600; }
 .rg-blk { color: var(--faint); }
 /* CTA/CTD/stop-sell flags are the reference's 22×22 `.tgchip` tile, each with
