@@ -18,6 +18,8 @@
     "check:room-pricing": "node scripts/check-room-pricing.mjs",
     "check:room-db": "node scripts/check-room-db.mjs",
     "check:settings-regression": "node scripts/check-settings-regression.mjs",
+    "check:check-in-check-out": "node scripts/check-check-in-check-out.mjs",
+    "check:check-in-check-out-db": "node scripts/check-check-in-check-out-db.mjs",
     "check:rate-plans": "node scripts/check-rate-plans.mjs",
     "check:pricing-engine": "node scripts/check-pricing-engine.mjs",
     "check:pricing-equality": "node scripts/check-pricing-equality.mjs",
@@ -61,6 +63,7 @@
     "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs"
   },
   "dependencies": {
+    "@hebcal/core": "^6.6.0",
     "@hookform/resolvers": "^5.4.0",
     "@react-pdf/renderer": "^4.5.1",
     "@supabase/ssr": "^0.12.0",

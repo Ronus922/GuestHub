@@ -10,6 +10,8 @@ import { PaymentSection } from "./PaymentSection";
 import { MessagingSection } from "./MessagingSection";
 import { BusinessProfileSection } from "./BusinessProfileSection";
 import { WorkflowStatusSection } from "./WorkflowStatusSection";
+import { CheckInCheckOutSection } from "./CheckInCheckOutSection";
+import type { CheckInCheckOutSettings } from "@/lib/check-in-check-out";
 import type { BusinessProfileContext } from "./business-actions";
 import type { WorkflowStatusDef } from "./status-actions";
 import type {
@@ -28,6 +30,7 @@ export function SettingsShell({
   businessProfile,
   currency,
   vatRate,
+  checkInCheckOut,
   extraGuest,
   cancellationPolicies,
   paymentPolicies,
@@ -42,6 +45,7 @@ export function SettingsShell({
   businessProfile: BusinessProfileContext | null;
   currency: string;
   vatRate: number;
+  checkInCheckOut: CheckInCheckOutSettings;
   extraGuest: ExtraGuestView;
   cancellationPolicies: CancellationPolicyView[];
   paymentPolicies: PaymentPolicyView[];
@@ -63,16 +67,36 @@ export function SettingsShell({
 
   return (
     <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
-      <div>
-        <h1 className="h1">הגדרות</h1>
-        <p className="t-secondary mt-1">
-          {propertyIdentity} — ניהול ערכים, סטטוסים וברירות מחדל של המערכת
-        </p>
-      </div>
+      {section !== "check-in-check-out" && (
+        <div>
+          <h1 className="h1">הגדרות</h1>
+          <p className="t-secondary mt-1">
+            {propertyIdentity} — ניהול ערכים, סטטוסים וברירות מחדל של המערכת
+          </p>
+        </div>
+      )}
 
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+      <label className="field xl:hidden">
+        <span className="field-label">קטגוריית הגדרות</span>
+        <select
+          className="field-input"
+          value={section}
+          onChange={(event) => setSection(event.target.value as SettingsSectionKey)}
+          aria-label="בחירת קטגוריית הגדרות"
+        >
+          {groups.map((group) => (
+            <optgroup key={group.title} label={group.title}>
+              {group.items.map((item) => (
+                <option key={item.key} value={item.key}>{item.label}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </label>
+
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
         {/* right-hand settings navigation — first child = right side in RTL (like Shell's Sidebar) */}
-        <nav className="card shrink-0 p-3 lg:w-[280px]" aria-label="ניווט הגדרות">
+        <nav className="card hidden shrink-0 p-3 xl:block xl:w-[280px]" aria-label="ניווט הגדרות">
           {groups.map((group) => (
             <div key={group.title} className="mb-3 last:mb-0">
               <p className="t-label px-3 pb-1 tracking-wide text-faint">{group.title}</p>
@@ -99,6 +123,7 @@ export function SettingsShell({
             businessProfile={businessProfile}
             currency={currency}
             vatRate={vatRate}
+            checkInCheckOut={checkInCheckOut}
             extraGuest={extraGuest}
             cancellationPolicies={cancellationPolicies}
             paymentPolicies={paymentPolicies}
@@ -145,6 +170,7 @@ function SectionBody({
   businessProfile,
   currency,
   vatRate,
+  checkInCheckOut,
   extraGuest,
   cancellationPolicies,
   paymentPolicies,
@@ -157,6 +183,7 @@ function SectionBody({
   businessProfile: BusinessProfileContext | null;
   currency: string;
   vatRate: number;
+  checkInCheckOut: CheckInCheckOutSettings;
   extraGuest: ExtraGuestView;
   cancellationPolicies: CancellationPolicyView[];
   paymentPolicies: PaymentPolicyView[];
@@ -174,6 +201,8 @@ function SectionBody({
       return <ExtraGuestSection value={extraGuest} currency={currency} vatRate={vatRate} />;
     case "statuses":
       return <WorkflowStatusSection initial={workflowStatuses} />;
+    case "check-in-check-out":
+      return <CheckInCheckOutSection initial={checkInCheckOut} />;
     case "cancellation":
       return <CancellationSection policies={cancellationPolicies} />;
     case "payment":
