@@ -122,6 +122,9 @@ export function StayEditor({
   }, [value.roomId, value.checkIn, value.checkOut, value.adults, value.children, value.infants, value.ratePlanId, validRange]);
 
   const selected = rooms.find((r) => r.id === value.roomId);
+  // the assigned room is occupied in the CHOSEN window (the list is fetched with
+  // excludeReservationId, so a stay never conflicts with itself)
+  const roomTaken = selected != null && !selected.free;
   const overCapacity =
     selected != null &&
     (value.adults > selected.max_adults ||
@@ -147,16 +150,11 @@ export function StayEditor({
           checkIn={value.checkIn}
           checkOut={value.checkOut}
           disabled={disabled}
-          onApply={(checkIn, checkOut) =>
-            // a new check-in re-opens the availability question — the chosen room
-            // may no longer be free, so it is re-picked (as the date inputs did).
-            onChange({
-              ...value,
-              checkIn,
-              checkOut,
-              roomId: checkIn === value.checkIn ? value.roomId : "",
-            })
-          }
+          // Moving the dates KEEPS the room: unassigning it silently left the
+          // stay invalid, which locked "שמור שינויים" while the panel still read
+          // "יש שינויים שלא נשמרו". Availability is re-checked below (and again
+          // on the server, under lock) — a real conflict is SAID, never guessed.
+          onApply={(checkIn, checkOut) => onChange({ ...value, checkIn, checkOut })}
         />
         <div className="field dp-after">
           <span className="field-label">
@@ -238,6 +236,11 @@ export function StayEditor({
       {quote?.restriction && (
         <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
           {quote.restriction}
+        </p>
+      )}
+      {roomTaken && selected && (
+        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
+          חדר {selected.room_number} תפוס בתאריכים שנבחרו — החליפו חדר או שנו את התאריכים
         </p>
       )}
       {overCapacity && selected && (

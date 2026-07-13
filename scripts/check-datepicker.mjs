@@ -69,5 +69,17 @@ assert.ok(
   !/type="date"/.test(stay),
   "the raw <input type=\"date\"> stay dates are gone — the picker is the ONE date UI",
 );
+// Moving the dates must NOT unassign the room: an empty roomId fails staysValid,
+// which locked "שמור שינויים" while the panel read "יש שינויים שלא נשמרו" — the
+// operator could neither save nor understand why.
+const onApply = stay.match(/onApply=\{([\s\S]*?)\n\s*\/>/);
+assert.ok(onApply, "StayEditor must wire the picker's onApply");
+assert.ok(
+  !/roomId/.test(onApply[1]),
+  "a date change must keep the assigned room — onApply may not touch roomId",
+);
+// …and an occupied room in the new window is SAID, not silently dropped
+assert.match(stay, /roomTaken/, "an unavailable assigned room must raise a visible conflict");
+assert.match(stay, /תפוס בתאריכים שנבחרו/, "the conflict must name the room and the dates");
 
 console.log("✓ datepicker: click semantics, month grid and StayEditor wiring");
