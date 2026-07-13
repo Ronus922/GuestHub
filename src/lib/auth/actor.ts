@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { sql } from "@/lib/db";
+export { AuthorizationError, hasPermission, requirePermission } from "@/lib/auth/permission-check";
 
 // Server-side identity of the caller. Every Server Action must resolve this and
 // tenant-scope its queries by actor.tenantId. Never trust a client-supplied tenantId.
@@ -32,13 +33,6 @@ export type ActorContext = {
   roleName: string | null;
   permissions: string[];
 };
-
-export class AuthorizationError extends Error {
-  constructor(message = "אין הרשאה לבצע פעולה זו") {
-    super(message);
-    this.name = "AuthorizationError";
-  }
-}
 
 type ActorRow = {
   user_id: string;
@@ -139,26 +133,4 @@ export function toActorContext(actor: Actor): ActorContext {
     roleName: actor.roleName,
     permissions: [...actor.permissions],
   };
-}
-
-// Non-throwing check for gating pages / passing capability flags to the client.
-export function hasPermission(actor: Actor, key: string): boolean {
-  return (
-    actor.roleKey === "super_admin" ||
-    actor.roleKey === "admin" ||
-    actor.permissions.has(key)
-  );
-}
-
-// Server authority check — the first line of every business Server Action.
-// super_admin / admin bypass the granular permission set.
-export function requirePermission(
-  actor: Actor | null,
-  key: string,
-): asserts actor is Actor {
-  if (!actor) throw new AuthorizationError("לא מחובר למערכת");
-  if (actor.roleKey === "super_admin" || actor.roleKey === "admin") return;
-  if (!actor.permissions.has(key)) {
-    throw new AuthorizationError(`חסרה הרשאה: ${key}`);
-  }
 }

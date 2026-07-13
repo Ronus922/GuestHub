@@ -13,10 +13,16 @@ import { logoutAction } from "@/lib/auth/actions";
 // on line 1 and WHICH property this is on line 2 — the two are separate.
 export function Sidebar({
   collapsed,
+  mobileOpen,
+  isMobile,
   propertyIdentity,
+  onNavigate,
 }: {
   collapsed: boolean;
+  mobileOpen: boolean;
+  isMobile: boolean;
   propertyIdentity: string;
+  onNavigate: () => void;
 }) {
   const actor = useActor();
   const { openNewReservation, canCreate } = useNewReservation();
@@ -24,8 +30,14 @@ export function Sidebar({
 
   return (
     <aside
-      className={`flex h-full shrink-0 flex-col border-e border-line bg-surface transition-[width] duration-200 ${
-        collapsed ? "w-[76px]" : "w-[250px]"
+      id="dashboard-sidebar"
+      aria-label="ניווט ראשי"
+      aria-hidden={isMobile && !mobileOpen}
+      inert={isMobile && !mobileOpen}
+      className={`fixed inset-y-0 start-0 z-50 flex h-full w-[250px] shrink-0 flex-col border-e border-line bg-surface transition-[width,transform] duration-200 md:relative md:z-auto md:translate-x-0 ${
+        mobileOpen ? "translate-x-0" : "translate-x-full"
+      } ${
+        collapsed ? "md:w-[76px]" : "md:w-[250px]"
       }`}
     >
       {/* מותג */}
@@ -49,7 +61,10 @@ export function Sidebar({
             type="button"
             className={`btn btn-primary w-full ${collapsed ? "px-0" : ""}`}
             title="הזמנה חדשה"
-            onClick={() => openNewReservation({ source: "global_sidebar" })}
+            onClick={() => {
+              onNavigate();
+              openNewReservation({ source: "global_sidebar" });
+            }}
           >
             <Icon name="plus" size={20} />
             {!collapsed && "הזמנה חדשה"}
@@ -72,7 +87,7 @@ export function Sidebar({
               )}
               <ul className="flex flex-col gap-0.5">
                 {items.map((item) => (
-                  <NavRow key={item.label} item={item} collapsed={collapsed} />
+                  <NavRow key={item.label} item={item} collapsed={collapsed} onNavigate={onNavigate} />
                 ))}
               </ul>
             </div>
@@ -128,7 +143,15 @@ function isNavActive(href: string | undefined, pathname: string): boolean {
   return pathname === href.split("?")[0];
 }
 
-function NavRow({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function NavRow({
+  item,
+  collapsed,
+  onNavigate,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  onNavigate: () => void;
+}) {
   const pathname = usePathname();
   const allowed = usePermission(item.permission);
   if (!allowed) return null;
@@ -155,7 +178,7 @@ function NavRow({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   if (item.href) {
     return (
       <li>
-        <Link href={item.href} className={`${base} ${state}`} title={item.label}>
+        <Link href={item.href} className={`${base} ${state}`} title={item.label} onClick={onNavigate}>
           {inner}
         </Link>
       </li>

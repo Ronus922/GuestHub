@@ -28,6 +28,8 @@ const ICONS = {
   maintenance: "build",
   employees: "badge",
   attendance: "schedule",
+  "date-range": "date_range",
+  sun: "brightness_high",
   "my-requests": "description",
   "approve-requests": "fact_check",
   documents: "description",

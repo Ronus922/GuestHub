@@ -1,9 +1,19 @@
 "use client";
 
+import type { RefObject } from "react";
+
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { useActor } from "@/components/providers/TenantProvider";
 
-export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+export function TopBar({
+  onToggleSidebar,
+  expanded,
+  toggleRef,
+}: {
+  onToggleSidebar: () => void;
+  expanded: boolean;
+  toggleRef: RefObject<HTMLButtonElement | null>;
+}) {
   const actor = useActor();
   const initial = (actor.fullName ?? actor.username).trim().charAt(0) || "G";
 
@@ -11,12 +21,16 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-line bg-surface/90 px-4 backdrop-blur-md">
       {/* icon-only controls: 36×36, radius 10, 20px icon (§4) */}
       <button
+        ref={toggleRef}
         type="button"
         onClick={onToggleSidebar}
         className="icon-btn"
-        title="כווץ/הרחב תפריט"
+        title={expanded ? "סגירת תפריט" : "פתיחת תפריט"}
+        aria-controls="dashboard-sidebar"
+        aria-expanded={expanded}
+        aria-label={expanded ? "סגירת תפריט הניווט" : "פתיחת תפריט הניווט"}
       >
-        <Icon name="chevron" size={20} label="כווץ/הרחב תפריט" />
+        <Icon name="chevron" size={20} />
       </button>
 
       {/* חיפוש — the canonical 44px field (§5) */}

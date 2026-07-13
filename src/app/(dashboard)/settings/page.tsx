@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getActor, hasPermission } from "@/lib/auth/actor";
-import { getTenantVatRate, getTenantCurrency } from "@/lib/settings";
+import { getTenantVatRate, getTenantCurrency, getTenantCheckInCheckOutSettings } from "@/lib/settings";
 import {
   getExtraGuestDefaults,
   listCancellationPolicies,
@@ -24,10 +24,11 @@ export default async function SettingsPage() {
   if (!actor) redirect("/auth/signout");
   if (!hasPermission(actor, "settings.edit")) redirect("/dashboard");
 
-  const [currency, vatRate, extraGuest, cancellationPolicies, paymentPolicies, paymentMethods, businessCtx] =
+  const [currency, vatRate, checkInCheckOut, extraGuest, cancellationPolicies, paymentPolicies, paymentMethods, businessCtx] =
     await Promise.all([
       getTenantCurrency(actor.tenantId),
       getTenantVatRate(actor.tenantId),
+      getTenantCheckInCheckOutSettings(actor.tenantId),
       getExtraGuestDefaults(actor.tenantId),
       listCancellationPolicies(actor.tenantId),
       listPaymentPolicies(actor.tenantId),
@@ -57,6 +58,7 @@ export default async function SettingsPage() {
       businessProfile={businessProfile}
       currency={currency}
       vatRate={vatRate}
+      checkInCheckOut={checkInCheckOut}
       extraGuest={extraGuest}
       cancellationPolicies={cancellationPolicies}
       paymentPolicies={paymentPolicies}

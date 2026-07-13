@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Toaster } from "sonner";
 import { TenantProvider } from "@/components/providers/TenantProvider";
@@ -34,6 +35,51 @@ export function Shell({
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const pathname = usePathname();
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 767px)");
+    const sync = () => setIsMobile(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>("#dashboard-sidebar a[href], #dashboard-sidebar button:not([disabled])")
+        ?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMobileOpen(false);
+      sidebarToggleRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [mobileOpen]);
+
+  const toggleSidebar = () => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      setMobileOpen((open) => !open);
+      return;
+    }
+    setCollapsed((value) => !value);
+  };
+
+  const closeMobileSidebar = (restoreFocus = false) => {
+    setMobileOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => sidebarToggleRef.current?.focus());
+  };
 
   return (
     <TenantProvider actor={actor}>
@@ -42,10 +88,28 @@ export function Shell({
         <NewReservationProvider {...newReservation}>
           <div className="flex h-screen overflow-hidden bg-appbg">
             {/* Sidebar — צד ימין ב-RTL (הילד הראשון) */}
-            <Sidebar collapsed={collapsed} propertyIdentity={propertyIdentity} />
+            {mobileOpen && (
+              <button
+                type="button"
+                className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-sm md:hidden"
+                aria-label="סגירת תפריט הניווט"
+                onClick={() => closeMobileSidebar(true)}
+              />
+            )}
+            <Sidebar
+              collapsed={isMobile ? false : collapsed}
+              mobileOpen={mobileOpen}
+              isMobile={isMobile}
+              propertyIdentity={propertyIdentity}
+              onNavigate={() => closeMobileSidebar(false)}
+            />
 
             <div className="flex min-w-0 flex-1 flex-col">
-              <TopBar onToggleSidebar={() => setCollapsed((v) => !v)} />
+              <TopBar
+                onToggleSidebar={toggleSidebar}
+                expanded={isMobile ? mobileOpen : !collapsed}
+                toggleRef={sidebarToggleRef}
+              />
               <main className="thin-scroll flex-1 overflow-auto">{children}</main>
             </div>
           </div>

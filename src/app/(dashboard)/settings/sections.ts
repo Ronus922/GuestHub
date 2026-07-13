@@ -6,7 +6,7 @@ import type { IconName } from "@/components/shared/Icon";
 // scope here and are not stubbed (§I: do not redesign unrelated Settings sections).
 
 export type SettingsSectionKey =
-  | "business" | "vat" | "extra-guest" | "statuses" | "cancellation" | "payment" | "messaging";
+  | "business" | "vat" | "extra-guest" | "statuses" | "check-in-check-out" | "cancellation" | "payment" | "messaging";
 
 export type SettingsSectionDef = {
   key: SettingsSectionKey;
@@ -35,6 +35,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     title: "הזמנות",
     items: [
       { key: "statuses", label: "סטטוסי הזמנה", icon: "check-circle", desc: "סטטוסים תפעוליים עם תגיות צבע" },
+      { key: "check-in-check-out", label: "שעות צ'ק-אין וצ'ק-אאוט", icon: "attendance", desc: "שעות הגעה ועזיבה לפי סוג יום" },
       { key: "cancellation", label: "מדיניות ביטול", icon: "circle-slash", desc: "תבניות מדיניות ביטול" },
     ],
   },

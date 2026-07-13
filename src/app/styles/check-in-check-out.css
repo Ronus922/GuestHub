@@ -1,0 +1,266 @@
+.check-hours {
+  container-type: inline-size;
+  width: 100%;
+  max-width: 980px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.check-hours__page-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.check-hours__page-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  background: var(--brand);
+  color: white;
+}
+
+.check-hours__page-header h2 {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.check-hours__page-header p {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.check-hours__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+.check-hours__card,
+.check-hours__preview {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.check-hours__card > header {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--brand-line);
+  background: var(--brand-soft);
+}
+
+.check-hours__card-icon {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--brand);
+}
+
+.check-hours__card h3,
+.check-hours__preview h3 {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.check-hours__card header p {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.check-hours__card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.check-hours__chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+}
+
+.check-hours__chip-target {
+  width: 38px;
+  min-height: 44px;
+  padding: 8px 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.check-hours__chip-target--wide {
+  width: auto;
+}
+
+.check-hours .chip {
+  min-width: 32px;
+  justify-content: center;
+  background: var(--field-bg);
+  color: var(--muted);
+}
+
+.check-hours .chip.is-selected {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+}
+
+.check-hours__chip-target:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand) 25%, transparent);
+  outline-offset: -3px;
+  border-radius: var(--r-md);
+}
+
+.check-hours__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.check-hours__field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.check-hours__field > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.check-hours__field > span .ms-icon {
+  color: var(--faint);
+}
+
+.check-hours__field input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 19px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  text-align: center;
+}
+
+.check-hours__field input:hover {
+  border-color: color-mix(in srgb, var(--muted) 48%, var(--line));
+}
+
+.check-hours__field input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: var(--focus-ring);
+}
+
+.check-hours__note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.check-hours__preview > header {
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 15px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.check-hours__preview > header .ms-icon {
+  color: var(--brand);
+}
+
+.check-hours__preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px;
+}
+
+.check-hours__preview-body p {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.check-hours__preview-body strong {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.check-hours__footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.check-hours__footer .btn {
+  min-width: 167px;
+}
+
+@container (min-width: 680px) {
+  .check-hours__grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .check-hours__page-header {
+    align-items: flex-start;
+  }
+
+  .check-hours__field > span {
+    white-space: normal;
+  }
+
+  .check-hours__field input {
+    padding-inline: 8px;
+    font-size: 17px;
+  }
+}
