@@ -147,17 +147,20 @@ export function GroupUpdatePanel({
     return m;
   }, [types]);
   const preview = useMemo(() => {
-    let noInventory = 0, missingPrice = 0, currentlyClosed = 0, currentlyOpen = 0;
+    let noInventory = 0, missingPrice = 0, currentlyClosed = 0, currentlyOpen = 0, unknown = 0;
     for (const su of selected) {
       for (const d of effectiveDates) {
         const c = cellIndex.get(`${su}|${d}`);
-        if (!c) continue;
+        // the grid only loaded its own window; a date picked outside it has no
+        // known current state, and counting it as "unchanged" would UNDER-report
+        // the update (it reads as "0 תאים ייסגרו" while cells really do close)
+        if (!c) { unknown++; continue; }
         if (c.availability === 0) noInventory++;
         if (c.effectivePrice <= 0) missingPrice++;
         if (c.stopSell) currentlyClosed++; else currentlyOpen++;
       }
     }
-    return { noInventory, missingPrice, willOpen: currentlyClosed, willClose: currentlyOpen };
+    return { noInventory, missingPrice, willOpen: currentlyClosed, willClose: currentlyOpen, unknown };
   }, [selected, effectiveDates, cellIndex]);
 
   const anyFieldSelected =
@@ -399,13 +402,20 @@ export function GroupUpdatePanel({
                 דוגמה — {sample.typeName}: <bdi className="ltr-num">₪{Math.round(sample.before)}</bdi> <span className="text-faint">←</span> <b className="text-ink"><bdi className="ltr-num">₪{Math.round(sample.after)}</bdi></b>
               </p>
             )}
-            {cellCount > 0 && (stopSell !== "nochange" || preview.noInventory > 0 || preview.missingPrice > 0) && (
+            {cellCount > 0 && (stopSell !== "nochange" || preview.noInventory > 0 || preview.missingPrice > 0 || preview.unknown > 0) && (
               <div className="gu-preview">
                 {stopSell === "no" && (
                   <p><b className="text-status-success ltr-num">{preview.willOpen}</b> תאים ייפתחו למכירה מסחרית{preview.noInventory > 0 && <> · <b className="text-status-danger ltr-num">{preview.noInventory}</b> מתוכם יישארו ללא מלאי פיזי (הפתיחה המסחרית אינה יוצרת זמינות)</>}</p>
                 )}
                 {stopSell === "yes" && (
                   <p><b className="text-status-danger ltr-num">{preview.willClose}</b> תאים ייסגרו למכירה מסחרית · המלאי הפיזי אינו משתנה</p>
+                )}
+                {/* dates outside the grid's loaded window have no known current
+                    state — say so, instead of reporting them as "0 will change" */}
+                {preview.unknown > 0 && (
+                  <p>
+                    <b className="text-status-warning ltr-num">{preview.unknown}</b> תאים מחוץ לחלון המוצג בטבלה — הם יעודכנו, אך אין להם תצוגה מקדימה כאן
+                  </p>
                 )}
                 {preview.noInventory > 0 && stopSell !== "no" && <p><b className="text-status-danger ltr-num">{preview.noInventory}</b> מהתאים ללא מלאי פיזי</p>}
                 {preview.missingPrice > 0 && <p><b className="text-status-warning ltr-num">{preview.missingPrice}</b> מהתאים ללא מחיר אפקטיבי</p>}
