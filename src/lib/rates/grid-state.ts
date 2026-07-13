@@ -2,6 +2,7 @@ import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { eachDay, type DateOnly } from "@/lib/dates";
 import { collectSellReasons, roomAdminStateOf } from "@/lib/rates/rules";
+import { compareRoomNumber } from "@/lib/rooms/sort";
 import type { SyncState } from "@/app/(dashboard)/rates/types";
 import type {
   RateCellState,
@@ -326,6 +327,18 @@ export async function getRateGridState(
     band.units.push(gu);
     band.unitIds.push(gu.sellableUnitId);
   }
+
+  // The board reads bottom-up by ROOM NUMBER, not by price: each band is ordered
+  // by its lowest-numbered room (926 → 1000 → 1006), and inside a band the rooms
+  // ascend numerically. Ordering flows through the ONE canonical comparator the
+  // calendar already uses (D86) — the SQL sort only makes the rows arrive
+  // deterministically; the visual order is decided here, once.
+  for (const band of types) {
+    const order = [...band.units].sort((a, b) => compareRoomNumber(a.code, b.code));
+    band.units = order;
+    band.unitIds = order.map((u) => u.sellableUnitId);
+  }
+  types.sort((a, b) => compareRoomNumber(a.units[0]?.code ?? "", b.units[0]?.code ?? ""));
 
   return {
     from,
