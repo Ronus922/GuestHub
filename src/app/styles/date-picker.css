@@ -200,6 +200,15 @@
     justify-content: center;
   }
 
+  /* the footer's honest status line: says where the dates already are */
+  .dp-ft-hint {
+    flex: 1;
+    text-align: start;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+
   /* ---------- footer: §7 primary hugs the start edge ---------- */
   .dp-ft {
     display: flex;
