@@ -35,7 +35,6 @@
      reference bundle, not from its stylesheet (the bundle ships inline
      overrides that beat its own CSS — the render is the source of truth). */
   /* ds-geometry: board rows — frozen grid geometry, not §4 controls */
-  --rg-band-h: 40px;   /* room-type band */
   /* ds-geometry: header day row */
   --rg-day-h: 52px;
   /* ds-geometry: room price row */
@@ -56,7 +55,6 @@
 .rg-wrap {
   --rg-today: var(--brand-soft);
   --rg-weekend: color-mix(in srgb, var(--brand-soft) 70%, #fff);
-  --rg-band-bg: color-mix(in srgb, var(--bg) 55%, #fff);
   --rg-head-bg: color-mix(in srgb, var(--bg) 25%, #fff);
 }
 
@@ -85,7 +83,7 @@
 
 /* Every label in the first column is sticky to the RTL start (= the right
    edge). Each is a grid item, so they all share the one 250px track. */
-.rg-corner, .rg-glabel, .rg-rlabel, .rg-slabel {
+.rg-corner, .rg-rlabel, .rg-slabel {
   position: sticky; inset-inline-start: 0;
   border-inline-end: 1px solid var(--line);
 }
@@ -142,27 +140,10 @@
 }
 .rg-dcell.td .rg-dn { background: var(--brand); color: #fff; }
 
-/* ---------- room-type band: sticky label + one strip across all days ---------- */
-.rg-glabel {
-  z-index: 3; height: var(--rg-band-h); background: var(--rg-band-bg);
-  display: flex; align-items: center; gap: 9px; padding: 0 14px;
-  border-block: 1px solid var(--line); margin-top: -1px;
-  font-size: 15px; font-weight: 800; color: var(--ink); white-space: nowrap;
-}
-.rg-glabel .rg-gc { font-size: 14px; font-weight: 700; color: var(--faint); }
-.rg-gstrip {
-  height: var(--rg-band-h); background: var(--rg-band-bg);
-  border-block: 1px solid var(--line); margin-top: -1px; display: flex; align-items: center;
-}
-/* pinned beside the label column, like the month name */
-.rg-gs-in {
-  position: sticky; inset-inline-start: calc(var(--rg-label) + 12px);
-  display: flex; align-items: center; gap: 12px; padding: 0 12px; white-space: nowrap;
-}
-.rg-tbase { font-size: 15px; font-weight: 700; color: var(--muted); }
-.rg-tbase b { color: var(--ink); font-variant-numeric: tabular-nums; }
-/* the reference defines this button but its snapshot never renders one; we keep
-   the per-type Group Update entry point and dress it in the reference's style. */
+/* The room-type BAND is gone: the board is ONE ascending room list (926 → 1000 →
+   1006 …), so a grouping row between rooms would break the order. Its CSS
+   (.rg-glabel/.rg-gstrip/.rg-gs-in/.rg-tbase, --rg-band-h, --rg-band-bg) went
+   with it. .rg-tlink survives — Group Update still uses it for its shortcuts. */
 .rg-tlink {
   display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px; font-weight: 700;
   color: var(--brand); background: transparent; border: none; cursor: pointer; white-space: nowrap;

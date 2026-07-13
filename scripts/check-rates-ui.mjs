@@ -72,7 +72,7 @@ ok(/minWidth:\s*`calc\(var\(--rg-label\)\s*\+\s*\$\{dates\.length\}\s*\*\s*var\(
 // the reference's responsive rule is CSS — no resize listener may creep back in
 ok(!/ResizeObserver|addEventListener\(\s*["']resize/.test(grid + screen),
   "no resize JavaScript — CSS reproduces the reference's column rule");
-for (const [v, px] of [["--rg-price-h", "46px"], ["--rg-metric-h", "34px"], ["--rg-day-h", "52px"], ["--rg-band-h", "40px"], ["--rg-month-h", "30px"]]) {
+for (const [v, px] of [["--rg-price-h", "46px"], ["--rg-metric-h", "34px"], ["--rg-day-h", "52px"], ["--rg-month-h", "30px"]]) {
   ok(new RegExp(`${v}:\\s*${px}`).test(css), `row geometry ${v} is the reference's ${px}`);
 }
 
@@ -89,10 +89,13 @@ ok(/\{open\s*&&\s*METRICS\.map/.test(grid),
 // ---- 5. Group Update keeps a usable UI path (never URL-only) ----
 ok(/onGroupUpdate\b/.test(toolbar) && /btn-primary|btn-secondary/.test(toolbar),
   "the toolbar keeps a Group Update button");
-ok(/rg-tlink[\s\S]*?onGroupUpdateForType/.test(grid) || /onGroupUpdateForType/.test(grid),
-  "the per-room-type Group Update entry point survives in the band strip");
-ok(/can\.bulk/.test(grid) && /can\.bulk/.test(toolbar),
-  "both Group Update entry points stay permission-gated on rates.bulk_update");
+// the per-type entry point used to live in a band header; with the board flat
+// (one ascending room list) the type chip + the toolbar button do the same job,
+// so Group Update presets to the rooms ON THE BOARD.
+ok(/openGroupUpdate\(visibleUnitIds\)/.test(screen),
+  "Group Update presets to the rooms currently on the board (type chip = the old per-type link)");
+ok(/can\.bulk/.test(toolbar),
+  "the Group Update entry point stays permission-gated on rates.bulk_update");
 
 // ---- 6. every real sale state stays documented in the footer legend ----
 const legendItems = (screen.match(/className="rg-leg"/g) || []).length;
@@ -169,18 +172,18 @@ ok(/widthClassName="w-\[60vw\]/.test(groupUpdate) && /grid-template-columns:\s*m
 ok(/<RateGrid[\s\S]*<GroupUpdatePanel/.test(screen),
   "the grid stays mounted underneath the locally controlled panel");
 
-// ---- 14. room order: the board reads by ROOM NUMBER, not by base price ----
-// Bands are ordered by their lowest-numbered room and the rooms inside a band
-// ascend numerically (926 → 1000 → 1006 → 1102), through the ONE canonical
-// comparator the calendar already uses (D86) — never a second sort rule.
-const gridState = read("src/lib/rates/grid-state.ts");
-ok(/from "@\/lib\/rooms\/sort"/.test(gridState),
-  "the rates grid orders through the canonical room comparator, not its own rule");
-ok(/band\.units = order/.test(gridState) && /compareRoomNumber\(a\.code, b\.code\)/.test(gridState),
-  "rooms ascend numerically inside every room-type band");
-ok(/types\.sort\(\(a, b\) => compareRoomNumber\(a\.units\[0\]\?\.code/.test(gridState),
-  "the bands themselves are ordered by their lowest-numbered room");
-ok(/band\.unitIds = order\.map/.test(gridState),
-  "unitIds follow the visible order — Group Update presets can never disagree with the board");
+// ---- 14. room order: ONE ascending list, no room-type bands ----
+// The board must read 926 → 1000 → 1006 → 1102 …  Banding by room type made the
+// order ascend only INSIDE a band, which is not an ascending board.
+ok(/from "@\/lib\/rooms\/sort"/.test(grid),
+  "the board orders through the canonical room comparator (D86), not its own rule");
+ok(/types\.flatMap\(\(t\) => t\.units\)\.sort\(\(a, b\) => compareRoomNumber\(a\.code, b\.code\)\)/.test(grid),
+  "every room of every type is ONE list, ascending by room number");
+ok(!/rg-glabel|rg-gstrip|rg-tbase/.test(grid),
+  "no room-type band row may sit between rooms — it would break the ascending order");
+ok(!/rg-glabel|rg-gstrip|rg-gs-in|rg-tbase|--rg-band-h|--rg-band-bg/.test(css.replace(/\/\*[\s\S]*?\*\//g, "")),
+  "the band CSS is deleted with the band (iron rule #11 — no orphaned CSS)");
+ok(/rg-utype/.test(grid),
+  "the room type still labels every room row — the grouping is gone, the information is not");
 
 console.log(`check:rates-ui — the /rates board matches the approved architecture ✔ (${n} checks)`);
