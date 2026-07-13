@@ -57,6 +57,7 @@
     "check:status-default": "node scripts/check-status-default.mjs",
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:design": "node scripts/check-design-system.mjs",
+    "check:datepicker": "node scripts/check-datepicker.mjs",
     "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs"
   },
   "dependencies": {
