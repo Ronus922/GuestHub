@@ -217,43 +217,18 @@
   padding-block-end: 16px;
 }
 
-.gu-range-field {
-  min-height: 44px;
-  min-width: min(100%, 360px);
-  padding-inline: 14px;
+/* the canonical <DateRangeField> lives here: the trigger keeps the old field's
+   width, the panel it opens takes the row (the two raw date inputs it replaced,
+   .gu-range-field / .gu-range-separator, are gone with their CSS) */
+.gu-range {
+  flex: 1 1 100%;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1.5px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--faint);
+  flex-direction: column;
+  gap: 12px;
 }
 
-.gu-range-field:focus-within {
-  border-color: var(--brand);
-  box-shadow: var(--focus-ring);
-}
-
-.gu-range-field label {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.gu-range-field input {
-  min-width: 112px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 14px;
-}
-
-.gu-range-separator {
-  color: var(--faint);
+.gu-range .dp-cell {
+  max-width: 360px;
 }
 
 .gu-presets,
@@ -353,14 +328,8 @@
     grid-template-columns: 1fr;
   }
 
-  .gu-range-field {
-    align-items: flex-start;
-    flex-direction: column;
-    padding-block: 10px;
-  }
-
-  .gu-range-separator {
-    display: none;
+  .gu-range .dp-cell {
+    max-width: none;
   }
 
   .gu-field-row {

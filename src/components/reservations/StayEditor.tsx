@@ -147,8 +147,8 @@ export function StayEditor({
 
       <div className="bw-grid3">
         <DateRangeField
-          checkIn={value.checkIn}
-          checkOut={value.checkOut}
+          from={value.checkIn}
+          to={value.checkOut}
           disabled={disabled}
           // Moving the dates KEEPS the room: unassigning it silently left the
           // stay invalid, which locked "שמור שינויים" while the panel still read

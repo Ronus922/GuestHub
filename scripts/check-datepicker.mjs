@@ -47,6 +47,24 @@ assert.deepEqual(
 // the picked range feeds the ONE hotel-night model
 assert.equal(nightsBetween("2026-07-10", "2026-07-16"), 6, "10→16 July = 6 nights");
 
+// ---- "days" semantics (Group Update): the end date is INCLUSIVE ----
+assert.deepEqual(
+  pickRange({ start: "2026-07-13", end: null }, "2026-07-13", { allowSameDay: true }),
+  { start: "2026-07-13", end: "2026-07-13" },
+  "a rates window may be a single day (that day IS the night)",
+);
+assert.deepEqual(
+  pickRange({ start: "2026-07-13", end: null }, "2026-07-12", { allowSameDay: true }),
+  { start: "2026-07-12", end: null },
+  "an earlier click still re-anchors the start in days mode",
+);
+// 13/07 → 11/08 inclusive = 30 nights, which is what Group Update writes
+assert.equal(
+  nightsBetween("2026-07-13", "2026-08-11") + 1,
+  30,
+  "days mode counts the end date as a night",
+);
+
 // ---- month grid ----
 const july = monthCells(2026, 6); // July 2026 starts on a Wednesday (offset 3)
 assert.equal(july.length, 3 + 31, "3 leading blanks + 31 days");
@@ -105,4 +123,28 @@ assert.ok(
   "the month grid must pick through the write-through handler, not setRange",
 );
 
-console.log("✓ datepicker: click semantics, month grid and StayEditor wiring");
+// ---- Group Update (rates) uses the SAME picker, in days mode ----
+const gu = readFileSync("src/app/(dashboard)/rates/GroupUpdatePanel.tsx", "utf8");
+assert.ok(/<DateRangeField/.test(gu), "Group Update must render the canonical picker");
+assert.ok(
+  !/type="date"/.test(gu),
+  'the raw <input type="date"> dates are gone from Group Update too',
+);
+assert.match(gu, /mode="days"/, "a rates window is INCLUSIVE — days mode, not a stay's nights");
+assert.match(gu, /min=\{minDate\}/, "the picker must be clamped to the writable horizon");
+assert.match(gu, /max=\{maxDate\}/, "the picker must be clamped to the writable horizon");
+// the picked window must feed the SAME state the bulk action sends
+const guApply = gu.match(/onApply=\{\(f, t\) => \{([\s\S]*?)\n\s*\}\}/);
+assert.ok(guApply, "Group Update must wire onApply");
+assert.match(guApply[1], /setDateFrom\(/, "the picked start must become dateFrom");
+assert.match(guApply[1], /setDateTo\(/, "the picked end must become dateTo");
+// the dead CSS of the inputs it replaced must be gone (iron rule #11)
+const guCss = readFileSync("src/app/styles/group-update.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+assert.ok(
+  !/\.gu-range-field|\.gu-range-separator/.test(guCss),
+  "the replaced date inputs' CSS must be deleted, not left orphaned",
+);
+
+console.log(
+  "✓ datepicker: click semantics (nights + days), month grid, StayEditor and Group Update wiring",
+);

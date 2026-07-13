@@ -12,14 +12,24 @@ export type DraftRange = { start: DateOnly | null; end: DateOnly | null };
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /**
- * One click on a day cell. First click = check-in; a later click = check-out;
- * a click on or before the check-in re-anchors it; a click on a complete range
- * starts over. check_out is EXCLUSIVE, so a same-day click can never produce a
- * zero-night stay.
+ * One click on a day cell. First click = start; a later click = end; a click
+ * before the start re-anchors it; a click on a complete range starts over.
+ *
+ * Two range semantics, because the app has exactly two:
+ *  - stays ("nights", the default): check_out is EXCLUSIVE, so a same-day click
+ *    can never produce a zero-night stay — it re-anchors instead.
+ *  - rates ("days", allowSameDay): every picked date IS a night, so the end is
+ *    INCLUSIVE and a single day is a legal one-night range.
  */
-export function pickRange(range: DraftRange, clicked: DateOnly): DraftRange {
+export function pickRange(
+  range: DraftRange,
+  clicked: DateOnly,
+  opts?: { allowSameDay?: boolean },
+): DraftRange {
   if (!range.start || range.end) return { start: clicked, end: null };
-  if (clicked <= range.start) return { start: clicked, end: null };
+  if (clicked < range.start) return { start: clicked, end: null };
+  if (clicked === range.start)
+    return opts?.allowSameDay ? { start: clicked, end: clicked } : { start: clicked, end: null };
   return { start: range.start, end: clicked };
 }
 

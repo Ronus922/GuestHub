@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
+import { DateRangeField } from "@/components/shared/DateRangeField";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { addDays, dayOfWeek, eachDay, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { bulkUpdateRatesAction } from "./actions";
@@ -302,17 +303,23 @@ export function GroupUpdatePanel({
           {/* 2 — Dates */}
           <Section n={2} title="תאריכים" badge={`${effectiveDates.length} לילות`}>
             <div className="gu-date-tools">
-              <div className="gu-range-field">
-                <Icon name="calendar" size={20} />
-                <label>
-                  <span className="field-label">מתאריך</span>
-                  <input id="gu-from" aria-label="מתאריך" data-testid="gu-date-from" type="date" dir="ltr" value={dateFrom} min={minDate} max={maxDate} onChange={(e) => setDateFrom(clampDate(e.target.value))} className="ltr-num" />
-                </label>
-                <span className="gu-range-separator">–</span>
-                <label>
-                  <span className="field-label">עד תאריך</span>
-                  <input id="gu-to" aria-label="עד תאריך" data-testid="gu-date-to" type="date" dir="ltr" value={dateTo} min={dateFrom} max={maxDate} onChange={(e) => setDateTo(clampDate(e.target.value))} className="ltr-num" />
-                </label>
+              {/* mode="days": every picked date IS a night here, so the end is
+                  INCLUSIVE (13/07–11/08 = 30 nights) — unlike a stay, whose
+                  check-out is exclusive. min/max = the writable horizon. */}
+              <div className="gu-range">
+                <DateRangeField
+                  mode="days"
+                  label="טווח תאריכים"
+                  required={false}
+                  from={dateFrom}
+                  to={dateTo}
+                  min={minDate}
+                  max={maxDate}
+                  onApply={(f, t) => {
+                    setDateFrom(clampDate(f));
+                    setDateTo(clampDate(t));
+                  }}
+                />
               </div>
               <div className="gu-presets">
                 {([7, 14, 30] as const).map((n) => (
