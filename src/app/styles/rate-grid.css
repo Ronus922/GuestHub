@@ -7,12 +7,18 @@
    NO primitive of its own. What remains here is ONLY the board's geometry:
    the sticky label column, the flex day columns and the row heights.
 
-   Layout model: a horizontally-scrolling board. Every row is `label | cells`.
-   The label column is a fixed-width sticky column (right, RTL); the cells are
-   flex:1 so the grid FILLS the workspace when wide, and only scrolls when the
-   viewport drops below the min-width floor (set inline from the column count).
-   Header day cells, month segments and body cells share the identical flex
-   basis, so every column aligns exactly across header and body.
+   Layout model: ONE CSS grid (the reference's own model — ref/html/
+   Synchronization-table.html). Columns are `250px` for the sticky label column
+   plus one `minmax(46px, 1fr)` track per day: the day columns STRETCH to fill
+   the card when the workspace is wide, and clamp to the 46px floor — putting
+   the board into horizontal scroll — when it is narrow. That is pure CSS; the
+   reference computes the same widths with a resize listener, which we do not
+   need (a `1fr` track already resolves to `(wrap − 250px) / days`).
+
+   The label column is sticky per grid item (`inset-inline-start: 0` — RTL start
+   is the right edge), and the month + day header rows are sticky per item too.
+   Because every item is a direct grid child, header and body columns can never
+   drift apart: they are the SAME tracks, not two flex rows that agree by luck.
 
    Geometry lives in CSS variables (one source, like the calendar) so a row
    height is a declared token of the board — never a stray literal.
@@ -23,16 +29,23 @@
 /* site page insets — match /calendar (18px off the top nav, 26px sides) so the
    title/buttons never sit flush against the TopBar (Iron Rule #5: padding) */
 .rg-wrap {
-  /* --rg-band-h is GRID ROW GEOMETRY (§12.1 dense-grid exception, like the
-     calendar's row tokens) — it is NOT a §4 control height and must never be
-     consumed by a button/field. The checker-side exemption for row heights
-     belongs in scripts/check-design-system.mjs (foundation-owned). */
-  /* ds-geometry: room-type band row — frozen grid geometry, not a §4 control */
-  --rg-band-h: 40px;
-  --rg-day-h: 50px;    /* header day row */
-  --rg-price-h: 32px;  /* SU price row */
-  --rg-metric-h: 24px; /* restriction row */
-  --rg-month-h: 24px;  /* month band */
+  /* --rg-* row heights are GRID ROW GEOMETRY (§12.1 dense-grid exception, like
+     the calendar's row tokens) — they are NOT §4 control heights and must never
+     be consumed by a button/field. Values are measured from the RENDERED
+     reference bundle, not from its stylesheet (the bundle ships inline
+     overrides that beat its own CSS — the render is the source of truth). */
+  /* ds-geometry: board rows — frozen grid geometry, not §4 controls */
+  --rg-band-h: 40px;   /* room-type band */
+  /* ds-geometry: header day row */
+  --rg-day-h: 52px;
+  /* ds-geometry: room price row */
+  --rg-price-h: 46px;
+  --rg-metric-h: 34px; /* restriction row */
+  --rg-month-h: 30px;  /* month band */
+  --rg-label: 250px;   /* sticky label column */
+  /* ds-geometry: day-column FLOOR (a track width, not a control height) —
+     wider tracks stretch to 1fr; this is the clamp that forces scroll */
+  --rg-col: 46px;
   display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; padding: 18px 26px 14px;
 }
 
@@ -53,118 +66,149 @@
 
 /* ---------- board card + scroll ----------
    the card chrome (bg / border / radius 16 / shadow) comes from `.card` (§6);
-   this class only makes it a scrolling flex column inside the page. */
-.rg-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+   this class only makes it a scrolling flex column inside the page. The legend
+   is the card's FOOTER (reference), so it never scrolls away with the board. */
+.rg-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .rg-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
-/* width:100% fills the workspace; min-width (inline) forces scroll when narrow */
-.rg-grid { width: 100%; }
+/* the ONE grid. grid-template-columns is set inline (it needs the day count):
+   `var(--rg-label) repeat(N, minmax(var(--rg-col), 1fr))`. */
+.rg-grid { display: grid; width: 100%; }
 
-/* every row is a flex line: sticky fixed label + growing cell strip */
-.rg-row { display: flex; width: 100%; }
-.rg-lab {
-  position: sticky; inset-inline-start: 0; flex: none; width: var(--rg-label, 224px);
-  border-inline-end: 1px solid var(--line); z-index: 2; background: var(--surface);
+/* Every label in the first column is sticky to the RTL start (= the right
+   edge). Each is a grid item, so they all share the one 250px track. */
+.rg-corner, .rg-glabel, .rg-rlabel, .rg-slabel {
+  position: sticky; inset-inline-start: 0;
+  border-inline-end: 1px solid var(--line);
 }
-.rg-cells { display: flex; flex: 1; min-width: 0; }
 .rg-cell {
-  flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center;
-  border-inline-end: 1px solid var(--grid-line); font-variant-numeric: tabular-nums; position: relative;
+  display: flex; align-items: center; justify-content: center;
+  border-bottom: 1px solid var(--grid-line);
+  border-inline-end: 1px solid var(--grid-line);
+  font-variant-numeric: tabular-nums; position: relative; background: var(--surface);
 }
 
-/* ---------- sticky header (month band + day row) ---------- */
-.rg-head { position: sticky; top: 0; z-index: 5; background: var(--surface); }
-.rg-head .rg-lab { z-index: 6; background: var(--rg-head-bg); }
-.rg-mrow { height: var(--rg-month-h); }
-.rg-mrow .rg-lab { background: var(--rg-head-bg); border-bottom: 1px solid var(--line); }
+/* ---------- sticky header: month band (row 1) + day row (row 2) ---------- */
+.rg-corner { z-index: 6; background: var(--rg-head-bg); }
+.rg-corner.mo { top: 0; height: var(--rg-month-h); border-bottom: 1px solid var(--grid-line); }
+.rg-corner.dy {
+  top: var(--rg-month-h); height: var(--rg-day-h); background: var(--surface);
+  border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; padding: 0 14px;
+  font-size: 19px; font-weight: 800; color: var(--ink);
+}
+.rg-corner.dy .rg-cnt { font-size: 13.5px; font-weight: 700; color: var(--faint); white-space: nowrap; }
+
+/* one segment per month, spanning its days (grid-column set inline) */
 .rg-mseg {
-  flex: 1 1 0; min-width: 0; height: var(--rg-month-h); background: var(--rg-head-bg);
-  border-bottom: 1px solid var(--line);
-  border-inline-start: 1.5px solid var(--line); display: flex; align-items: center; overflow: hidden;
+  position: sticky; top: 0; z-index: 4; height: var(--rg-month-h); background: var(--rg-head-bg);
+  border-bottom: 1px solid var(--grid-line);
+  border-inline-start: 1.5px solid var(--line); display: flex; align-items: center;
 }
-.rg-mseg:first-child { border-inline-start: none; }
-.rg-mseg span { font-size: 12px; font-weight: 800; color: var(--muted); padding: 0 10px; white-space: nowrap; }
+/* the month name stays pinned beside the sticky label column while the board
+   scrolls under it, so a long month is always readable (reference) */
+.rg-mseg span {
+  position: sticky; inset-inline-start: calc(var(--rg-label) + 16px);
+  font-size: 15px; font-weight: 800; color: var(--muted); padding: 0 10px; white-space: nowrap;
+}
 
-.rg-drow { height: var(--rg-day-h); }
-.rg-drow .rg-lab {
-  display: flex; align-items: center; justify-content: space-between; padding: 0 14px;
-  background: var(--surface); border-bottom: 1px solid var(--line);
-}
-.rg-drow .rg-lab .rg-htitle { font-size: 13.5px; font-weight: 800; color: var(--ink); }
-.rg-drow .rg-lab .rg-hsub { font-size: 12px; font-weight: 700; color: var(--faint); }
 .rg-dcell {
-  flex: 1 1 0; min-width: 0; height: var(--rg-day-h); display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 1px;
+  position: sticky; top: var(--rg-month-h); z-index: 4; height: var(--rg-day-h);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
   border-bottom: 1px solid var(--line); border-inline-end: 1px solid var(--grid-line); background: var(--surface);
 }
 .rg-dcell.we { background: var(--rg-weekend); }
-.rg-dcell.we .rg-dw { color: var(--brand); }
 .rg-dcell.ms { border-inline-start: 1.5px solid var(--line); }
-.rg-dw { font-size: 12px; font-weight: 700; color: var(--faint); line-height: 1; }
+/* the approved PNG paints EVERY weekday label dark (sampled rgb(55,55,55)),
+   today's included — the today affordance is the brand pill on the number
+   alone. (The reference stylesheet tints today's label brand; its own inline
+   overrides beat that rule, and the PNG is the pixel source of truth.) */
+.rg-dw { font-size: 15px; font-weight: 800; color: var(--ink); line-height: 1; }
 .rg-dn {
   font-size: 15px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums;
-  min-width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
-  border-radius: var(--r-sm);
+  min-width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
 }
-.rg-dcell.td .rg-dn { background: var(--brand); color: #fff; box-shadow: var(--brand-shadow); }
-.rg-dcell.td .rg-dw { color: var(--brand); font-weight: 800; }
+.rg-dcell.td .rg-dn { background: var(--brand); color: #fff; }
 
-/* ---------- room-type band header ---------- */
-.rg-band { height: var(--rg-band-h); background: var(--rg-band-bg); border-block: 1px solid var(--line); }
-.rg-band .rg-lab {
-  display: flex; align-items: center; gap: 7px; padding: 0 12px; background: var(--rg-band-bg); z-index: 3;
+/* ---------- room-type band: sticky label + one strip across all days ---------- */
+.rg-glabel {
+  z-index: 3; height: var(--rg-band-h); background: var(--rg-band-bg);
+  display: flex; align-items: center; gap: 9px; padding: 0 14px;
+  border-block: 1px solid var(--line); margin-top: -1px;
+  font-size: 15px; font-weight: 800; color: var(--ink); white-space: nowrap;
 }
-.rg-collapse {
-  /* §4 icon button (36×36 / r10) — fits inside the 40px band without moving it */
-  width: 36px; height: 36px; border: none; background: transparent; color: var(--faint);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  border-radius: 10px; font-family: inherit;
-}
-.rg-collapse:hover { background: var(--surface-hover); }
-.rg-tname { font-size: 13.5px; font-weight: 800; color: var(--ink); white-space: nowrap; }
-.rg-tcount { font-size: 12px; font-weight: 700; color: var(--faint); white-space: nowrap; }
-.rg-bandinfo {
-  display: flex; align-items: center; gap: 16px; padding: 0 14px;
+.rg-glabel .rg-gc { font-size: 14px; font-weight: 700; color: var(--faint); }
+.rg-gstrip {
   height: var(--rg-band-h); background: var(--rg-band-bg);
+  border-block: 1px solid var(--line); margin-top: -1px; display: flex; align-items: center;
 }
-.rg-tbase { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
-.rg-tbase b { color: var(--ink); }
+/* pinned beside the label column, like the month name */
+.rg-gs-in {
+  position: sticky; inset-inline-start: calc(var(--rg-label) + 12px);
+  display: flex; align-items: center; gap: 12px; padding: 0 12px; white-space: nowrap;
+}
+.rg-tbase { font-size: 15px; font-weight: 700; color: var(--muted); }
+.rg-tbase b { color: var(--ink); font-variant-numeric: tabular-nums; }
+/* the reference defines this button but its snapshot never renders one; we keep
+   the per-type Group Update entry point and dress it in the reference's style. */
 .rg-tlink {
-  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700;
-  color: var(--brand); background: none; border: none; cursor: pointer; white-space: nowrap;
-  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px; font-weight: 700;
+  color: var(--brand); background: transparent; border: none; cursor: pointer; white-space: nowrap;
+  font-family: inherit; border-radius: var(--r-sm);
   /* §4: an in-row control gets the 36px hit area; transparent, so nothing moves */
-  height: 36px;
+  height: 36px; padding: 0 10px;
 }
-.rg-tlink:hover { text-decoration: underline; }
-.rg-band .rg-cells { background: var(--rg-band-bg); }
+.rg-tlink:hover { background: var(--brand-soft); }
 
-/* ---------- Sellable-Unit block: price row + 6 metric rows ---------- */
-.rg-unit { border-bottom: 2px solid var(--line); }
-.rg-prow { height: var(--rg-price-h); }
-/* overflow:hidden guarantees the sticky column can never paint over day cells */
-.rg-prow .rg-lab { display: flex; align-items: center; gap: 6px; padding: 0 12px; overflow: hidden; }
-.rg-unum { font-size: 14px; font-weight: 800; color: var(--ink); }
+/* ---------- room block: price row + 6 restriction rows ---------- */
+/* the whole room label is the disclosure control (reference: "לחיצה על שורת
+   חדר פותחת מגבלות") — a real <button> so it is keyboard- and SR-reachable. */
+.rg-rlabel {
+  z-index: 3; height: var(--rg-price-h); background: var(--surface);
+  display: flex; align-items: center; gap: 7px; padding: 0 10px 0 8px;
+  border-bottom: 1px solid var(--grid-line);
+  cursor: pointer; user-select: none; font-family: inherit; text-align: start; width: 100%;
+  border-top: none; border-inline-start: none;
+}
+.rg-rlabel:hover { background: var(--surface-hover); }
+.rg-rchev { color: var(--faint); transition: transform .16s; flex: none; }
+.rg-rlabel[aria-expanded="true"] .rg-rchev { transform: rotate(-180deg); }
+.rg-unum { font-size: 19px; font-weight: 800; color: var(--ink); font-variant-numeric: tabular-nums; }
 .rg-utype {
-  font-size: 12px; font-weight: 700; color: var(--faint); min-width: 0;
+  font-size: 13.5px; font-weight: 600; color: var(--faint); min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* dense-grid internal annotations (מאגר / N סגורים / ללא תוכנית) — NOT chips
-   (coordinator ruling): plain 12px/700 text labels, the §12.2-class dense
-   exception. A 28px .chip cannot fit the fixed 224px sticky label column; a
-   text label always does. Colour comes only from the §1 tokens. */
-.rg-utags { margin-inline-start: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
-.rg-utag { font-size: 12px; font-weight: 700; color: var(--muted); white-space: nowrap; }
-.rg-utag.closed { color: var(--danger); }
-.rg-utag.noplan { color: color-mix(in srgb, var(--warn) 72%, var(--ink)); }
+   (coordinator ruling): a 28px .chip cannot fit the sticky label column. The
+   reference's own `.rflag` badge: §3.1 "ממתין לאישור" amber triplet, r7. */
+.rg-utags { margin-inline-start: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.rg-utag {
+  font-size: 13.5px; font-weight: 700; white-space: nowrap;
+  border-radius: var(--r-xs); padding: 2px 6px;
+  color: color-mix(in srgb, var(--warn) 72%, var(--ink));
+  background: color-mix(in srgb, var(--warn) 14%, #fff);
+}
+/* a missing plan is a CONFIG error, not a commercial state — it keeps the
+   danger hue so it can never be misread as "just closed" (Step 7). */
+.rg-utag.noplan {
+  color: color-mix(in srgb, var(--danger) 78%, var(--ink));
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+}
 
-.rg-mrow2 { height: var(--rg-metric-h); }
-.rg-mrow2 .rg-lab { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
-.rg-mname { font-size: 12px; font-weight: 700; color: var(--faint); white-space: nowrap; }
-.rg-mtag { font-size: 12px; font-weight: 800; color: var(--faint); letter-spacing: .03em; }
+.rg-slabel {
+  z-index: 3; height: var(--rg-metric-h); background: var(--surface);
+  display: flex; align-items: center; gap: 7px;
+  padding-inline-start: 37px; padding-inline-end: 10px;
+  border-bottom: 1px solid var(--grid-line);
+  font-size: 14px; font-weight: 600; color: var(--muted); white-space: nowrap;
+}
+.rg-mtag { font-size: 12px; font-weight: 800; color: var(--faint); letter-spacing: .04em; }
 
-/* ---------- cells (shared price/metric) ---------- */
-.rg-cell.we { background: var(--rg-weekend); }
-.rg-cell.td { background: var(--rg-today); }
+/* ---------- cells (shared price/restriction) ----------
+   The reference tints the weekend/today DAY HEADER only — no body cell carries
+   a `we`/`td` background — so the board reads as one clean field and the tints
+   stay a column-heading affordance. */
+.rg-cell { height: var(--rg-price-h); font-size: 15px; font-weight: 800; color: var(--ink); }
+.rg-cell.sub { height: var(--rg-metric-h); font-size: 14px; font-weight: 700; }
 .rg-cell.ms { border-inline-start: 1.5px solid var(--line); }
 .rg-cell.editable { cursor: pointer; }
 .rg-cell.editable:hover { box-shadow: inset 0 0 0 1.5px var(--brand); border-radius: var(--r-xs); z-index: 1; }
@@ -173,33 +217,38 @@
 }
 .rg-cell.saving { opacity: .45; }
 
-.rg-price { font-size: 12px; font-weight: 800; color: var(--ink); }
+.rg-price { font-size: 15px; font-weight: 800; color: var(--ink); }
 .rg-price.inherited { color: var(--faint); font-weight: 700; }
 .rg-price.notsell { color: var(--danger); }
-.rg-num { font-size: 12px; font-weight: 800; color: var(--muted); }
-.rg-dash { color: color-mix(in srgb, var(--faint) 45%, #fff); font-size: 12px; font-weight: 700; }
+.rg-num { font-size: 14px; font-weight: 700; color: var(--muted); }
+.rg-dash { color: color-mix(in srgb, var(--faint) 45%, #fff); font-size: 14px; font-weight: 600; }
 .rg-blk { color: var(--faint); }
-/* CTA/CTD/stop-sell flags render as filled rounded tags (reference), each with
+/* CTA/CTD/stop-sell flags are the reference's 22×22 `.tgchip` tile, each with
    its own token hue: CTA warn, CTD info, stop-sell danger. */
 .rg-flag {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 16px; border-radius: var(--r-xs);
+  width: 22px; height: 22px; border-radius: var(--r-xs);
 }
 .rg-flag.sell { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, #fff); }
 .rg-flag.cta { color: color-mix(in srgb, var(--warn) 75%, var(--ink)); background: color-mix(in srgb, var(--warn) 14%, #fff); }
 .rg-flag.ctd { color: color-mix(in srgb, var(--info) 80%, var(--ink)); background: color-mix(in srgb, var(--info) 12%, #fff); }
 
 .rg-input {
-  width: 82%; height: 22px; border: 1.5px solid var(--brand); border-radius: var(--r-xs);
-  text-align: center; font-family: inherit; font-size: 12px; font-weight: 800;
+  width: 82%; height: 26px; border: 1.5px solid var(--brand); border-radius: var(--r-sm);
+  text-align: center; font-family: inherit; font-size: 14px; font-weight: 800;
   font-variant-numeric: tabular-nums; color: var(--ink); outline: none; padding: 0;
 }
 
-/* ---------- legend + hint ---------- */
-.rg-legend { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
-.rg-leg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--muted); }
-.rg-leg .rg-sw { width: 12px; height: 12px; border-radius: var(--r-xs); flex: none; }
-.rg-leg .rg-sw.today { background: var(--rg-today); }
+/* ---------- legend + hint ----------
+   the legend is the CARD FOOTER (reference): a bordered bar pinned under the
+   scrolling board, so it never scrolls away and the hint sits at its far end. */
+.rg-legend {
+  flex: none; display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 9px 16px; border-top: 1px solid var(--line); background: var(--rg-head-bg);
+}
+.rg-leg { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.rg-leg .rg-sw { width: 14px; height: 14px; border-radius: var(--r-xs); border: 1px solid var(--line); flex: none; }
+.rg-leg .rg-sw.today { background: var(--rg-today); border-color: var(--brand-line); }
 .rg-leg .rg-sw.we { background: var(--rg-weekend); }
 .rg-leg .rg-sw.noprice {
   background: color-mix(in srgb, var(--warn) 22%, #fff);
@@ -209,7 +258,7 @@
   background-image: repeating-linear-gradient(45deg, transparent, transparent 3px, var(--faint) 3px, var(--faint) 6px);
   border: 1px solid var(--line);
 }
-.rg-hint { font-size: 12px; font-weight: 600; color: var(--faint); }
+.rg-hint { margin-inline-start: auto; font-size: 12px; font-weight: 600; color: var(--faint); }
 
 /* ---------- cell tooltip — the §8 float surface: brand header, divided rows,
    sale-state band. Radius 16 / var(--shadow-float), like every floating surface. */

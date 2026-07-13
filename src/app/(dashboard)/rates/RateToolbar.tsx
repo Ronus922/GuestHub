@@ -35,6 +35,10 @@ export function RateToolbar({
   // Commercial rates are future-facing: never navigate into a window before
   // tenant-local today (Step 6). The floor is today; prev is disabled there.
   const prevDisabled = state.from <= today;
+  // rooms, not sellable units — a pooled unit stands for several rooms (D74)
+  const roomTotal = state.types.reduce(
+    (n, t) => n + t.units.reduce((m, u) => m + u.roomCount, 0), 0,
+  );
   return (
     <>
       {/* title row */}
@@ -42,10 +46,10 @@ export function RateToolbar({
         <div className="min-w-0">
           <div className="flex items-center gap-3">
             <h1 className="h1">רשת תעריפים</h1>
-            <span className="chip chip-neutral">{state.unitCount} יחידות · {state.typeCount} סוגים</span>
+            <span className="chip chip-neutral">{roomTotal} חדרים · {state.typeCount} סוגים</span>
           </div>
           <p className="t-label mt-0.5">
-            מחירים ומגבלות לכל יחידת מכירה ותאריך · לחיצה על תא לעריכה מהירה
+            מחירים ומגבלות שהייה לכל חדר ותאריך · לחיצה על תא לעריכה מהירה
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -62,7 +66,7 @@ export function RateToolbar({
       {/* filters + date nav */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="rg-filters">
-          <span className="rg-flabl">סוג יחידה:</span>
+          <span className="rg-flabl">סוג חדר:</span>
           <button type="button" aria-pressed={typeFilter === "all"} className={`chip clickable${typeFilter === "all" ? " on" : ""}`} onClick={() => onFilter("all")}>הכל</button>
           {state.types.map((t) => (
             <button
@@ -76,7 +80,10 @@ export function RateToolbar({
           ))}
           {/* a command, not a filter — §4 button (a .chip.clickable never enters
               `.on`, so as a command it would render borderless muted text) */}
-          <button type="button" className="btn btn-secondary" onClick={onToggleCollapseAll}>{allCollapsed ? "הרחב הכל" : "כווץ הכל"}</button>
+          <button type="button" className="btn btn-secondary" onClick={onToggleCollapseAll}>
+            <Icon name={allCollapsed ? "unfold-more" : "unfold-less"} size={20} />
+            {allCollapsed ? "הרחב הכול" : "כווץ הכול"}
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <div className="cb-seg">

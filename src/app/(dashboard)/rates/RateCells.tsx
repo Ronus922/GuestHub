@@ -77,7 +77,7 @@ export function MetricCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit
   const k = ctx.key(unit.sellableUnitId, cell.date, field);
   const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === field && ctx.editing.date === cell.date;
   const value = cell[field] as number | null;
-  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   if (isEditing) {
     return (
       <div className={className}>
@@ -107,7 +107,7 @@ export function MetricCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit
 export function BoolCell({ unit, cell, col, field, ctx }: { unit: RateGridUnit; cell: RateCellState; col: ColGeom; field: BoolField; ctx: CellCtx }) {
   const k = ctx.key(unit.sellableUnitId, cell.date, field);
   const on = cell[field] as boolean;
-  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   const iconName = field === "stopSell" ? "circle-slash" : field === "closedToArrival" ? "login" : "logout";
   return (
     <div
@@ -178,7 +178,7 @@ export function StopSellCell({ unit, cell, col, ctx }: { unit: RateGridUnit; cel
   const k = ctx.key(unit.sellableUnitId, cell.date, "stopSell");
   const isEditing = ctx.editing?.unitId === unit.sellableUnitId && ctx.editing.field === "stopSell" && ctx.editing.date === cell.date;
   const closed = cell.stopSell;
-  const className = cls(col, [ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
+  const className = cls(col, ["sub", ctx.editable ? "editable" : "", ctx.saving.has(k) ? "saving" : ""]);
   if (isEditing) {
     return (
       <div className={className}>
