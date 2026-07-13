@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { DateRangeField } from "@/components/shared/DateRangeField";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween } from "@/lib/dates";
 import {
@@ -142,32 +143,22 @@ export function StayEditor({
       </div>
 
       <div className="bw-grid3">
-        <label className="field">
-          <span className="field-label">
-            תאריך כניסה <span className="bw-req">*</span>
-          </span>
-          <input
-            type="date"
-            className="field-input ltr-num"
-            value={value.checkIn}
-            disabled={disabled}
-            onChange={(e) => onChange({ ...value, checkIn: e.target.value, roomId: "" })}
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">
-            תאריך יציאה <span className="bw-req">*</span>
-          </span>
-          <input
-            type="date"
-            className="field-input ltr-num"
-            value={value.checkOut}
-            min={value.checkIn}
-            disabled={disabled}
-            onChange={(e) => onChange({ ...value, checkOut: e.target.value, roomId: value.roomId })}
-          />
-        </label>
-        <div className="field">
+        <DateRangeField
+          checkIn={value.checkIn}
+          checkOut={value.checkOut}
+          disabled={disabled}
+          onApply={(checkIn, checkOut) =>
+            // a new check-in re-opens the availability question — the chosen room
+            // may no longer be free, so it is re-picked (as the date inputs did).
+            onChange({
+              ...value,
+              checkIn,
+              checkOut,
+              roomId: checkIn === value.checkIn ? value.roomId : "",
+            })
+          }
+        />
+        <div className="field dp-after">
           <span className="field-label">
             לילות <span className="font-normal text-faint">(מחושב)</span>
           </span>
