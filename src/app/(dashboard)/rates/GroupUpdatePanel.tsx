@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { addDays, dayOfWeek, eachDay, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { bulkUpdateRatesAction } from "./actions";
 import { applyPriceMode } from "@/lib/rates/rules";
+import { compareRoomNumber } from "@/lib/rooms/sort";
 import type { BulkUpdateRatesInput } from "@/lib/validation/rates";
 import type { RateGridType, RateCellState } from "./types";
 
@@ -63,7 +64,7 @@ export function GroupUpdatePanel({
           pooled: u.isPooled,
           rooms: u.roomCount,
         })),
-      ),
+      ).sort((a, b) => compareRoomNumber(a.code, b.code)),
     [types],
   );
 
@@ -90,6 +91,10 @@ export function GroupUpdatePanel({
   const [ctd, setCtd] = useState<TriState>("nochange");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // State does not update until React renders again, so a rapid double-click can
+  // enter apply() twice before `busy` disables the button. This ref closes that
+  // synchronous gap without changing the canonical server update path.
+  const submittingRef = useRef(false);
 
   // Each open may target a different preset (whole grid vs one room-type button).
   // The panel is always mounted now, so opening must reset ALL editable state to
@@ -123,7 +128,7 @@ export function GroupUpdatePanel({
   const cards = allCards.filter(
     (c) =>
       (cardType === "all" || c.roomTypeId === cardType) &&
-      (search.trim() === "" || c.code.includes(search.trim()) || c.name.includes(search.trim())),
+      (search.trim() === "" || c.code.includes(search.trim()) || c.name.includes(search.trim()) || c.typeName.includes(search.trim())),
   );
 
   const effectiveDates = useMemo(() => {
@@ -184,6 +189,8 @@ export function GroupUpdatePanel({
   }, [priceOn, priceMode, priceAmount, selected, allCards]);
 
   async function apply() {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setBusy(true);
     setError(null);
     const allWeekdays = weekdays.size === 7;
@@ -200,14 +207,20 @@ export function GroupUpdatePanel({
       ...(cta !== "nochange" ? { closedToArrival: cta === "yes" } : {}),
       ...(ctd !== "nochange" ? { closedToDeparture: ctd === "yes" } : {}),
     };
-    const res = await bulkUpdateRatesAction(input as BulkUpdateRatesInput);
-    setBusy(false);
-    if (res.success) {
-      onSaved();
-      router.refresh();
-      onClose();
-    } else {
-      setError(res.error ?? "אירעה שגיאה");
+    try {
+      const res = await bulkUpdateRatesAction(input as BulkUpdateRatesInput);
+      if (res.success) {
+        onSaved();
+        router.refresh();
+        onClose();
+      } else {
+        setError(res.error ?? "אירעה שגיאה");
+      }
+    } catch {
+      setError("אירעה שגיאה");
+    } finally {
+      submittingRef.current = false;
+      setBusy(false);
     }
   }
 
@@ -215,55 +228,46 @@ export function GroupUpdatePanel({
     <SidePanel
       open={open}
       onClose={onClose}
-      title="עדכון קבוצתי"
-      subtitle="עדכון מחיר, זמינות ומגבלות לילות במספר יחידות ותאריכים בבת אחת"
+      title="עדכון חדרים קבוצתי"
+      subtitle="עדכון מחיר, זמינות ומגבלות לילות במספר חדרים ותאריכים בבת אחת"
       icon="bulk-update"
-      bodyClassName="p-5 flex flex-col gap-4"
-      footer={
-        /* §7 — flat .dw-ft children (row-reverse): the FIRST DOM child (the
-           primary) lands on the LEFT edge, "ביטול" to its right. No wrapper. */
-        <>
-          <button
-            type="button"
-            data-testid="gu-apply"
-            onClick={apply}
-            disabled={!canApply}
-            className="btn btn-primary flex-1"
-          >
-            <Icon name="check" size={20} />
-            {busy ? "מעדכן…" : `עדכן ${cellCount} תאים`}
-          </button>
-          <button type="button" onClick={onClose} className="btn btn-secondary">ביטול</button>
-        </>
-      }
+      widthClassName="w-[60vw] max-w-[calc(100vw-48px)] max-sm:max-w-none"
+      visualVariant="group-update"
+      bodyClassName="gu-body"
     >
+      <div className="gu-layout">
+        <div className="gu-main">
           {/* 1 — Sellable Units */}
-          <Section n={1} title="יחידות מכירה" badge={`נבחרו ${selected.size} מתוך ${allCards.length}`}>
-            <div className="flex items-center gap-2 flex-wrap mb-3">
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="חיפוש יחידה…"
-                aria-label="חיפוש יחידה"
-                className="field-input flex-1 min-w-[140px]"
-              />
-              <button type="button" aria-pressed={cardType === "all"} className={`chip clickable${cardType === "all" ? " on" : ""}`} onClick={() => setCardType("all")}>הכל</button>
-              {types.map((t) => (
-                <button
-                  key={t.roomTypeId ?? "—"} type="button"
-                  aria-pressed={cardType === (t.roomTypeId ?? "—")}
-                  className={`chip clickable${cardType === (t.roomTypeId ?? "—") ? " on" : ""}`}
-                  onClick={() => setCardType(t.roomTypeId ?? "—")}
-                >
-                  {t.roomTypeName}
-                </button>
-              ))}
-              {/* commands, not filters — §4 buttons (a .chip.clickable never enters
-                  `.on`, so as a command it would render borderless muted text) */}
-              <button type="button" data-testid="gu-selectall" className="btn btn-secondary" onClick={() => setSelected(new Set(cards.map((c) => c.id)))}>בחר הכל</button>
-              <button type="button" data-testid="gu-clear" className="btn btn-secondary" onClick={() => setSelected(new Set())}>נקה</button>
+          <Section n={1} title="חדרים" badge={`נבחרו ${selected.size} מתוך ${allCards.length}`}>
+            <div className="gu-room-tools">
+              <label className="gu-search">
+                <Icon name="search" size={20} />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="חיפוש חדר…"
+                  aria-label="חיפוש חדר"
+                />
+              </label>
+              <div className="gu-filter-row">
+                <button type="button" aria-pressed={cardType === "all"} className={`chip clickable${cardType === "all" ? " on" : ""}`} onClick={() => setCardType("all")}>הכל</button>
+                {types.map((t) => (
+                  <button
+                    key={t.roomTypeId ?? "—"} type="button"
+                    aria-pressed={cardType === (t.roomTypeId ?? "—")}
+                    className={`chip clickable${cardType === (t.roomTypeId ?? "—") ? " on" : ""}`}
+                    onClick={() => setCardType(t.roomTypeId ?? "—")}
+                  >
+                    {t.roomTypeName}
+                  </button>
+                ))}
+              </div>
+              <div className="gu-room-commands">
+                <button type="button" data-testid="gu-selectall" className="btn btn-tertiary btn-sm" onClick={() => setSelected(new Set(cards.map((c) => c.id)))}>בחר הכל</button>
+                <button type="button" data-testid="gu-clear" className="btn btn-tertiary btn-sm" onClick={() => setSelected(new Set())}>נקה</button>
+              </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+            <div className="gu-room-grid">
               {cards.map((c) => {
                 const on = selected.has(c.id);
                 return (
@@ -274,18 +278,18 @@ export function GroupUpdatePanel({
                     aria-checked={on}
                     data-su={c.id}
                     onClick={() => toggleSel(c.id)}
-                    className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-[12px] border-[1.5px] text-start ${on ? "border-primary bg-primary-050" : "border-line bg-surface hover:bg-hover"}`}
+                    className={`gu-room-card${on ? " is-selected" : ""}`}
                   >
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-1.5">
-                        <b className="text-[15px] text-ink">{c.code}</b>
+                    <span className="gu-room-copy">
+                      <span className="gu-room-title">
+                        <b className="ltr-num">{c.code}</b>
                         {c.pooled && <span className="chip chip-neutral">מאגר · {c.rooms}</span>}
                       </span>
-                      <span className="t-label block truncate">{c.typeName}</span>
+                      <span className="t-label">{c.typeName}{c.name !== c.code ? ` · ${c.name}` : ""}</span>
                     </span>
-                    <span className="flex items-center gap-2 flex-none">
-                      <span className="t-label ltr-num">₪{Math.round(c.basePrice)}</span>
-                      <span className={`w-5 h-5 rounded-[7px] border-[1.5px] flex items-center justify-center ${on ? "bg-primary border-primary text-white" : "border-line"}`}>
+                    <span className="gu-room-meta">
+                      <span className="gu-price ltr-num">₪{Math.round(c.basePrice)}</span>
+                      <span className="gu-checkbox">
                         {on && <Icon name="check" size={13.5} />}
                       </span>
                     </span>
@@ -297,22 +301,26 @@ export function GroupUpdatePanel({
 
           {/* 2 — Dates */}
           <Section n={2} title="תאריכים" badge={`${effectiveDates.length} לילות`}>
-            <div className="flex items-end gap-2 flex-wrap mb-3">
-              <div className="field">
-                <label className="field-label" htmlFor="gu-from">מתאריך</label>
-                <input id="gu-from" data-testid="gu-date-from" type="date" dir="ltr" value={dateFrom} min={minDate} max={maxDate} onChange={(e) => setDateFrom(clampDate(e.target.value))} className="field-input ltr-num" />
+            <div className="gu-date-tools">
+              <div className="gu-range-field">
+                <Icon name="calendar" size={20} />
+                <label>
+                  <span className="field-label">מתאריך</span>
+                  <input id="gu-from" aria-label="מתאריך" data-testid="gu-date-from" type="date" dir="ltr" value={dateFrom} min={minDate} max={maxDate} onChange={(e) => setDateFrom(clampDate(e.target.value))} className="ltr-num" />
+                </label>
+                <span className="gu-range-separator">–</span>
+                <label>
+                  <span className="field-label">עד תאריך</span>
+                  <input id="gu-to" aria-label="עד תאריך" data-testid="gu-date-to" type="date" dir="ltr" value={dateTo} min={dateFrom} max={maxDate} onChange={(e) => setDateTo(clampDate(e.target.value))} className="ltr-num" />
+                </label>
               </div>
-              <div className="field">
-                <label className="field-label" htmlFor="gu-to">עד תאריך</label>
-                <input id="gu-to" data-testid="gu-date-to" type="date" dir="ltr" value={dateTo} min={dateFrom} max={maxDate} onChange={(e) => setDateTo(clampDate(e.target.value))} className="field-input ltr-num" />
+              <div className="gu-presets">
+                {([7, 14, 30] as const).map((n) => (
+                  <button type="button" key={n} className="btn btn-secondary btn-sm" onClick={() => setDateTo(earlier(addDays(dateFrom, n - 1), maxDate))}>{n} ימים</button>
+                ))}
               </div>
-              <span className="mx-1 h-6 w-px bg-line" />
-              {/* quick-range COMMANDS (§4 buttons), aligned with the 44px date fields */}
-              {([7, 14, 30] as const).map((n) => (
-                <button type="button" key={n} className="btn btn-secondary" onClick={() => setDateTo(earlier(addDays(dateFrom, n - 1), maxDate))}>{n} ימים</button>
-              ))}
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="gu-weekdays">
               <span className="field-label">ימים בשבוע</span>
               {[0, 1, 2, 3, 4, 5, 6].map((d) => (
                 <button
@@ -326,10 +334,11 @@ export function GroupUpdatePanel({
                   {HEBREW_DAY_LETTERS[d].replace("'", "")}
                 </button>
               ))}
-              <span className="mx-1 h-6 w-px bg-line" />
-              <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]))}>הכל</button>
-              <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4]))}>אמצע שבוע</button>
-              <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([5, 6]))}>סוף שבוע</button>
+              <div className="gu-weekday-shortcuts">
+                <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]))}>הכל</button>
+                <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([0, 1, 2, 3, 4]))}>אמצע שבוע</button>
+                <button type="button" className="rg-tlink" onClick={() => setWeekdays(new Set([5, 6]))}>סוף שבוע</button>
+              </div>
             </div>
           </Section>
 
@@ -369,20 +378,22 @@ export function GroupUpdatePanel({
             </div>
           </Section>
 
-          {/* summary */}
+        </div>
+
+        <aside className="gu-summary" aria-label="סיכום העדכון">
           <Section n={0} title="סיכום העדכון" icon="info">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="gu-stats">
               <Stat value={cellCount} label="תאים לעדכון" />
               <Stat value={effectiveDates.length} label="לילות" />
               <Stat value={selected.size} label="יחידות" />
             </div>
             {sample && (
-              <p className="mt-3 text-[13.5px] font-bold text-muted">
+              <p className="gu-example">
                 דוגמה — {sample.typeName}: <bdi className="ltr-num">₪{Math.round(sample.before)}</bdi> <span className="text-faint">←</span> <b className="text-ink"><bdi className="ltr-num">₪{Math.round(sample.after)}</bdi></b>
               </p>
             )}
             {cellCount > 0 && (stopSell !== "nochange" || preview.noInventory > 0 || preview.missingPrice > 0) && (
-              <div className="mt-3 text-[12px] font-bold text-muted flex flex-col gap-1">
+              <div className="gu-preview">
                 {stopSell === "no" && (
                   <p><b className="text-status-success ltr-num">{preview.willOpen}</b> תאים ייפתחו למכירה מסחרית{preview.noInventory > 0 && <> · <b className="text-status-danger ltr-num">{preview.noInventory}</b> מתוכם יישארו ללא מלאי פיזי (הפתיחה המסחרית אינה יוצרת זמינות)</>}</p>
                 )}
@@ -394,8 +405,24 @@ export function GroupUpdatePanel({
               </div>
             )}
           </Section>
-
-      {error && <p className="field-msg">{error}</p>}
+          <button
+            type="button"
+            data-testid="gu-apply"
+            onClick={apply}
+            disabled={!canApply}
+            className="btn btn-primary gu-apply"
+          >
+            <Icon name="check" size={20} />
+            {busy ? "מעדכן…" : `עדכן ${cellCount} תאים`}
+          </button>
+          <button type="button" onClick={onClose} className="btn btn-tertiary gu-cancel">ביטול</button>
+          <div className="gu-sync-note">
+            <Icon name="refresh" size={17} />
+            <span>הנתונים יסונכרנו אוטומטית לערוצי ההפצה לאחר העדכון</span>
+          </div>
+          {error && <p className="field-msg">{error}</p>}
+        </aside>
+      </div>
     </SidePanel>
   );
 }
@@ -424,7 +451,7 @@ function Section({ n, title, badge, hint, icon, children }: { n: number; title: 
 
 function FieldRow({ icon, title, desc, on, onToggle, testId, children }: { icon: Parameters<typeof Icon>[0]["name"]; title: string; desc: string; on?: boolean; onToggle?: () => void; testId?: string; children: ReactNode }) {
   return (
-    <div className="flex items-center gap-3 py-3">
+    <div className="gu-field-row flex items-center gap-3 py-3">
       <span className="flex h-8 w-8 flex-none items-center justify-center rounded-[7px] bg-field text-muted"><Icon name={icon} size={17} /></span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -474,8 +501,8 @@ function Stepper({ value, onChange, disabled }: { value: number; onChange: (v: n
 
 function Stat({ value, label }: { value: number; label: string }) {
   return (
-    <div className="rounded-[12px] bg-field p-3 text-center">
-      <div className="text-[21px] font-extrabold text-ink tabular-nums">{value}</div>
+    <div className="gu-stat">
+      <div className="gu-stat-value">{value}</div>
       <div className="t-label">{label}</div>
     </div>
   );

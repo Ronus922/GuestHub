@@ -26,8 +26,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "דשבורד", icon: "dashboard", href: "/dashboard", permission: "dashboard.view" },
       { label: "תפוסה", icon: "calendar", href: "/calendar", permission: "calendar.view" },
-      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates?panel=group-update", permission: "rates.bulk_update" },
-      { label: "רשת תעריפים", icon: "credit-card", href: "/rates", permission: "rates.view" },
+      { label: "עדכון קבוצתי", icon: "bulk-update", href: "/rates", permission: "rates.view" },
       { label: "תוכניות תעריף", icon: "tags", href: "/rate-plans", permission: "rate_plans.view" },
       { label: "הזמנות", icon: "reservations", href: "/reservations", permission: "reservations.view" },
       // אורחים — hidden from the nav by owner request; /guests itself still works

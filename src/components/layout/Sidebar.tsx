@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { NAV_SECTIONS, type NavItem } from "./nav-items";
 import { useActor, usePermission } from "@/components/providers/TenantProvider";
@@ -121,23 +121,19 @@ export function Sidebar({
   );
 }
 
-// Active when the path matches and the `panel` overlay param matches too
-// (absent === absent). Keeps /rates and /rates?panel=group-update mutually
-// exclusive in the highlight; other params (from/view) don't affect it.
-function isNavActive(href: string | undefined, pathname: string, curPanel: string | null): boolean {
+// Navigation categories are path-based. Query parameters belong to the screen's
+// date/view state and never create a second sidebar category.
+function isNavActive(href: string | undefined, pathname: string): boolean {
   if (!href) return false;
-  const [path, query = ""] = href.split("?");
-  if (pathname !== path) return false;
-  return (new URLSearchParams(query).get("panel") ?? null) === (curPanel ?? null);
+  return pathname === href.split("?")[0];
 }
 
 function NavRow({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const allowed = usePermission(item.permission);
   if (!allowed) return null;
 
-  const active = isNavActive(item.href, pathname, searchParams.get("panel"));
+  const active = isNavActive(item.href, pathname);
 
   const base = `relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] transition-colors ${
     collapsed ? "justify-center" : ""

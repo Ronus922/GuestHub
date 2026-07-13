@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Icon, type IconName } from "@/components/shared/Icon";
 
@@ -17,7 +18,9 @@ import { Icon, type IconName } from "@/components/shared/Icon";
 //
 // z-90: above every calendar layer (sticky headers z-7, tooltip z-60, date
 // picker z-80).
-const DURATION = 1.2;
+const DEFAULT_DURATION = 1.2;
+const GROUP_UPDATE_DURATION = 0.3;
+const GROUP_UPDATE_EASE = [0.32, 0.72, 0.28, 1] as const;
 
 export function SidePanel({
   open,
@@ -33,6 +36,7 @@ export function SidePanel({
   band,
   bodyClassName,
   widthClassName,
+  visualVariant = "default",
   children,
   footer,
 }: {
@@ -62,6 +66,9 @@ export function SidePanel({
   bodyClassName?: string;
   // panel width override (default: the §7 60%; full width on mobile)
   widthClassName?: string;
+  // A caller-scoped visual treatment. Shared accessibility/portal behavior
+  // remains canonical while reference-specific motion/overlay stays isolated.
+  visualVariant?: "default" | "group-update";
   children: React.ReactNode;
   // rendered inside the §7 `.dw-ft`. Pass FLAT .btn children with the PRIMARY
   // action FIRST in the DOM — .dw-ft is row-reverse, so the first child hugs
@@ -69,6 +76,8 @@ export function SidePanel({
   footer?: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   // Keep the latest onClose in a ref so the effect below can depend on [open]
   // ALONE. Owners pass a fresh onClose closure every render (e.g. requestClose);
   // if it were a dep, every keystroke would re-run the effect and its
@@ -78,7 +87,15 @@ export function SidePanel({
   onCloseRef.current = onClose;
 
   useEffect(() => {
+    setPortalRoot(document.body);
+  }, []);
+
+  useEffect(() => {
     if (!open) return;
+    returnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         onCloseRef.current();
@@ -104,14 +121,23 @@ export function SidePanel({
     };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
-    panelRef.current?.focus();
+    const focusTimer = window.setTimeout(() => panelRef.current?.focus(), 0);
     return () => {
+      window.clearTimeout(focusTimer);
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
+      const returnTarget = returnFocusRef.current;
+      if (returnTarget?.isConnected) returnTarget.focus();
     };
   }, [open]);
 
-  return (
+  if (!portalRoot) return null;
+
+  const isGroupUpdate = visualVariant === "group-update";
+  const duration = isGroupUpdate ? GROUP_UPDATE_DURATION : DEFAULT_DURATION;
+  const ease = isGroupUpdate ? GROUP_UPDATE_EASE : "easeInOut";
+
+  return createPortal(
     <AnimatePresence>
       {open && (
         <div className="fixed inset-0 z-[90]" dir="rtl">
@@ -120,8 +146,10 @@ export function SidePanel({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: DURATION, ease: "easeInOut" }}
-            className="absolute inset-0 bg-black/65 backdrop-blur-sm"
+            transition={{ duration, ease }}
+            className={isGroupUpdate
+              ? "absolute inset-0 bg-[rgba(16,24,40,.44)] backdrop-blur-[2.5px]"
+              : "absolute inset-0 bg-black/65 backdrop-blur-sm"}
             onClick={onClose}
             aria-hidden="true"
           />
@@ -132,12 +160,12 @@ export function SidePanel({
             initial={{ x: "-100%", opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: "-100%", opacity: 0 }}
-            transition={{ duration: DURATION, ease: "easeInOut" }}
+            transition={{ duration, ease }}
             role="dialog"
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
-            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[60%]"} flex-col overflow-hidden rounded-s-2xl bg-surface shadow-pop outline-none max-sm:w-full`}
+            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[60%]"} ${isGroupUpdate ? "gu-side-panel" : ""} flex-col overflow-hidden rounded-s-2xl bg-surface shadow-pop outline-none max-sm:w-full`}
           >
             <header className="dw-hd shrink-0">
               {avatar ??
@@ -190,6 +218,7 @@ export function SidePanel({
           </motion.aside>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    portalRoot,
   );
 }
