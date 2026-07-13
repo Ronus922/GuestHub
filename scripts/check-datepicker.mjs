@@ -82,4 +82,27 @@ assert.ok(
 assert.match(stay, /roomTaken/, "an unavailable assigned room must raise a visible conflict");
 assert.match(stay, /תפוס בתאריכים שנבחרו/, "the conflict must name the room and the dates");
 
+// ---- WRITE-THROUGH: a picked range reaches the form without a second commit ----
+// The picker used to hold the range as a local draft until "החל" was clicked, so
+// an operator who picked dates and pressed "שמור שינויים" saved the OLD dates and
+// saw nothing change (audit_logs: before === after). The pick handler itself must
+// call onApply, and no button may be the sole path to the form.
+const field = readFileSync("src/components/shared/DateRangeField.tsx", "utf8");
+const pickFn = field.match(/const pick = \(d: DateOnly\) => \{([\s\S]*?)\n  \};/);
+assert.ok(pickFn, "DateRangeField must own a pick handler");
+assert.match(
+  pickFn[1],
+  /if \(next\.start && next\.end\) onApply\(next\.start, next\.end\)/,
+  "a completed range must be written to the form the moment it is picked",
+);
+assert.ok(
+  !/>\s*החל\s*</.test(field),
+  'no "החל" button: a picker inside a form may not carry a second commit step',
+);
+// the day cells go through pick() — never straight into local state
+assert.ok(
+  !/onPick=\{\(d\) => setRange/.test(field),
+  "the month grid must pick through the write-through handler, not setRange",
+);
+
 console.log("✓ datepicker: click semantics, month grid and StayEditor wiring");

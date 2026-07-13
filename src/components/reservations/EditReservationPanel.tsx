@@ -42,6 +42,11 @@ import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 // Preserves every reservation room, per-room guests, pricing, status and
 // payments (§F). The stored-card section shows masked metadata only;
 // full-PAN reveal is explicit, permission-guarded and audited.
+
+// how long after our own save a realtime event for THIS reservation is treated
+// as the echo of that save rather than a background change
+const SELF_EVENT_WINDOW_MS = 5000;
+
 export function EditReservationPanel({
   reservationId,
   onClose,
@@ -106,6 +111,9 @@ export function EditReservationPanel({
   const staysRef = useRef<HTMLElement | null>(null);
   const addPayRef = useRef<HTMLInputElement | null>(null);
   const staleToastRef = useRef(false);
+  // when THIS panel last committed — realtime events inside the window below are
+  // the echo of our own write, not a background change
+  const selfSaveRef = useRef(0);
   // in-panel message composer (email | whatsapp) — a full-panel overlay; the
   // booking stays mounted underneath (no navigation, scroll preserved)
   const [composer, setComposer] = useState<null | "email" | "whatsapp">(null);
@@ -211,6 +219,11 @@ export function EditReservationPanel({
   // is never clobbered, it gets a one-time honest notice instead.
   useRealtimeEvent((event) => {
     if (!reservationId || event.reservationId !== reservationId) return;
+    // OUR OWN save publishes this event, and the form is still dirty for the
+    // instant between the commit and the panel closing — without this the
+    // operator was told "your unsaved changes may conflict" right after a
+    // successful save.
+    if (Date.now() - selfSaveRef.current < SELF_EVENT_WINDOW_MS) return;
     if (dirtyRef.current) {
       if (!staleToastRef.current) {
         staleToastRef.current = true;
@@ -254,6 +267,7 @@ export function EditReservationPanel({
   const save = (statusOverride?: (typeof EDITABLE_STATUSES)[number]) =>
     startSaving(async () => {
       if (!detail) return;
+      selfSaveRef.current = Date.now();
       const res = await updateReservationAction({
         id: detail.id,
         guest: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import {
   HEBREW_DAY_LETTERS,
@@ -20,9 +20,11 @@ import {
 } from "@/lib/date-range";
 
 // The ONE stay date-range picker (DatePicker reference): a trigger that reads
-// the applied range, and an in-flow panel with two months, a nights summary and
-// החל / ביטול. In-flow (not floating) because the panels it lives in scroll —
+// the form's dates, and an in-flow panel with the months, a nights summary and
+// סגור / ביטול. In-flow (not floating) because the panels it lives in scroll —
 // an absolutely-positioned popover would be clipped by .dw-bd.
+// A picked range is written to the form IMMEDIATELY (see `pick`): the trigger,
+// the nights field and the price always show what a save would actually write.
 
 const hebDay = (d: DateOnly) =>
   `${Number(d.slice(8, 10))} ב${HEBREW_MONTHS[Number(d.slice(5, 7)) - 1]}`;
@@ -57,9 +59,13 @@ export function DateRangeField({
   const draftNights =
     range.start && range.end ? nightsBetween(range.start, range.end) : 0;
 
+  // the dates the panel was opened on — what "ביטול" restores
+  const openedRef = useRef<DraftRange>({ start: null, end: null });
+
   const toggle = () => {
     if (!open) {
       const now = new Date();
+      openedRef.current = { start: checkIn || null, end: checkOut || null };
       setView(
         range.start
           ? monthOf(range.start)
@@ -69,14 +75,21 @@ export function DateRangeField({
     setOpen(!open);
   };
 
-  const apply = () => {
-    if (!range.start || !range.end) return;
-    onApply(range.start, range.end);
-    setOpen(false);
+  // WRITE-THROUGH: a completed range enters the form the moment it is picked.
+  // It used to sit in this component as a draft until "החל" was clicked — so an
+  // operator who picked dates and went straight to "שמור שינויים" saved the OLD
+  // dates and saw nothing change. A picker inside a form must never hold a
+  // second, invisible commit step.
+  const pick = (d: DateOnly) => {
+    const next = pickRange(range, d);
+    setRange(next);
+    if (next.start && next.end) onApply(next.start, next.end);
   };
 
   const cancel = () => {
-    setRange({ start: checkIn || null, end: checkOut || null });
+    const opened = openedRef.current;
+    setRange(opened);
+    if (opened.start && opened.end) onApply(opened.start, opened.end);
     setOpen(false);
   };
 
@@ -151,14 +164,10 @@ export function DateRangeField({
             >
               <Icon name="chevron-right" size={20} />
             </button>
-            <Month view={view} range={range} onPick={(d) => setRange(pickRange(range, d))} />
+            <Month view={view} range={range} onPick={pick} />
             <span className="dp-sep" />
             <div className="dp-m2">
-              <Month
-                view={shiftMonth(view, 1)}
-                range={range}
-                onPick={(d) => setRange(pickRange(range, d))}
-              />
+              <Month view={shiftMonth(view, 1)} range={range} onPick={pick} />
             </div>
             <button
               type="button"
@@ -170,18 +179,21 @@ export function DateRangeField({
             </button>
           </div>
 
+          {/* The dates are ALREADY in the form (write-through) — this footer only
+              closes the panel or restores what it was opened on. No button here
+              is the thing that "commits", so none can be missed. */}
           <div className="dp-ft">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!range.start || !range.end}
-              onClick={apply}
-            >
-              החל
+            <button type="button" className="btn btn-primary" onClick={() => setOpen(false)}>
+              סגור
             </button>
             <button type="button" className="btn btn-tertiary" onClick={cancel}>
               ביטול
             </button>
+            <span className="dp-ft-hint">
+              {range.start && !range.end
+                ? "בחרו תאריך יציאה"
+                : "התאריכים עודכנו בטופס — לשמירה לחצו שמור שינויים"}
+            </span>
           </div>
         </div>
       )}
