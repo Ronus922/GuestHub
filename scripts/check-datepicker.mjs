@@ -138,6 +138,17 @@ const guApply = gu.match(/onApply=\{\(f, t\) => \{([\s\S]*?)\n\s*\}\}/);
 assert.ok(guApply, "Group Update must wire onApply");
 assert.match(guApply[1], /setDateFrom\(/, "the picked start must become dateFrom");
 assert.match(guApply[1], /setDateTo\(/, "the picked end must become dateTo");
+// the preview must not under-report a window the grid never loaded: with the
+// picker it is easy to select dates outside the visible table, and those cells
+// used to be silently counted as "nothing will change" ("0 תאים ייסגרו" while
+// three really closed).
+assert.match(gu, /unknown\+\+/, "cells outside the loaded grid window must be counted, not skipped");
+assert.match(
+  gu,
+  /מחוץ לחלון המוצג בטבלה/,
+  "the preview must SAY that out-of-window cells will be updated without a preview",
+);
+
 // the dead CSS of the inputs it replaced must be gone (iron rule #11)
 const guCss = readFileSync("src/app/styles/group-update.css", "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 assert.ok(
