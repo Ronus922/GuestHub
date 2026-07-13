@@ -90,9 +90,11 @@ export function RateGridScreen({
       else visibleUnitIds.forEach((id) => n.add(id));
       return n;
     });
-  // Group Update keeps its existing scope (every room, not just the filtered
-  // view) — that is pre-existing behaviour and out of a visual redesign's remit.
-  const allUnitIds = useMemo(() => state.types.flatMap((t) => t.unitIds), [state.types]);
+  // Group Update acts on the rooms ON THE BOARD. With the room-type bands gone
+  // (the board is now ONE ascending room list), the old "עדכון קבוצתי לסוג" link
+  // that lived in a band header has no home — filtering by a type chip and
+  // pressing עדכון קבוצתי is the same act, through one control instead of two.
+  // With no filter this is every room, exactly as before.
   const toggleCollapse = (unitId: string) =>
     setCollapsed((s) => { const n = new Set(s); if (n.has(unitId)) n.delete(unitId); else n.add(unitId); return n; });
 
@@ -135,7 +137,7 @@ export function RateGridScreen({
         onFilter={setTypeFilter}
         onToggleCollapseAll={toggleCollapseAll}
         onNavigate={navigate}
-        onGroupUpdate={() => openGroupUpdate(allUnitIds)}
+        onGroupUpdate={() => openGroupUpdate(visibleUnitIds)}
       />
 
       {state.unitCount === 0 ? (
@@ -144,7 +146,7 @@ export function RateGridScreen({
         <RateGrid
           types={visibleTypes} dates={state.dates} today={today} can={can}
           collapsed={collapsed} legend={legend}
-          onToggleCollapse={toggleCollapse} onGroupUpdateForType={openGroupUpdate}
+          onToggleCollapse={toggleCollapse}
           onOpenDetail={(u, c) => setDetailKey({ unitId: u.sellableUnitId, date: c.date })}
           onSaved={onSaved}
         />

@@ -1,9 +1,10 @@
 "use client";
 
-import { Fragment, useCallback, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/shared/Icon";
 import { dayOfWeek, HEBREW_DAY_LETTERS, hebrewMonthYear, type DateOnly } from "@/lib/dates";
+import { compareRoomNumber } from "@/lib/rooms/sort";
 import { upsertRateCellAction } from "./actions";
 import type { RateCan, RateCellState, RateGridType, RateGridUnit } from "./types";
 import { BoolCell, CellTip, MetricCell, PriceCell, StopSellCell, type BoolField, type CellCtx, type ColGeom, type NumField } from "./RateCells";
@@ -28,8 +29,10 @@ type CellPatch = {
 const cellKey = (u: string, d: string, f: string) => `${u}|${d}|${f}`;
 
 export function RateGrid({
-  types, dates, today, can, collapsed, legend, onToggleCollapse, onGroupUpdateForType, onOpenDetail, onSaved,
+  types, dates, today, can, collapsed, legend, onToggleCollapse, onOpenDetail, onSaved,
 }: {
+  /** the room-type bands are still the DATA shape; the board renders one flat,
+      ascending room list out of them (no per-type grouping row) */
   types: RateGridType[];
   dates: DateOnly[];
   today: DateOnly;
@@ -39,7 +42,6 @@ export function RateGrid({
   /** the card's footer bar (reference: the legend is part of the board card) */
   legend: ReactNode;
   onToggleCollapse: (sellableUnitId: string) => void;
-  onGroupUpdateForType: (unitIds: string[]) => void;
   onOpenDetail: (unit: RateGridUnit, cell: RateCellState) => void;
   onSaved: () => void;
 }) {
@@ -117,11 +119,18 @@ export function RateGrid({
     gridTemplateColumns: `var(--rg-label) repeat(${dates.length}, minmax(var(--rg-col), 1fr))`,
     minWidth: `calc(var(--rg-label) + ${dates.length} * var(--rg-col))`,
   } as CSSProperties;
-  const fullRow = { gridColumn: `span ${dates.length}` } as CSSProperties;
   // the board counts ROOMS (D74: the room is the canonical identity), which is
   // not the SU count — a pooled unit stands for several rooms.
-  const roomCount = (band: RateGridType) => band.units.reduce((n, u) => n + u.roomCount, 0);
-  const roomTotal = types.reduce((n, t) => n + roomCount(t), 0);
+  const roomTotal = types.reduce(
+    (n, t) => n + t.units.reduce((m, u) => m + u.roomCount, 0),
+    0,
+  );
+  // ONE ascending list across every room type — the ONE canonical comparator
+  // (D86), the same one the calendar orders by.
+  const rooms = useMemo(
+    () => types.flatMap((t) => t.units).sort((a, b) => compareRoomNumber(a.code, b.code)),
+    [types],
+  );
 
   return (
     <div className="card rg-card">
@@ -145,25 +154,11 @@ export function RateGrid({
             </div>
           ))}
 
-          {/* one band per room type, then its rooms */}
-          {types.map((band) => (
-            <Fragment key={band.roomTypeId ?? "—"}>
-              <div className="rg-glabel">
-                {band.roomTypeName}
-                <span className="rg-gc">{roomCount(band)} חדרים</span>
-              </div>
-              <div className="rg-gstrip" style={fullRow}>
-                <span className="rg-gs-in">
-                  <span className="rg-tbase">מחיר בסיס <b>₪{Math.round(band.basePrice)}</b></span>
-                  {can.bulk && (
-                    <button type="button" className="rg-tlink" onClick={() => onGroupUpdateForType(band.unitIds)}>
-                      <Icon name="bulk-update" size={13.5} />עדכון קבוצתי לסוג
-                    </button>
-                  )}
-                </span>
-              </div>
-
-              {band.units.map((unit) => {
+          {/* ONE ascending list of rooms — 926 → 1000 → 1006 → 1102 … The board
+              used to be banded by room type, which made the order ascend only
+              INSIDE a band. The type still labels every room row (.rg-utype), so
+              nothing is lost but the grouping itself. */}
+          {rooms.map((unit) => {
                 const open = !collapsed.has(unit.sellableUnitId);
                 return (
                   <Fragment key={unit.sellableUnitId}>
@@ -204,8 +199,6 @@ export function RateGrid({
                   </Fragment>
                 );
               })}
-            </Fragment>
-          ))}
         </div>
       </div>
       <div className="rg-legend">{legend}</div>
