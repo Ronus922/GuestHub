@@ -60,9 +60,22 @@ export function Field({
   );
 }
 
-/** the two-column form grid every settings section uses */
+/**
+ * the two-column form grid every settings section uses.
+ * A real <form>, not a <div>: browsers refuse to treat a password field outside
+ * a form as a credential (Chrome logs "Password field is not contained in a
+ * form" and its password manager misreads the section). Saving always runs
+ * through an explicit type="button" handler, so submission is inert.
+ */
 export function FormGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">{children}</div>;
+  return (
+    <form
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+      onSubmit={(e) => e.preventDefault()}
+    >
+      {children}
+    </form>
+  );
 }
 
 /** §4 icon-only button: 36×36, radius 10, 20px icon — always with an accessible name. */
