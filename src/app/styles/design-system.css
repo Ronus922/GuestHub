@@ -386,16 +386,20 @@
   }
   select.field-input {
     appearance: none;
+    /* The two halves of the chevron: the 45° wedge is the LEFT box and the 135°
+       wedge the RIGHT one. They were swapped, which drew ◤◥ instead of ⌄ on
+       every select in the app. The caret sits at the left (inline-end in RTL),
+       so the text padding must be reserved on that same side. */
     background-image: linear-gradient(45deg, transparent 50%, var(--faint) 50%),
       linear-gradient(135deg, var(--faint) 50%, transparent 50%);
     background-position:
-      calc(14px + 5px) center,
-      14px center;
+      14px center,
+      19px center;
     background-size:
       5px 5px,
       5px 5px;
     background-repeat: no-repeat;
-    padding-inline-start: 34px;
+    padding-inline-end: 34px;
   }
   textarea.field-input {
     height: auto;

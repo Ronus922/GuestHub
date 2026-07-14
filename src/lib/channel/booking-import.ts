@@ -583,7 +583,7 @@ async function applyLiveRevision(
          check_in, check_out, adults, children, infants,
          total_price, paid_amount, balance, currency, notes, expected_arrival_time,
          expected_arrival_time_source, cancellation_policy_snapshot,
-         created_by,
+         created_by, booking_origin,
          channel_connection_id, external_booking_id, external_revision_id,
          external_unique_id, ota_reservation_code, ota_name, external_booked_at,
          workflow_status_id)
@@ -594,7 +594,7 @@ async function applyLiveRevision(
               ${norm.arrivalHour},
               ${norm.arrivalHour ? "ota" : null},
               ${cancellationSnapshot === null ? null : tx.json(cancellationSnapshot as never)},
-              NULL,
+              NULL, 'ota',
               ${conn.id}, ${norm.bookingId}, ${norm.revisionId},
               ${norm.uniqueId}, ${norm.otaReservationCode}, ${norm.otaName},
               ${norm.insertedAt}, ${wf?.id ?? null})

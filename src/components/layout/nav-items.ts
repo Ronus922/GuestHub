@@ -60,7 +60,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "מערכת",
     items: [
-      { label: "אוטומציות", icon: "automations", permission: "settings.edit", hidden: true },
+      { label: "תקשורת אורחים", icon: "automations", href: "/communications/templates", permission: "communications.templates.view" },
       // ערוצים (Channel Manager diagnostics) — DISPLAY-only, super_admin only. The
       // nav gate here is coarse (usePermission grants admin a bypass); the real
       // super_admin-only boundary is enforced server-side on /channels (redirect via

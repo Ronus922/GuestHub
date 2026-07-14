@@ -33,6 +33,7 @@ import {
 } from "@/lib/commercial/policy-snapshot";
 import { markAriDirty } from "@/lib/channel/outbox";
 import { publishDomainEvent } from "@/lib/realtime/publish";
+import { enqueueReservationConfirmed } from "@/lib/communications/outbox";
 import {
   createReservationSchema,
   updateReservationSchema,
@@ -250,7 +251,7 @@ export async function createReservationAction(
            check_in, check_out, adults, children, infants,
            discount_amount, total_price, paid_amount, balance, currency,
            notes, expected_arrival_time, expected_arrival_time_source,
-           cancellation_policy_snapshot, created_by, workflow_status_id)
+           cancellation_policy_snapshot, booking_origin, created_by, workflow_status_id)
         VALUES (${actor.tenantId}, ${number}, ${guestId}, ${input.sourceId ?? null},
                 ${input.status}, ${agg.checkIn}, ${agg.checkOut},
                 ${agg.adults}, ${agg.children}, ${agg.infants},
@@ -258,7 +259,7 @@ export async function createReservationAction(
                 ${input.notes || null}, ${input.expectedArrivalTime ?? null},
                 ${input.expectedArrivalTime ? "manual" : null},
                 ${cancellationSnapshot === null ? null : tx.json(cancellationSnapshot as never)},
-                ${actor.userId}, ${workflowStatusId})
+                'back_office', ${actor.userId}, ${workflowStatusId})
         RETURNING id`;
 
       for (const s of priced) {
@@ -303,6 +304,14 @@ export async function createReservationAction(
           dateTo: agg.checkOut,
         });
       }
+      if (input.status === "confirmed") {
+        await enqueueReservationConfirmed(tx, {
+          tenantId: actor.tenantId,
+          reservationId: res.id,
+          bookingOrigin: "back_office",
+          initiatedBy: actor.userId,
+        });
+      }
       await publishDomainEvent(tx, actor.tenantId, {
         type: "reservation.created",
         reservationId: res.id,
@@ -345,10 +354,10 @@ export async function updateReservationAction(
 
     await sql.begin(async (tx) => {
       const [existing] = await tx<
-        { id: string; status: string; primary_guest_id: string | null; check_in: string; check_out: string;
+        { id: string; status: string; booking_origin: string; primary_guest_id: string | null; check_in: string; check_out: string;
           discount_amount: string; extra_charges: string; paid_amount: string }[]
       >`
-        SELECT id, status, primary_guest_id, check_in::text, check_out::text,
+        SELECT id, status, booking_origin, primary_guest_id, check_in::text, check_out::text,
                discount_amount, extra_charges, paid_amount
         FROM guesthub.reservations
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
@@ -585,6 +594,19 @@ export async function updateReservationAction(
           roomIds: eventRoomIds,
           dateFrom: eventDates[0],
           dateTo: eventDates[eventDates.length - 1],
+        });
+      }
+
+      if (
+        existing.status !== "confirmed" &&
+        nextStatus === "confirmed" &&
+        existing.booking_origin !== "ota"
+      ) {
+        await enqueueReservationConfirmed(tx, {
+          tenantId: actor.tenantId,
+          reservationId: input.id,
+          bookingOrigin: existing.booking_origin === "direct_website" ? "direct_website" : "back_office",
+          initiatedBy: actor.userId,
         });
       }
 

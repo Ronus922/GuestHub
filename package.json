@@ -34,6 +34,8 @@
     "check:payments": "node scripts/check-payments.mjs",
     "check:channel-card-ingest": "node scripts/check-channel-card-ingest.mjs",
     "check:messaging": "node scripts/check-messaging.mjs",
+    "check:guest-communications": "node scripts/check-guest-communications.mjs && node scripts/check-guest-communications-automation.mjs && node scripts/check-guest-communications-worker.mjs",
+    "check:guest-communications-db": "node scripts/check-guest-communications-db.mjs",
     "check:channex-connection": "node scripts/check-channex-connection.mjs",
     "check:channex-properties": "node scripts/check-channex-properties.mjs",
     "check:business-profile": "node scripts/check-business-profile.mjs",

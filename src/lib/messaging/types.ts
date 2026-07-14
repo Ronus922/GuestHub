@@ -43,8 +43,14 @@ export type TestResult = {
 export type EmailMessage = {
   to: string;
   toName?: string | null;
+  /** Optional per-template display-name snapshot; sender address stays configured. */
+  fromName?: string | null;
   subject: string;
-  body: string; // plain text (rendered to text/plain + minimal html)
+  /** Canonical plain-text fallback. Kept required for existing/manual callers. */
+  body: string;
+  /** Optional rendered HTML. Providers send multipart/alternative when present. */
+  html?: string | null;
+  /** undefined = channel default; null = explicitly no Reply-To header. */
   replyTo?: string | null;
 };
 

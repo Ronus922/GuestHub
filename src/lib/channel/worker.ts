@@ -10,6 +10,7 @@ import {
 } from "./ari-sync";
 import { loadInboundConnections, runInboundPull } from "./booking-import";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
+import { runCommunicationTick } from "@/lib/communications/worker";
 
 // ============================================================
 // The GuestHub channel worker (D68) — a long-running PM2 process
@@ -191,6 +192,14 @@ async function ensureInboundPullJobs(): Promise<void> {
 
 export async function runTick(workerId: string, log: (m: string) => void): Promise<TickSummary> {
   const summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
+  // Guest communication shares this existing durable worker process. It runs
+  // before channel work so an immediate confirmation is not delayed by ARI
+  // traffic; failures remain isolated to its own event/delivery rows.
+  try {
+    await runCommunicationTick(workerId, log);
+  } catch (e) {
+    log(`communications tick failed: ${e instanceof Error ? e.name : "error"}`);
+  }
   await ensureDrainJobs();
   await ensureInboundPullJobs();
   const jobs = await claimChannelJobs(workerId, JOBS_PER_TICK);

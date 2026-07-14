@@ -26,6 +26,7 @@ export function SidePanel({
   open,
   onClose,
   title,
+  titleSlot,
   subtitle,
   icon,
   avatar,
@@ -42,7 +43,10 @@ export function SidePanel({
 }: {
   open: boolean;
   onClose: () => void;
+  /** Always required — it is the panel's accessible name, even when titleSlot renders instead. */
   title: string;
+  /** Replaces the <h2> in the blue bar (e.g. a rename-in-place field). aria-label still comes from `title`. */
+  titleSlot?: React.ReactNode;
   subtitle?: string;
   icon?: IconName;
   // identity header (edit-employee reference): custom avatar replaces the icon
@@ -177,7 +181,7 @@ export function SidePanel({
 
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="dw-title truncate">{title}</h2>
+                  {titleSlot ?? <h2 className="dw-title truncate">{title}</h2>}
                   {headerChips}
                   {/* on-brand header chip — the §7 header surface (white at .16, the
                       same value as .dw-icon/.dw-close); design-system.css has no
