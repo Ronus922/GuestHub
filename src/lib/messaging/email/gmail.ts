@@ -1,6 +1,8 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import nodemailer from "nodemailer";
 import type { EmailProvider, EmailMessage, GmailConfig, GmailSecrets, SendResult, TestResult } from "../types";
+import { isEmailAddress, sanitizeEmailHeader } from "./headers";
 
 // Gmail email adapters (D53). Two modes behind ONE EmailProvider interface:
 //   • GmailOAuthProvider  — Gmail REST API + OAuth 2.0 refresh token (PRODUCTION).
@@ -23,19 +25,52 @@ function encodeHeader(value: string): string {
 }
 
 function buildRawMessage(from: string, fromName: string | undefined, msg: EmailMessage): string {
-  const fromHeader = fromName ? `${encodeHeader(fromName)} <${from}>` : from;
-  const toHeader = msg.toName ? `${encodeHeader(msg.toName)} <${msg.to}>` : msg.to;
+  const safeFrom = sanitizeEmailHeader(from);
+  const safeFromName = fromName ? sanitizeEmailHeader(fromName) : undefined;
+  const safeTo = sanitizeEmailHeader(msg.to);
+  const safeToName = msg.toName ? sanitizeEmailHeader(msg.toName) : undefined;
+  const fromHeader = safeFromName ? `${encodeHeader(safeFromName)} <${safeFrom}>` : safeFrom;
+  const toHeader = safeToName ? `${encodeHeader(safeToName)} <${safeTo}>` : safeTo;
   const headers = [
     `From: ${fromHeader}`,
     `To: ${toHeader}`,
-    msg.replyTo ? `Reply-To: ${msg.replyTo}` : "",
-    `Subject: ${encodeHeader(msg.subject)}`,
+    msg.replyTo ? `Reply-To: ${sanitizeEmailHeader(msg.replyTo)}` : "",
+    `Subject: ${encodeHeader(sanitizeEmailHeader(msg.subject))}`,
     "MIME-Version: 1.0",
+  ].filter(Boolean);
+  const text = Buffer.from(msg.body, "utf8").toString("base64");
+  if (!msg.html) {
+    return [
+      ...headers,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      text,
+    ].join("\r\n");
+  }
+
+  // A random boundary prevents rendered guest/template content from ever
+  // terminating a MIME part. Both parts use base64, preserving Hebrew and
+  // keeping arbitrary HTML bytes away from the MIME grammar.
+  const boundary = `guesthub_${randomUUID().replaceAll("-", "")}`;
+  const html = Buffer.from(msg.html, "utf8").toString("base64");
+  return [
+    ...headers,
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
-  ].filter(Boolean);
-  const body = Buffer.from(msg.body, "utf8").toString("base64");
-  return headers.join("\r\n") + "\r\n\r\n" + body;
+    "",
+    text,
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    html,
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
 }
 
 async function accessTokenFromRefresh(s: GmailSecrets): Promise<string> {
@@ -68,10 +103,15 @@ export class GmailOAuthProvider implements EmailProvider {
 
   async sendEmail(msg: EmailMessage): Promise<SendResult> {
     try {
+      const replyTo = msg.replyTo === undefined ? this.config.replyTo ?? null : msg.replyTo;
+      if (!isEmailAddress(this.config.senderEmail) || !isEmailAddress(msg.to)
+          || (replyTo !== null && !isEmailAddress(replyTo))) {
+        return { status: "failed", providerMessageId: null, errorCode: "invalid_email_address", errorDetail: "כתובת אימייל אינה תקינה" };
+      }
       const token = await accessTokenFromRefresh(this.secrets);
-      const raw = buildRawMessage(this.config.senderEmail, this.config.senderName, {
+      const raw = buildRawMessage(this.config.senderEmail, msg.fromName ?? this.config.senderName, {
         ...msg,
-        replyTo: msg.replyTo ?? this.config.replyTo ?? null,
+        replyTo,
       });
       const rawUrlSafe = Buffer.from(raw, "utf8")
         .toString("base64")
@@ -124,12 +164,23 @@ export class GmailSmtpProvider implements EmailProvider {
 
   async sendEmail(msg: EmailMessage): Promise<SendResult> {
     try {
+      const fromName = msg.fromName ?? this.config.senderName;
+      const replyTo = msg.replyTo === undefined ? this.config.replyTo ?? undefined : msg.replyTo ?? undefined;
+      if (!isEmailAddress(this.config.senderEmail) || !isEmailAddress(msg.to)
+          || (replyTo !== undefined && !isEmailAddress(replyTo))) {
+        return { status: "failed", providerMessageId: null, errorCode: "invalid_email_address", errorDetail: "כתובת אימייל אינה תקינה" };
+      }
       const info = await this.transport().sendMail({
-        from: this.config.senderName ? `${this.config.senderName} <${this.config.senderEmail}>` : this.config.senderEmail,
-        to: msg.toName ? `${msg.toName} <${msg.to}>` : msg.to,
-        replyTo: msg.replyTo ?? this.config.replyTo ?? undefined,
-        subject: msg.subject,
+        from: fromName
+          ? `${sanitizeEmailHeader(fromName)} <${sanitizeEmailHeader(this.config.senderEmail)}>`
+          : sanitizeEmailHeader(this.config.senderEmail),
+        to: msg.toName
+          ? `${sanitizeEmailHeader(msg.toName)} <${sanitizeEmailHeader(msg.to)}>`
+          : sanitizeEmailHeader(msg.to),
+        replyTo: replyTo ? sanitizeEmailHeader(replyTo) : undefined,
+        subject: sanitizeEmailHeader(msg.subject),
         text: msg.body,
+        html: msg.html ?? undefined,
       });
       return { status: "sent", providerMessageId: info.messageId ?? null };
     } catch (e) {
@@ -154,5 +205,8 @@ function safeDetail(msg: string | undefined): string {
   return msg.slice(0, 120);
 }
 function codeOf(e: unknown): string {
+  if (e && typeof e === "object" && "code" in e && typeof e.code === "string") {
+    return e.code.slice(0, 60);
+  }
   return e instanceof Error ? e.message.slice(0, 60) : "unknown";
 }

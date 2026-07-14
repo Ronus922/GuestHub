@@ -41,6 +41,25 @@ export const STATUS_PALETTE = [
 // reads on the tint — matching the reference pill families
 // (ref/screens/GuesthubCalandr.png) for ANY hex the tenant picks.
 
+// ---- email palette ----
+// An HTML email cannot read a CSS variable: every colour must be an inline
+// literal in the sent bytes. These are the SAME §1 tokens as design-system.css,
+// declared here (a token file) so the renderer consumes them instead of
+// inventing hexes of its own.
+export const EMAIL_PALETTE = {
+  brand: "#2540C8",
+  brandDark: "#1C2E9A",
+  brandSoft: "#EEF1FD",
+  brandLine: "#DFE5FB",
+  ink: "#1B2233",
+  muted: "#6B7385",
+  faint: "#9AA1B4",
+  line: "#E7EAF1",
+  surface: "#FFFFFF",
+  fieldBg: "#F7F8FB",
+  bg: "#F1F3F8",
+} as const;
+
 export type TintPalette = { bg: string; bd: string; tx: string };
 
 // the approved neutral family (§3.1 "בוטל")

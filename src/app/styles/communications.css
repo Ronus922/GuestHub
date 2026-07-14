@@ -1,0 +1,752 @@
+/* ============================================================
+   תקשורת אורחים — ref/html/TemplateConstruction.html
+   ref/screens/TemplateConstruction.png · CreateGuestCommunicationWindowes.png
+
+   Geometry from the reference RENDER (computed styles); colour from the
+   canonical tokens — the reference was drawn on this very design system, so
+   every hex it uses is already a token here. Where the reference expressed a
+   value GUIDELINES closes (a 40px tab, a 38px icon button, a 25px number) it is
+   snapped to the approved one; the layout is unchanged.
+
+   The drawer itself is <SidePanel> (§7). This file styles only what lives
+   INSIDE it — there is no second drawer shell.
+   ============================================================ */
+
+@layer components {
+  /* ---------------- list page ---------------- */
+  .gc-page {
+    width: min(1480px, 100%);
+    margin-inline: auto;
+    padding: 24px 28px 44px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .gc-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .gc-sub {
+    margin-top: 4px;
+    max-width: 92ch;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .gc-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap-reverse;
+  }
+
+  /* tabs — pill track. §4: a control is 44px (the reference's 40px is not approved) */
+  .gc-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 5px;
+    max-width: 100%;
+    border-radius: var(--r-md);
+    background: color-mix(in srgb, var(--brand-line) 62%, #fff);
+    overflow-x: auto;
+  }
+  .gc-tab {
+    height: 44px;
+    padding: 0 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .gc-tab:hover {
+    background: color-mix(in srgb, #fff 55%, transparent);
+  }
+  .gc-tab[aria-current="page"] {
+    background: var(--surface);
+    color: var(--brand);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* KPI cards — each is a filter button */
+  .gc-sums {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .gc-sum {
+    flex: 1 1 170px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    font-family: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+  .gc-sum:hover {
+    border-color: var(--faint);
+  }
+  .gc-sum[aria-pressed="true"] {
+    border-color: var(--brand);
+    box-shadow: var(--focus-ring);
+  }
+  .gc-sum-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .gc-sum-l {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .gc-sum-v {
+    font-size: 21px;
+    font-weight: 800;
+    line-height: 1.15;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .gc-sum-v.is-ok {
+    color: var(--ok);
+  }
+  .gc-sum-v.is-warn {
+    color: var(--warn);
+  }
+  .gc-sum-v.is-brand {
+    color: var(--brand);
+  }
+  .gc-sum-v.is-muted {
+    color: var(--muted);
+  }
+  .gc-sum-c {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+
+  /* panel head: title + description, filters pushed to the far end */
+  .gc-ph {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .gc-ph > .ms-icon {
+    color: var(--brand);
+  }
+  /* the description yields first: the filters must stay on ONE row */
+  .gc-ph-d {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .gc-ph-f {
+    flex: none;
+    margin-inline-start: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .gc-ph-f .gc-select {
+    width: 230px;
+  }
+
+  /* segmented control */
+  .gc-seg {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: var(--r-md);
+    background: var(--line);
+  }
+  .gc-segb {
+    height: 36px;
+    padding: 0 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .gc-segb[aria-pressed="true"] {
+    background: var(--surface);
+    color: var(--brand);
+    box-shadow: var(--shadow-card);
+  }
+  .gc-segb.gc-seg-icon {
+    padding: 0 12px;
+  }
+
+  /* the 36px select of a dense toolbar (§5: 36px only in a row) */
+  .gc-select {
+    height: 36px;
+    font-size: 13.5px;
+  }
+
+  /* ---------------- templates table (CSS grid — RTL: track 1 = rightmost) ---------------- */
+  .gc-tw {
+    overflow-x: auto;
+  }
+  /* The reference's own 1200px min-width assumes its full-bleed page. Inside the
+     app shell (sidebar + page padding) the row would overflow the card and push
+     the last action button off-screen, so the tracks are tightened to fit — the
+     column ORDER and proportions are the reference's, the absolute widths are
+     what actually fits a 1440px screen. */
+  .gc-thead,
+  .gc-row {
+    display: grid;
+    grid-template-columns: 44px minmax(150px, 1.4fr) 92px 96px 62px 88px 50px 100px 120px 152px;
+    align-items: center;
+    gap: 12px;
+    min-width: 1040px;
+    padding-inline: 18px;
+  }
+  .gc-thead {
+    height: 44px;
+    border-block: 1px solid var(--line);
+    background: var(--field-bg);
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--muted);
+  }
+  .gc-row {
+    width: 100%;
+    padding-block: 11px;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 14px;
+    text-align: start;
+    cursor: pointer;
+  }
+  .gc-row:last-child {
+    border-bottom: none;
+  }
+  .gc-row:hover {
+    background: var(--surface-hover);
+  }
+  .gc-row-ic {
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-md);
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+  .gc-row-n {
+    font-size: 15px;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .gc-row-m {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .gc-acts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  /* the reference's bordered row action (§4 icon-btn + a hairline) */
+  .icon-btn.gc-ib {
+    border: 1.5px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .icon-btn.gc-ib:hover:not(:disabled) {
+    background: var(--surface-hover);
+    color: var(--brand);
+  }
+  /* "אוטומציה אחת" — a link, not a chip */
+  .gc-link {
+    padding: 4px 8px;
+    border: none;
+    border-radius: var(--r-xs);
+    background: transparent;
+    color: var(--brand);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+  .gc-link:hover {
+    background: var(--brand-soft);
+  }
+
+  /* ---------------- editor (rendered INSIDE <SidePanel>) ---------------- */
+  /* three columns, DOM order = right → left: palette · canvas · settings */
+  .gc-b3 {
+    display: grid;
+    grid-template-columns: 302px minmax(0, 1fr) 318px;
+    height: 100%;
+    min-height: 0;
+  }
+  .gc-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    overflow-y: auto;
+    background: var(--surface);
+  }
+  /* A scrolling flex column must not SHRINK its children: with the default
+     flex-shrink:1 the mail sheet and the email-details card collapse to fit the
+     column instead of overflowing it, so the column never scrolls and the lower
+     half of the editor (subject, preheader, most of the email) is unreachable. */
+  .gc-col > * {
+    flex-shrink: 0;
+  }
+  .gc-col-canvas {
+    padding: 16px 22px;
+    background: var(--line);
+  }
+  .gc-col-start {
+    border-inline-start: 1px solid var(--line);
+  }
+  .gc-col-end {
+    border-inline-end: 1px solid var(--line);
+  }
+  .gc-colhd {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+  .gc-colhd > .ms-icon {
+    color: var(--brand);
+  }
+
+  /* block palette */
+  .gc-hint {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+  .gc-cat {
+    margin: 4px 0 2px;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--faint);
+  }
+  .gc-lib {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px;
+  }
+  .gc-libc {
+    position: relative;
+    min-height: 66px;
+    padding: 11px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    cursor: pointer;
+  }
+  .gc-libc .ms-icon {
+    color: var(--muted);
+  }
+  .gc-libc:hover:not(:disabled) {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+  }
+  .gc-libc:hover:not(:disabled) .ms-icon {
+    color: var(--brand);
+  }
+  .gc-libc:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  /* the ⊕ affordance the reference puts on every palette card */
+  .gc-libc-add {
+    position: absolute;
+    top: 5px;
+    inset-inline-end: 5px;
+    color: var(--faint);
+  }
+  .gc-libc:hover:not(:disabled) .gc-libc-add {
+    color: var(--brand);
+  }
+
+  /* variables */
+  .gc-varg {
+    margin: 4px 0 2px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--muted);
+  }
+  .gc-varg > .ms-icon {
+    color: var(--brand);
+  }
+  .gc-var {
+    width: 100%;
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    text-align: start;
+    cursor: pointer;
+  }
+  .gc-var:hover {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+  }
+  .gc-var code {
+    font-size: 12px;
+    color: var(--brand);
+    direction: ltr;
+  }
+
+  /* canvas */
+  .gc-tools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .gc-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 11px;
+  }
+  .gc-cnt {
+    margin-inline-start: auto;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .gc-label-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* the mail sheet — 640px desktop / 375px phone, exactly like a client */
+  .gc-mail {
+    width: 100%;
+    max-width: 640px;
+    margin-inline: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    transition: max-width 0.25s ease;
+  }
+  .gc-mail.is-phone {
+    max-width: 375px;
+  }
+  /* client chrome — editor only, never emitted into the email */
+  .gc-envelope {
+    padding: 12px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    border-bottom: 1px solid var(--line);
+    background: var(--field-bg);
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .gc-envelope > p {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .gc-envelope b {
+    flex: none;
+    width: 44px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  .gc-envelope-s {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+  .gc-envelope-p {
+    font-size: 12px;
+    color: var(--faint);
+  }
+
+  /* a rendered block on the canvas — its inner HTML is the EMAIL's own bytes */
+  .gc-blk {
+    position: relative;
+    display: block;
+    width: 100%;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    text-align: start;
+  }
+  .gc-blk-pad {
+    padding: 16px 24px 0;
+  }
+  /* the mail sheet clips (rounded corners), so the block chrome sits INSIDE the
+     block. Give a selected block room for it rather than let the toolbar cover
+     the first line of the text being edited. */
+  .gc-blk.is-sel .gc-blk-pad {
+    padding-top: 40px;
+  }
+  .gc-blk.is-editable {
+    cursor: pointer;
+  }
+  /* selection ring — an outline, so it never displaces the email's own layout */
+  .gc-blk.is-editable:hover {
+    outline: 2px solid var(--brand-line);
+    outline-offset: -2px;
+  }
+  .gc-blk.is-sel {
+    outline: 2px solid var(--brand);
+    outline-offset: -2px;
+  }
+  .gc-blk.is-off {
+    opacity: 0.4;
+  }
+  /* a block that renders to nothing — named, so the gap is never a mystery */
+  .gc-blk-ghost {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 16px;
+    color: var(--faint);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .gc-blk-tag {
+    position: absolute;
+    top: 0;
+    inset-inline-start: 10px;
+    z-index: 2;
+    padding: 3px 9px;
+    border-radius: var(--r-xs);
+    background: var(--ink);
+    color: var(--surface);
+    font-size: 12px;
+    font-weight: 700;
+    pointer-events: none;
+  }
+  .gc-blk-tb {
+    position: absolute;
+    top: 0;
+    inset-inline-end: 10px;
+    z-index: 2;
+    display: flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: var(--r-sm);
+    background: var(--ink);
+  }
+  .gc-blk-tb button {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: var(--r-xs);
+    background: transparent;
+    color: var(--line);
+    cursor: pointer;
+  }
+  .gc-blk-tb button:hover:not(:disabled) {
+    background: color-mix(in srgb, #fff 20%, transparent);
+    color: var(--surface);
+  }
+  .gc-blk-tb button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* settings / block properties */
+  .gc-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 13px;
+    border: 1px solid var(--brand-line);
+    border-radius: var(--r-sm);
+    background: var(--brand-soft);
+    color: var(--brand-hover);
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+  .gc-note > .ms-icon {
+    flex: none;
+  }
+  .gc-ver {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+  .gc-ver:last-child {
+    border-bottom: none;
+  }
+  .gc-ver-m {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .gc-ver-m b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 700;
+  }
+  .gc-ver-m span {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .gc-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+
+  /* the §7 footer's unsaved-changes indicator */
+  .gc-dirty {
+    margin-inline-start: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .gc-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--faint);
+  }
+  .gc-dot.is-dirty {
+    background: var(--warn);
+  }
+
+  /* switch — design-system.css has no canonical switch yet; composed once, here */
+  .gc-sw {
+    position: relative;
+    flex: none;
+    width: 40px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: var(--faint);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+  .gc-sw[aria-checked="true"] {
+    background: var(--brand);
+  }
+  .gc-sw:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .gc-sw::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    inset-inline-start: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--surface);
+    transition: translate 0.15s ease;
+  }
+  /* RTL: inline-start is the RIGHT edge, so "on" slides the knob leftwards */
+  .gc-sw[aria-checked="true"]::after {
+    translate: -18px 0;
+  }
+
+  @media (max-width: 1100px) {
+    .gc-b3 {
+      grid-template-columns: minmax(0, 1fr);
+      overflow-y: auto;
+    }
+    .gc-col {
+      overflow: visible;
+    }
+    .gc-col-start,
+    .gc-col-end {
+      border-inline: none;
+      border-block-start: 1px solid var(--line);
+    }
+  }
+}

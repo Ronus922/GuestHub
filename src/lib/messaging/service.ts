@@ -35,7 +35,7 @@ async function recordTerminal(args: {
 // ---- Email (Gmail) ----
 export async function sendEmailMessage(
   actor: Actor,
-  params: { reservationId: string | null; guestId: string | null; to: string; toName?: string | null; subject: string; body: string; templateId: string | null },
+  params: { reservationId: string | null; guestId: string | null; to: string; toName?: string | null; subject: string; body: string; html?: string | null; templateId: string | null },
 ): Promise<SendOutcome> {
   if (!EMAIL_RE.test(params.to.trim())) {
     return recordTerminal({ actor, ...params, channel: "email", provider: "gmail", subject: params.subject,
@@ -52,7 +52,13 @@ export async function sendEmailMessage(
     toAddress: params.to.trim(), subject: params.subject, body: params.body, status: "submitting",
     userId: actor.userId,
   });
-  const result = await provider.sendEmail({ to: params.to.trim(), toName: params.toName ?? null, subject: params.subject, body: params.body });
+  const result = await provider.sendEmail({
+    to: params.to.trim(),
+    toName: params.toName ?? null,
+    subject: params.subject,
+    body: params.body,
+    html: params.html ?? null,
+  });
   await applySendResult(messageId, result);
   await writeAudit(actor, {
     entityType: "reservation", entityId: params.reservationId,

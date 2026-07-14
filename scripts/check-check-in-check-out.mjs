@@ -6,14 +6,16 @@ import { join } from "node:path";
 const out = mkdtempSync(join(process.cwd(), "node_modules/.cache/check-in-check-out-"));
 writeFileSync(join(out, "package.json"), JSON.stringify({ type: "module" }));
 execSync(
-  `pnpm exec tsc src/lib/check-in-check-out.ts src/lib/dates.ts --outDir ${out} ` +
+  `pnpm exec tsc src/lib/check-in-check-out.ts src/lib/check-in-check-out-policy.ts src/lib/dates.ts --outDir ${out} ` +
     "--module esnext --target es2022 --moduleResolution bundler --skipLibCheck",
   { stdio: "inherit" },
 );
 const compiledDomainPath = join(out, "check-in-check-out.js");
 writeFileSync(
   compiledDomainPath,
-  readFileSync(compiledDomainPath, "utf8").replace('"./dates"', '"./dates.js"'),
+  readFileSync(compiledDomainPath, "utf8")
+    .replace('"./dates"', '"./dates.js"')
+    .replaceAll('"./check-in-check-out-policy"', '"./check-in-check-out-policy.js"'),
 );
 const domain = await import(compiledDomainPath);
 

@@ -39,6 +39,7 @@ assert.ok(/mapTwilioStatus/.test(twilio), "Twilio maps provider status → canon
 assert.ok(/case "delivered":\s*return "delivered"/.test(twilio), "Twilio delivered maps to delivered (from a real callback)");
 const gmail = src("src/lib/messaging/email/gmail.ts");
 assert.ok(/status: "sent"/.test(gmail), "Gmail messages.send success → 'sent' (accepted for sending)");
+assert.ok(/sanitizeEmailHeader/.test(gmail), "Gmail raw MIME sanitizes every editable header value");
 
 // ---- no secret in logs / audit / errors ----
 for (const p of ["src/lib/messaging/email/gmail.ts", "src/lib/messaging/whatsapp/twilio.ts", "src/lib/messaging/whatsapp/green-api.ts", "src/lib/messaging/service.ts"]) {
@@ -127,5 +128,14 @@ assert.equal(phone.normalizePhone("+14155552671").e164, "+14155552671", "US pass
 assert.equal(phone.normalizePhone("").valid, false, "empty invalid");
 assert.equal(phone.isIsraeliMobile("052-546-0546"), true, "IL mobile detected");
 assert.equal(phone.greenApiChatId("0525460546"), "972525460546@c.us", "green-api chatId form");
+
+// Raw Gmail MIME must reject CR/LF header injection while preserving Hebrew.
+const headerOut = mkdtempSync(join(tmpdir(), "gh-email-header-"));
+execSync(`npx tsc src/lib/messaging/email/headers.ts --outDir ${headerOut} --target es2022 --module es2022 --moduleResolution bundler --skipLibCheck`, { cwd: ROOT, stdio: "pipe" });
+const headers = await import(join(headerOut, "headers.js"));
+assert.equal(headers.sanitizeEmailHeader("אישור הזמנה"), "אישור הזמנה");
+assert.throws(() => headers.sanitizeEmailHeader("safe\r\nBcc: attacker@example.com"), /invalid_email_header/);
+assert.equal(headers.isEmailAddress("guest@example.com"), true);
+assert.equal(headers.isEmailAddress("guest@example.com\r\nBcc:x@example.com"), false);
 
 console.log("check-messaging: all assertions passed ✓");
