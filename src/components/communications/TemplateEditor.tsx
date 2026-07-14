@@ -14,11 +14,15 @@ import {
   CONDITION_LABELS, STAGE_KEYS, STAGE_LABELS, TEXT_BLOCKS,
   blockMeta, defaultTemplateContent, makeBlock, usageLabel,
 } from "@/lib/communications/blocks";
-import { renderCommunicationBlocks, renderStructuredCommunication, renderTemplateString } from "@/lib/communications/renderer";
+import {
+  renderCommunicationBlocks, renderStructuredCommunication, renderTemplateString,
+  type RenderedBlock,
+} from "@/lib/communications/renderer";
+import { structuredTemplateContentSchema } from "@/lib/communications/schemas";
 import { COMMUNICATION_VARIABLES } from "@/lib/communications/variables";
 import type {
-  BlockCondition, CommunicationRenderContext, StructuredTemplateContent,
-  TemplateBlock, TemplateBlockType,
+  BlockCondition, CommunicationRenderContext, RenderedCommunication,
+  StructuredTemplateContent, TemplateBlock, TemplateBlockType,
 } from "@/lib/communications/types";
 
 // ============================================================
@@ -110,14 +114,30 @@ export function TemplateEditor({
   );
 
   const selectedBlock = content.blocks.find((b) => b.id === selected) ?? null;
-  const blocks = useMemo(
-    () => renderCommunicationBlocks(content, context, { highlight: true }),
-    [content, context],
-  );
-  const emailDoc = useMemo(
-    () => renderStructuredCommunication(content, context, { preheader }),
-    [content, context, preheader],
-  );
+
+  // The renderer parses STRICTLY — it is the same code that produces what a guest
+  // receives, and it must refuse malformed content. But mid-edit content is
+  // legitimately invalid for a keystroke or two (clear the button's label and it
+  // has no label), and a throw inside useMemo would tear the editor down and take
+  // the unsaved template with it. So validate first, and hold the last good render.
+  const invalid = useMemo(() => {
+    const parsed = structuredTemplateContentSchema.safeParse(content);
+    return parsed.success ? null : "יש בלוק עם שדה חסר או ארוך מדי — השלימו אותו כדי לראות תצוגה ולפרסם";
+  }, [content]);
+
+  const lastGood = useRef<{ blocks: RenderedBlock[]; doc: RenderedCommunication } | null>(null);
+  const render = useMemo(() => {
+    if (invalid) return lastGood.current;
+    const next = {
+      blocks: renderCommunicationBlocks(content, context, { highlight: true }),
+      doc: renderStructuredCommunication(content, context, { preheader }),
+    };
+    lastGood.current = next;
+    return next;
+  }, [content, context, preheader, invalid]);
+
+  const blocks = render?.blocks ?? [];
+  const emailDoc = render?.doc ?? null;
   const renderedSubject = useMemo(() => renderTemplateString(subject, context), [subject, context]);
 
   const touch = () => setDirty(true);
@@ -275,19 +295,19 @@ export function TemplateEditor({
       footer={
         <>
           {canPublish && (
-            <button type="button" className="btn btn-primary" disabled={pending || !canEdit}
+            <button type="button" className="btn btn-primary" disabled={pending || !canEdit || Boolean(invalid)}
               onClick={() => run(() => publishTemplateAction(payload))}>
               <Icon name="publish" size={17} /> פרסום
             </button>
           )}
           {canEdit && (
-            <button type="button" className="btn btn-secondary" disabled={pending}
+            <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
               onClick={() => run(() => saveTemplateDraftAction(payload), () => { if (!template) onClose(); })}>
               <Icon name="draft" size={17} /> שמירת טיוטה
             </button>
           )}
           {canTest && (
-            <button type="button" className="btn btn-secondary" disabled={pending}
+            <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
               onClick={() => setTestOpen(true)}>
               <Icon name="send" size={17} /> שליחת בדיקה
             </button>
@@ -473,7 +493,7 @@ export function TemplateEditor({
                 className="block w-full border-0"
                 style={{ height: 720 }}
                 sandbox=""
-                srcDoc={emailDoc.html}
+                srcDoc={emailDoc?.html ?? ""}
                 title="תצוגה מקדימה של האימייל"
               />
             ) : (
@@ -564,6 +584,13 @@ export function TemplateEditor({
                   />
                   <span className="field-hint">אפשר לשלב משתנים מלשונית ״משתנים״</span>
                 </label>
+              )}
+
+              {selectedBlock.type === "cancellation_policy" && (
+                <p className="gc-note">
+                  <Icon name="info" size={17} />
+                  הבלוק מציג את מדיניות הביטול של ההזמנה עצמה — הטקסט נמשך מההזמנה ואינו נכתב כאן.
+                </p>
               )}
 
               {(selectedBlock.type === "heading" || selectedBlock.type === "text") && (
@@ -704,6 +731,8 @@ export function TemplateEditor({
               )}
             </>
           )}
+
+          {invalid && <p className="field-msg" role="alert">{invalid}</p>}
 
           {notice && (
             <p className={notice.success ? "gc-note" : "field-msg"} role="status">

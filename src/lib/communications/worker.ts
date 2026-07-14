@@ -32,6 +32,7 @@ export async function runCommunicationTick(
     retried: 0,
     failed: 0,
     ambiguous: 0,
+    cancelled: 0,
   };
 
   const events = await claimCommunicationEvents(workerId, 10);

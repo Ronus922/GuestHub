@@ -36,14 +36,21 @@ export function usageLabel(count: number): string {
   return `${count} אוטומציות`;
 }
 
-/** Blocks whose only content is a free-text body. */
-export const TEXT_BLOCKS: TemplateBlockType[] = ["heading", "text", "signature", "cancellation_policy"];
+/**
+ * Blocks whose content is a free-text body the author writes.
+ *
+ * `cancellation_policy` is deliberately NOT one of them: it renders the
+ * reservation's OWN policy ({{reservation.cancellation_policy}}), which is the
+ * only text that is legally true for that booking. Offering a textarea there
+ * would let staff author a policy, publish it, and have the guest never see a
+ * word of it — the renderer ignores the authored text entirely.
+ */
+export const TEXT_BLOCKS: TemplateBlockType[] = ["heading", "text", "signature"];
 
 export const BLOCK_TEXT_PLACEHOLDER: Partial<Record<TemplateBlockType, string>> = {
   heading: "טקסט הכותרת",
   text: "כתבו כאן טקסט…",
   signature: "נתראה בקרוב…",
-  cancellation_policy: "מדיניות הביטול…",
 };
 
 export const CONDITION_LABELS: Record<BlockCondition, string> = {

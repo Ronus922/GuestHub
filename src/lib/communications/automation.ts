@@ -243,6 +243,9 @@ async function resolveVersion(automation: AutomationRow): Promise<VersionRow | n
       ON t.id = v.template_id AND t.tenant_id = v.tenant_id
     WHERE v.tenant_id = ${automation.tenant_id}
       AND v.template_id = ${automation.template_id}
+      -- an archived template is out of service: it must not keep reaching guests
+      -- through an automation that was merely disabled and later switched back on
+      AND t.archived_at IS NULL AND t.lifecycle_state <> 'archived'
       AND v.id = ${automation.template_version_policy === "locked"
         ? automation.locked_template_version_id
         : sql`t.current_published_version_id`}
@@ -280,7 +283,8 @@ async function recordSkippedDelivery(args: {
     missing_guest_email: "כתובת האימייל של האורח חסרה או אינה תקינה",
     template_version_missing: "לא נמצאה גרסה מפורסמת תואמת",
     provider_not_ready: "ערוץ האימייל אינו מחובר או לא נבדק",
-    render_failed: "נתון נדרש לתבנית חסר",
+    render_failed: "נתון נדרש לתבנית חסר בהזמנה הזו",
+    render_context_failed: "לא ניתן להרכיב את נתוני ההודעה",
     automation_config_invalid: "הגדרת האוטומציה אינה תקינה",
     invalid_reply_to: "כתובת המענה של התבנית אינה תקינה",
   };
@@ -404,7 +408,22 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
     }
     return summary;
   }
-  const context = await buildRenderContext(reservation);
+
+  // Building the render context needs the tenant's business profile and the
+  // Israel check-in/out calendar. If that throws, the event would be retried and
+  // then quietly buried in communication_events — which no screen shows — so the
+  // guest never gets their confirmation and NOBODY can find out. Make it loud:
+  // a terminal skipped row in the history and the automation flagged.
+  let context: CommunicationRenderContext;
+  try {
+    context = await buildRenderContext(reservation);
+  } catch {
+    for (const automation of automations) {
+      await markNeedsAttention(automation.id, "לא ניתן להרכיב את נתוני ההודעה (פרופיל העסק או לוח השעות)");
+      await skipAutomation(summary, event, automation, reservation, "render_context_failed", await resolveVersion(automation));
+    }
+    return summary;
+  }
 
   for (const automation of automations) {
     try {
@@ -449,7 +468,10 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       const subject = renderTemplateString(version.subject, context);
       const preheader = version.preheader ? renderTemplateString(version.preheader, context) : null;
       if (!rendered.canSend || !subject.canSend || (preheader && !preheader.canSend)) {
-        await markNeedsAttention(automation.id, "התבנית מכילה משתנה נדרש שחסר בנתוני ההזמנה");
+        // A missing variable is a fact about THIS reservation (a guest with no
+        // first name, an unassigned room), not about the automation. Disabling
+        // the automation here would silently stop every OTHER guest's
+        // confirmation too. Record the skip and carry on.
         await skipAutomation(summary, event, automation, reservation, "render_failed", version);
         continue;
       }

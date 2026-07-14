@@ -254,10 +254,43 @@ ok("template editor and delivery panel are the canonical §7 SidePanel, not a se
 // match what is actually sent — the exact failure this module exists to prevent.
 assert.match(editor, /renderCommunicationBlocks\(content, context/);
 assert.match(editor, /dangerouslySetInnerHTML=\{\{ __html: block\.html \}\}/);
-assert.match(editor, /srcDoc=\{emailDoc\.html\}/);
+assert.match(editor, /srcDoc=\{emailDoc\?\.html \?\? ""\}/);
+// mid-edit content is briefly invalid; a strict parse inside useMemo would throw
+// during render and take the unsaved template down with the editor
+assert.match(editor, /structuredTemplateContentSchema\.safeParse\(content\)/);
 assert.equal(/<h1|<table|pv-det|gc-details-card/.test(editor), false,
   "the editor must not re-implement the email's markup");
 ok("editor canvas renders the renderer's own output — preview cannot diverge from the send");
+
+// A queued email is not a sent email: the booking can be cancelled during the
+// retry backoff, and the send path only ever reads the frozen snapshot.
+assert.match(delivery, /cancelIneligibleDeliveries/);
+assert.match(delivery, /r\.status <> 'confirmed' OR r\.is_test OR r\.guest_communication_opt_out/);
+assert.match(delivery, /status = 'cancelled'/);
+// Assert the CALL inside drainDeliveries — not merely that the function exists.
+// (A first cut of this check matched the declaration and happily passed with the
+// call deleted; it was caught by mutating the source and watching it stay green.)
+const drainBody = delivery.slice(delivery.indexOf("export async function drainDeliveries"));
+assert.match(drainBody, /await cancelIneligibleDeliveries\(\)/,
+  "drainDeliveries must re-check eligibility on every tick");
+assert.equal(
+  drainBody.indexOf("await cancelIneligibleDeliveries()") < drainBody.indexOf("await claimDeliveries("),
+  true,
+  "eligibility must be re-checked BEFORE the claim, not after",
+);
+assert.match(delivery, /delivery_type <> 'test'/, "the worker must not steal an operator's test send");
+ok("a booking cancelled or opted-out after queueing has its delivery cancelled, never sent");
+
+// A per-reservation data gap must not disable the automation for every OTHER guest.
+const renderFailedBlock = automation.slice(
+  automation.indexOf("!rendered.canSend"),
+  automation.indexOf("!rendered.canSend") + 400,
+);
+assert.equal(/markNeedsAttention/.test(renderFailedBlock), false,
+  "render_failed is a fact about ONE reservation — it must not disable the automation");
+assert.match(automation, /render_context_failed/);
+assert.match(automation, /t\.archived_at IS NULL AND t\.lifecycle_state <> 'archived'/);
+ok("one unrenderable reservation never disables the automation; an archived template is never sent");
 
 // A test send is a REAL send on the REAL path, but never guest history.
 assert.match(uiActions, /claimDeliveryById/);

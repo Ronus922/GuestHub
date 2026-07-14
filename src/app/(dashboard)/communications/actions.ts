@@ -330,15 +330,21 @@ export async function setAutomationStatusAction(idRaw: string, operation: "activ
     const id = z.string().uuid().parse(idRaw);
     if (operation === "activate") {
       const [ready] = await sql<{ template_ready: boolean; provider_ready: boolean }[]>`
-        SELECT (m.current_published_version_id IS NOT NULL) AS template_ready,
+        SELECT (m.current_published_version_id IS NOT NULL
+                -- an archived template must not reach a guest through an automation
+                -- that was merely disabled and is now being switched back on
+                AND m.archived_at IS NULL AND m.lifecycle_state <> 'archived') AS template_ready,
           EXISTS(SELECT 1 FROM guesthub.messaging_provider_connections p
             WHERE p.tenant_id = a.tenant_id AND p.provider IN ('gmail','gmail_smtp')
               AND p.status = 'connected' AND p.last_tested_at IS NOT NULL AND p.secret_ciphertext IS NOT NULL) AS provider_ready
-        FROM guesthub.communication_automations a JOIN guesthub.message_templates m ON m.id = a.template_id
+        FROM guesthub.communication_automations a
+        JOIN guesthub.message_templates m ON m.id = a.template_id AND m.tenant_id = a.tenant_id
         WHERE a.id = ${id} AND a.tenant_id = ${actor.tenantId}`;
       if (!ready) return { success: false, error: "האוטומציה לא נמצאה" };
       if (!ready.template_ready || !ready.provider_ready)
-        return { success: false, error: !ready.template_ready ? "יש לפרסם את התבנית לפני הפעלה" : "יש לחבר ולבדוק את ערוץ האימייל לפני הפעלה" };
+        return { success: false, error: !ready.template_ready
+          ? "יש לפרסם תבנית פעילה (לא בארכיון) לפני הפעלה"
+          : "יש לחבר ולבדוק את ערוץ האימייל לפני הפעלה" };
     }
     let changed = false;
     await sql.begin(async (tx) => {
@@ -358,11 +364,12 @@ export async function setAutomationStatusAction(idRaw: string, operation: "activ
   } catch (error) { return fail(error); }
 }
 
+// Only what the send path actually OBEYS. Quiet hours and failure notifications
+// have columns (and Zod schemas) ready for the day an automation can be delayed
+// or alerted on — but nothing reads them yet, and a switch that silently does
+// nothing is worse than no switch, so the UI does not offer them.
 const settingsSchema = z.object({
-  quietEnabled: z.boolean(), quietStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-  quietEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), maxAttempts: z.number().int().min(0).max(10),
-  failureEnabled: z.boolean(), failureEmail: z.string().email().or(z.literal("")),
-  manualBookingRecipients: z.array(z.string().email()).max(20), directBookingRecipients: z.array(z.string().email()).max(20),
+  maxAttempts: z.number().int().min(1).max(10),
 });
 
 export async function saveCommunicationSettingsAction(raw: unknown): Promise<CommunicationActionResult> {
@@ -372,20 +379,14 @@ export async function saveCommunicationSettingsAction(raw: unknown): Promise<Com
     const input = settingsSchema.parse(raw);
     await sql.begin(async (tx) => {
       await tx`
-      INSERT INTO guesthub.communication_settings
-        (tenant_id, quiet_hours, retry_policy, failure_notification,
-         manual_booking_recipients, direct_booking_recipients, created_by, updated_by)
-      VALUES (${actor.tenantId}, ${sql.json({ enabled: input.quietEnabled, start: input.quietStart, end: input.quietEnd } as never)},
+      INSERT INTO guesthub.communication_settings (tenant_id, retry_policy, created_by, updated_by)
+      VALUES (${actor.tenantId},
         ${sql.json({ maxAttempts: input.maxAttempts, baseDelaySeconds: 60, maxDelaySeconds: 3600 } as never)},
-        ${sql.json({ enabled: input.failureEnabled, ...(input.failureEmail ? { email: input.failureEmail } : {}) } as never)},
-        ${input.manualBookingRecipients}, ${input.directBookingRecipients}, ${actor.userId}, ${actor.userId})
-      ON CONFLICT (tenant_id) DO UPDATE SET quiet_hours = EXCLUDED.quiet_hours,
-        retry_policy = EXCLUDED.retry_policy, failure_notification = EXCLUDED.failure_notification,
-        manual_booking_recipients = EXCLUDED.manual_booking_recipients,
-        direct_booking_recipients = EXCLUDED.direct_booking_recipients, updated_by = EXCLUDED.updated_by`;
+        ${actor.userId}, ${actor.userId})
+      ON CONFLICT (tenant_id) DO UPDATE SET retry_policy = EXCLUDED.retry_policy,
+        updated_by = EXCLUDED.updated_by`;
       await writeAudit(actor, { entityType: "communication_settings", entityId: actor.tenantId,
-      action: "communication_settings_updated", after: { quietEnabled: input.quietEnabled, maxAttempts: input.maxAttempts,
-        manualRecipientCount: input.manualBookingRecipients.length, directRecipientCount: input.directBookingRecipients.length } }, tx);
+        action: "communication_settings_updated", after: { maxAttempts: input.maxAttempts } }, tx);
     });
     refresh();
     return { success: true, message: "כללי התקשורת נשמרו" };

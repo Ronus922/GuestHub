@@ -38,6 +38,12 @@ export default async function CommunicationSectionPage({ params }: { params: Pro
   }
 
   const canViewTemplates = hasPermission(actor, "communications.templates.view");
+  // The preview datasets are REAL reservations — the guest's email, phone, name,
+  // room and balance — and they are serialized to the browser. Editing a template
+  // is not a reason to see them: communications.templates.view is its own
+  // permission and does not imply reservations.view. Without it the editor
+  // previews against the property only, which still proves the template renders.
+  const canSeeGuestData = hasPermission(actor, "reservations.view");
   const [data, datasets, fallbackContext] = await Promise.all([
     loadCommunicationsData(actor.tenantId, {
       templates: canViewTemplates,
@@ -45,10 +51,9 @@ export default async function CommunicationSectionPage({ params }: { params: Pro
       deliveries: hasPermission(actor, "communications.deliveries.view"),
       channels: hasPermission(actor, "communications.channels.manage"),
     }),
-    // The editor previews against REAL reservations, run through the very same
-    // context builder the worker uses — so a preview cannot look correct while
-    // the live send would not.
-    canViewTemplates ? loadPreviewDatasets(actor.tenantId) : Promise.resolve([]),
+    // A preview runs through the very same context builder the worker uses — so a
+    // preview cannot look correct while the live send would not.
+    canViewTemplates && canSeeGuestData ? loadPreviewDatasets(actor.tenantId) : Promise.resolve([]),
     propertyOnlyContext(actor.tenantId),
   ]);
 

@@ -579,12 +579,7 @@ function DeliveryPanel({ row, onClose }: { row: DeliveryRow; onClose: () => void
 function ChannelsPanel({
   data, canManage, pending, onSave,
 }: { data: CommunicationsData; canManage: boolean; pending: boolean; onSave: (input: unknown) => void }) {
-  const [quiet, setQuiet] = useState(Boolean(data.settings.quietHours.enabled));
-  const [start, setStart] = useState(data.settings.quietHours.start ?? "22:00");
-  const [end, setEnd] = useState(data.settings.quietHours.end ?? "07:00");
   const [attempts, setAttempts] = useState(data.settings.retryPolicy.maxAttempts ?? 5);
-  const [failureEnabled, setFailureEnabled] = useState(Boolean(data.settings.failureNotification.enabled));
-  const [failureEmail, setFailureEmail] = useState(data.settings.failureNotification.email ?? "");
   const connected = data.channel.email.status === "connected";
 
   return (
@@ -629,52 +624,20 @@ function ChannelsPanel({
           <h2 className="h4">כללים כלליים</h2>
         </div>
         <div className="card-bd flex flex-col gap-4">
-          <span className="gc-toggle">
-            <button type="button" className="gc-sw" role="switch" aria-checked={quiet}
-              disabled={!canManage} onClick={() => setQuiet(!quiet)} aria-label="שעות שקטות" />
-            שעות שקטות
-          </span>
-          {quiet && (
-            <div className="gc-meta-grid">
-              <label className="field">
-                <span className="field-label">התחלה</span>
-                <input className="field-input" type="time" value={start} disabled={!canManage}
-                  onChange={(e) => setStart(e.target.value)} />
-              </label>
-              <label className="field">
-                <span className="field-label">סיום</span>
-                <input className="field-input" type="time" value={end} disabled={!canManage}
-                  onChange={(e) => setEnd(e.target.value)} />
-              </label>
-            </div>
-          )}
           <label className="field">
             <span className="field-label">מספר ניסיונות מרבי</span>
             <select className="field-input" value={attempts} disabled={!canManage}
               onChange={(e) => setAttempts(Number(e.target.value))}>
               {[1, 3, 5, 7, 10].map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
+            <span className="field-hint">
+              כמה פעמים לנסות לשלוח שוב לאחר כשל זמני אצל הספק, בהשהיה עולה. כשל קבוע
+              (כתובת לא תקינה, ערוץ מנותק) אינו מנוסה שוב.
+            </span>
           </label>
-          <span className="gc-toggle">
-            <button type="button" className="gc-sw" role="switch" aria-checked={failureEnabled}
-              disabled={!canManage} onClick={() => setFailureEnabled(!failureEnabled)} aria-label="התראת כשל" />
-            התראה על כשל סופי
-          </span>
-          {failureEnabled && (
-            <label className="field">
-              <span className="field-label">אימייל להתראה</span>
-              <input className="field-input ltr-num" type="email" value={failureEmail} disabled={!canManage}
-                onChange={(e) => setFailureEmail(e.target.value)} placeholder="ops@example.com" />
-            </label>
-          )}
           {canManage && (
             <button type="button" className="btn btn-primary self-start" disabled={pending}
-              onClick={() => onSave({
-                quietEnabled: quiet, quietStart: start, quietEnd: end, maxAttempts: attempts,
-                failureEnabled, failureEmail: failureEmail.trim(),
-                manualBookingRecipients: data.settings.manualBookingRecipients,
-                directBookingRecipients: data.settings.directBookingRecipients,
-              })}>
+              onClick={() => onSave({ maxAttempts: attempts })}>
               {pending ? "שומר…" : "שמירת כללים"}
             </button>
           )}

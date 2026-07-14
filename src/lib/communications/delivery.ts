@@ -24,6 +24,7 @@ export type DeliveryTickResult = {
   retried: number;
   failed: number;
   ambiguous: number;
+  cancelled: number;
 };
 
 type ErrorClass = { category: string; permanent: boolean };
@@ -67,6 +68,32 @@ export async function recoverAmbiguousDeliveries(): Promise<number> {
   return rows.length;
 }
 
+/**
+ * A queued email is not yet a sent email. Between queueing and the send — and
+ * across every retry, which can span an hour of backoff — the reservation can be
+ * cancelled, marked as a test, or opted out of guest communication. The eligibility
+ * that was true when the row was created is therefore RE-ASSERTED at claim time
+ * against the live reservation; a booking that is no longer eligible has its
+ * delivery cancelled instead of sent.
+ *
+ * Without this, a guest who phones to cancel still receives "ההזמנה שלכם אושרה".
+ */
+export async function cancelIneligibleDeliveries(): Promise<number> {
+  const rows = await sql<{ id: string }[]>`
+    UPDATE guesthub.outbound_messages o
+    SET status = 'cancelled', final_error_category = 'reservation_no_longer_eligible',
+        error_code = 'reservation_no_longer_eligible',
+        error_detail = 'ההזמנה שונתה לאחר הכניסה לתור — ההודעה לא נשלחה',
+        lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+    FROM guesthub.reservations r
+    WHERE o.status = 'queued' AND o.delivery_type = 'normal'
+      AND o.reservation_id IS NOT NULL
+      AND r.tenant_id = o.tenant_id AND r.id = o.reservation_id
+      AND (r.status <> 'confirmed' OR r.is_test OR r.guest_communication_opt_out)
+    RETURNING o.id`;
+  return rows.length;
+}
+
 /** Claim queued deliveries and create the immutable attempt row atomically. */
 export async function claimDeliveries(workerId: string, limit = 10): Promise<ClaimedDelivery[]> {
   return sql.begin(async (tx) => {
@@ -75,6 +102,9 @@ export async function claimDeliveries(workerId: string, limit = 10): Promise<Cla
         SELECT id
         FROM guesthub.outbound_messages
         WHERE channel = 'email' AND status = 'queued'
+          -- a test send is owned by the action that made it: it reports the real
+          -- outcome to the operator inline, and must not be stolen mid-flight
+          AND delivery_type <> 'test'
           AND scheduled_at <= now() AND attempt_count < max_attempts
           AND lease_owner IS NULL
         ORDER BY scheduled_at, created_at, id
@@ -254,8 +284,11 @@ export async function deliverClaimedEmail(
 }
 
 export async function drainDeliveries(workerId: string, limit = 10): Promise<DeliveryTickResult> {
-  const summary: DeliveryTickResult = { claimed: 0, sent: 0, retried: 0, failed: 0, ambiguous: 0 };
+  const summary: DeliveryTickResult = { claimed: 0, sent: 0, retried: 0, failed: 0, ambiguous: 0, cancelled: 0 };
   summary.ambiguous = await recoverAmbiguousDeliveries();
+  // eligibility is re-checked BEFORE the claim, so a cancelled booking can never
+  // be picked up for sending
+  summary.cancelled = await cancelIneligibleDeliveries();
   const deliveries = await claimDeliveries(workerId, limit);
   summary.claimed = deliveries.length;
   for (const delivery of deliveries) {
