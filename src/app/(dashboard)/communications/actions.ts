@@ -27,7 +27,7 @@ function refresh(): void {
 
 const STAGES = [
   "reservation", "pre_arrival", "check_in", "in_stay",
-  "check_out", "post_stay", "cancellation", "payment",
+  "check_out", "post_stay", "cancellation", "payment", "other",
 ] as const;
 
 const templateInputSchema = z.object({

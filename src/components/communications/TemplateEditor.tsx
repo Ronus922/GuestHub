@@ -11,7 +11,7 @@ import {
 } from "@/app/(dashboard)/communications/actions";
 import {
   ACTION_URL_OPTIONS, BLOCK_GROUPS, BLOCK_LIBRARY, BLOCK_TEXT_PLACEHOLDER,
-  CONDITION_LABELS, STAGE_KEYS, STAGE_LABELS, TEXT_BLOCKS,
+  CONDITION_LABELS, STAGE_KEYS, STAGE_LABELS, STYLE_OPTIONS, TEXT_BLOCKS,
   blockMeta, defaultTemplateContent, makeBlock, usageLabel,
 } from "@/lib/communications/blocks";
 import {
@@ -44,8 +44,12 @@ import type {
 
 type PreviewDataset = { id: string; label: string; context: CommunicationRenderContext };
 
+export type EditorSeed = { name?: string; category?: string; content?: StructuredTemplateContent };
+
 type Props = {
   template: CommunicationTemplateRow | null;
+  /** Initial values for a NEW template (from the creation window). Ignored when editing an existing row. */
+  seed?: EditorSeed;
   datasets: PreviewDataset[];
   fallbackContext: CommunicationRenderContext;
   senderAddress: string | null;
@@ -77,18 +81,19 @@ function dateTime(value: string): string {
 }
 
 export function TemplateEditor({
-  template, datasets, fallbackContext, senderAddress, canEdit, canPublish, canTest, onClose,
+  template, seed, datasets, fallbackContext, senderAddress, canEdit, canPublish, canTest, onClose,
 }: Props) {
   const router = useRouter();
-  const [name, setName] = useState(template?.name ?? "תבנית חדשה");
+  const [name, setName] = useState(template?.name ?? seed?.name ?? "תבנית חדשה");
   const [subject, setSubject] = useState(template?.subject ?? "ההזמנה שלכם אושרה – {{reservation.number}}");
   const [preheader, setPreheader] = useState(template?.preheader ?? "");
   const [sender, setSender] = useState(template?.senderDisplayName ?? "");
   const [replyTo, setReplyTo] = useState(template?.replyTo ?? "");
-  const [stage, setStage] = useState(template?.category ?? "reservation");
+  const [stage, setStage] = useState(template?.category ?? seed?.category ?? "reservation");
   const [language, setLanguage] = useState(template?.language ?? "he");
   const [content, setContent] = useState<StructuredTemplateContent>(
-    isContent(template?.draftContent) ? template.draftContent : defaultTemplateContent(),
+    isContent(template?.draftContent) ? template.draftContent
+      : seed?.content ?? defaultTemplateContent(),
   );
 
   const [selected, setSelected] = useState<string | null>(null);
@@ -104,9 +109,20 @@ export function TemplateEditor({
   const [testTo, setTestTo] = useState(senderAddress ?? "");
   const [pending, startTransition] = useTransition();
 
+  // Drag-and-drop + direct-editing state.
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [varHint, setVarHint] = useState(false);
+  // The active drag payload for BLOCK drags (palette→canvas or canvas reorder).
+  // Variable drags carry their token in dataTransfer instead, so a variable drag
+  // never trips the canvas block-insertion indicator.
+  const drag = useRef<{ kind: "new"; type: TemplateBlockType } | { kind: "move"; id: string } | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+
+  type FieldKind = "subject" | "preheader" | "block" | "label" | "url";
   // The field a variable click inserts into. Captured on focus; the palette
   // buttons preventDefault on mousedown so focus (and the caret) survive the click.
-  const activeField = useRef<{ kind: "subject" | "preheader" | "block"; el: HTMLInputElement | HTMLTextAreaElement } | null>(null);
+  const activeField = useRef<{ kind: FieldKind; el: HTMLInputElement | HTMLTextAreaElement } | null>(null);
 
   const context = useMemo(
     () => datasets.find((d) => d.id === datasetId)?.context ?? fallbackContext,
@@ -114,6 +130,37 @@ export function TemplateEditor({
   );
 
   const selectedBlock = content.blocks.find((b) => b.id === selected) ?? null;
+
+  // A labeled select bound to one style token on the selected block (§8).
+  const styleSelect = (
+    field: keyof TemplateBlock["data"], label: string,
+    opts: readonly { value: string; label: string }[], def: string,
+  ) => (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      <select
+        className="field-input"
+        disabled={!canEdit}
+        value={String(selectedBlock?.data[field] ?? def)}
+        onChange={(e) => patchData({ [field]: e.target.value } as Partial<TemplateBlock["data"]>)}
+      >
+        {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+  const fieldToggle = (
+    field: keyof TemplateBlock["data"], label: string, defaultOn: boolean,
+  ) => {
+    const on = selectedBlock?.data[field] === undefined ? defaultOn : Boolean(selectedBlock?.data[field]);
+    return (
+      <span className="gc-toggle">
+        <button type="button" className="gc-sw" role="switch" disabled={!canEdit}
+          aria-checked={on} aria-label={label}
+          onClick={() => patchData({ [field]: !on } as Partial<TemplateBlock["data"]>)} />
+        {label}
+      </span>
+    );
+  };
 
   // The renderer parses STRICTLY — it is the same code that produces what a guest
   // receives, and it must refuse malformed content. But mid-edit content is
@@ -150,11 +197,22 @@ export function TemplateEditor({
   const patchData = (change: Partial<TemplateBlock["data"]>) =>
     patch((blocks) => blocks.map((b) => (b.id === selected ? { ...b, data: { ...b.data, ...change } } : b)));
 
-  const addBlock = (type: TemplateBlockType) => {
+  const insertBlockAt = (type: TemplateBlockType, at: number) => {
     const block = makeBlock(type, `${type}-${crypto.randomUUID().slice(0, 8)}`);
-    patch((blocks) => [...blocks, block]);
+    patch((blocks) => [...blocks.slice(0, at), block, ...blocks.slice(at)]);
     setSelected(block.id);
+    // A dropped text block should be typeable at once (§3).
+    if (TEXT_BLOCKS.includes(type)) setEditingId(block.id);
   };
+  const addBlock = (type: TemplateBlockType) => insertBlockAt(type, content.blocks.length);
+  const moveBlockTo = (id: string, at: number) =>
+    patch((blocks) => {
+      const from = blocks.findIndex((b) => b.id === id);
+      if (from < 0) return blocks;
+      const without = [...blocks.slice(0, from), ...blocks.slice(from + 1)];
+      const target = at > from ? at - 1 : at;
+      return [...without.slice(0, target), blocks[from], ...without.slice(target)];
+    });
   const moveBlock = (id: string, direction: -1 | 1) =>
     patch((blocks) => {
       const index = blocks.findIndex((b) => b.id === id);
@@ -174,23 +232,74 @@ export function TemplateEditor({
   const removeBlock = (id: string) => {
     patch((blocks) => blocks.filter((b) => b.id !== id));
     if (selected === id) setSelected(null);
+    if (editingId === id) setEditingId(null);
   };
 
-  const insertVariable = (token: string) => {
-    const field = activeField.current;
-    if (!field) return;
-    const { el, kind } = field;
-    const start = el.selectionStart ?? el.value.length;
-    const end = el.selectionEnd ?? start;
-    const next = `${el.value.slice(0, start)}${token}${el.value.slice(end)}`;
+  // Compute the insertion slot from the pointer Y over the stacked block list.
+  const canvasDragOver = (e: React.DragEvent) => {
+    if (!drag.current || !canvasRef.current) return;
+    e.preventDefault();
+    const els = [...canvasRef.current.querySelectorAll<HTMLElement>("[data-blk]")];
+    let idx = els.length;
+    for (let i = 0; i < els.length; i++) {
+      const r = els[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) { idx = i; break; }
+    }
+    setDropIndex(idx);
+  };
+  const canvasDrop = (e: React.DragEvent) => {
+    const payload = drag.current;
+    if (!payload) return;
+    e.preventDefault();
+    const at = dropIndex ?? content.blocks.length;
+    if (payload.kind === "new") insertBlockAt(payload.type, at);
+    else moveBlockTo(payload.id, at);
+    drag.current = null;
+    setDropIndex(null);
+  };
+  const endDrag = () => { drag.current = null; setDropIndex(null); };
+
+  const applyField = (kind: FieldKind, next: string) => {
     if (kind === "subject") setSubject(next);
     else if (kind === "preheader") setPreheader(next);
+    else if (kind === "label") patchData({ label: next });
+    else if (kind === "url") patchData({ url: next });
     else patchData({ text: next });
     touch();
+  };
+
+  /** Splice a token into a text field at `pos`, restore focus + caret. */
+  const spliceToken = (el: HTMLInputElement | HTMLTextAreaElement, kind: FieldKind, token: string, pos: number) => {
+    const end = el.selectionEnd != null && el.selectionEnd >= pos ? el.selectionEnd : pos;
+    applyField(kind, `${el.value.slice(0, pos)}${token}${el.value.slice(end)}`);
     requestAnimationFrame(() => {
       el.focus();
-      el.setSelectionRange(start + token.length, start + token.length);
+      el.setSelectionRange(pos + token.length, pos + token.length);
     });
+  };
+
+  // Click-to-insert: into the currently focused field. When nothing is focused,
+  // say so — never silently do nothing (§6).
+  const insertVariable = (token: string) => {
+    const field = activeField.current;
+    if (!field || !field.el.isConnected) { setVarHint(true); return; }
+    setVarHint(false);
+    spliceToken(field.el, field.kind, token, field.el.selectionStart ?? field.el.value.length);
+  };
+
+  // Drop-to-insert: at the caret the browser placed under the pointer during the
+  // drag (selectionStart reflects it for inputs/textareas), else at the end.
+  const onFieldDrop = (e: React.DragEvent<HTMLInputElement | HTMLTextAreaElement>, kind: FieldKind) => {
+    const token = e.dataTransfer.getData("application/x-gh-variable");
+    if (!token) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget;
+    setVarHint(false);
+    spliceToken(el, kind, token, el.selectionStart ?? el.value.length);
+  };
+  const allowVarDrop = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes("application/x-gh-variable")) { e.preventDefault(); e.stopPropagation(); }
   };
 
   const payload = {
@@ -343,7 +452,7 @@ export function TemplateEditor({
 
           {tab === "blocks" ? (
             <>
-              <p className="gc-hint">הוסיפו בלוק בלחיצה. הסדר נקבע בסרגל הבלוק שעל הקנבס.</p>
+              <p className="gc-hint">גררו בלוק לקנבס, או הוסיפו בלחיצה. הסדר נקבע בגרירה או בחיצי הבלוק שעל הקנבס.</p>
               {BLOCK_GROUPS.map((group) => {
                 const items = palette.filter((b) => b.group === group);
                 if (!items.length) return null;
@@ -357,8 +466,15 @@ export function TemplateEditor({
                           type="button"
                           className="gc-libc"
                           disabled={!canEdit}
+                          draggable={canEdit}
+                          onDragStart={(e) => {
+                            drag.current = { kind: "new", type: block.type };
+                            e.dataTransfer.effectAllowed = "copy";
+                            e.dataTransfer.setData("text/plain", block.label);
+                          }}
+                          onDragEnd={endDrag}
                           onClick={() => addBlock(block.type)}
-                          title={`הוספת ${block.label}`}
+                          title={`גרירה או הוספה: ${block.label}`}
                         >
                           <Icon name="plus-circle" size={17} className="gc-libc-add" />
                           <Icon name={block.icon} size={20} />
@@ -372,7 +488,13 @@ export function TemplateEditor({
             </>
           ) : (
             <>
-              <p className="gc-hint">לחיצה מוסיפה למיקום הסמן בשדה הטקסט הפעיל.</p>
+              <p className="gc-hint">גררו משתנה לשדה טקסט, או לחצו כדי להוסיף במיקום הסמן.</p>
+              {varHint && (
+                <p className="gc-varhint" role="status">
+                  <Icon name="touch" size={17} />
+                  בחרו שדה טקסט או בלוק שאליו תרצו להוסיף את המשתנה
+                </p>
+              )}
               {VARIABLE_GROUPS.map((group) => {
                 const items = variables.filter((v) => v.group === group.key);
                 if (!items.length) return null;
@@ -385,8 +507,15 @@ export function TemplateEditor({
                         type="button"
                         className="gc-var"
                         disabled={!canEdit}
+                        draggable={canEdit}
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = "copy";
+                          e.dataTransfer.setData("application/x-gh-variable", `{{${variable.key}}}`);
+                          e.dataTransfer.setData("text/plain", `{{${variable.key}}}`);
+                        }}
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => insertVariable(`{{${variable.key}}}`)}
+                        title={`הוספת ${variable.label}`}
                       >
                         <span>{variable.label}</span>
                         <code className="ltr-num">{`{{${variable.key}}}`}</code>
@@ -464,6 +593,7 @@ export function TemplateEditor({
                 </span>
                 <input className="field-input" value={subject} disabled={!canEdit}
                   onFocus={(e) => { activeField.current = { kind: "subject", el: e.currentTarget }; }}
+                  onDragOver={allowVarDrop} onDrop={(e) => onFieldDrop(e, "subject")}
                   onChange={(e) => { setSubject(e.target.value); touch(); }} />
               </label>
               <label className="field">
@@ -473,14 +603,20 @@ export function TemplateEditor({
                 </span>
                 <input className="field-input" value={preheader} disabled={!canEdit}
                   onFocus={(e) => { activeField.current = { kind: "preheader", el: e.currentTarget }; }}
+                  onDragOver={allowVarDrop} onDrop={(e) => onFieldDrop(e, "preheader")}
                   onChange={(e) => { setPreheader(e.target.value); touch(); }}
                   placeholder="התקציר שמופיע ליד הנושא בתיבת הדואר" />
               </label>
             </div>
           </div>
 
-          {/* the mail sheet */}
-          <div className={`gc-mail${device === "phone" ? " is-phone" : ""}`}>
+          {/* the mail sheet — also the block drop zone (palette→canvas + reorder) */}
+          <div
+            ref={canvasRef}
+            className={`gc-mail${device === "phone" ? " is-phone" : ""}`}
+            onDragOver={canvasDragOver}
+            onDrop={canvasDrop}
+          >
             <div className="gc-envelope">
               <p><b>מאת</b> <span>{sender || "שם העסק"} <span className="ltr-num">&lt;{senderAddress ?? "ערוץ טרם חובר"}&gt;</span></span></p>
               <p><b>אל</b> <span className="ltr-num">{String(context.values["guest.email"] ?? "guest@example.com")}</span></p>
@@ -496,54 +632,84 @@ export function TemplateEditor({
                 srcDoc={emailDoc?.html ?? ""}
                 title="תצוגה מקדימה של האימייל"
               />
+            ) : blocks.length === 0 ? (
+              <p className="gc-canvas-empty">
+                <Icon name="blocks" size={24} />
+                גררו בלוק לכאן או הוסיפו אותו מרשימת הבלוקים כדי להתחיל
+              </p>
             ) : (
               blocks.map((block, index) => {
                 const source = content.blocks[index];
                 const meta = blockMeta(block.type);
                 const fullBleed = block.type === "logo_header" || block.type === "contact";
                 const isSelected = selected === block.id;
+                const editable = TEXT_BLOCKS.includes(block.type);
+                const isEditing = editingId === block.id && editable;
                 return (
-                  <div
-                    key={block.id}
-                    className={`gc-blk is-editable${isSelected ? " is-sel" : ""}${block.visible ? "" : " is-off"}`}
-                    onClick={() => setSelected(block.id)}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(block.id); } }}
-                    aria-pressed={isSelected}
-                    aria-label={meta?.label ?? block.type}
-                  >
-                    {isSelected && (
-                      <>
-                        <span className="gc-blk-tag">{meta?.label}</span>
-                        <span className="gc-blk-tb" onClick={(e) => e.stopPropagation()}>
-                          <button type="button" title="הזזה למעלה" disabled={!canEdit || index === 0}
-                            onClick={() => moveBlock(block.id, -1)}><Icon name="arrow-up" size={13.5} label="הזזה למעלה" /></button>
-                          <button type="button" title="הזזה למטה" disabled={!canEdit || index === blocks.length - 1}
-                            onClick={() => moveBlock(block.id, 1)}><Icon name="arrow-down" size={13.5} label="הזזה למטה" /></button>
-                          <button type="button" title="שכפול" disabled={!canEdit}
-                            onClick={() => duplicateBlock(block.id)}><Icon name="copy" size={13.5} label="שכפול" /></button>
-                          <button type="button" title={source?.enabled ? "הסתרה" : "הצגה"} disabled={!canEdit}
-                            onClick={() => patchSelected({ enabled: !source?.enabled })}>
-                            <Icon name={source?.enabled ? "eye-off" : "eye"} size={13.5} label={source?.enabled ? "הסתרה" : "הצגה"} />
-                          </button>
-                          <button type="button" title="מחיקה" disabled={!canEdit}
-                            onClick={() => removeBlock(block.id)}><Icon name="trash" size={13.5} label="מחיקה" /></button>
-                        </span>
-                      </>
-                    )}
-                    {/* the block's OWN bytes — the same string the email carries. A block
-                        that renders to nothing (condition unmet, or a variable the data has
-                        no value for) would otherwise be a blank strip the operator cannot
-                        explain, so it says out loud why it will not be sent. */}
-                    {block.html ? (
-                      <div className={fullBleed ? undefined : "gc-blk-pad"} dangerouslySetInnerHTML={{ __html: block.html }} />
-                    ) : (
-                      <p className="gc-blk-pad gc-blk-ghost">
-                        <Icon name="eye-off" size={17} />
-                        {meta?.label} — לא ייכלל בהודעה בנתוני התצוגה הנוכחיים
-                      </p>
-                    )}
+                  <div key={block.id} data-blk={block.id}>
+                    {dropIndex === index && <div className="gc-dropline" aria-hidden="true" />}
+                    <div
+                      className={`gc-blk is-editable${isSelected ? " is-sel" : ""}${block.visible ? "" : " is-off"}`}
+                      onClick={() => { setSelected(block.id); setVarHint(false); setEditingId(editable ? block.id : null); }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(block.id); } }}
+                      aria-pressed={isSelected}
+                      aria-label={meta?.label ?? block.type}
+                    >
+                      {isSelected && (
+                        <>
+                          <span className="gc-blk-tag">{meta?.label}</span>
+                          <span className="gc-blk-tb" onClick={(e) => e.stopPropagation()}>
+                            <button type="button" className="gc-blk-grip" title="גרירה לסידור מחדש" aria-label="גרירה לסידור מחדש"
+                              draggable={canEdit}
+                              onDragStart={(e) => { drag.current = { kind: "move", id: block.id }; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", meta?.label ?? ""); }}
+                              onDragEnd={endDrag}>
+                              <Icon name="drag" size={13.5} label="גרירה" />
+                            </button>
+                            <button type="button" title="הזזה למעלה" disabled={!canEdit || index === 0}
+                              onClick={() => moveBlock(block.id, -1)}><Icon name="arrow-up" size={13.5} label="הזזה למעלה" /></button>
+                            <button type="button" title="הזזה למטה" disabled={!canEdit || index === blocks.length - 1}
+                              onClick={() => moveBlock(block.id, 1)}><Icon name="arrow-down" size={13.5} label="הזזה למטה" /></button>
+                            <button type="button" title="שכפול" disabled={!canEdit}
+                              onClick={() => duplicateBlock(block.id)}><Icon name="copy" size={13.5} label="שכפול" /></button>
+                            <button type="button" title={source?.enabled ? "הסתרה" : "הצגה"} disabled={!canEdit}
+                              onClick={() => patchSelected({ enabled: !source?.enabled })}>
+                              <Icon name={source?.enabled ? "eye-off" : "eye"} size={13.5} label={source?.enabled ? "הסתרה" : "הצגה"} />
+                            </button>
+                            <button type="button" title="מחיקה" disabled={!canEdit}
+                              onClick={() => removeBlock(block.id)}><Icon name="trash" size={13.5} label="מחיקה" /></button>
+                          </span>
+                        </>
+                      )}
+                      {/* Direct editing: a text/heading/signature block becomes an inline
+                          field on click (§7). It is an INPUT, not a second renderer —
+                          the canvas still paints the renderer's bytes everywhere else. */}
+                      {isEditing ? (
+                        <textarea
+                          className="gc-inline"
+                          autoFocus
+                          disabled={!canEdit}
+                          value={source?.data.text ?? ""}
+                          placeholder={BLOCK_TEXT_PLACEHOLDER[block.type]}
+                          onClick={(e) => e.stopPropagation()}
+                          onFocus={(e) => { activeField.current = { kind: "block", el: e.currentTarget }; }}
+                          onChange={(e) => patchData({ text: e.target.value })}
+                          onDragOver={allowVarDrop}
+                          onDrop={(e) => onFieldDrop(e, "block")}
+                          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setEditingId(null); e.currentTarget.blur(); } }}
+                          onBlur={() => setEditingId(null)}
+                        />
+                      ) : block.html ? (
+                        <div className={fullBleed ? undefined : "gc-blk-pad"} dangerouslySetInnerHTML={{ __html: block.html }} />
+                      ) : (
+                        <p className="gc-blk-pad gc-blk-ghost">
+                          <Icon name="eye-off" size={17} />
+                          {meta?.label} — לא ייכלל בהודעה בנתוני התצוגה הנוכחיים
+                        </p>
+                      )}
+                    </div>
+                    {dropIndex === index + 1 && index === blocks.length - 1 && <div className="gc-dropline" aria-hidden="true" />}
                   </div>
                 );
               })
@@ -580,9 +746,11 @@ export function TemplateEditor({
                     value={selectedBlock.data.text ?? ""}
                     placeholder={BLOCK_TEXT_PLACEHOLDER[selectedBlock.type]}
                     onFocus={(e) => { activeField.current = { kind: "block", el: e.currentTarget }; }}
+                    onDragOver={allowVarDrop}
+                    onDrop={(e) => onFieldDrop(e, "block")}
                     onChange={(e) => patchData({ text: e.target.value })}
                   />
-                  <span className="field-hint">אפשר לשלב משתנים מלשונית ״משתנים״</span>
+                  <span className="field-hint">אפשר להקליד ישירות בקנבס, או לשלב משתנים מלשונית ״משתנים״</span>
                 </label>
               )}
 
@@ -593,22 +761,33 @@ export function TemplateEditor({
                 </p>
               )}
 
-              {(selectedBlock.type === "heading" || selectedBlock.type === "text") && (
-                <div className="field">
-                  <span className="field-label">יישור טקסט</span>
-                  <div className="gc-seg">
-                    <button type="button" className="gc-segb gc-seg-icon" disabled={!canEdit}
-                      aria-pressed={(selectedBlock.data.align ?? "start") === "start"}
-                      onClick={() => patchData({ align: "start" })} title="יישור לימין">
-                      <Icon name="align-start" size={17} label="יישור לימין" />
-                    </button>
-                    <button type="button" className="gc-segb gc-seg-icon" disabled={!canEdit}
-                      aria-pressed={selectedBlock.data.align === "center"}
-                      onClick={() => patchData({ align: "center" })} title="מרכוז">
-                      <Icon name="align-center" size={17} label="מרכוז" />
-                    </button>
+              {TEXT_BLOCKS.includes(selectedBlock.type) && (
+                <>
+                  <div className="field">
+                    <span className="field-label">יישור</span>
+                    <div className="gc-seg">
+                      {([["start", "align-start", "ימין"], ["center", "align-center", "מרכז"], ["end", "align-end", "שמאל"]] as const).map(([value, icon, t]) => (
+                        <button key={value} type="button" className="gc-segb gc-seg-icon" disabled={!canEdit}
+                          aria-pressed={(selectedBlock.data.align ?? "start") === value}
+                          onClick={() => patchData({ align: value })} title={t}>
+                          <Icon name={icon} size={17} label={t} />
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                  <div className="gc-two">
+                    {styleSelect("fontSize", "גודל טקסט", STYLE_OPTIONS.fontSize, selectedBlock.type === "heading" ? "xl" : "base")}
+                    {styleSelect("fontWeight", "עובי", STYLE_OPTIONS.fontWeight, selectedBlock.type === "heading" ? "black" : "medium")}
+                  </div>
+                  <div className="gc-two">
+                    {styleSelect("lineHeight", "גובה שורה", STYLE_OPTIONS.lineHeight, "normal")}
+                    {styleSelect("textColor", "צבע טקסט", STYLE_OPTIONS.textColor, selectedBlock.type === "signature" ? "muted" : "ink")}
+                  </div>
+                  <div className="gc-two">
+                    {styleSelect("background", "רקע", STYLE_OPTIONS.background, "none")}
+                    {styleSelect("padding", "ריווח פנימי", STYLE_OPTIONS.padding, "none")}
+                  </div>
+                </>
               )}
 
               {selectedBlock.type === "action_button" && (
@@ -616,39 +795,75 @@ export function TemplateEditor({
                   <label className="field">
                     <span className="field-label">טקסט הכפתור</span>
                     <input className="field-input" disabled={!canEdit} value={selectedBlock.data.label ?? ""}
-                      onChange={(e) => patchData({ label: e.target.value })} />
+                      onFocus={(e) => { activeField.current = { kind: "label", el: e.currentTarget }; }}
+                      onDragOver={allowVarDrop} onDrop={(e) => onFieldDrop(e, "label")}
+                      onChange={(e) => patchData({ label: e.target.value })} placeholder="לצפייה בהזמנה" />
                   </label>
                   <label className="field">
                     <span className="field-label">קישור יעד</span>
-                    <select className="field-input" disabled={!canEdit} value={selectedBlock.data.urlVariable ?? ""}
-                      onChange={(e) => patchData({ urlVariable: e.target.value })}>
+                    <input className="field-input ltr-num" disabled={!canEdit}
+                      value={selectedBlock.data.url ?? (selectedBlock.data.urlVariable ? `{{${selectedBlock.data.urlVariable}}}` : "")}
+                      onFocus={(e) => { activeField.current = { kind: "url", el: e.currentTarget }; }}
+                      onDragOver={allowVarDrop} onDrop={(e) => onFieldDrop(e, "url")}
+                      onChange={(e) => patchData({ url: e.target.value, urlVariable: undefined })}
+                      placeholder="https://…  או  {{reservation.manage_url}}" />
+                    <span className="gc-quickvars">
                       {ACTION_URL_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
+                        <button key={option.value} type="button" className="gc-chipbtn" disabled={!canEdit}
+                          onClick={() => patchData({ url: `{{${option.value}}}`, urlVariable: undefined })}>
+                          <Icon name="link" size={13.5} /> {option.label}
+                        </button>
                       ))}
-                    </select>
-                    <span className="field-hint">אם הקישור אינו קיים בהזמנה, הכפתור לא ייכלל בהודעה</span>
+                    </span>
+                    <span className="field-hint">קישור קבוע או משתנה. אם היעד ריק בהזמנה, הכפתור לא ייכלל בהודעה.</span>
                   </label>
+                  {canPublish && !selectedBlock.data.url?.trim() && !selectedBlock.data.urlVariable && (
+                    <p className="field-msg" role="alert">
+                      <Icon name="warning" size={13.5} /> לכפתור אין יעד — לא ניתן לפרסם אותו כך.
+                    </p>
+                  )}
+                  <div className="field">
+                    <span className="field-label">יישור</span>
+                    <div className="gc-seg">
+                      {([["start", "align-start", "ימין"], ["center", "align-center", "מרכז"], ["end", "align-end", "שמאל"]] as const).map(([value, icon, t]) => (
+                        <button key={value} type="button" className="gc-segb gc-seg-icon" disabled={!canEdit}
+                          aria-pressed={(selectedBlock.data.align ?? "center") === value}
+                          onClick={() => patchData({ align: value })} title={t}>
+                          <Icon name={icon} size={17} label={t} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="gc-two">
+                    {styleSelect("buttonWidth", "רוחב", STYLE_OPTIONS.buttonWidth, "auto")}
+                    {styleSelect("buttonRadius", "פינות", STYLE_OPTIONS.buttonRadius, "md")}
+                  </div>
+                  <div className="gc-two">
+                    {styleSelect("buttonBg", "צבע רקע", STYLE_OPTIONS.buttonBg, "brand")}
+                    {styleSelect("buttonText", "צבע טקסט", STYLE_OPTIONS.buttonText, "white")}
+                  </div>
                 </>
               )}
 
               {selectedBlock.type === "reservation_details" && (
                 <div className="field">
                   <span className="field-label">שדות מוצגים</span>
-                  <span className="gc-toggle">
-                    <button type="button" className="gc-sw" role="switch" disabled={!canEdit}
-                      aria-checked={selectedBlock.data.showTimes !== false}
-                      onClick={() => patchData({ showTimes: selectedBlock.data.showTimes === false })}
-                      aria-label="שעות צ׳ק-אין וצ׳ק-אאוט" />
-                    שעות צ׳ק-אין וצ׳ק-אאוט
-                  </span>
-                  <span className="gc-toggle">
-                    <button type="button" className="gc-sw" role="switch" disabled={!canEdit}
-                      aria-checked={selectedBlock.data.showNights !== false}
-                      onClick={() => patchData({ showNights: selectedBlock.data.showNights === false })}
-                      aria-label="מספר לילות" />
-                    מספר לילות
-                  </span>
-                  <span className="field-hint">שעות הצ׳ק-אין והצ׳ק-אאוט נמשכות אוטומטית מהגדרות הנכס</span>
+                  {fieldToggle("showSource", "מקור הזמנה", false)}
+                  {fieldToggle("showCreatedAt", "תאריך יצירה", false)}
+                  {fieldToggle("showTimes", "שעות צ׳ק-אין וצ׳ק-אאוט", true)}
+                  {fieldToggle("showNights", "מספר לילות", true)}
+                  {fieldToggle("showGuests", "מספר אורחים", false)}
+                  <span className="field-hint">שם האורח, מספר ההזמנה ותאריכי ההגעה/עזיבה מוצגים תמיד. השעות נמשכות מהגדרות הנכס.</span>
+                </div>
+              )}
+
+              {selectedBlock.type === "payment_summary" && (
+                <div className="field">
+                  <span className="field-label">שדות מוצגים</span>
+                  {fieldToggle("showTotal", "סכום כולל", true)}
+                  {fieldToggle("showPaid", "שולם", true)}
+                  {fieldToggle("showBalance", "יתרה לתשלום", true)}
+                  <span className="field-hint">הסכומים והמטבע נמשכים מההזמנה ומוצגים כפי שהאורח יראה.</span>
                 </div>
               )}
 

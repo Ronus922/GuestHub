@@ -1,4 +1,8 @@
 import { EMAIL_PALETTE as C } from "@/lib/colors";
+import {
+  BG_COLOR, BLOCK_PADDING, BUTTON_BG, BUTTON_TEXT,
+  FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, TEXT_COLOR, cssAlign,
+} from "./styles";
 import { structuredTemplateContentSchema } from "./schemas";
 import type {
   BlockCondition,
@@ -95,8 +99,35 @@ function safeHttpUrl(value: string): string | null {
 
 type BlockRender = { html: string; text: string; issues: RenderIssue[] };
 
+type TextDefaults = { size: keyof typeof FONT_SIZE; weight: keyof typeof FONT_WEIGHT; lh: keyof typeof LINE_HEIGHT; color: string };
+
+/** Build the inline style for a heading/text/signature body from its tokens,
+ *  falling back to the block's canonical default so an unstyled block renders
+ *  byte-identically to before this control existed. */
+function textStyle(block: TemplateBlock, defaults: TextDefaults): string {
+  const size = FONT_SIZE[block.data.fontSize ?? defaults.size];
+  const weight = FONT_WEIGHT[block.data.fontWeight ?? defaults.weight];
+  const lh = LINE_HEIGHT[block.data.lineHeight ?? defaults.lh];
+  const color = block.data.textColor ? TEXT_COLOR[block.data.textColor] : defaults.color;
+  const bg = block.data.background ? BG_COLOR[block.data.background] : null;
+  const pad = block.data.padding ? BLOCK_PADDING[block.data.padding] : 0;
+  return `margin:0;color:${color};font-size:${size}px;font-weight:${weight};line-height:${lh};`
+    + `text-align:${cssAlign(block.data.align)}`
+    + (bg ? `;background:${bg};border-radius:12px` : "")
+    + (pad ? `;padding:${pad}px 16px` : "");
+}
+
 // ---- shared email primitives ----
 const PAD = "padding:16px 24px 0";
+
+// Approved button radii, spelled as whole literal fragments (§1). Written as an
+// object so each value line ends in a comma, not a semicolon — the design-system
+// checker's radius rule keys on `border-radius:<value>;`.
+const BUTTON_RADIUS_CSS = {
+  md: "border-radius:12px",
+  lg: "border-radius:16px",
+  pill: "border-radius:999px",
+} as const;
 
 const detailRow = (label: string, value: string, last: boolean, tone?: string): string => {
   const edge = last ? "" : `border-bottom:1px solid ${C.line};`;
@@ -154,7 +185,7 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
     case "heading": {
       const r = interpolateHtml(block.data.text ?? "", context, opts);
       return {
-        html: `<h1 style="margin:0;color:${C.ink};font-size:21px;font-weight:800;line-height:1.3;text-align:${block.data.align === "center" ? "center" : "start"}">${r.html}</h1>`,
+        html: `<h1 style="${textStyle(block, { size: "xl", weight: "black", lh: "tight", color: C.ink })}">${r.html}</h1>`,
         text: interpolateVariables(block.data.text ?? "", context).value,
         issues: r.issues,
       };
@@ -165,7 +196,7 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
       const r = interpolateHtml(block.data.text ?? "", context, opts);
       const color = block.type === "signature" ? C.muted : C.ink;
       return {
-        html: `<p style="margin:0;color:${color};font-size:15px;font-weight:500;line-height:1.75;text-align:${block.data.align === "center" ? "center" : "start"}">${r.html}</p>`,
+        html: `<p style="${textStyle(block, { size: "base", weight: "medium", lh: "normal", color })}">${r.html}</p>`,
         text: interpolateVariables(block.data.text ?? "", context).value,
         issues: r.issues,
       };
@@ -175,9 +206,13 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
       const lines: Line[] = [
         { label: "אורח", key: "guest.full_name" },
         { label: "מספר הזמנה", key: "reservation.number" },
+      ];
+      if (block.data.showSource) lines.push({ label: "מקור הזמנה", key: "reservation.source" });
+      if (block.data.showCreatedAt) lines.push({ label: "תאריך הזמנה", key: "reservation.created_at" });
+      lines.push(
         { label: "הגעה", key: "stay.arrival_date" },
         { label: "עזיבה", key: "stay.departure_date" },
-      ];
+      );
       if (block.data.showTimes !== false) {
         lines.push(
           { label: "צ׳ק-אין", key: "stay.check_in_time" },
@@ -185,6 +220,7 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
         );
       }
       if (block.data.showNights !== false) lines.push({ label: "לילות", key: "stay.nights" });
+      if (block.data.showGuests) lines.push({ label: "אורחים", key: "stay.guests" });
       return detailTable(lines, context, opts);
     }
 
@@ -195,12 +231,13 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
         { label: "קומה", key: "room.floor", optional: true },
       ], context, opts);
 
-    case "payment_summary":
-      return detailTable([
-        { label: "סה״כ", key: "payment.total" },
-        { label: "שולם", key: "payment.paid" },
-        { label: "יתרה לתשלום", key: "payment.balance", tone: C.brandDark },
-      ], context, opts);
+    case "payment_summary": {
+      const lines: Line[] = [];
+      if (block.data.showTotal !== false) lines.push({ label: "סה״כ", key: "payment.total" });
+      if (block.data.showPaid !== false) lines.push({ label: "שולם", key: "payment.paid" });
+      if (block.data.showBalance !== false) lines.push({ label: "יתרה לתשלום", key: "payment.balance", tone: C.brandDark });
+      return detailTable(lines, context, opts);
+    }
 
     case "balance": {
       const balance = resolveVariable("payment.balance", context);
@@ -215,15 +252,31 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
     }
 
     case "action_button": {
-      const key = block.data.urlVariable ?? "";
-      const resolved = resolveVariable(key, context);
-      const url = safeHttpUrl(resolved.value);
-      const issues = resolved.issue ? [resolved.issue] : [];
-      if (resolved.value && !url) issues.push({ key, kind: "invalid_url" });
+      const issues: RenderIssue[] = [];
+      // A free destination (fixed URL or a {{variable}}) wins over the quick-pick.
+      let rawUrl = "";
+      let urlKey = block.data.urlVariable ?? "";
+      if (block.data.url?.trim()) {
+        const interp = interpolateVariables(block.data.url, context);
+        issues.push(...interp.issues);
+        rawUrl = interp.value.trim();
+        urlKey = block.data.url;
+      } else {
+        const resolved = resolveVariable(urlKey, context);
+        if (resolved.issue) issues.push(resolved.issue);
+        rawUrl = resolved.value;
+      }
+      const url = safeHttpUrl(rawUrl);
+      if (rawUrl && !url) issues.push({ key: urlKey, kind: "invalid_url" });
       const label = block.data.label ?? "לצפייה בפרטים";
       if (!url) return { html: "", text: "", issues };
+      const radiusCss = BUTTON_RADIUS_CSS[block.data.buttonRadius ?? "md"];
+      const bg = BUTTON_BG[block.data.buttonBg ?? "brand"];
+      const txt = BUTTON_TEXT[block.data.buttonText ?? "white"];
+      const full = block.data.buttonWidth === "full";
+      const anchor = `<a href="${escapeHtml(url)}" style="display:${full ? "block" : "inline-block"};${full ? "" : "padding:0 28px;"}height:44px;line-height:44px;${radiusCss};background:${bg};color:${txt};font-size:15px;font-weight:700;text-decoration:none;text-align:center">${escapeHtml(label)}</a>`;
       return {
-        html: `<div style="text-align:center"><a href="${escapeHtml(url)}" style="display:inline-block;height:44px;line-height:44px;padding:0 28px;border-radius:12px;background:${C.brand};color:#fff;font-size:15px;font-weight:700;text-decoration:none">${escapeHtml(label)}</a></div>`,
+        html: `<div style="text-align:${cssAlign(block.data.align) === "start" ? "right" : cssAlign(block.data.align) === "end" ? "left" : "center"}">${anchor}</div>`,
         text: `${label}: ${url}`,
         issues,
       };

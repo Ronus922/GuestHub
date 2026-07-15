@@ -18,9 +18,26 @@ export const templateBlockSchema = z.object({
     level: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
     label: z.string().trim().max(160).optional(),
     urlVariable: z.string().trim().max(120).optional(),
-    align: z.enum(["start", "center"]).optional(),
+    url: z.string().trim().max(400).optional(),
+    align: z.enum(["start", "center", "end"]).optional(),
+    fontSize: z.enum(["sm", "base", "md", "lg", "xl", "xxl"]).optional(),
+    fontWeight: z.enum(["normal", "medium", "semibold", "bold", "black"]).optional(),
+    lineHeight: z.enum(["tight", "snug", "normal", "loose"]).optional(),
+    textColor: z.enum(["ink", "muted", "brand", "brandDark", "ok", "danger"]).optional(),
+    background: z.enum(["none", "subtle", "brandSoft", "brand"]).optional(),
+    padding: z.enum(["none", "sm", "md", "lg"]).optional(),
+    buttonWidth: z.enum(["auto", "full"]).optional(),
+    buttonRadius: z.enum(["md", "lg", "pill"]).optional(),
+    buttonBg: z.enum(["brand", "ink", "ok"]).optional(),
+    buttonText: z.enum(["white", "ink"]).optional(),
     showTimes: z.boolean().optional(),
     showNights: z.boolean().optional(),
+    showGuests: z.boolean().optional(),
+    showSource: z.boolean().optional(),
+    showCreatedAt: z.boolean().optional(),
+    showTotal: z.boolean().optional(),
+    showPaid: z.boolean().optional(),
+    showBalance: z.boolean().optional(),
   }).strict(),
 }).strict();
 
@@ -34,8 +51,8 @@ export const structuredTemplateContentSchema = z.object({
       ctx.addIssue({ code: "custom", path: ["blocks", index, "id"], message: "Block IDs must be unique" });
     }
     ids.add(block.id);
-    if (block.type === "action_button" && (!block.data.label || !block.data.urlVariable)) {
-      ctx.addIssue({ code: "custom", path: ["blocks", index, "data"], message: "Action buttons require a label and URL variable" });
+    if (block.type === "action_button" && (!block.data.label || !(block.data.url?.trim() || block.data.urlVariable))) {
+      ctx.addIssue({ code: "custom", path: ["blocks", index, "data"], message: "Action buttons require a label and a destination" });
     }
   }
 });

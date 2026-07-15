@@ -146,6 +146,9 @@ const ICONS = {
   smartphone: "smartphone",
   "align-start": "format_align_right",
   "align-center": "format_align_center",
+  "align-end": "format_align_left",
+  "format-size": "format_size",
+  palette: "palette",
   "mail-unread": "mark_email_unread",
   // block palette
   "logo-header": "branding_watermark",

@@ -71,9 +71,50 @@ export const STAGE_LABELS: Record<string, string> = {
   in_stay: "במהלך השהייה",
   check_out: "צ׳ק-אאוט",
   post_stay: "לאחר השהייה",
-  cancellation: "ביטול",
   payment: "תשלום",
+  cancellation: "ביטול",
+  other: "אחר",
 };
+
+/** Labeled option lists for the block-style selects (§8) — the Hebrew UI face of
+ *  the approved tokens in lib/communications/styles.ts. */
+export const STYLE_OPTIONS = {
+  fontSize: [
+    { value: "sm", label: "קטן" }, { value: "base", label: "רגיל" }, { value: "md", label: "בינוני" },
+    { value: "lg", label: "גדול" }, { value: "xl", label: "כותרת" }, { value: "xxl", label: "כותרת גדולה" },
+  ],
+  fontWeight: [
+    { value: "normal", label: "רגיל" }, { value: "medium", label: "בינוני" }, { value: "semibold", label: "מודגש-חלקי" },
+    { value: "bold", label: "מודגש" }, { value: "black", label: "כבד" },
+  ],
+  lineHeight: [
+    { value: "tight", label: "צפוף" }, { value: "snug", label: "רגיל" },
+    { value: "normal", label: "מרווח" }, { value: "loose", label: "מרווח מאוד" },
+  ],
+  textColor: [
+    { value: "ink", label: "כהה" }, { value: "muted", label: "אפור" }, { value: "brand", label: "מותג" },
+    { value: "brandDark", label: "מותג כהה" }, { value: "ok", label: "ירוק" }, { value: "danger", label: "אדום" },
+  ],
+  background: [
+    { value: "none", label: "ללא" }, { value: "subtle", label: "אפור עדין" },
+    { value: "brandSoft", label: "תכלת מותג" }, { value: "brand", label: "מותג מלא" },
+  ],
+  padding: [
+    { value: "none", label: "ללא" }, { value: "sm", label: "קטן" }, { value: "md", label: "בינוני" }, { value: "lg", label: "גדול" },
+  ],
+  buttonWidth: [
+    { value: "auto", label: "לפי התוכן" }, { value: "full", label: "רוחב מלא" },
+  ],
+  buttonRadius: [
+    { value: "md", label: "מעוגל" }, { value: "lg", label: "מעוגל יותר" }, { value: "pill", label: "כדורי" },
+  ],
+  buttonBg: [
+    { value: "brand", label: "מותג" }, { value: "ink", label: "כהה" }, { value: "ok", label: "ירוק" },
+  ],
+  buttonText: [
+    { value: "white", label: "לבן" }, { value: "ink", label: "כהה" },
+  ],
+} as const;
 
 export const STAGE_KEYS = Object.keys(STAGE_LABELS);
 
