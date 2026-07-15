@@ -45,13 +45,38 @@ export type TemplateBlock = {
     text?: string;
     level?: 1 | 2 | 3;
     label?: string;
+    /** action_button: quick-pick URL variable (e.g. reservation.manage_url). */
     urlVariable?: string;
-    /** heading / text alignment. undefined = start (RTL: right). */
-    align?: "start" | "center";
+    /** action_button: free destination — a fixed https URL or a {{variable}}. Wins over urlVariable. */
+    url?: string;
+    /** heading / text / button alignment. undefined = start (RTL: right). */
+    align?: "start" | "center" | "end";
+    // ---- text / heading typography (keys resolved in lib/communications/styles.ts) ----
+    fontSize?: "sm" | "base" | "md" | "lg" | "xl" | "xxl";
+    fontWeight?: "normal" | "medium" | "semibold" | "bold" | "black";
+    lineHeight?: "tight" | "snug" | "normal" | "loose";
+    textColor?: "ink" | "muted" | "brand" | "brandDark" | "ok" | "danger";
+    background?: "none" | "subtle" | "brandSoft" | "brand";
+    padding?: "none" | "sm" | "md" | "lg";
+    // ---- action_button appearance ----
+    buttonWidth?: "auto" | "full";
+    buttonRadius?: "md" | "lg" | "pill";
+    buttonBg?: "brand" | "ink" | "ok";
+    buttonText?: "white" | "ink";
     /** reservation_details: show the check-in/check-out hours row. Default true. */
     showTimes?: boolean;
     /** reservation_details: show the nights row. Default true. */
     showNights?: boolean;
+    /** reservation_details: show the guests-composition row. Default false. */
+    showGuests?: boolean;
+    /** reservation_details: show the booking source row. Default false. */
+    showSource?: boolean;
+    /** reservation_details: show the created-at row. Default false. */
+    showCreatedAt?: boolean;
+    /** payment_summary: per-row visibility. Default true for total/paid/balance. */
+    showTotal?: boolean;
+    showPaid?: boolean;
+    showBalance?: boolean;
   };
 };
 

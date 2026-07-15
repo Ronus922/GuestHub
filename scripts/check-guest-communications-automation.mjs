@@ -29,13 +29,14 @@ let source = readFileSync(automationPath, "utf8")
   .replaceAll('"./outbox"', '"./outbox.js"')
   .replaceAll('"./types"', '"./types.js"');
 writeFileSync(automationPath, source);
-for (const file of ["schemas.js", "renderer.js", "variables.js"]) {
+for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js"]) {
   const path = join(out, `communications/${file}`);
   if (!readFileSync(path, "utf8")) continue;
   let emitted = readFileSync(path, "utf8")
     .replaceAll('"./types"', '"./types.js"')
     .replaceAll('"./schemas"', '"./schemas.js"')
     .replaceAll('"./variables"', '"./variables.js"')
+    .replaceAll('"./styles"', '"./styles.js"')
     .replaceAll('"@/lib/colors"', '"../colors.js"');
   writeFileSync(path, emitted);
 }

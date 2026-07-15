@@ -735,6 +735,143 @@
     translate: -18px 0;
   }
 
+  /* ---- drag-and-drop, inline editing, expanded controls (builder v2) ---- */
+
+  /* the drag handle in a selected block's toolbar */
+  .gc-blk-grip {
+    cursor: grab;
+  }
+  .gc-blk-grip:active {
+    cursor: grabbing;
+  }
+
+  /* insertion indicator while dragging a block over the canvas */
+  .gc-dropline {
+    height: 3px;
+    margin: 2px 12px;
+    border-radius: 999px;
+    background: var(--brand);
+  }
+
+  /* inline canvas editor — a plain textarea sized to the block it replaces.
+     NOT a second renderer: it edits data.text; every other block still paints
+     the renderer's own bytes. */
+  .gc-inline {
+    display: block;
+    width: 100%;
+    min-height: 84px;
+    margin: 40px 24px 16px;
+    width: calc(100% - 48px);
+    padding: 10px 12px;
+    border: 1.5px solid var(--brand);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1.7;
+    resize: vertical;
+    outline: none;
+  }
+
+  /* empty-canvas prompt */
+  .gc-canvas-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 48px 24px;
+    color: var(--faint);
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* "pick a field first" instruction under the variables tab */
+  .gc-varhint {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 10px 13px;
+    border: 1px solid var(--warn);
+    border-radius: var(--r-sm);
+    background: color-mix(in srgb, var(--warn) 12%, var(--surface));
+    color: var(--ink);
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+
+  /* two style selects side by side in the properties panel */
+  .gc-two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  /* quick-pick URL-variable chips under the button destination field */
+  .gc-quickvars {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .gc-chipbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--field-bg);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .gc-chipbtn:hover:not(:disabled) {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  .gc-chipbtn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* creation-window start-point radios */
+  .gc-radio {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+  }
+  .gc-radio:has(input:checked) {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+  }
+  .gc-radio input {
+    margin-top: 3px;
+    accent-color: var(--brand);
+  }
+  .gc-radio > span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* palette + variable items advertise draggability */
+  .gc-libc[draggable="true"],
+  .gc-var[draggable="true"] {
+    cursor: grab;
+  }
+  .gc-libc[draggable="true"]:active,
+  .gc-var[draggable="true"]:active {
+    cursor: grabbing;
+  }
+
   @media (max-width: 1100px) {
     .gc-b3 {
       grid-template-columns: minmax(0, 1fr);

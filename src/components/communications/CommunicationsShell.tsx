@@ -5,9 +5,9 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { TemplateEditor } from "./TemplateEditor";
-import { STAGE_KEYS, STAGE_LABELS, usageLabel } from "@/lib/communications/blocks";
-import type { CommunicationRenderContext } from "@/lib/communications/types";
+import { TemplateEditor, type EditorSeed } from "./TemplateEditor";
+import { defaultTemplateContent, STAGE_KEYS, STAGE_LABELS, usageLabel } from "@/lib/communications/blocks";
+import type { CommunicationRenderContext, StructuredTemplateContent } from "@/lib/communications/types";
 import type {
   AutomationRow, CommunicationsData, CommunicationTemplateRow, DeliveryRow,
 } from "@/app/(dashboard)/communications/data";
@@ -110,7 +110,8 @@ function Empty({ icon, title, text, action }: { icon: IconName; title: string; t
 
 export function CommunicationsShell({ section, data, permissions, datasets, fallbackContext }: Props) {
   const router = useRouter();
-  const [editing, setEditing] = useState<CommunicationTemplateRow | "new" | null>(null);
+  const [editing, setEditing] = useState<CommunicationTemplateRow | { seed: EditorSeed } | null>(null);
+  const [creating, setCreating] = useState(false);
   const [delivery, setDelivery] = useState<DeliveryRow | null>(null);
   const [automation, setAutomation] = useState<AutomationRow | "new" | null>(null);
   const [notice, setNotice] = useState<CommunicationActionResult | null>(null);
@@ -145,10 +146,8 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
     return true;
   }), [live, channel, stage, kpi]);
 
-  const openTemplate = (template: CommunicationTemplateRow | "new") => {
-    if (template === "new" && !permissions.editTemplates) return;
-    setEditing(template);
-  };
+  const openTemplate = (template: CommunicationTemplateRow) => setEditing(template);
+  const startCreate = () => { if (permissions.editTemplates) setCreating(true); };
 
   return (
     <main className="gc-page" dir="rtl">
@@ -176,7 +175,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
           ))}
         </nav>
         {section === "templates" && permissions.editTemplates && (
-          <button type="button" className="btn btn-primary" onClick={() => openTemplate("new")}>
+          <button type="button" className="btn btn-primary" onClick={startCreate}>
             <Icon name="plus" size={17} /> תבנית חדשה
           </button>
         )}
@@ -232,7 +231,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                   ? "שנו את הערוץ או את שלב ההזמנה."
                   : "צרו תבנית ראשונה והשתמשו בה באוטומציות לשליחה לאורחים"}
                 action={permissions.editTemplates && !live.length ? (
-                  <button type="button" className="btn btn-primary" onClick={() => openTemplate("new")}>
+                  <button type="button" className="btn btn-primary" onClick={startCreate}>
                     <Icon name="plus" size={17} /> תבנית חדשה
                   </button>
                 ) : undefined}
@@ -358,10 +357,19 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
           onSave={(input) => run(() => saveCommunicationSettingsAction(input))} />
       )}
 
+      {creating && (
+        <NewTemplateDialog
+          templates={live}
+          onCancel={() => setCreating(false)}
+          onCreate={(seed) => { setCreating(false); setEditing({ seed }); }}
+        />
+      )}
+
       {editing && (
         <TemplateEditor
-          key={editing === "new" ? "new" : editing.id}
-          template={editing === "new" ? null : editing}
+          key={"seed" in editing ? "new" : editing.id}
+          template={"seed" in editing ? null : editing}
+          seed={"seed" in editing ? editing.seed : undefined}
           datasets={datasets}
           fallbackContext={fallbackContext}
           senderAddress={data.channel.email.sender}
@@ -752,6 +760,122 @@ function AutomationPanel({
                 aria-label="הפעלה מיד לאחר שמירה" />
               הפעלה מיד לאחר שמירה (אירועים חדשים בלבד)
             </span>
+          </div>
+        </section>
+      </div>
+    </SidePanel>
+  );
+}
+
+/** The creation window (§1) — ref/screens/CreateGuestCommunicationWindowes.png.
+ *  Captures a real, editable name + category + channel, and whether to start from
+ *  a blank template or duplicate an existing one, then hands an EditorSeed to the
+ *  canonical editor. Nothing is published and no automation is created. */
+function NewTemplateDialog({
+  templates, onCancel, onCreate,
+}: {
+  templates: CommunicationTemplateRow[];
+  onCancel: () => void;
+  onCreate: (seed: EditorSeed) => void;
+}) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("reservation");
+  const [channel, setChannel] = useState("email");
+  const [mode, setMode] = useState<"blank" | "duplicate">("blank");
+  const [sourceId, setSourceId] = useState(templates[0]?.id ?? "");
+
+  const trimmed = name.trim();
+  const valid = trimmed.length >= 2 && trimmed.length <= 120
+    && (mode === "blank" || Boolean(sourceId));
+
+  const submit = () => {
+    if (!valid) return;
+    let content: StructuredTemplateContent = defaultTemplateContent();
+    if (mode === "duplicate") {
+      const source = templates.find((t) => t.id === sourceId);
+      const draft = source?.draftContent as StructuredTemplateContent | undefined;
+      if (draft && draft.schemaVersion === 1 && Array.isArray(draft.blocks)) content = draft;
+    }
+    onCreate({ name: trimmed, category, content });
+  };
+
+  return (
+    <SidePanel
+      open
+      onClose={onCancel}
+      title="תבנית חדשה"
+      subtitle="בחרו שם, שלב וערוץ — התוכן נערך בעורך התבנית. אין פרסום ואין יצירת אוטומציה בשלב זה."
+      icon="documents"
+      footer={
+        <>
+          <button type="button" className="btn btn-primary" disabled={!valid} onClick={submit}>
+            <Icon name="plus" size={17} /> יצירת תבנית
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={onCancel}>ביטול</button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <section className="card">
+          <div className="card-hd">פרטי התבנית</div>
+          <div className="card-bd flex flex-col gap-3">
+            <label className="field">
+              <span className="gc-label-row">
+                <span className="field-label">שם התבנית</span>
+                <span className="gc-cnt">{trimmed.length}/120</span>
+              </span>
+              <input
+                className="field-input"
+                value={name}
+                maxLength={120}
+                autoFocus
+                placeholder="לדוגמה: מכתב ברוכים הבאים"
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
+              />
+              {name.length > 0 && trimmed.length < 2 && (
+                <span className="field-msg">יש להזין שם תבנית</span>
+              )}
+            </label>
+            <label className="field">
+              <span className="field-label">קטגוריה</span>
+              <select className="field-input" value={category} onChange={(e) => setCategory(e.target.value)}>
+                {STAGE_KEYS.map((key) => <option key={key} value={key}>{STAGE_LABELS[key]}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">ערוץ</span>
+              <select className="field-input" value={channel} onChange={(e) => setChannel(e.target.value)}>
+                <option value="email">אימייל</option>
+                <option value="whatsapp" disabled>WhatsApp (בקרוב)</option>
+                <option value="sms" disabled>SMS (בקרוב)</option>
+              </select>
+              <span className="field-hint">כרגע פעיל ערוץ האימייל בלבד.</span>
+            </label>
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-hd">נקודת התחלה</div>
+          <div className="card-bd flex flex-col gap-3">
+            {([["blank", "תבנית ריקה", "מתחילים ממבנה בסיסי"], ["duplicate", "שכפול תבנית קיימת", "מעתיקים תבנית ומתאימים"]] as const).map(([key, label, hint]) => (
+              <label key={key} className="gc-radio">
+                <input type="radio" name="create-mode" checked={mode === key} onChange={() => setMode(key)} />
+                <span>
+                  <b>{label}</b>
+                  <span className="t-label">{hint}</span>
+                </span>
+              </label>
+            ))}
+            {mode === "duplicate" && (
+              <label className="field">
+                <span className="field-label">תבנית מקור</span>
+                <select className="field-input" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+                  {templates.length === 0 && <option value="">אין תבניות לשכפול</option>}
+                  {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </label>
+            )}
           </div>
         </section>
       </div>

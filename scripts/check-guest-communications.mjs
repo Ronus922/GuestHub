@@ -17,6 +17,7 @@ writeFileSync(tsconfig, JSON.stringify({
   files: [
     "src/lib/communications/types.ts", "src/lib/communications/variables.ts",
     "src/lib/communications/schemas.ts", "src/lib/communications/renderer.ts",
+    "src/lib/communications/styles.ts",
     "src/lib/colors.ts", "src/lib/auth/permission-check.ts",
     "src/lib/messaging/types.ts", "src/lib/messaging/email/headers.ts",
     "src/lib/messaging/email/gmail.ts",
@@ -31,9 +32,11 @@ const patchImports = (path, replacements) => {
 };
 patchImports(join(out, "communications/variables.js"), [['"./types"', '"./types.js"']]);
 patchImports(join(out, "communications/schemas.js"), [['"./types"', '"./types.js"']]);
+patchImports(join(out, "communications/styles.js"), [['"@/lib/colors"', '"../colors.js"']]);
 patchImports(join(out, "communications/renderer.js"), [
   ['"./schemas"', '"./schemas.js"'],
   ['"./variables"', '"./variables.js"'],
+  ['"./styles"', '"./styles.js"'],
   ['"./types"', '"./types.js"'],
   // the email palette is a TOKEN file (GUIDELINES §1) — the renderer consumes it
   ['"@/lib/colors"', '"../colors.js"'],
@@ -144,6 +147,63 @@ const subject = renderer.renderTemplateString("אישור {{reservation.number}}
 assert.equal(subject.value, "אישור GH-42 / ");
 assert.equal(subject.canSend, false);
 ok("subject interpolation blocks unknown variables before delivery");
+
+// ---- builder v2: style tokens are a KEY→literal map; an unstyled block is unchanged ----
+const styledHeading = { schemaVersion: 1, blocks: [
+  { id: "h", type: "heading", enabled: true, condition: "always", data: { text: "שלום", fontSize: "xxl", fontWeight: "bold", textColor: "brand", background: "brandSoft", padding: "md", align: "end" } },
+] };
+const styledHtml = renderer.renderStructuredCommunication(styledHeading, context).html;
+assert.match(styledHtml, /font-size:24px/);
+assert.match(styledHtml, /font-weight:700/);
+assert.match(styledHtml, /color:#2540C8/);
+assert.match(styledHtml, /background:#EEF1FD/);
+assert.match(styledHtml, /text-align:end/);
+// an UNSTYLED heading must still render its canonical defaults (byte parity with the
+// pre-control renderer) — else every existing template silently restyles on deploy
+const plainHeading = { schemaVersion: 1, blocks: [{ id: "h", type: "heading", enabled: true, condition: "always", data: { text: "שלום" } }] };
+const plainHtml = renderer.renderStructuredCommunication(plainHeading, context).html;
+assert.match(plainHtml, /font-size:21px;font-weight:800;line-height:1\.3;text-align:start/);
+ok("text/heading style tokens resolve to approved literals; an unstyled block is byte-identical");
+
+// ---- builder v2: a button accepts a fixed URL or a {{variable}}, and its look is bounded ----
+const fixedBtn = { schemaVersion: 1, blocks: [
+  { id: "b", type: "action_button", enabled: true, condition: "always", data: { label: "לאתר", url: "https://example.test/x", buttonWidth: "full", buttonRadius: "pill", buttonBg: "ok", buttonText: "ink" } },
+] };
+const fixedHtml = renderer.renderStructuredCommunication(fixedBtn, context).html;
+assert.match(fixedHtml, /href="https:\/\/example\.test\/x"/);
+assert.match(fixedHtml, /border-radius:999px/);
+assert.match(fixedHtml, /background:#16A34A/);
+assert.match(fixedHtml, /display:block/);
+const varBtn = { schemaVersion: 1, blocks: [
+  { id: "b", type: "action_button", enabled: true, condition: "always", data: { label: "ניהול", url: "{{reservation.manage_url}}" } },
+] };
+const withUrl = { ...context, values: { ...context.values, "reservation.manage_url": "https://gh.test/manage" } };
+assert.match(renderer.renderStructuredCommunication(varBtn, withUrl).html, /href="https:\/\/gh\.test\/manage"/);
+// a token that resolves to nothing → the button is omitted, never a dead link
+assert.equal(renderer.renderStructuredCommunication(varBtn, context).html.includes("<a "), false);
+ok("button destination accepts a fixed URL or a variable, and an empty destination omits the button");
+
+// ---- builder v2: structured-block field toggles ----
+const resDetails = { schemaVersion: 1, blocks: [
+  { id: "r", type: "reservation_details", enabled: true, condition: "always", data: { showSource: true, showGuests: true, showTimes: false, showNights: false } },
+] };
+const resHtml = renderer.renderStructuredCommunication(resDetails, context).html;
+assert.match(resHtml, /מקור הזמנה/);
+assert.match(resHtml, /אורחים/);
+assert.equal(resHtml.includes("צ׳ק-אין"), false);
+const payDetails = { schemaVersion: 1, blocks: [
+  { id: "p", type: "payment_summary", enabled: true, condition: "always", data: { showPaid: false, showBalance: false } },
+] };
+const payHtml = renderer.renderStructuredCommunication(payDetails, context).html;
+assert.match(payHtml, /סה״כ/);
+assert.equal(payHtml.includes("שולם"), false);
+ok("reservation and payment blocks honour per-field visibility toggles");
+
+// schema accepts the new bounded fields and rejects out-of-enum values
+assert.equal(schemas.structuredTemplateContentSchema.safeParse(styledHeading).success, true);
+assert.equal(schemas.structuredTemplateContentSchema.safeParse({ schemaVersion: 1, blocks: [{ id: "h", type: "heading", enabled: true, condition: "always", data: { fontSize: "huge" } }] }).success, false);
+assert.equal(schemas.structuredTemplateContentSchema.safeParse(fixedBtn).success, true);
+ok("block schema accepts the new style tokens and rejects values outside the approved set");
 
 assert.equal(permissions.hasPermission({ roleKey: "admin", permissions: new Set() }, "communications.templates.publish"), true);
 assert.equal(permissions.hasPermission({ roleKey: "viewer", permissions: new Set(["communications.templates.view"]) }, "communications.templates.view"), true);
@@ -261,6 +321,36 @@ assert.match(editor, /structuredTemplateContentSchema\.safeParse\(content\)/);
 assert.equal(/<h1|<table|pv-det|gc-details-card/.test(editor), false,
   "the editor must not re-implement the email's markup");
 ok("editor canvas renders the renderer's own output — preview cannot diverge from the send");
+
+// ---- builder v2 interactions live in the editor, not a parallel screen ----
+// Block DnD: palette items and the canvas are real drop targets, dropping persists
+// a structured block (insertBlockAt), and reorder moves it (moveBlockTo).
+assert.match(editor, /draggable=\{canEdit\}/, "palette blocks must be draggable");
+assert.match(editor, /const insertBlockAt/, "a dropped block must become a real persisted block");
+assert.match(editor, /const moveBlockTo/, "blocks must reorder by drag");
+assert.match(editor, /onDrop=\{canvasDrop\}/, "the canvas must accept block drops");
+assert.match(editor, /data-blk=\{block\.id\}/);
+assert.match(editor, /gc-dropline/, "a drop must show an insertion indicator");
+// Variable DnD + click, and NEVER a silent no-op when nothing is focused.
+assert.match(editor, /application\/x-gh-variable/, "variables must be draggable with a typed payload");
+assert.match(editor, /setVarHint\(true\)/, "clicking a variable with no field focused must instruct, not no-op");
+assert.match(editor, /בחרו שדה טקסט או בלוק/, "the no-target instruction must be shown");
+assert.match(editor, /onFieldDrop/, "text fields must accept a dropped variable at the caret");
+// Direct in-canvas editing of a text block (an input, not a second renderer).
+assert.match(editor, /gc-inline/, "a text block must be editable directly in the canvas");
+assert.match(editor, /setEditingId/);
+// Button gets a free destination + a publish-time warning when it has none.
+assert.match(editor, /kind: "url"/, "the button URL field must accept variable insertion");
+assert.match(editor, /לכפתור אין יעד/, "a destination-less published button must warn");
+ok("block drag-drop, variable drag+click with an instruction, direct editing, and button URL live in the one editor");
+
+// ---- builder v2: the creation window collects a real, custom name (§1) ----
+assert.match(shell, /function NewTemplateDialog/, "there must be a real creation window");
+assert.match(shell, /setCreating\(true\)/, "the 'new template' action opens the creation flow");
+assert.match(shell, /שכפול תבנית קיימת/, "creation supports blank or duplicate");
+assert.equal(/name = "תודה ואישור הזמנה"|value="תודה ואישור/.test(shell + editor), false,
+  "no template name may be hard-coded");
+ok("template creation opens a real window with an editable name and blank/duplicate choice");
 
 // A queued email is not a sent email: the booking can be cancelled during the
 // retry backoff, and the send path only ever reads the frozen snapshot.

@@ -58,6 +58,8 @@ export const EMAIL_PALETTE = {
   surface: "#FFFFFF",
   fieldBg: "#F7F8FB",
   bg: "#F1F3F8",
+  ok: "#16A34A",
+  danger: "#E5484D",
 } as const;
 
 export type TintPalette = { bg: string; bd: string; tx: string };
