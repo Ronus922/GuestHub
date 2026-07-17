@@ -28,7 +28,8 @@ import {
   type PaymentState,
   type RateRow,
 } from "@/lib/inventory-rules";
-import { statusTintPalette } from "@/lib/colors";
+import { normalizeChannel, statusTintPalette } from "@/lib/colors";
+import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
   NEUTRAL_STATUS,
   paymentTriplet,
@@ -1101,6 +1102,7 @@ export function CalendarGrid({
               >
                 {dragUi?.mode === "move" && dragStay ? (
                   <>
+                    <ChannelBadge channel={normalizeChannel(dragStay.source_key)} size="lg" ring />
                     {dragStay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
                     <span className="cb-nm">{dragStay.guest_name}</span>
                     <span className="cb-bn">
@@ -1524,6 +1526,8 @@ const StayBar = memo(function StayBar({
         }
       }}
     >
+      {/* channel first (RTL: right-hand leading edge), then VIP, then name */}
+      <ChannelBadge channel={normalizeChannel(stay.source_key)} size="lg" ring />
       {stay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={13.5} className="shrink-0 opacity-70" />}

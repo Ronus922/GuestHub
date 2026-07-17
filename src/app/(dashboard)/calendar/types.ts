@@ -33,7 +33,8 @@ export type CalendarStay = {
   reservation_number: string;
   guest_name: string; // per-room guest if set, else primary guest
   is_vip: boolean;
-  source_label: string | null;
+  /** lookup_items(booking_sources).key — normalizeChannel() derives the badge */
+  source_key: string | null;
   total_price: number;
   paid_amount: number;
   payment: PaymentState;

@@ -58,7 +58,7 @@ export async function getCalendarData(
            COALESCE(
              NULLIF(TRIM(CONCAT(rr.guest_first_name, ' ', rr.guest_last_name)), ''),
              g.full_name, 'אורח') AS guest_name,
-           src.label AS source_label,
+           src.key AS source_key,
            wf.label AS workflow_label, wf.color AS workflow_color,
            res.total_price::float8 AS total_price,
            res.paid_amount::float8 AS paid_amount,

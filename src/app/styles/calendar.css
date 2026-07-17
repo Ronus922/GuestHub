@@ -988,6 +988,20 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
+/* the channel badge sits on the row's far (inline-end) side, echoing the pill */
+.cb-pl .ch-badge {
+  margin-inline-start: auto;
+}
+/* "ערוצים" opens the channel legend beside the payment filter — a hairline
+   divider separates the two families; the row itself wraps (flex-wrap) */
+.cb-leg-h {
+  margin-inline-start: 10px;
+  padding-inline-start: 14px;
+  border-inline-start: 1px solid var(--line);
+}
+.cb-leg-h ~ .ch-leg {
+  margin-inline-start: 8px;
+}
 /* the tooltip is informational only, so the whole card is pointer-events:none.
    Editing happens by clicking the pill; the hint reads as a blue action line. */
 .cb-pop-hint {

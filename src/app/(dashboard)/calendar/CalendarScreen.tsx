@@ -14,6 +14,8 @@ import {
 } from "@/lib/dates";
 import type { PaymentState } from "@/lib/inventory-rules";
 import { paymentTriplet } from "@/lib/status-colors";
+import { CHANNEL_CONFIG, CHANNEL_ORDER } from "@/lib/colors";
+import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import type { CalendarData, CalendarView } from "./types";
 import { VIEW_DAYS } from "./types";
 import { CalendarGrid } from "./CalendarGrid";
@@ -206,6 +208,16 @@ export function CalendarScreen({
             )}
             {l.label}
           </button>
+        ))}
+
+        {/* ---- channel legend — visual identification only, no filtering.
+             Same badge component + ONE config as the pill and the popover. ---- */}
+        <span className="ch-leg cb-leg-h">ערוצים</span>
+        {CHANNEL_ORDER.map((ch) => (
+          <span key={ch} className="ch-leg">
+            <ChannelBadge channel={ch} size="sm" />
+            {CHANNEL_CONFIG[ch].name}
+          </span>
         ))}
       </div>
 
