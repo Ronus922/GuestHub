@@ -170,7 +170,12 @@ export function EditReservationPanel({
       setMethod("");
       setCc(EMPTY_CARD);
       setCardMeta(d.card);
-      setReplacingCard(false);
+      // Card-entry MODE survives background refreshes. A realtime event may
+      // reload a clean panel while the operator has just opened the manual
+      // form (an empty draft is not "dirty", so the reload proceeds) — that
+      // reload must not snap the section back to the imported card. Only an
+      // explicit load (open / reservation switch / post-cancel) resets it.
+      if (opts?.force) setReplacingCard(false);
       setConfirmDiscard(false);
       setNotes(d.notes ?? "");
       setArrivalTime(d.expected_arrival_time ?? "");
@@ -242,11 +247,12 @@ export function EditReservationPanel({
     else onClose();
   };
 
-  // §15 — switching the payment method away from credit card destroys any
-  // unsaved sensitive draft (a stored/tokenized card is NOT touched)
-  useEffect(() => {
-    if (method !== "credit_card") setCc(EMPTY_CARD);
-  }, [method]);
+  // The payment-method selector registers PAYMENTS (additionalPayment +
+  // paymentMethod on save). It is fully decoupled from the card section:
+  // storing/replacing card details is governed ONLY by the card section's own
+  // mode (replacingCard / resolveCardView) — the method never unlocks, locks,
+  // or wipes the card fields here. (§15's method-gated entry remains only in
+  // the NEW-reservation flow, BookingPanel.)
 
   const staysValid =
     stays.length > 0 &&
@@ -931,16 +937,17 @@ export function EditReservationPanel({
               )}
               {/* ---- THE credit-card section (D86) — one interface for every
                    source: the vaulted card (masked, audited reveal), the masked
-                   channel guarantee, manual entry, or the empty state. §15 —
-                   manual entry activates only when the payment method is credit
-                   card; switching away destroys the unsaved draft. ---- */}
+                   channel guarantee, manual entry, or the empty state. Card
+                   entry is governed ONLY by the section's own mode (the
+                   "הזנת כרטיס ידנית במקום" toggle / empty state) — the
+                   payment-method selector above registers payments and never
+                   gates these fields. ---- */}
               {showCardSection && (
                 <>
                   <CardFields
                     value={cc}
                     onChange={setCc}
                     chargeAmount={Math.max(0, total - paidAfter)}
-                    disabled={method !== "credit_card"}
                     stored={cardMeta}
                     channel={guarantee}
                     channelName={
@@ -978,11 +985,11 @@ export function EditReservationPanel({
                       <button
                         type="button"
                         className="btn btn-secondary"
-                        disabled={cardBusy || ccStateForSave !== "valid" || method !== "credit_card"}
+                        disabled={cardBusy || ccStateForSave !== "valid"}
                         onClick={saveCard}
                       >
                         <Icon name="check" size={20} />
-                        {cardBusy ? "שומר…" : cardMeta ? "החלף כרטיס" : "שמור כרטיס"}
+                        {cardBusy ? "שומר…" : "שמירת כרטיס"}
                       </button>
                     </div>
                   )}

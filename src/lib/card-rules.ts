@@ -187,6 +187,32 @@ function expDisplay(month: number | null, year: number | null): string {
   return `${String(month).padStart(2, "0")}/${String(year % 100).padStart(2, "0")}`;
 }
 
+// ============================================================
+// The explicit card-section state model — ONE source of truth for which of
+// the three modes the canonical card section is in:
+//
+//   "manual"   — the operator explicitly chose to key a card in
+//                (replacingCard). ALWAYS wins: it outranks the stored card,
+//                the imported guarantee, and any payment-method state.
+//   "existing" — a stored (vaulted) card or an imported channel guarantee is
+//                shown read-only (inside the view, stored outranks channel).
+//   "fresh"    — nothing exists: the empty form is direct manual entry.
+//
+// The payment method is deliberately NOT an input — it can never decide,
+// lock, or unlock the card section.
+// ============================================================
+export type CardMode = "existing" | "manual" | "fresh";
+
+export function resolveCardMode(input: {
+  stored?: object | null;
+  channel?: object | null;
+  manualEntry?: boolean;
+}): CardMode {
+  if (input.manualEntry) return "manual";
+  if (input.stored || input.channel) return "existing";
+  return "fresh";
+}
+
 export function resolveCardView(input: {
   stored?: StoredCardInput | null;
   channel?: ChannelCardInput | null;
@@ -200,10 +226,13 @@ export function resolveCardView(input: {
   revealed?: RevealedCardInput | null;
 }): CardView {
   const { stored, channel, draft, manualEntry, revealed } = input;
+  const mode = resolveCardMode(input);
 
-  // 1 — the operator asked to type a card in, or there is nothing to show:
-  //     the fields ARE the draft (this is also the empty state)
-  if (manualEntry || (!stored && !channel)) {
+  // "manual" (the operator's explicit choice — precedence 1) and "fresh"
+  // (nothing to show — precedence 4) are both the editable draft: the fields
+  // ARE the draft, initialized clean — imported/masked values are NEVER
+  // copied into it, and the imported card itself is not touched.
+  if (mode === "manual" || mode === "fresh") {
     const touched =
       draft.holder.trim() !== "" ||
       draft.number.trim() !== "" ||
@@ -226,7 +255,8 @@ export function resolveCardView(input: {
     };
   }
 
-  // 2 — a real card lives in the vault (a channel-ingested PAN also lands here)
+  // "existing", precedence 2 — a real card lives in the vault (a
+  // channel-ingested PAN also lands here); it outranks the masked guarantee
   if (stored) {
     const fromChannel = stored.source === "channel";
     const sourceLabel = fromChannel
@@ -261,7 +291,8 @@ export function resolveCardView(input: {
     };
   }
 
-  // 3 — only the masked channel guarantee arrived: show exactly what arrived
+  // "existing", precedence 3 — only the masked channel guarantee arrived:
+  // show exactly what arrived, never padded into a full card number
   const g = channel!;
   const name = input.channelName?.trim() || "הערוץ";
   const number = g.last4 ? maskedPan(g.last4) : (g.maskedDisplay ?? "");

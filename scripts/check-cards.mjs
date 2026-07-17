@@ -285,12 +285,53 @@ assert.ok(/disabled=\{method !== "credit_card"\}/.test(booking),
 assert.ok(/setCc\(EMPTY_CARD\)/.test(booking),
   "leaving the credit-card method clears the unsaved card draft");
 const editPanelD77 = src("src/components/reservations/EditReservationPanel.tsx");
-assert.ok(/disabled=\{method !== "credit_card"\}/.test(editPanelD77),
-  "edit-panel card entry activates only for the credit-card method");
-assert.ok(/if \(method !== "credit_card"\) setCc\(EMPTY_CARD\)/.test(editPanelD77),
-  "edit panel clears the unsaved draft when the method leaves credit card");
+// EDIT PANEL: card entry is FULLY decoupled from the payment-method selector.
+// The selector registers payments (additionalPayment + paymentMethod); the
+// card section's own mode (replacingCard / the empty state) is the ONLY thing
+// that opens the fields. No gate, no save-block, no draft-wipe on the method —
+// the duplicated "switch the method above to unlock the card form" flow is gone.
+assert.ok(!/method !== "credit_card"/.test(editPanelD77),
+  "edit panel: ZERO payment-method coupling — no entry gate, no save gate, no draft-clear effect");
+const editCardJsx = editPanelD77.match(/<CardFields[\s\S]*?\/>/);
+assert.ok(editCardJsx && !/\bdisabled=/.test(editCardJsx[0]),
+  "edit panel passes NO disabled prop to CardFields — the fields are never method-locked");
+assert.ok(/manualEntry=\{replacingCard\}/.test(editPanelD77),
+  "manual-entry mode is driven solely by the card section's replacingCard state");
+assert.ok(/disabled=\{cardBusy \|\| ccStateForSave !== "valid"\}/.test(editPanelD77),
+  "the card save button is gated ONLY on validation + save state");
+assert.ok(/שמירת כרטיס/.test(editPanelD77),
+  "manual mode offers the שמירת כרטיס action");
+// A background realtime reload (useRealtimeEvent → loadDetail without force)
+// must NOT snap the operator out of manual mode: an empty manual draft is not
+// "dirty", so the reload proceeds — and used to reset replacingCard, visibly
+// reverting the section to the imported card right after the click.
+assert.ok(/if \(opts\?\.force\) setReplacingCard\(false\)/.test(editPanelD77),
+  "card-entry mode is reset ONLY on explicit (forced) loads — background refreshes preserve it");
+assert.ok(!/^\s*setReplacingCard\(false\);\s*$/m.test(
+    editPanelD77.slice(editPanelD77.indexOf("const loadDetail"), editPanelD77.indexOf("useEffect")),
+  ),
+  "no unconditional replacingCard reset remains inside loadDetail");
+// the footer actions are driven by the ONE explicit mode, not ad-hoc booleans
+assert.ok(/const mode = resolveCardMode\(\{ stored, channel, manualEntry \}\)/.test(cardFields),
+  "CardFields derives the explicit CardMode from the one resolver");
+assert.ok(/\{mode === "existing" && canManage && onToggleManual &&/.test(cardFields),
+  "the manual-entry toggle renders in the existing mode");
+assert.ok(/\{mode === "manual" && onToggleManual &&/.test(cardFields),
+  "the return-to-existing action renders in the manual mode");
 assert.ok(/bw-ccbox-off/.test(src("src/components/reservations/CardFields.tsx")),
-  "the deactivated card area renders visibly grey/disabled");
+  "the deactivated card area renders visibly grey/disabled (new-reservation flow)");
+// The manual fields lock ONLY on entryOff (view.editable && disabled) — i.e. the
+// fresh-entry grey-out — never on read-only/imported state. So once the panel
+// lifts the gate, an editable (manual) view is fully writable.
+assert.ok(/const entryOff = view\.editable && disabled;/.test(cardFields),
+  "CardFields: the fieldset disable derives ONLY from the editable-entry grey-out");
+assert.ok(/<fieldset disabled=\{entryOff\}/.test(cardFields),
+  "CardFields: the parent fieldset is disabled solely by entryOff, nothing else");
+assert.ok(/readOnly=\{ro\}/.test(cardFields) && /const ro = !view\.editable;/.test(cardFields),
+  "CardFields: read-only styling tracks !editable, independent of the entry grey-out");
+// the required back-to-existing action must be present verbatim (spec label)
+assert.ok(/חזרה לפרטי הכרטיס הקיימים/.test(cardFields),
+  "manual mode offers 'חזרה לפרטי הכרטיס הקיימים' to restore the imported/stored card");
 
 // StoredCardBox: live charge visible-but-disabled + no-provider text; the
 // external-payment recorder is confirmation-gated
@@ -398,12 +439,30 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.ok(!/\d{13,}/.test(partial.number.replace(/\D/g, "")),
     "masked fragments are never padded into a full card number");
 
+  // ---- the explicit CardMode model: manual > stored > guarantee > fresh ----
+  assert.equal(rules.resolveCardMode({ stored: STORED, channel: CHANNEL, manualEntry: true }), "manual",
+    "manual replacement OUTRANKS the stored card AND the imported guarantee");
+  assert.equal(rules.resolveCardMode({ channel: CHANNEL, manualEntry: true }), "manual",
+    "manual replacement outranks the imported Booking.com guarantee");
+  assert.equal(rules.resolveCardMode({ stored: STORED, channel: CHANNEL }), "existing");
+  assert.equal(rules.resolveCardMode({ channel: CHANNEL }), "existing",
+    "guarantee-only reservations are the read-only existing mode");
+  assert.equal(rules.resolveCardMode({}), "fresh",
+    "no card + no guarantee = direct manual entry, no unlock step");
+
   // manual opt-in wins over both, and the empty state is the editable draft
   const manual = rules.resolveCardView({ stored: STORED, channel: CHANNEL, draft: DRAFT, manualEntry: true });
   assert.equal(manual.origin, "manual");
   assert.equal(manual.editable, true, "manual entry is the ONLY editable mode");
   assert.equal(manual.number, DRAFT.number, "the manual draft owns its own value");
   assert.equal(manual.sourceLabel, "", "the editable mode shows the source <select>, not a label");
+  // entering manual mode with a CLEAN draft: the editable inputs start BLANK —
+  // the masked OTA/stored values are never copied into the manual form
+  const manualClean = rules.resolveCardView({ stored: STORED, channel: CHANNEL, draft: EMPTY_DRAFT, manualEntry: true });
+  assert.equal(manualClean.editable, true, "clean manual mode is editable immediately");
+  assert.equal(manualClean.holder, "", "the imported holder is not copied into the manual input");
+  assert.equal(manualClean.number, "", "the masked PAN is not copied into the manual input");
+  assert.equal(manualClean.exp, "", "the imported expiry is not copied into the manual input");
   const empty = rules.resolveCardView({ draft: EMPTY_DRAFT });
   assert.equal(empty.origin, "empty");
   assert.equal(empty.editable, true, "the empty state is the normal entry form");
