@@ -62,6 +62,57 @@ export const EMAIL_PALETTE = {
   danger: "#E5484D",
 } as const;
 
+// ---- reservation channel identity ----
+// The ONE channel map (calendar pill badge, reservation popover, legend): key,
+// glyph, brand colors, display name. Declared HERE because this is a token
+// file — the brand hexes may not appear anywhere else. The badge itself is
+// <ChannelBadge>; nobody re-types a glyph or a color at a call site.
+export type ReservationChannel = "booking" | "airbnb" | "expedia" | "site" | "manual";
+
+export const CHANNEL_ORDER: readonly ReservationChannel[] = [
+  "booking",
+  "airbnb",
+  "expedia",
+  "site",
+  "manual",
+] as const;
+
+export const CHANNEL_CONFIG: Record<
+  ReservationChannel,
+  { glyph: string | null; bg: string; tx: string; name: string }
+> = {
+  booking: { glyph: "B", bg: "#003580", tx: "#FFFFFF", name: "Booking.com" },
+  airbnb: { glyph: "A", bg: "#FF5A5F", tx: "#FFFFFF", name: "Airbnb" },
+  expedia: { glyph: "E", bg: "#FFC400", tx: "#1B2233", name: "Expedia" },
+  site: { glyph: "S", bg: "#2540C8", tx: "#FFFFFF", name: "אתר המלון" },
+  // glyph null → the badge renders the Material Symbols `edit` icon
+  manual: { glyph: null, bg: "#E6E9F0", tx: "#5B6478", name: "הזמנה ידנית" },
+};
+
+// lookup_items(booking_sources).key → channel. The canonical source field is
+// reservations.source_id; imported bookings get booking_com/airbnb/expedia
+// via otaSourceKey (booking-normalize.ts), operator-entered ones carry the
+// tenant's keys (direct/phone/walk_in). Anything unknown, inactive, or NULL
+// (e.g. an unrecognized OTA kept NULL by otaSourceKey) reads as manual — the
+// neutral fallback, never a wrong brand.
+export function normalizeChannel(sourceKey: string | null | undefined): ReservationChannel {
+  switch (sourceKey) {
+    case "booking_com":
+    case "booking":
+      return "booking";
+    case "airbnb":
+      return "airbnb";
+    case "expedia":
+      return "expedia";
+    case "direct":
+    case "site":
+    case "website":
+      return "site";
+    default:
+      return "manual";
+  }
+}
+
 export type TintPalette = { bg: string; bd: string; tx: string };
 
 // the approved neutral family (§3.1 "בוטל")

@@ -30,6 +30,7 @@
     "check:sellability": "node --env-file=.env.local scripts/check-rate-sellability.mjs",
     "check:reservation-snapshot": "node scripts/check-reservation-snapshot.mjs",
     "check:calendar": "node scripts/check-calendar.mjs",
+    "check:channels-badge": "node scripts/check-channels-badge.mjs",
     "check:cards": "node scripts/check-cards.mjs",
     "check:payments": "node scripts/check-payments.mjs",
     "check:channel-card-ingest": "node scripts/check-channel-card-ingest.mjs",

@@ -39,6 +39,7 @@ const ICONS = {
   reports: "bar_chart",
   automations: "bolt",
   channels: "share",
+  hub: "hub",
   settings: "settings",
   permissions: "shield",
   plus: "add",

@@ -259,6 +259,49 @@
   }
 
   /* ============================================================
+     §3.2 channel badge — reservation source identity
+     One circular badge (<ChannelBadge>) on the calendar pill, the
+     reservation popover, and the legend. Colors come from the ONE
+     map in src/lib/colors.ts (CHANNEL_CONFIG) — never re-typed.
+     ============================================================ */
+  .ch-badge {
+    width: 21px;
+    height: 21px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    font-family: inherit;
+    user-select: none;
+  }
+  .ch-badge.sm {
+    width: 16px;
+    height: 16px;
+  }
+  .ch-badge.md {
+    width: 18px;
+    height: 18px;
+  }
+  /* white separation ring — calendar pills only, visible over any pill tint */
+  .ch-badge.ring {
+    box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.65);
+  }
+  /* legend item: [16px badge] [name] — matches the payment-legend chips row */
+  .ch-leg {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #5b6478;
+    white-space: nowrap;
+  }
+
+  /* ============================================================
      §4 buttons — three kinds, one size
      ============================================================ */
   .btn {
