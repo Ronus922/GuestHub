@@ -12,6 +12,7 @@ import {
   normalizePan,
   panValid,
   parseExpiry,
+  resolveCardMode,
   resolveCardView,
   type CardSource,
   type ChannelCardInput,
@@ -194,6 +195,9 @@ export function CardFields({
     manualEntry,
     revealed,
   });
+  // the explicit section mode (existing | manual | fresh) — drives the footer
+  // actions; manual always outranks the stored card / imported guarantee
+  const mode = resolveCardMode({ stored, channel, manualEntry });
 
   const digits = normalizePan(value.number);
   const numberBad = view.editable && digits.length > 0 && !panValid(digits);
@@ -454,16 +458,16 @@ export function CardFields({
         )}
 
         {/* switch the SAME fields to manual entry — not a second form */}
-        {!view.editable && canManage && onToggleManual && (
+        {mode === "existing" && canManage && onToggleManual && (
           <button type="button" className="btn btn-tertiary" onClick={() => onToggleManual(true)}>
             <Icon name="refresh" size={17} />
             {view.origin === "stored" ? "החלף כרטיס" : "הזנת כרטיס ידנית במקום"}
           </button>
         )}
-        {view.editable && manualEntry && onToggleManual && (
+        {mode === "manual" && onToggleManual && (
           <button type="button" className="btn btn-tertiary" onClick={() => onToggleManual(false)}>
             <Icon name="circle-slash" size={17} />
-            ביטול — חזרה לפרטי הכרטיס הקיימים
+            חזרה לפרטי הכרטיס הקיימים
           </button>
         )}
 
