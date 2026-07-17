@@ -356,17 +356,21 @@ assert.ok(/color: var\(--brand\)/.test(rule(".cb-pop-hint")), "the footer stays 
 // so the row cannot come back.
 const body = tooltip.slice(tooltip.indexOf('<div className="cb-pop-b">'), tooltip.indexOf('cb-pop-hint'));
 const rows = body.match(/<p className="cb-pl">/g) ?? [];
-assert.equal(rows.length, 4, "the card body has EXACTLY four rows (dates, nights+room, channel, money)");
+assert.equal(rows.length, 4, "the card body declares four rows (dates, nights+room, channel, money)");
 // The channel row CONSOLIDATED the old free-text "מקור" row (it sits between
 // nights and money, per the channel-badge spec) — the normalized channel name +
 // the SAME <ChannelBadge> the pill wears, so the card can never show a second,
-// diverging source. The forbidden-row assertions below are unchanged.
+// diverging source. It renders ONLY for a visible external/site channel: an
+// internal reservation (phone/walk_in/unknown/NULL) shows a three-row body
+// with no empty row or gap. The forbidden-row assertions below are unchanged.
 const rowOrder = [
   ["stay dates", /name="calendar"[\s\S]*?hebDayMonth\(stay\.check_in\)/],
   ["nights + room + status", /name="moon"[\s\S]*?<b>\{nights\}<\/b> לילות · חדר/],
   ["channel", /name="hub"[\s\S]*?CHANNEL_CONFIG\[channel\]\.name[\s\S]*?<ChannelBadge channel=\{channel\} size="md" \/>/],
   ["total + balance", /name="finance"[\s\S]*?total_price\.toLocaleString\(\)/],
 ];
+assert.ok(/\{channel && \(\s*<p className="cb-pl">/.test(body),
+  "the channel row is CONDITIONAL — an internal reservation gets no row, not an empty one");
 assert.ok(!/source_label|מקור:/.test(tooltip), "the old free-text source row is consolidated, not duplicated");
 let cursor = 0;
 for (const [what, re] of rowOrder) {

@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
-import { CHANNEL_CONFIG, normalizeChannel } from "@/lib/colors";
+import { CHANNEL_CONFIG, normalizeVisibleChannel } from "@/lib/colors";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
 import { formatBalance } from "@/lib/inventory-rules";
 import { STATUS_COLORS } from "@/lib/status-colors";
@@ -90,7 +90,8 @@ export function ReservationTooltip({
   if (!target) return null;
 
   const { stay, room } = target;
-  const channel = normalizeChannel(stay.source_key);
+  // null for internal reservations → the card simply has no channel row
+  const channel = normalizeVisibleChannel(stay.source_key);
   // the payment badge keeps PAYMENT colors (D77.1): the pill now wears the
   // workflow family, and neither domain may repaint the other
   const pal = PAY_STYLE[stay.payment];
@@ -162,9 +163,11 @@ export function ReservationTooltip({
         </span>
       </div>
 
-      {/* the approved body: FOUR compact rows — dates, nights+room, channel,
-          money. The reservation number and the order-status chip are NOT on
-          this card (InvitationCard.png); they live in the editor. */}
+      {/* the approved body: compact rows — dates, nights+room, channel (only
+          for a visible external/site channel; an internal reservation has no
+          channel row at all), money. The reservation number and the
+          order-status chip are NOT on this card (InvitationCard.png); they
+          live in the editor. */}
       <div className="cb-pop-b">
         <p className="cb-pl">
           <Icon name="calendar" size={17} className="cb-pli" />
@@ -183,14 +186,17 @@ export function ReservationTooltip({
           </span>
         </p>
         {/* the channel row CONSOLIDATES the old free-text "מקור" row: one
-            normalized name + the same badge the pill wears (md, no ring) */}
-        <p className="cb-pl">
-          <Icon name="hub" size={17} className="cb-pli" />
-          <span>
-            ערוץ: <b>{CHANNEL_CONFIG[channel].name}</b>
-          </span>
-          <ChannelBadge channel={channel} size="md" />
-        </p>
+            normalized name + the same badge the pill wears (md, no ring).
+            Rendered ONLY for a visible channel — no empty row, no gap. */}
+        {channel && (
+          <p className="cb-pl">
+            <Icon name="hub" size={17} className="cb-pli" />
+            <span>
+              ערוץ: <b>{CHANNEL_CONFIG[channel].name}</b>
+            </span>
+            <ChannelBadge channel={channel} size="md" />
+          </p>
+        )}
         <p className="cb-pl">
           <Icon name="finance" size={17} className="cb-pli" />
           <span>

@@ -28,7 +28,7 @@ import {
   type PaymentState,
   type RateRow,
 } from "@/lib/inventory-rules";
-import { normalizeChannel, statusTintPalette } from "@/lib/colors";
+import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
   NEUTRAL_STATUS,
@@ -926,6 +926,8 @@ export function CalendarGrid({
 
   const dragStay = dragUi ? data.stays.find((s) => s.rr_id === dragUi.rrId) : null;
   const dragPalette = dragStay ? stayPalette(dragStay) : null;
+  // ghost badge follows the same rule as the pill: internal reservations wear none
+  const dragChannel = dragStay ? normalizeVisibleChannel(dragStay.source_key) : null;
   // dim only the source card of a MOVE, and only re-render its own row
   const dimRoomId = dragUi?.mode === "move" ? (dragStay?.room_id ?? null) : null;
   // highlighted card = the one whose hover tooltip is open (row-scoped)
@@ -1102,7 +1104,7 @@ export function CalendarGrid({
               >
                 {dragUi?.mode === "move" && dragStay ? (
                   <>
-                    <ChannelBadge channel={normalizeChannel(dragStay.source_key)} size="lg" ring />
+                    {dragChannel && <ChannelBadge channel={dragChannel} size="lg" ring />}
                     {dragStay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
                     <span className="cb-nm">{dragStay.guest_name}</span>
                     <span className="cb-bn">
@@ -1494,6 +1496,8 @@ const StayBar = memo(function StayBar({
   const geo = barGeometry(from, days, stay.check_in, stay.check_out);
   const nights = nightsBetween(stay.check_in, stay.check_out);
   const draggable = canDragCard(canEdit, pending);
+  // null for internal reservations → no badge, no wrapper, no reserved width
+  const channel = normalizeVisibleChannel(stay.source_key);
 
   return (
     <div
@@ -1527,7 +1531,7 @@ const StayBar = memo(function StayBar({
       }}
     >
       {/* channel first (RTL: right-hand leading edge), then VIP, then name */}
-      <ChannelBadge channel={normalizeChannel(stay.source_key)} size="lg" ring />
+      {channel && <ChannelBadge channel={channel} size="lg" ring />}
       {stay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={13.5} className="shrink-0 opacity-70" />}
