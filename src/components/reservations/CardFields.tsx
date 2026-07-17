@@ -123,6 +123,7 @@ export function CardFields({
   channelName = null,
   stateLabel = null,
   manualEntry = false,
+  externalSource = false,
   onToggleManual,
   canReveal = false,
   canManage = false,
@@ -151,6 +152,9 @@ export function CardFields({
   stateLabel?: string | null;
   /** operator explicitly chose to key in a card instead of the imported/stored one */
   manualEntry?: boolean;
+  /** the reservation belongs to an external channel — an empty section renders
+   *  the read-only "external_unavailable" state, never the editable fresh form */
+  externalSource?: boolean;
   onToggleManual?: (manual: boolean) => void;
   canReveal?: boolean;
   /** may replace/remove the stored card (permission + live reservation) */
@@ -193,11 +197,14 @@ export function CardFields({
     stateLabel,
     draft: value,
     manualEntry,
+    externalSource,
     revealed,
   });
-  // the explicit section mode (existing | manual | fresh) — drives the footer
-  // actions; manual always outranks the stored card / imported guarantee
-  const mode = resolveCardMode({ stored, channel, manualEntry });
+  // the explicit section mode (existing | external_unavailable | manual |
+  // fresh) — drives the footer actions; manual always outranks the stored
+  // card / imported guarantee, and an external reservation without card data
+  // is read-only, never automatically editable
+  const mode = resolveCardMode({ stored, channel, manualEntry, externalSource });
 
   const digits = normalizePan(value.number);
   const numberBad = view.editable && digits.length > 0 && !panValid(digits);
@@ -457,14 +464,19 @@ export function CardFields({
           </button>
         )}
 
-        {/* switch the SAME fields to manual entry — not a second form */}
-        {mode === "existing" && canManage && onToggleManual && (
+        {/* switch the SAME fields to manual entry — not a second form. The
+            initial external view (existing card/guarantee OR the unavailable
+            state) offers ONLY the opt-in action. */}
+        {(mode === "existing" || mode === "external_unavailable") && canManage && onToggleManual && (
           <button type="button" className="btn btn-tertiary" onClick={() => onToggleManual(true)}>
             <Icon name="refresh" size={17} />
             {view.origin === "stored" ? "החלף כרטיס" : "הזנת כרטיס ידנית במקום"}
           </button>
         )}
-        {mode === "manual" && onToggleManual && (
+        {/* the return action exists only in explicit replacement mode AND only
+            when there is a previous state to return to — a fresh direct entry
+            never shows it */}
+        {mode === "manual" && (stored || channel || externalSource) && onToggleManual && (
           <button type="button" className="btn btn-tertiary" onClick={() => onToggleManual(false)}>
             <Icon name="circle-slash" size={17} />
             חזרה לפרטי הכרטיס הקיימים

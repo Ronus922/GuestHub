@@ -311,13 +311,39 @@ assert.ok(!/^\s*setReplacingCard\(false\);\s*$/m.test(
     editPanelD77.slice(editPanelD77.indexOf("const loadDetail"), editPanelD77.indexOf("useEffect")),
   ),
   "no unconditional replacingCard reset remains inside loadDetail");
+// Manual mode is scoped to ONE reservation editing session. The identity
+// effect must reset the mode + the sensitive draft SYNCHRONOUSLY, BEFORE the
+// null-id early return — so it runs on open, on switching reservations AND on
+// close, regardless of whether any async response ever lands. (The async
+// force-load reset alone proved lossy: a dropped load left the stale mode for
+// the next realtime reload to paint as the initial view of ANOTHER reservation.)
+assert.ok(
+  /useEffect\(\(\) => \{\s*setReplacingCard\(false\);\s*setCc\(EMPTY_CARD\);\s*if \(!reservationId\)[\s\S]*?\[reservationId, loadDetail\]\);/.test(
+    editPanelD77,
+  ),
+  "replacingCard + the manual draft reset synchronously on EVERY reservation-identity change (open / switch / close)");
+// …while a SAME-reservation realtime refresh never touches the mode
+const rtBlock = editPanelD77.match(/useRealtimeEvent\(\(event\) => \{[\s\S]*?\}\);/);
+assert.ok(rtBlock, "the panel subscribes to same-reservation realtime events");
+assert.ok(!/setReplacingCard/.test(rtBlock[0]),
+  "a same-reservation realtime refresh never resets the card-entry mode");
+assert.ok(!/force/.test(rtBlock[0]),
+  "the realtime reload is a background (non-forced) load — it preserves the operator's mode");
 // the footer actions are driven by the ONE explicit mode, not ad-hoc booleans
-assert.ok(/const mode = resolveCardMode\(\{ stored, channel, manualEntry \}\)/.test(cardFields),
-  "CardFields derives the explicit CardMode from the one resolver");
-assert.ok(/\{mode === "existing" && canManage && onToggleManual &&/.test(cardFields),
-  "the manual-entry toggle renders in the existing mode");
-assert.ok(/\{mode === "manual" && onToggleManual &&/.test(cardFields),
-  "the return-to-existing action renders in the manual mode");
+assert.ok(/const mode = resolveCardMode\(\{ stored, channel, manualEntry, externalSource \}\)/.test(cardFields),
+  "CardFields derives the explicit CardMode from the one resolver (incl. the external flag)");
+assert.ok(/\{\(mode === "existing" \|\| mode === "external_unavailable"\) && canManage && onToggleManual &&/.test(cardFields),
+  "the initial external views (existing card/guarantee OR unavailable) offer ONLY the manual-entry opt-in");
+assert.ok(/\{mode === "manual" && \(stored \|\| channel \|\| externalSource\) && onToggleManual &&/.test(cardFields),
+  "the return action renders ONLY in explicit manual mode, and only when a previous state exists to return to");
+// the edit panel wires the external flag from the canonical channel mapping +
+// the OTA linkage, and gates the save row on the TWO editable modes only
+assert.ok(/externalSource=\{externalReservation\}/.test(editPanelD77),
+  "the edit panel passes the external-reservation flag into the card section");
+assert.ok(/Boolean\(detail\?\.ota\) \|\| normalizeVisibleChannel\(detailSource\?\.key \?\? null\) !== null/.test(editPanelD77),
+  "externality derives from the OTA linkage + the ONE canonical channel mapping (no parallel source list)");
+assert.ok(/canManageCard && \(cardMode === "manual" \|\| cardMode === "fresh"\)/.test(editPanelD77),
+  "the card-save action is reachable only from the two EDITABLE modes — never from a read-only external state");
 assert.ok(/bw-ccbox-off/.test(src("src/components/reservations/CardFields.tsx")),
   "the deactivated card area renders visibly grey/disabled (new-reservation flow)");
 // The manual fields lock ONLY on entryOff (view.editable && disabled) — i.e. the
@@ -439,7 +465,8 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.ok(!/\d{13,}/.test(partial.number.replace(/\D/g, "")),
     "masked fragments are never padded into a full card number");
 
-  // ---- the explicit CardMode model: manual > stored > guarantee > fresh ----
+  // ---- the explicit CardMode model:
+  //      manual > stored > guarantee > external-unavailable > fresh ----
   assert.equal(rules.resolveCardMode({ stored: STORED, channel: CHANNEL, manualEntry: true }), "manual",
     "manual replacement OUTRANKS the stored card AND the imported guarantee");
   assert.equal(rules.resolveCardMode({ channel: CHANNEL, manualEntry: true }), "manual",
@@ -448,7 +475,38 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.equal(rules.resolveCardMode({ channel: CHANNEL }), "existing",
     "guarantee-only reservations are the read-only existing mode");
   assert.equal(rules.resolveCardMode({}), "fresh",
-    "no card + no guarantee = direct manual entry, no unlock step");
+    "no card + no guarantee + internal source = direct manual entry, no unlock step");
+  // an external reservation NEVER falls through to the editable fresh form
+  assert.equal(rules.resolveCardMode({ externalSource: true }), "external_unavailable",
+    "an OTA/external reservation without usable card data is NOT fresh manual entry");
+  assert.equal(rules.resolveCardMode({ externalSource: true, manualEntry: true }), "manual",
+    "explicit manual replacement outranks the external-unavailable state");
+  assert.equal(rules.resolveCardMode({ stored: STORED, externalSource: true }), "existing",
+    "a stored card outranks the external-unavailable state");
+  assert.equal(rules.resolveCardMode({ channel: CHANNEL, externalSource: true }), "existing",
+    "an imported guarantee outranks the external-unavailable state");
+
+  // the external-unavailable VIEW: read-only, nothing fabricated, honest text
+  const unavailable = rules.resolveCardView({
+    externalSource: true, channelName: "Booking.com", stateLabel: "בערוץ", draft: EMPTY_DRAFT,
+  });
+  assert.equal(unavailable.editable, false,
+    "external-unavailable is READ-ONLY — never an automatically-open manual form");
+  assert.equal(unavailable.holder, "", "no cardholder is fabricated");
+  assert.equal(unavailable.number, "", "no card number is fabricated");
+  assert.equal(unavailable.exp, "", "no expiry is fabricated");
+  assert.equal(unavailable.idNumber, "", "no holder ID is fabricated");
+  assert.ok(/ערוץ חיצוני · Booking\.com/.test(unavailable.sourceLabel),
+    "the source line names the external channel");
+  assert.ok(/לא התקבלו מהערוץ פרטי כרטיס זמינים/.test(unavailable.helper),
+    "the honest 'no usable card fields were received' message is shown");
+  // …and the explicit opt-in from that state is a CLEAN editable draft
+  const manualFromUnavailable = rules.resolveCardView({
+    externalSource: true, manualEntry: true, channelName: "Booking.com", draft: EMPTY_DRAFT,
+  });
+  assert.equal(manualFromUnavailable.editable, true, "opt-in manual entry is fully editable");
+  assert.equal(manualFromUnavailable.holder, "", "the manual draft starts blank");
+  assert.equal(manualFromUnavailable.number, "", "the manual draft starts blank");
 
   // manual opt-in wins over both, and the empty state is the editable draft
   const manual = rules.resolveCardView({ stored: STORED, channel: CHANNEL, draft: DRAFT, manualEntry: true });
@@ -469,7 +527,7 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.equal(empty.number, "", "nothing is invented out of nothing");
 
   // the view model never carries a CVV, in any mode (D52 §2)
-  for (const v of [both, revealed, ch, partial, manual, empty]) {
+  for (const v of [both, revealed, ch, partial, manual, empty, unavailable, manualFromUnavailable]) {
     assert.ok(!Object.keys(v).some((k) => /cvv/i.test(k)), "no CVV anywhere in the card view model");
   }
 }

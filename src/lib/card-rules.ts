@@ -104,7 +104,8 @@ export function maskedPan(last4: string): string {
 // תעודת זהות · מקור פרטי הכרטיס · הערת חיוב).
 //
 // Rules this function enforces:
-//   • precedence: manual opt-in > stored card > channel guarantee > empty
+//   • precedence: manual opt-in > stored card > channel guarantee >
+//     external-channel unavailable (read-only) > empty/fresh
 //   • values are DISPLAY strings — a missing value stays empty, never invented
 //     (no digits are ever reconstructed from a masked fragment)
 //   • the number is the masked representation; the plaintext PAN appears only
@@ -188,28 +189,37 @@ function expDisplay(month: number | null, year: number | null): string {
 }
 
 // ============================================================
-// The explicit card-section state model — ONE source of truth for which of
-// the three modes the canonical card section is in:
+// The explicit card-section state model — ONE source of truth for which
+// mode the canonical card section is in:
 //
 //   "manual"   — the operator explicitly chose to key a card in
 //                (replacingCard). ALWAYS wins: it outranks the stored card,
 //                the imported guarantee, and any payment-method state.
 //   "existing" — a stored (vaulted) card or an imported channel guarantee is
 //                shown read-only (inside the view, stored outranks channel).
-//   "fresh"    — nothing exists: the empty form is direct manual entry.
+//   "external_unavailable" — the reservation belongs to an external channel
+//                but NO usable card fields were received (no stored card, no
+//                guarantee). Read-only honest state — an external reservation
+//                is never dropped into the editable fresh form automatically.
+//   "fresh"    — a genuinely internal reservation with nothing stored: the
+//                empty form is direct manual entry.
 //
 // The payment method is deliberately NOT an input — it can never decide,
 // lock, or unlock the card section.
 // ============================================================
-export type CardMode = "existing" | "manual" | "fresh";
+export type CardMode = "existing" | "external_unavailable" | "manual" | "fresh";
 
 export function resolveCardMode(input: {
   stored?: object | null;
   channel?: object | null;
   manualEntry?: boolean;
+  /** the reservation originates from an external channel (OTA-imported or an
+   *  external booking source) — blocks the automatic fall-through to "fresh" */
+  externalSource?: boolean;
 }): CardMode {
   if (input.manualEntry) return "manual";
   if (input.stored || input.channel) return "existing";
+  if (input.externalSource) return "external_unavailable";
   return "fresh";
 }
 
@@ -223,13 +233,16 @@ export function resolveCardView(input: {
   draft: CardDraftInput;
   /** operator explicitly chose to key a card in instead of the imported/stored one */
   manualEntry?: boolean;
+  /** the reservation belongs to an external channel — see resolveCardMode */
+  externalSource?: boolean;
   revealed?: RevealedCardInput | null;
 }): CardView {
   const { stored, channel, draft, manualEntry, revealed } = input;
   const mode = resolveCardMode(input);
 
   // "manual" (the operator's explicit choice — precedence 1) and "fresh"
-  // (nothing to show — precedence 4) are both the editable draft: the fields
+  // (internal reservation, nothing to show — precedence 5) are both the
+  // editable draft: the fields
   // ARE the draft, initialized clean — imported/masked values are NEVER
   // copied into it, and the imported card itself is not touched.
   if (mode === "manual" || mode === "fresh") {
@@ -252,6 +265,31 @@ export function resolveCardView(input: {
       availableFrom: null,
       availableUntil: null,
       helper: null,
+    };
+  }
+
+  // "external_unavailable", precedence 4 — an external-channel reservation
+  // where nothing usable arrived: every value stays honestly empty (nothing is
+  // fabricated), the section is read-only, and the operator may still opt into
+  // manual entry explicitly. NEVER the editable fresh form.
+  if (mode === "external_unavailable") {
+    const name = input.channelName?.trim() || "הערוץ";
+    return {
+      origin: "empty",
+      editable: false,
+      holder: "",
+      number: "",
+      exp: "",
+      idNumber: "",
+      billingNotes: "",
+      sourceLabel: `${CARD_SOURCE_LABEL.channel} · ${name}`,
+      brandLabel: null,
+      isVirtual: false,
+      availableFrom: null,
+      availableUntil: null,
+      helper: ["לא התקבלו מהערוץ פרטי כרטיס זמינים", input.stateLabel ?? null]
+        .filter(Boolean)
+        .join(" · "),
     };
   }
 
