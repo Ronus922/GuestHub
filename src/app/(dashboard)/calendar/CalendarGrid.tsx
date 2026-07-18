@@ -28,6 +28,11 @@ import {
   type PaymentState,
   type RateRow,
 } from "@/lib/inventory-rules";
+import {
+  nightsRuleViolation,
+  stayViolationMessage,
+  type NightsRuleRow,
+} from "@/lib/rates/rules";
 import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
@@ -324,6 +329,30 @@ export function CalendarGrid({
     [rangeInvalid],
   );
 
+  // Stay-LENGTH gate for a NEW range [ci, co) — the same min/max-nights rule the
+  // server enforces on create (nightsRuleViolation shares the canonical Hebrew
+  // message). Built from the already-fetched per-cell rates, so a selection that
+  // violates minimum/maximum nights is blocked at selection time and never opens
+  // the booking panel. Returns the Hebrew message, or null when the length is legal.
+  const nightsViolation = useCallback(
+    (room: CalendarRoom, ci: DateOnly, co: DateOnly): string | null => {
+      const nights = eachDay(ci, co); // occupied nights [ci, co)
+      const byDate = new Map<string, NightsRuleRow>();
+      for (const d of nights) {
+        const r = cellRate(room, d);
+        if (r)
+          byDate.set(d, {
+            min_stay_arrival: r.min_nights,
+            min_stay_through: r.min_stay_through,
+            max_stay: r.max_nights,
+          });
+      }
+      const v = nightsRuleViolation(byDate, { checkIn: ci, nights });
+      return v ? stayViolationMessage(v) : null;
+    },
+    [cellRate],
+  );
+
   // ---- ghost rendering (direct DOM, rAF-throttled — zero React work) ----
   const paintGhost = useCallback(() => {
     const s = sessionRef.current;
@@ -370,7 +399,9 @@ export function CalendarGrid({
       ghost.classList.remove("new");
       ghost.classList.add("rsz", "live");
     } else if (s.mode === "create" && s.startDate) {
-      const t = createRangeTarget(s.startDate, dayDelta, s.minNights);
+      // preview the RAW dragged range (min=1) so the highlighted band is exactly
+      // what will be validated on release — no silent extend-to-minimum.
+      const t = createRangeTarget(s.startDate, dayDelta, 1);
       const geo = cellRangeGeometry(data.from, data.days, t.ci, t.co);
       const room = data.rooms[s.roomIndex];
       const invalid = rangeInvalid(room, t.ci, t.co);
@@ -819,16 +850,24 @@ export function CalendarGrid({
       endDrag();
       if (!s.activated || !s.startDate) return; // plain click → double-click still creates
       const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
-      const t = createRangeTarget(s.startDate, dayDelta, s.minNights);
+      // RAW selection — never auto-extend to the minimum (owner decision): a
+      // sub-minimum drag must be BLOCKED with a message, not silently grown to a
+      // legal length, so the enforcement is visible at the moment of selection.
+      const t = createRangeTarget(s.startDate, dayDelta, 1);
       const room = data.rooms[s.roomIndex];
       if (!room) return;
       if (rangeInvalid(room, t.ci, t.co)) {
         toast.error("הטווח המסומן אינו זמין");
         return;
       }
+      const lenMsg = nightsViolation(room, t.ci, t.co);
+      if (lenMsg) {
+        toast.error(lenMsg);
+        return;
+      }
       onNewBooking({ roomId: room.id, checkIn: t.ci, checkOut: t.co, source: "calendar_drag" });
     },
-    [endDrag, data.rooms, rangeInvalid, onNewBooking],
+    [endDrag, data.rooms, rangeInvalid, nightsViolation, onNewBooking],
   );
 
   // dismiss context menus on outside click / escape
@@ -1349,7 +1388,10 @@ const RoomRow = memo(function RoomRow({
           const weekend = dow === 5 || dow === 6;
             const rate = cellRate(room, d);
           const price = rate?.price != null ? Number(rate.price) : room.base_price;
-          const minN = rate?.min_nights ?? null;
+          // Binding minimum for a guest arriving this day = stricter of arrival-min
+          // and this cell's through-min (the Group Update's primary "מינימום לילות").
+          // 0 = no minimum. Shown as the moon hint and used to size a double-click.
+          const minN = Math.max(rate?.min_nights ?? 0, rate?.min_stay_through ?? 0);
           const closed = rate?.closed ?? false;
           const creatable = can.create && sellable;
           return (
@@ -1357,12 +1399,12 @@ const RoomRow = memo(function RoomRow({
               key={d}
               className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${!sellable ? "blocked" : ""} ${creatable ? "cr" : ""}`}
               onPointerDown={
-                creatable ? (e) => onCellPointerDown(e, roomIndex, d, minN ?? 1) : undefined
+                creatable ? (e) => onCellPointerDown(e, roomIndex, d, minN || 1) : undefined
               }
               onPointerMove={creatable ? onCellPointerMove : undefined}
               onPointerUp={creatable ? onCellPointerUp : undefined}
               onPointerCancel={creatable ? onCellPointerCancel : undefined}
-              onDoubleClick={creatable ? () => onCellDouble(room.id, d, minN ?? 1) : undefined}
+              onDoubleClick={creatable ? () => onCellDouble(room.id, d, minN || 1) : undefined}
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
@@ -1380,7 +1422,6 @@ const RoomRow = memo(function RoomRow({
                     // A 28px .chip cannot fit a ~37px-wide day column.
                     <span className="cb-cx">סגור</span>
                   ) : (
-                    minN != null &&
                     minN >= 2 && (
                       <span className="cb-mn">
                         <Icon name="moon" size={13.5} />

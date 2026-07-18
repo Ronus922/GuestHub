@@ -112,6 +112,48 @@ export function stayRestrictionViolation(
   return v ? stayViolationMessage(v) : null;
 }
 
+// The three per-date fields the MIN/MAX-NIGHTS rule needs — a narrow view of a
+// PlanRateRow so a caller (e.g. the calendar) can build the map from whatever
+// read model it already holds.
+export type NightsRuleRow = Pick<PlanRateRow, "min_stay_arrival" | "min_stay_through" | "max_stay">;
+
+// Focused stay-LENGTH check: a deliberate SUBSET of stayRestrictionViolation-
+// Structured that evaluates ONLY min_stay_arrival, min_stay_through and max_stay
+// — NOT the commercial CTA / CTD / stop_sell gates. Front-desk staff may still
+// place a MANUAL booking on a closed/stop-sold date, so a manual calendar create
+// is blocked purely on illegal LENGTH. Same evaluation order and the same Hebrew
+// messages (stayViolationMessage) as the full validator, so the calendar block,
+// the server create gate and the Channex ARI rules can never disagree.
+export function nightsRuleViolation(
+  byDate: Map<string, NightsRuleRow>,
+  stay: { checkIn: string; nights: string[] },
+): StayRuleViolation | null {
+  const nightsCount = stay.nights.length;
+
+  const arrival = byDate.get(stay.checkIn);
+  if (arrival) {
+    if (arrival.min_stay_arrival != null && nightsCount < arrival.min_stay_arrival)
+      return { code: "MIN_STAY_NOT_MET", date: stay.checkIn, required: arrival.min_stay_arrival, scope: "arrival" };
+    if (arrival.max_stay != null && nightsCount > arrival.max_stay)
+      return { code: "MAX_STAY_EXCEEDED", date: stay.checkIn, limit: arrival.max_stay };
+  }
+
+  // min_stay_through is the strictest through-min across the occupied nights.
+  let maxThrough = 0;
+  let maxThroughDate = stay.checkIn;
+  for (const d of stay.nights) {
+    const t = byDate.get(d)?.min_stay_through;
+    if (t != null && t > maxThrough) {
+      maxThrough = t;
+      maxThroughDate = d;
+    }
+  }
+  if (maxThrough > 0 && nightsCount < maxThrough)
+    return { code: "MIN_STAY_NOT_MET", date: maxThroughDate, required: maxThrough, scope: "through" };
+
+  return null;
+}
+
 // ============================================================
 // Sale-state reason codes (Step 2). The read model must not collapse unrelated
 // causes into one generic "hatched" state. classifySellState returns exactly
