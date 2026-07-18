@@ -61,6 +61,7 @@
     "check:housekeeping": "node scripts/check-housekeeping.mjs",
     "check:maintenance-closures": "node scripts/check-maintenance-closures.mjs",
     "check:reports": "node scripts/check-reports.mjs",
+    "check:israel-market": "node scripts/check-israel-market.mjs",
     "db:replay": "node scripts/db/migrate.mjs",
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",

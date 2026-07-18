@@ -47,3 +47,4 @@
 039_channel_circuit_breaker.sql
 040_typed_room_closures.sql
 041_operational_tasks.sql
+042_guest_anonymization.sql

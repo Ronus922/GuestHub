@@ -33,3 +33,12 @@ export function includedVatAmount(grossTotal: number, rate: number): number {
   if (rate <= 0) return 0;
   return Math.round(grossTotal - grossTotal / (1 + rate / 100));
 }
+
+// §21 Israel tourist VAT zero-rating: a foreign tourist's accommodation is
+// zero-rated, so a reservation flagged tax_exempt carries NO included VAT — the
+// gross total is entirely net. Every VAT display/invoice for a reservation must
+// resolve its VAT through here, never includedVatAmount directly.
+export function includedVatForReservation(grossTotal: number, rate: number, taxExempt: boolean): number {
+  if (taxExempt) return 0;
+  return includedVatAmount(grossTotal, rate);
+}
