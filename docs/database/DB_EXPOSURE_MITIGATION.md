@@ -35,9 +35,14 @@ ip6tables -I DOCKER-USER -i ens3 -p tcp --dport 6543 -j DROP
 - **Post-DNAT matching:** in `DOCKER-USER` the destination is already the container port, so `--dport 5432` covers both the pooler (5432) and the test DB (host 5433 → container 5432); `--dport 6543` covers the transaction pooler.
 - **No container/daemon restart:** rules are inserted live. Zero PM2 restarts observed (guesthub stayed at 66, worker 49, and the three unrelated apps unchanged).
 
-### Scope note — gateway ports 8000/8443 (Kong) NOT blocked here
+### Gateway ports 8000/8443 (Kong) — RESOLVED in Stage 6
 
-The Supabase Kong gateway (`8000`/`8443`) is also published on `0.0.0.0`. It is **intentionally left open** by this mitigation because `NEXT_PUBLIC_SUPABASE_URL=https://db.bios.co.il` (browser auth) appears to reach Kong's `:8443` directly (the `supabase` nginx vhost that would proxy 443→127.0.0.1:8000 exists only in `sites-available`, not `sites-enabled`). Blocking Kong externally could break authentication for GuestHub and possibly the other apps on the shared stack. Kong requires anon/service-role JWTs and is a narrower surface than raw Postgres. **Gateway hardening (confirm the true `db.bios.co.il` ingress path, then restrict 8000/8443 or move behind nginx/Tailscale) is tracked for Stage 6** (`DEFECT_MATRIX.md` C2 → Stage 6 verify).
+The Stage-2 note deferred the Kong gateway (`8000`/`8443`, published on `0.0.0.0`) because the real `db.bios.co.il` ingress path was uncertain. **Stage 6 confirmed it** (2026-07-18):
+
+- `/etc/nginx/sites-available/supabase` **is** symlinked into `sites-enabled` and serves `db.bios.co.il` on `:443` (Certbot TLS) with `proxy_pass http://127.0.0.1:8000` — i.e. the browser auth path is **nginx :443 → LOOPBACK :8000**, not Kong's external `:8443`.
+- GuestHub server-side uses `http://localhost:8000` (loopback); the other host apps follow the same loopback pattern. **No legitimate consumer reaches Kong via the public interface.**
+
+The external `8000`/`8443` exposure is therefore pure attack surface (notably **plaintext auth on 8000**), the same class as the raw DB ports. It is now closed by the same interface-scoped `DOCKER-USER` DROP (`-i ens3`), which cannot touch the loopback nginx ingress, container-to-container traffic, or Tailscale admin. Verified after applying: `127.0.0.1:8000/auth/v1/health` and `db.bios.co.il:443` (via loopback) both return `HTTP 401` (gateway alive), and prod `:3007/login` returns `HTTP 200` (unaffected). A host-local connection to the public IP cannot traverse the `ens3` FORWARD rule (same reason the DB rules leave localhost unaffected), so the external block is asserted by rule semantics + the proven C2 DB-port precedent rather than a self-connection test.
 
 ## Persistence
 

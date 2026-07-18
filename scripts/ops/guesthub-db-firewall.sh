@@ -27,12 +27,23 @@ PUB_IF="${PUB_IF:-ens3}"          # public interface
 PORTS=(5432 6543)                  # container-side DB ports to block externally
 COMMENT_PREFIX="guesthub-C2: block external DB"
 
-ensure() {  # ensure <iptables-bin> <port>
-  local bin="$1" port="$2"
+# C2 Kong portion (Stage 6): the shared Supabase gateway (supabase-kong) publishes
+# 8000 (plaintext) and 8443 (TLS) on 0.0.0.0 — internet-exposed. The only
+# legitimate ingress is nginx :443 (Certbot TLS for db.bios.co.il) -> proxy_pass
+# http://127.0.0.1:8000, i.e. LOOPBACK. Host apps also reach the gateway via
+# localhost:8000. Neither path enters via ${PUB_IF}, so an interface-scoped DROP
+# closes the external attack surface (esp. plaintext auth on 8000) without
+# touching the nginx ingress, container-to-container traffic, or Tailscale admin.
+# Ingress path confirmed 2026-07-18: /etc/nginx/sites-available/supabase.
+GATEWAY_PORTS=(8000 8443)
+GATEWAY_COMMENT_PREFIX="guesthub-C2: block external Kong gateway"
+
+ensure() {  # ensure <iptables-bin> <port> <comment-prefix>
+  local bin="$1" port="$2" prefix="$3"
   if ! "$bin" -C DOCKER-USER -i "$PUB_IF" -p tcp --dport "$port" \
-        -m comment --comment "${COMMENT_PREFIX} ${port}" -j DROP 2>/dev/null; then
+        -m comment --comment "${prefix} ${port}" -j DROP 2>/dev/null; then
     "$bin" -I DOCKER-USER -i "$PUB_IF" -p tcp --dport "$port" \
-        -m comment --comment "${COMMENT_PREFIX} ${port}" -j DROP
+        -m comment --comment "${prefix} ${port}" -j DROP
     echo "inserted ${bin} DROP ${PUB_IF} tcp/${port}"
   else
     echo "present  ${bin} DROP ${PUB_IF} tcp/${port}"
@@ -40,8 +51,13 @@ ensure() {  # ensure <iptables-bin> <port>
 }
 
 for p in "${PORTS[@]}"; do
-  ensure iptables "$p"
-  ensure ip6tables "$p"
+  ensure iptables "$p" "$COMMENT_PREFIX"
+  ensure ip6tables "$p" "$COMMENT_PREFIX"
 done
 
-echo "guesthub-db-firewall applied on ${PUB_IF} for ports: ${PORTS[*]}"
+for p in "${GATEWAY_PORTS[@]}"; do
+  ensure iptables "$p" "$GATEWAY_COMMENT_PREFIX"
+  ensure ip6tables "$p" "$GATEWAY_COMMENT_PREFIX"
+done
+
+echo "guesthub-db-firewall applied on ${PUB_IF} for ports: ${PORTS[*]} ${GATEWAY_PORTS[*]}"
