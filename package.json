@@ -69,7 +69,10 @@
     "check:reservation-concurrency": "node scripts/check-reservation-concurrency.mjs",
     "check:inventory-integrity": "node scripts/check-inventory-integrity.mjs",
     "check:payment-ledger-integrity": "node scripts/check-payment-ledger-integrity.mjs",
-    "check:payment-refund-void": "node scripts/check-payment-refund-void.mjs"
+    "check:payment-refund-void": "node scripts/check-payment-refund-void.mjs",
+    "check:timezone-and-money-invariants": "node scripts/check-timezone-and-money-invariants.mjs",
+    "check:pms-domain-invariants": "node scripts/check-pms-domain-invariants.mjs",
+    "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs"
   },
   "dependencies": {
     "@hebcal/core": "^6.6.0",

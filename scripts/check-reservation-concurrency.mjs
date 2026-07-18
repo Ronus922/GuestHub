@@ -28,7 +28,7 @@ const c2 = postgres(url, { prepare:false, max:1 });
 let fail = 0; const ok=(m)=>console.log(`  ✓ ${m}`); const bad=(m,e)=>{fail++;console.log(`  ✗ ${m}: ${e?.message??e}`);};
 const isExcl = (e) => /rr_no_double_booking|exclusion|conflicting key|overlap/i.test(e?.message||"");
 
-let T, ROOM, G1, G2, G3, G4;
+let T, ROOM, G1, G2;
 try {
   [{ id: T }] = await admin`insert into guesthub.tenants (name, slug) values ('concurrency-test', 'concurrency-test-'||substr(md5(random()::text),1,8)) returning id`;
   [{ id: ROOM }] = await admin`insert into guesthub.rooms (tenant_id, room_number) values (${T}, 'CT-1') returning id`;
