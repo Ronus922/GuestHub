@@ -4,9 +4,23 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 6 — Security, Performance & Observability** — NOT STARTED (entry gate next). Continuous mode (charter §1). Read `06_STAGE_6_SECURITY_PERFORMANCE_OBSERVABILITY.md` at entry.
+**Stage 6 — Security, Performance & Observability** — IN PROGRESS. Entry gate PASSED (2026-07-18). Continuous mode (charter §1).
 
-Stage 6 scope: full red-team/threat-model execution; re-scoped **H8** (PAN purge job + full PCI review) and **H11** (quarantine log retention/dedup); performance/load; observability (metrics/alerting/structured logs); **Kong gateway (8000/8443) external hardening** (Stage-2 deferral); maintainability refactor round-2 guarded by the accumulated checks.
+### Stage 6 progress
+- ✅ Entry gate: `stage-5-complete` tag present, branch current, headroom OK, residual backlog loaded (H8, H11, Kong from Stage-2/3 reports).
+- ✅ **Secrets (§19)** — `check:no-secrets`: 430 tracked files scanned, no secret material, no `.env*` ever committed, encryption/activation env vars never hardcoded. Commit 5e8712a.
+- ✅ **Supply-chain (§19)** — resolved the one moderate advisory (postcss<8.5.10 via next) with a pinned pnpm override → audit clean; pinned Node (engines >=20<21, `.nvmrc`, packageManager pnpm@10.32.1). `check:supply-chain`. Commit 60062c4.
+- ⏳ **Remaining Stage-6 scope:**
+  - Red-team (§19): authorization/application/synchronization attacks — resolve Critical/High, document residual; `SECURITY_TEST_REPORT.md`.
+  - **H8** (re-scoped): PAN purge job + full PCI review. **H11** (re-scoped): `channel_sync_errors` retention/dedup.
+  - Performance (§20): measure at current + growth-scale fixtures; justified indexes only; before/after evidence.
+  - Observability (§21): sanitized visibility list, actionable alert list (each with runbook step), log hygiene, backup-status monitoring; `OBSERVABILITY.md`.
+  - Fault-injection (§24): full list (webhook+poll, credential rotation mid-job, cert reset during run, two Full Sync clicks, DB unavailable, corrupted queue payload, expired lease) — add coverage to `check:channel-chaos` + `check:background-job-recovery`.
+  - **Kong gateway (8000/8443)** external hardening (Stage-2 deferral) — confirm ingress path first, then restrict without breaking `db.bios.co.il` auth.
+  - Docs: `THREAT_MODEL.md` (finalize), `SECURITY_TEST_REPORT.md`, `SECRET_HANDLING.md`, `OBSERVABILITY.md`.
+  - New checks so far: `check:no-secrets`, `check:supply-chain`. Node runtime now pinned (was unpinned).
+
+### Stage 6 prior (entry-gate context)
 
 ## Prior stage
 
