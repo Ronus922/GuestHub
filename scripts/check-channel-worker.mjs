@@ -182,7 +182,8 @@ async function seed() {
 }
 
 const connRow = async (id) => (await sql`
-  SELECT id, tenant_id, channex_property_id, api_key_ciphertext
+  SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
+         circuit_open_until::text AS circuit_open_until, consecutive_failures
   FROM guesthub.channel_connections WHERE id = ${id}`)[0];
 
 let f;
@@ -426,10 +427,13 @@ try {
     const [job] = await sql`
       INSERT INTO guesthub.channel_sync_jobs (tenant_id, connection_id, job_type, status, priority)
       VALUES (${f.T}, ${f.conn}, 'full_sync', 'queued', 10) RETURNING id`;
-    const summary = await workerMod.runTick("fs-worker", () => {});
-    assert.equal(summary.failed, 1, "an unready property fails the Full Sync");
+    // runTick operates GLOBALLY (it ensures + claims inbound-pull / drain jobs for
+    // every connection in the shared test DB), so its aggregate summary.failed is
+    // not a per-job invariant. Assert the SPECIFIC job's outcome: our unready Full
+    // Sync must dead-letter and never re-send.
+    await workerMod.runTick("fs-worker", () => {});
     const [j] = await sql`SELECT status FROM guesthub.channel_sync_jobs WHERE id = ${job.id}`;
-    assert.equal(j.status, "dead_letter", "a failed Full Sync dead-letters — it is never re-sent automatically");
+    assert.equal(j.status, "dead_letter", "an unready Full Sync dead-letters — it is never re-sent automatically");
     await sql`UPDATE guesthub.channel_room_mappings SET status = 'mapped' WHERE connection_id = ${f.conn}`;
     await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
     ok("a failed Full Sync dead-letters; ARI is never re-sent without an operator click");
@@ -437,16 +441,31 @@ try {
 
   // ---- the job queue: claim, dedup, FIFO-per-connection, stale-lease reclaim ----
   {
-    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    // These assertions test queue SEMANTICS by count (exactly-one-claim,
+    // FIFO-blocks-the-next, idle-claims-nothing). claimChannelJobs() is GLOBAL —
+    // it claims any connection's runnable jobs — so the count invariants only
+    // hold against an otherwise-empty queue. The shared :5433 test DB accumulates
+    // jobs from prior CRASHED runs (each run cleans only its own tenant; a killed
+    // run — e.g. the agents-rtl loop — leaves 'processing'/'retry_wait' rows), and
+    // those become claimable as their lease/backoff expires: a global claim here
+    // would then return them too, so `claimed.length` reads 6–10 instead of 1.
+    // The atomicity guarantee (SKIP LOCKED) is real and asserted directly below;
+    // the count assertions merely need a clean queue, and this check is the sole
+    // legitimate actor on the isolated test DB — so start from an empty queue.
+    await sql`DELETE FROM guesthub.channel_sync_jobs`;
     const a = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "sync_ari_range", idempotencyKey: `ari_drain:${f.conn}` });
     const b = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "sync_ari_range", idempotencyKey: `ari_drain:${f.conn}` });
     assert.ok(a.id, "first enqueue creates the job");
     assert.ok(b.duplicate, "a second enqueue while queued is deduplicated");
 
-    // two workers claim concurrently — exactly one wins
+    // two workers claim concurrently. The invariant is atomicity: the SAME job is
+    // never taken by both (FOR UPDATE SKIP LOCKED) — asserted directly, so it holds
+    // no matter what else is runnable. With one runnable job they claim it exactly once.
     const [c1, c2] = await Promise.all([queue.claimChannelJobs("worker-1", 5), queue.claimChannelJobs("worker-2", 5)]);
+    const s2 = new Set(c2.map((j) => j.id));
+    assert.ok(!c1.some((j) => s2.has(j.id)), "two concurrent workers never claim the same job");
     const claimed = [...c1, ...c2];
-    assert.equal(claimed.length, 1, "two concurrent workers never claim the same job");
+    assert.equal(claimed.length, 1, "exactly one worker claims the single runnable job");
     assert.equal(claimed[0].id, a.id);
 
     // a second job on the SAME connection is not claimable while one is live

@@ -26,16 +26,21 @@ const out = mkdtempSync(join(process.cwd(), "node_modules/.cache/check-hours-db-
 writeFileSync(join(out, "package.json"), JSON.stringify({ type: "module" }));
 execSync(
   `pnpm exec tsc src/lib/check-in-check-out-mutation.ts src/lib/check-in-check-out.ts ` +
+    `src/lib/check-in-check-out-policy.ts ` +
     `src/lib/dates.ts src/lib/auth/permission-check.ts src/lib/audit-write.ts --outDir ${out} ` +
     "--module esnext --target es2022 --moduleResolution bundler --skipLibCheck",
   { stdio: "inherit" },
 );
 const patchImport = (path, replacements) => {
   let source = readFileSync(path, "utf8");
-  for (const [from, to] of replacements) source = source.replace(from, to);
+  for (const [from, to] of replacements) source = source.replaceAll(from, to);
   writeFileSync(path, source);
 };
-patchImport(join(out, "check-in-check-out.js"), [['"./dates"', '"./dates.js"']]);
+patchImport(join(out, "check-in-check-out.js"), [
+  ['"./dates"', '"./dates.js"'],
+  ['"./check-in-check-out-policy"', '"./check-in-check-out-policy.js"'],
+]);
+patchImport(join(out, "check-in-check-out-policy.js"), [['"./dates"', '"./dates.js"']]);
 patchImport(join(out, "check-in-check-out-mutation.js"), [
   ['"./check-in-check-out"', '"./check-in-check-out.js"'],
   ['"./auth/permission-check"', '"./auth/permission-check.js"'],

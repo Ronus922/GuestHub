@@ -157,18 +157,13 @@ try {
     if (e.message !== "ROLLBACK") throw e;
   });
 
-  // ---- no connection is active ⇒ zero outbound backlog (§S) ----
-  const [{ active }] = await sql`
-    SELECT COUNT(*)::int AS active FROM guesthub.channel_connections
-    WHERE state = 'active'`;
-  assert.equal(active, 0, "no active connection exists in Phase 3");
-  const [{ dirty }] = await sql`
-    SELECT COUNT(*)::int AS dirty FROM guesthub.channel_dirty_ranges`;
-  assert.equal(dirty, 0, "no dirty-range backlog accumulates while disconnected");
-  const [{ runnable }] = await sql`
-    SELECT COUNT(*)::int AS runnable FROM guesthub.channel_sync_jobs
-    WHERE status IN ('queued','processing','retry_wait')`;
-  assert.equal(runnable, 0, "no runnable jobs exist while disconnected");
+  // NOTE: the former Phase-3 "no active connection ⇒ zero outbound backlog"
+  // assertions were removed here. Channel sync was intentionally activated
+  // (D68/D72), so live backlog is legitimate + transient; asserting live-prod
+  // operational state in a code-integrity check is inherently flaky. That health
+  // signal (stuck ranges / wedged jobs) is now an OBSERVABILITY.md alert and is
+  // exercised deterministically by check:background-job-recovery + check:channel-worker
+  // on the disposable DB. This check stays focused on inventory-FUNCTION integrity.
 
   console.log("check-inventory: all assertions passed");
 } finally {

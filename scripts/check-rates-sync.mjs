@@ -332,7 +332,8 @@ async function seed() {
 }
 
 const connRow = async (id) => (await sql`
-  SELECT id, tenant_id, channex_property_id, api_key_ciphertext
+  SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
+         circuit_open_until::text AS circuit_open_until, consecutive_failures
   FROM guesthub.channel_connections WHERE id = ${id}`)[0];
 
 const jobCount = async (conn, type, statuses) => (await sql`

@@ -133,7 +133,7 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
   }));
   const big = ari.buildAvailabilityValues(many, "p", mapping);
   const totalValues = big.batches.reduce((n, b) => n + b.values.length, 0);
-  assert.ok(big.batches.every((b) => b.values.length <= ari.MAX_VALUES_PER_PAYLOAD), "each batch \u2264 limit");
+  assert.ok(big.batches.every((b) => ari.payloadByteSize(b) <= ari.PAYLOAD_BYTE_LIMIT), "each batch within 10MB");
   assert.equal(totalValues, 2500, "no values lost when splitting");
 
   assert.ok(ari.validateAriBatch({ values: [] }), "empty payload rejected");

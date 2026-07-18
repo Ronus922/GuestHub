@@ -5,7 +5,8 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob } from "./queue";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl, type ChannexEnvironment } from "./config";
+import { effectiveChannexEnvironment, assertProductionActivationAuthorized } from "./production-guard";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest, type ChannexErrorCategory } from "./connection-test";
 import {
@@ -120,6 +121,8 @@ export async function upsertChannelConnectionAction(input: {
 }): Promise<Result<{ id: string }>> {
   try {
     const actor = await requireChannelAdmin();
+    // §26: a production connection cannot even be created while activation is off.
+    if (input.environment === "production") assertProductionActivationAuthorized();
     const [row] = await sql<{ id: string }[]>`
       INSERT INTO guesthub.channel_connections
         (tenant_id, provider, environment, state, channex_property_id, created_by, updated_by)
@@ -258,7 +261,11 @@ async function probeStoredChannexKey(tenantId: string): Promise<ProbeResult> {
     return { ok: false, error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה", category: "undecryptable" };
   }
 
-  const result = await runChannexConnectionTest({ apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+  // §11: base URL from the connection's environment, not a bare literal. The
+  // connection lifecycle here is staging-scoped (CHANNEX_ENV); production
+  // connections are introduced by the §26 activation guard, and this resolves
+  // with them automatically.
+  const result = await runChannexConnectionTest({ apiKey, baseUrl: channexBaseUrl(CHANNEX_ENV) });
 
   if (result.ok) {
     await sql`
@@ -551,11 +558,13 @@ export async function getAriSyncStatusAction(connectionId: string): Promise<Resu
 // webhook/booking is created here.
 // ============================================================
 
-const CHANNEX_ENV = "staging" as const;
+// §26: the effective environment is resolved through the production-activation
+// guard, never hardcoded. Staging until CHANNEX_PRODUCTION_ACTIVATION is set.
+const CHANNEX_ENV: ChannexEnvironment = effectiveChannexEnvironment();
 
-// Masked, secret-free view of the staging connection for the UI.
+// Masked, secret-free view of the connection for the UI.
 export type ChannexConnectionView = {
-  environment: "staging";
+  environment: ChannexEnvironment;
   baseUrl: string;
   secretsKeyConfigured: boolean;
   configured: boolean; // an api-key is stored
@@ -598,7 +607,7 @@ export async function getChannexConnectionAction(): Promise<Result<ChannexConnec
       success: true,
       data: {
         environment: CHANNEX_ENV,
-        baseUrl: CHANNEX_BASE_URLS.staging,
+        baseUrl: channexBaseUrl(CHANNEX_ENV),
         secretsKeyConfigured: channelSecretsConfigured(),
         configured: !!row?.api_key_hint,
         apiKeyHint: row?.api_key_hint ?? null,
@@ -635,7 +644,7 @@ export async function saveChannexApiKeyAction(input: { apiKey: string }): Promis
     const replacing = !!existing?.api_key_ciphertext;
 
     // Authenticate the CANDIDATE before it touches the database.
-    const probe = await runChannexConnectionTest({ apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+    const probe = await runChannexConnectionTest({ apiKey, baseUrl: channexBaseUrl(CHANNEX_ENV) });
     if (!probe.ok) {
       await writeAudit(actor, {
         entityType: "channel_connection",
@@ -1004,7 +1013,7 @@ export async function listChannexPropertiesAction(): Promise<
     const key = await withChannexKey(actor.tenantId);
     if (!key.ok) return { success: false, error: key.error };
 
-    const res = await listChannexProperties({ apiKey: key.apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+    const res = await listChannexProperties({ apiKey: key.apiKey, baseUrl: channexBaseUrl(CHANNEX_ENV) });
     if (!res.ok) return apiFail(res);
 
     if (res.properties.length > 0 && !(await loadPropertyMappingRow(actor.tenantId))?.channex_property_id) {
@@ -1074,7 +1083,7 @@ export async function createChannexPropertyAction(): Promise<Result<{ propertyId
 
       const created = await apiCreateChannexProperty({
         apiKey: key.apiKey,
-        baseUrl: CHANNEX_BASE_URLS.staging,
+        baseUrl: channexBaseUrl(CHANNEX_ENV),
         payload,
       });
       if (!created.ok) return { kind: "fail" as const, fail: created };
@@ -1137,7 +1146,7 @@ export async function adoptChannexPropertyAction(input: {
     if (!key.ok) return { success: false, error: key.error };
 
     // Verify accessibility BEFORE adopting.
-    const got = await getChannexProperty({ apiKey: key.apiKey, baseUrl: CHANNEX_BASE_URLS.staging, id: propertyId });
+    const got = await getChannexProperty({ apiKey: key.apiKey, baseUrl: channexBaseUrl(CHANNEX_ENV), id: propertyId });
     if (!got.ok) return apiFail(got);
     const auditCtx = await auditRequestContext();
 
@@ -1194,7 +1203,7 @@ export async function refreshChannexPropertyAction(): Promise<
 
     const got = await getChannexProperty({
       apiKey: key.apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(CHANNEX_ENV),
       id: mapping.channex_property_id,
     });
     const auditCtx = await auditRequestContext();
@@ -1289,7 +1298,7 @@ export async function previewChannexUpdateAction(): Promise<Result<ChannexUpdate
     if (!key.ok) return { success: false, error: key.error };
     const got = await getChannexProperty({
       apiKey: key.apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(CHANNEX_ENV),
       id: mapping.channex_property_id,
     });
     if (!got.ok) return apiFail(got);
@@ -1353,7 +1362,7 @@ export async function updateChannexPropertyFromBusinessProfileAction(): Promise<
 
     const updated = await apiUpdateChannexProperty({
       apiKey: key.apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(CHANNEX_ENV),
       id: mapping.channex_property_id, // SAME id — never a new property
       payload: built,
     });

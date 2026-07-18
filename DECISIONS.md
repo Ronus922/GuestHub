@@ -737,3 +737,23 @@ An off-screen autofill decoy was deliberately **not** added: it is unverifiable 
 **Operator surface.** /channels gained one compact inbound card: enabled state, webhook registration, last import/pull, pending pull, imported/unacked/quarantined counts, last sanitized error, and a super_admin "משיכת הזמנות עכשיו" that only enqueues the same idempotent durable job. Enabling inbound generates the hashed per-connection webhook token and registers the Channex webhook (`event_mask=booking`, `send_data=false`); registration failure is a warning, not a blocker — the poll alone imports everything.
 
 Verified by `scripts/check-inbound-bookings.mjs` (16 assertions on the isolated :5433 DB): lifecycle, idempotent duplicate delivery, ack-after-commit and ack-impossible-before-import, quarantines, tenant isolation, fallback poll, worker retry, masked/real card handling, calendar visibility through the calendar's own query.
+
+---
+
+## Program hardening + certification (Stages 2–7, 2026-07-18)
+
+The 7-stage hardening program (branch `feat/pms-hardening-channex-certification`, draft PR #92) established these canonical decisions. Full detail in `docs/program/` (charter, V2, STATE, per-stage reports) and `docs/architecture/adr/`.
+
+**Sources of truth (ADR-0001).** One resolver per concern: pricing via `calculateReservationPrice`; availability via `sellable_unit_inventory`/`room_type_inventory`/`check_room_availability` (physical room, 0/1 model — D64); Channex base URL via `config.channexBaseUrl(env)`; balance via `recomputePaymentAggregates`. No second writer/reader for any of these.
+
+**Safety boundaries (V2 §3).** Dev/prod share the shared supabase-db (:5432) — it is READ-ONLY for this program; all migrations/destructive work run only on the dedicated staging DB (:5434) or disposable (:5433). No production cutover, no Channex production activation, no merge/deploy. 45 migrations replay from zero (proven).
+
+**Integrity (Stage 3).** Double-booking is impossible at the DB (exclusion constraint, proven under concurrency); payments derive from one ledger formula; refunds are negative contra rows; tenant isolation is server-side canonical + a data backstop.
+
+**Channex (Stage 4).** Environment routing is crossover-proof (one resolver); production is guarded off by `CHANNEX_PRODUCTION_ACTIVATION` (built + inactive); an append-only evidence ledger records Task IDs for every scenario; Full Sync = 500 days / 2 requests with a 10MB byte preflight; rate limits are handled by a 429 cooldown + circuit breaker; inbound bookings ACK only after commit. Live cert execution needs a Channex Staging channel (external dependency, V2 §2).
+
+**PMS capabilities (Stage 5).** Housekeeping tasks auto-generate on checkout; maintenance OOO removes availability + syncs while OOS stays sellable; one unified task store (no per-module fork); reports are read-only server-side with injection-hardened CSV; tourist VAT zero-rating + guest anonymization (Amendment 13) + a fail-closed invoice seam.
+
+**Security/ops (Stage 6).** No secrets in code or git history; dependency audit clean; runtime pinned; PAN + log retention purges (H8/H11); performance measured (500-day projection ~13ms); observability + actionable alerts documented. Zero unresolved Critical/High; residual Medium/Low documented with plans.
+
+**Verification discipline.** Every claim is guarded by a runnable `check:*` script; each stage was independently verified by Agent N (a non-implementing verifier) before its tag. No implementing agent self-certifies.

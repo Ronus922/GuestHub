@@ -1,7 +1,7 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { decryptSecret } from "./crypto";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import {
   acknowledgeBookingRevision,
   fetchBookingRevision,
@@ -91,7 +91,7 @@ const REACK_BATCH = 50;
 export function inboundCreds(conn: InboundConnection): ChannexReqOpts {
   return {
     apiKey: decryptSecret(conn.api_key_ciphertext),
-    baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+    baseUrl: channexBaseUrl(conn.environment),
   };
 }
 
@@ -339,6 +339,32 @@ async function upsertChannelGuest(
       WHERE id = ${existingGuestId} AND tenant_id = ${tenantId}`;
     return existingGuestId;
   }
+
+  // ADR-0005 import dedup seam: before creating a new guest, reuse the canonical
+  // guest matched by a STRONG key (normalized email). Only a UNIQUE match is
+  // reused; zero or ambiguous (>1) matches fall through to a new record — never
+  // a silent wrong merge (fail-visible, V2 §8). This stops the "new guest per
+  // OTA booking" duplication (defect M24 foundation); operator merge UI = Stage 5.
+  const dedupEmail = (customer.email ?? "").trim().toLowerCase() || null;
+  if (dedupEmail) {
+    const matches = await tx<{ id: string }[]>`
+      SELECT id FROM guesthub.guests
+      WHERE tenant_id = ${tenantId} AND lower(email) = ${dedupEmail} LIMIT 2`;
+    if (matches.length === 1) {
+      await tx`
+        UPDATE guesthub.guests SET
+          first_name = ${customer.firstName}, last_name = ${customer.lastName},
+          full_name = ${fullName},
+          phone = COALESCE(${customer.phone}, phone),
+          email = COALESCE(${customer.email}, email),
+          address = COALESCE(${address}, address),
+          city = COALESCE(${customer.city}, city),
+          country = COALESCE(${customer.country}, country)
+        WHERE id = ${matches[0].id} AND tenant_id = ${tenantId}`;
+      return matches[0].id;
+    }
+  }
+
   const [created] = await tx<{ id: string }[]>`
     INSERT INTO guesthub.guests
       (tenant_id, first_name, last_name, full_name, phone, email, country, language,
@@ -545,7 +571,12 @@ async function applyLiveRevision(
         status = ${status},
         check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
         adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
-        total_price = ${total}, currency = ${norm.currency ?? "ILS"},
+        -- H6: preserve locally-added discount/extra_charges across an OTA
+        -- modification. The channel total is folded through the reservation's
+        -- own adjustments (reservationTotal semantics: max(0, channel+extra−disc))
+        -- instead of blindly overwriting total_price with the raw channel amount.
+        total_price = GREATEST(0, ${total} + extra_charges - discount_amount),
+        currency = ${norm.currency ?? "ILS"},
         notes = ${norm.notes},
         expected_arrival_time = COALESCE(${norm.arrivalHour}, expected_arrival_time),
         expected_arrival_time_source = CASE

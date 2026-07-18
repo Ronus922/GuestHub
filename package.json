@@ -47,6 +47,22 @@
     "check:channex-rate-plans": "node scripts/check-channex-rate-plans.mjs",
     "check:su-lifecycle": "node scripts/check-su-lifecycle.mjs",
     "check:room-identity": "node scripts/check-room-identity.mjs",
+    "check:db-isolation": "node scripts/check-db-isolation.mjs",
+    "check:channex-environment-routing": "node scripts/check-channex-environment-routing.mjs",
+    "check:production-activation-guard": "node scripts/check-production-activation-guard.mjs",
+    "check:channex-certification-evidence": "node scripts/check-channex-certification-evidence.mjs",
+    "check:channex-full-sync-two-requests": "node scripts/check-channex-full-sync-two-requests.mjs",
+    "check:channex-group-update-batching": "node scripts/check-channex-group-update-batching.mjs",
+    "check:channex-rate-limit-cooldown": "node scripts/check-channex-rate-limit-cooldown.mjs",
+    "check:channel-security": "node scripts/check-channel-security.mjs",
+    "check:channel-chaos": "node scripts/check-channel-chaos.mjs",
+    "check:channex-booking-crs-flow": "node scripts/check-channex-booking-crs-flow.mjs",
+    "check:channex-certification": "node scripts/check-channex-certification.mjs",
+    "check:housekeeping": "node scripts/check-housekeeping.mjs",
+    "check:maintenance-closures": "node scripts/check-maintenance-closures.mjs",
+    "check:reports": "node scripts/check-reports.mjs",
+    "check:israel-market": "node scripts/check-israel-market.mjs",
+    "db:replay": "node scripts/db/migrate.mjs",
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
@@ -63,7 +79,28 @@
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:design": "node scripts/check-design-system.mjs",
     "check:datepicker": "node scripts/check-datepicker.mjs",
-    "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs"
+    "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs",
+    "check:reservation-concurrency": "node scripts/check-reservation-concurrency.mjs",
+    "check:inventory-integrity": "node scripts/check-inventory-integrity.mjs",
+    "check:payment-ledger-integrity": "node scripts/check-payment-ledger-integrity.mjs",
+    "check:payment-refund-void": "node scripts/check-payment-refund-void.mjs",
+    "check:timezone-and-money-invariants": "node scripts/check-timezone-and-money-invariants.mjs",
+    "check:pms-domain-invariants": "node scripts/check-pms-domain-invariants.mjs",
+    "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs",
+    "check:no-secrets": "node scripts/check-no-secrets.mjs",
+    "check:supply-chain": "node scripts/check-supply-chain.mjs",
+    "check:retention": "node scripts/check-retention.mjs",
+    "check:performance": "node scripts/check-performance.mjs",
+    "check:code-documentation": "node scripts/check-code-documentation.mjs"
+  },
+  "engines": {
+    "node": ">=20 <21"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10"
+    }
   },
   "dependencies": {
     "@hebcal/core": "^6.6.0",

@@ -627,6 +627,26 @@ export async function updateReservationAction(
         dateTo: eventDates[eventDates.length - 1],
         lifecycle: input.status,
       });
+      // §7 Housekeeping — a checkout makes the room(s) dirty and generates a
+      // cleaning task, connecting housekeeping to the real reservation lifecycle.
+      // Fires ONLY on the transition into checked_out; idempotent per room (skips a
+      // room that already has an open task for this reservation). Cleanliness does
+      // not reduce availability (a dirty room is still sellable before the next
+      // arrival — the D64 0/1 model), so no outbox marking here.
+      if (input.status !== existing.status && input.status === "checked_out") {
+        const cleanRoomIds = [...new Set(eventRoomIds.filter((r): r is string => !!r))];
+        if (cleanRoomIds.length > 0) {
+          await tx`
+            INSERT INTO guesthub.housekeeping_tasks
+              (tenant_id, room_id, reservation_id, checkout_time, status, priority, notes)
+            SELECT ${actor.tenantId}, rid, ${input.id}, now(), 'pending', 'normal', 'נוצר אוטומטית ביציאת אורח'
+            FROM unnest(${cleanRoomIds}::uuid[]) AS rid
+            WHERE NOT EXISTS (
+              SELECT 1 FROM guesthub.housekeeping_tasks h
+              WHERE h.tenant_id = ${actor.tenantId} AND h.room_id = rid
+                AND h.reservation_id = ${input.id} AND h.status IN ('pending','in_progress'))`;
+        }
+      }
       if (addPay > 0) {
         await publishDomainEvent(tx, actor.tenantId, {
           type: "reservation.payment_changed",
@@ -878,12 +898,16 @@ export async function rescheduleReservationRoomAction(raw: {
           WHERE id = ${rr.id} AND tenant_id = ${actor.tenantId}`;
       }
 
-      // recompute parent aggregates from ALL rooms
+      // recompute parent dates + canonical total from ALL rooms, then derive
+      // paid_amount/balance from the LEDGER (M7 fix, D51/D52 one-source-of-truth):
+      // no inline balance formula — recomputePaymentAggregates owns balance and
+      // re-derives paid_amount from guesthub.payments, so a stale cached
+      // paid_amount can never leak into the balance on a reschedule. The
+      // total_price expression matches reservationTotal() (max(0, rooms+extra−disc)).
       await tx`
         UPDATE guesthub.reservations res SET
           check_in = x.min_ci, check_out = x.max_co,
-          total_price = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges),
-          balance = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges) - res.paid_amount
+          total_price = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges)
         FROM (
           SELECT MIN(check_in) AS min_ci, MAX(check_out) AS max_co,
                  COALESCE(SUM(price_total), 0) AS rooms_total
@@ -891,6 +915,7 @@ export async function rescheduleReservationRoomAction(raw: {
           WHERE reservation_id = ${rr.reservation_id} AND tenant_id = ${actor.tenantId}
         ) x
         WHERE res.id = ${rr.reservation_id} AND res.tenant_id = ${actor.tenantId}`;
+      await recomputePaymentAggregates(tx, actor.tenantId, rr.reservation_id);
 
       await writeAudit(actor, {
         entityType: "reservation_room",

@@ -52,7 +52,7 @@ export const nightsBetween = () => 2;
 `);
 writeFileSync(join(out, "communications/test-db.js"), `
 export const state = {
-  reservation: null, automations: [], version: null, channel: null,
+  reservation: null, automations: [], version: null, channel: null, siblingByLang: null,
   deliveryKeys: new Set(), insertions: [], attention: [],
 };
 const queryText = (strings) => strings.join("?");
@@ -60,6 +60,12 @@ export const sql = (strings, ...values) => {
   const text = queryText(strings);
   if (text.includes("FROM guesthub.reservations r")) return Promise.resolve(state.reservation ? [state.reservation] : []);
   if (text.includes("FROM guesthub.communication_automations")) return Promise.resolve(state.automations);
+  // guest-language sibling lookup (FROM message_templates cfg JOIN … language = $target)
+  if (text.includes("guesthub.message_templates cfg")) {
+    const lang = values.find((v) => v === "he" || v === "en");
+    const sib = state.siblingByLang ? state.siblingByLang[lang] : null;
+    return Promise.resolve(sib ? [sib] : []);
+  }
   if (text.includes("FROM guesthub.message_template_versions")) return Promise.resolve(state.version ? [state.version] : []);
   if (text.includes("FROM guesthub.messaging_provider_connections")) return Promise.resolve(state.channel ? [state.channel] : []);
   if (text.includes("UPDATE guesthub.communication_automations")) {
@@ -79,6 +85,7 @@ export const sql = (strings, ...values) => {
 sql.json = (value) => value;
 export const reset = () => {
   state.deliveryKeys.clear(); state.insertions.length = 0; state.attention.length = 0;
+  state.siblingByLang = null;
 };
 `);
 
@@ -178,5 +185,51 @@ ok("missing published version or tested email channel marks the automation for a
 db.reset(); db.state.reservation = baseReservation; db.state.automations = [];
 assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-no-automation")), { created: 0, duplicates: 0, skipped: 0 });
 ok("no active automation produces no delivery and no synthetic failure");
+
+// ---- §10/§21 guest-language template selection ----
+const enVersion = {
+  ...version, id: "version-en", template_id: "template-en",
+  subject: "Confirmation {{reservation.number}}", preheader: "Booking confirmation",
+  content: { schemaVersion: 1, blocks: [
+    { id: "hello", type: "text", enabled: true, condition: "always", data: { text: "Hello {{guest.first_name}}" } },
+  ] },
+};
+
+// an English-speaking guest gets the published English sibling (same category)
+configure({ ...baseReservation, guest_language: "en" });
+db.state.siblingByLang = { en: enVersion };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-en")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("version-en"), true, "the English sibling version was selected");
+assert.equal(db.state.insertions[0].values.includes("Confirmation GH-100"), true, "the English subject was rendered");
+ok("guest.language=en selects the published English sibling template (same category)");
+
+// a Hebrew-speaking guest keeps the configured (Hebrew) template
+configure({ ...baseReservation, guest_language: "he" });
+db.state.siblingByLang = { en: enVersion }; // only an English sibling exists
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-he")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("version-1"), true, "the configured Hebrew version was used");
+ok("guest.language=he uses the configured Hebrew template (no spurious override)");
+
+// no sibling in the guest's language → honest fallback to the configured template
+configure({ ...baseReservation, guest_language: "en" });
+db.state.siblingByLang = null; // no English sibling published
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-en-fallback")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("version-1"), true, "fell back to the configured template");
+ok("no published sibling in the guest's language → honest fallback, never a fabricated translation");
+
+// unknown/blank guest language → no override (configured template)
+configure({ ...baseReservation, guest_language: "  " });
+db.state.siblingByLang = { en: enVersion };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-blanklang")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("version-1"), true, "blank language did not trigger a sibling lookup");
+ok("unknown/blank guest.language never overrides the configured template");
+
+// a LOCKED automation is an explicit choice — never language-overridden
+configure({ ...baseReservation, guest_language: "en" });
+db.state.automations = [{ ...baseAutomation, template_version_policy: "locked", locked_template_version_id: "version-1" }];
+db.state.siblingByLang = { en: enVersion };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-locked")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("version-1"), true, "locked policy kept its pinned version");
+ok("a locked automation is never language-overridden (explicit operator choice)");
 
 process.stdout.write(`\n✓ Guest Communications automation checks passed (${checks} groups)\n`);

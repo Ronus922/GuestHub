@@ -25,6 +25,7 @@ import {
 } from "@/lib/card-vault";
 import { getPaymentGateway, NO_GATEWAY_MESSAGE } from "@/lib/payments/gateway";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
+import { recordRefund, voidPayment } from "@/lib/payments/mutations";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
@@ -352,14 +353,21 @@ export async function recordExternalPaymentAction(input: {
         FOR UPDATE`;
       if (!res) throw new DomainError("הזמנה לא נמצאה");
 
+      // M6: when an external reference is supplied it is the natural idempotency
+      // key — recording the same external transaction twice is suppressed by the
+      // unique (tenant_id, idempotency_key) index, so a double-submit can't
+      // double-count money. No reference → no key (manual entries stay additive).
+      const idempotencyKey = reference ? `ext:${reference}` : null;
       const [payment] = await tx<
         { id: string; amount: number; method: string | null; paid_at: string; reference: string | null }[]
       >`
         INSERT INTO guesthub.payments
-          (tenant_id, reservation_id, amount, method, status, paid_at, reference, notes)
+          (tenant_id, reservation_id, amount, method, status, paid_at, reference, notes, idempotency_key)
         VALUES (${actor.tenantId}, ${input.reservationId}, ${amount}, ${method},
-                'paid', now(), ${reference}, ${note})
+                'paid', now(), ${reference}, ${note}, ${idempotencyKey})
+        ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
         RETURNING id, amount::float8 AS amount, method, paid_at::text AS paid_at, reference`;
+      if (!payment) throw new DomainError("תשלום עם אסמכתא זו כבר נרשם");
 
       // paid_amount/balance derive from the payments LEDGER (D51) — one
       // formula everywhere, never an incremental add that can drift.
@@ -413,6 +421,86 @@ export async function deleteReservationCardAction(cardId: string): Promise<Actio
       }, tx);
     });
     return { success: true };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// ---- refund / void (Stage 3, H7) ----
+// Refund and void are the sanctioned corrections to captured money. Both go
+// through the canonical ledger (lib/payments/mutations) so paid_amount/balance
+// stay derived, never hand-adjusted. Neither performs a real PSP operation —
+// they record money movements done OUTSIDE GuestHub (like the external recorder).
+export async function refundPaymentAction(input: {
+  reservationId: string;
+  amount: number;
+  method?: string;
+  reference?: string;
+  note?: string;
+  confirmed: boolean;
+}): Promise<ActionResult<{ refunded: number; paid: number; balance: number }>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "payments.refund");
+    if (!input.confirmed) return fail("נדרש אישור שהזיכוי בוצע בפועל");
+    const amount = Math.round((Number(input.amount) || 0) * 100) / 100;
+    if (amount <= 0) return fail("סכום הזיכוי חייב להיות חיובי");
+    const method = String(input.method ?? "").trim() || "refund";
+    const reference = String(input.reference ?? "").trim().slice(0, 120) || null;
+    const note = String(input.note ?? "").trim().slice(0, 500) || null;
+    const ctx = await auditRequestContext();
+
+    const result = await sql.begin(async (tx) => {
+      const refunded = await recordRefund(tx, {
+        tenantId: actor.tenantId,
+        reservationId: input.reservationId,
+        amount, method, reference, notes: note,
+        idempotencyKey: reference ? `refund:${reference}` : null,
+      });
+      if (!refunded) throw new DomainError("זיכוי עם אסמכתא זו כבר נרשם");
+      await writeAudit(actor, {
+        entityType: "reservation",
+        entityId: input.reservationId,
+        action: "payment_refund_record",
+        after: { amount, method, reference, outcome: "refunded_external" },
+        ip: ctx.ip, session: ctx.session,
+      }, tx);
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.payment_changed", reservationId: input.reservationId,
+      });
+      return { refunded: refunded.refunded, paid: refunded.paid, balance: refunded.balance };
+    });
+    return { success: true, data: result };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+export async function voidPaymentAction(input: {
+  reservationId: string;
+  paymentId: string;
+}): Promise<ActionResult<{ voided: boolean }>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "payments.refund");
+    const ctx = await auditRequestContext();
+    const voided = await sql.begin(async (tx) => {
+      const ok = await voidPayment(tx, actor.tenantId, input.paymentId);
+      if (ok) {
+        await writeAudit(actor, {
+          entityType: "reservation",
+          entityId: input.reservationId,
+          action: "payment_void",
+          after: { paymentId: input.paymentId, outcome: "voided" },
+          ip: ctx.ip, session: ctx.session,
+        }, tx);
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "reservation.payment_changed", reservationId: input.reservationId,
+        });
+      }
+      return ok;
+    });
+    return { success: true, data: { voided } };
   } catch (e) {
     return fail(errorMessage(e));
   }

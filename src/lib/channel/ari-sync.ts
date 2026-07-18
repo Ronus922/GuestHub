@@ -2,15 +2,20 @@ import "server-only";
 import type { Sql } from "postgres";
 import { sql } from "@/lib/db";
 import { addDays, todayInTz, type DateOnly } from "@/lib/dates";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest } from "./connection-test";
 import { projectAri, type AriProjection } from "./ari-projection";
 import {
-  buildAvailabilityValues, buildRestrictionValues,
+  buildAvailabilityValues, buildRestrictionValues, payloadByteSize,
   type AvailabilityInput, type RestrictionInput,
 } from "./ari-payloads";
 import { pushAri, summarizeWarnings, type AriPushResult, type SafeAriWarning } from "./channex-ari";
+import { recordAriEvidence, type EvidenceOutcome } from "./evidence";
+import {
+  circuitAllowsRequest, onCircuitFailure, onCircuitSuccess, failureKindOf,
+  type CircuitState,
+} from "./circuit-breaker";
 import { logChannelError } from "./queue";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
 import {
@@ -53,6 +58,11 @@ export type AriConnection = {
   tenant_id: string;
   channex_property_id: string;
   api_key_ciphertext: string;
+  // §11: the connection's environment is the ONLY source of the Channex base URL.
+  environment: "staging" | "production";
+  // §16 circuit-breaker state, persisted between drains.
+  circuit_open_until: string | null;
+  consecutive_failures: number;
 };
 
 export type SendOutcome = {
@@ -60,7 +70,7 @@ export type SendOutcome = {
   taskIds: string[];
   warnings: SafeAriWarning[];
   /** a transport/auth/validation failure — the range stays retryable */
-  failure: { code: string; message: string } | null;
+  failure: { code: string; message: string; retryAfterMs?: number } | null;
   /** batches left unsent because the per-run request ceiling was reached */
   deferredBatches: number;
 };
@@ -82,7 +92,24 @@ export type DrainSummary = {
   failed: number;
   requests: number;
   sentValues: number;
+  /** §16 — true when the circuit breaker skipped this connection (still cooling) */
+  circuitOpen?: boolean;
 };
+
+// §16 — read/write the persisted breaker state on the connection row.
+function circuitStateOf(conn: AriConnection): CircuitState {
+  return {
+    consecutiveFailures: conn.consecutive_failures ?? 0,
+    openUntil: conn.circuit_open_until ? Date.parse(conn.circuit_open_until) : null,
+  };
+}
+async function persistCircuit(db: Sql, connId: string, next: CircuitState): Promise<void> {
+  await db`
+    UPDATE guesthub.channel_connections
+    SET circuit_open_until = ${next.openUntil ? new Date(next.openUntil).toISOString() : null},
+        consecutive_failures = ${next.consecutiveFailures}
+    WHERE id = ${connId}`;
+}
 
 // The one seam a check may substitute: the same `fetchImpl` channex-http already
 // accepts. Absent everywhere in production — the worker never passes it — so a
@@ -104,7 +131,9 @@ function credentialsFor(conn: AriConnection, deps?: AriSyncDeps): Creds | { erro
   try {
     return {
       apiKey: decryptSecret(conn.api_key_ciphertext),
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      // §11 canonical routing: resolve the base URL from the connection's own
+      // environment — never a hardcoded staging constant (was defect CHX G6).
+      baseUrl: channexBaseUrl(conn.environment),
       propertyId: conn.channex_property_id,
       fetchImpl: deps?.fetchImpl,
     };
@@ -201,7 +230,10 @@ async function sendBatches(
     });
     outcome.requests += 1;
     if (!res.ok) {
-      outcome.failure = { code: res.category, message: res.message };
+      outcome.failure = {
+        code: res.category, message: res.message,
+        ...(res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}),
+      };
       return outcome; // stop this kind — the caller keeps the ranges retryable
     }
     outcome.taskIds.push(...res.taskIds);
@@ -515,6 +547,45 @@ export async function runInitialFullSync(
     });
   }
 
+  // §13 — durable certification evidence. A Full Sync is expected to be exactly
+  // two Channex requests (one availability, one rates/restrictions); record the
+  // actual counts + all Task IDs so the console can prove it against the official
+  // expectation. Never discards Task IDs (H9/H10).
+  const fullSyncOutcome: EvidenceOutcome = clean ? "success" : failure ? "failed" : "partial";
+  const availabilityBytes = avail.batches.reduce((n, b) => n + payloadByteSize(b), 0);
+  const restrictionBytes = restr.batches.reduce((n, b) => n + payloadByteSize(b), 0);
+  await recordAriEvidence(db, {
+    tenantId: conn.tenant_id,
+    connectionId: conn.id,
+    environment: conn.environment,
+    scenarioKey: "full_sync",
+    kind: "availability+restrictions",
+    uiWorkflow: "Channels → Full Sync",
+    firingFile: "src/lib/channel/ari-sync.ts",
+    firingFunction: "runInitialFullSync",
+    requestCount: availabilityOutcome.requests + restrictionsOutcome.requests,
+    expectedRequests: 2,
+    requestBytes: availabilityBytes + restrictionBytes,
+    taskIds: [...availabilityOutcome.taskIds, ...restrictionsOutcome.taskIds],
+    dateFrom: today,
+    dateTo: dateToInclusive,
+    warnings,
+    outcome: fullSyncOutcome,
+    errorCode: failure ? failure.code : warnings.length ? "partial_warnings" : null,
+    errorMessage,
+    jobId,
+    context: {
+      availabilityRequests: availabilityOutcome.requests,
+      restrictionRequests: restrictionsOutcome.requests,
+      availabilityValues,
+      restrictionValues,
+      availabilityBytes,
+      restrictionBytes,
+      deferredBatches: deferred,
+      blocked: projectionBlocked,
+    },
+  });
+
   return {
     ok: clean,
     dateFrom: today,
@@ -550,6 +621,16 @@ export async function drainAriDirtyRanges(
   deps?: AriSyncDeps,
 ): Promise<DrainSummary> {
   const summary: DrainSummary = { claimed: 0, synced: 0, retried: 0, failed: 0, requests: 0, sentValues: 0 };
+  const now = deps?.now ?? (() => Date.now());
+
+  // §16 — if the circuit is open (cooling after a 429 or repeated failures), skip
+  // this connection entirely. The dirty ranges stay pending and drain once the
+  // cooldown elapses; we never hammer a provider that just told us to back off.
+  const circuit = circuitStateOf(conn);
+  if (!circuitAllowsRequest(circuit, now())) {
+    summary.circuitOpen = true;
+    return summary;
+  }
 
   // The worker holds this connection's job lease (FIFO per connection), so a
   // plain SELECT is enough — no second claim protocol, no 'queued' limbo.
@@ -638,6 +719,28 @@ export async function drainAriDirtyRanges(
   const failure = outcomes.find((o) => o.failure)?.failure ?? null;
   const warnings = outcomes.flatMap((o) => o.warnings);
   const deferred = outcomes.reduce((n, o) => n + o.deferredBatches, 0);
+  // H9/H10 — incremental Task IDs were previously discarded here. Capture them.
+  const taskIds = outcomes.flatMap((o) => o.taskIds);
+
+  // §13 — record incremental-sync evidence with the Task IDs Channex returned.
+  const recordIncrementalEvidence = (outcome: EvidenceOutcome, code: string | null, msg: string | null) =>
+    recordAriEvidence(db, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      environment: conn.environment,
+      scenarioKey: "incremental_sync",
+      kind: "availability+restrictions",
+      uiWorkflow: "canonical save → dirty-range drain",
+      firingFile: "src/lib/channel/ari-sync.ts",
+      firingFunction: "drainAriDirtyRanges",
+      requestCount: summary.requests,
+      taskIds,
+      warnings,
+      outcome,
+      errorCode: code,
+      errorMessage: msg,
+      context: { claimed: summary.claimed, sentValues: summary.sentValues, deferredBatches: deferred },
+    });
 
   if (failure || warnings.length > 0 || deferred > 0) {
     const err = failure ?? { code: "partial_warnings", message: summarizeWarnings(warnings) };
@@ -650,6 +753,11 @@ export async function drainAriDirtyRanges(
     const outcome = await failRanges(db, conn, rows, err);
     summary.retried = outcome.retried;
     summary.failed = outcome.failed;
+    // §16 — advance the breaker. A 429 opens it for the provider's Retry-After;
+    // repeated server/transport failures open it once the threshold is crossed.
+    await persistCircuit(db, conn.id,
+      onCircuitFailure(circuit, failureKindOf(err.code), now(), { retryAfterMs: failure?.retryAfterMs }));
+    await recordIncrementalEvidence(failure ? "failed" : "partial", err.code, err.message);
     return summary;
   }
 
@@ -660,6 +768,11 @@ export async function drainAriDirtyRanges(
     UPDATE guesthub.channel_connections SET last_outbound_sync_at = now(), last_error = NULL
     WHERE id = ${conn.id}`;
   summary.synced = rows.length;
+  // §16 — a clean drain fully closes the breaker.
+  if (circuit.consecutiveFailures > 0 || circuit.openUntil !== null) {
+    await persistCircuit(db, conn.id, onCircuitSuccess());
+  }
+  await recordIncrementalEvidence("success", null, null);
   return summary;
 }
 
@@ -704,7 +817,8 @@ async function failRanges(
 /** Connections whose baseline is established — the ONLY ones a drain may touch. */
 export async function loadDrainableConnections(db: Sql = sql): Promise<AriConnection[]> {
   return db<AriConnection[]>`
-    SELECT id, tenant_id, channex_property_id, api_key_ciphertext
+    SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
+           circuit_open_until::text AS circuit_open_until, consecutive_failures
     FROM guesthub.channel_connections
     WHERE state = 'active' AND outbound_sync_enabled = true AND full_sync_required = false
       AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;

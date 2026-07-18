@@ -150,10 +150,26 @@ const { calculateQuote } = req(join(out, "lib/pricing/engine.js"));
   }));
   const built = ari.buildRestrictionValues(many, "p", combo);
   const total = built.batches.reduce((a, b) => a + b.values.length, 0);
-  assert.ok(built.batches.every((b) => b.values.length <= ari.MAX_VALUES_PER_PAYLOAD), "every batch within the provider ceiling");
-  assert.equal(total, 2500, "batching SPLITS — no value is ever truncated");
-  assert.ok(built.batches.length > 1, "an oversized set produces several batches");
-  ok("batching: splits at the provider ceiling, loses nothing");
+  // §14 — batching is bounded by the real 10MB body limit, not a value count.
+  // 2500 small values fit in ONE request (the two-request Full Sync semantics).
+  assert.ok(built.batches.every((b) => ari.payloadByteSize(b) <= ari.PAYLOAD_BYTE_LIMIT), "every batch within the 10MB provider limit");
+  assert.equal(total, 2500, "batching never truncates");
+  assert.equal(built.batches.length, 1, "a realistic set is a single request (byte-bounded)");
+  ok("batching: byte-bounded to 10MB, single request for realistic volume");
+
+  // a genuinely oversize dimension (>10MB) still SPLITS and loses nothing.
+  const huge = Array.from({ length: 60_000 }, (_, i) => ({
+    roomId: "r1", planId: "p1", date: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`,
+    rates: [{ occupancy: 1, rate: 100 + i }],
+    minStayArrival: null, minStayThrough: null, maxStay: null,
+    stopSell: false, closedToArrival: false, closedToDeparture: false,
+  }));
+  const builtHuge = ari.buildRestrictionValues(huge, "p", combo);
+  const totalHuge = builtHuge.batches.reduce((a, b) => a + b.values.length, 0);
+  assert.equal(totalHuge, 60_000, "oversize batching still loses nothing");
+  assert.ok(builtHuge.batches.length > 1, "a >10MB dimension splits into several requests");
+  assert.ok(builtHuge.batches.every((b) => ari.payloadByteSize(b) <= ari.PAYLOAD_BYTE_LIMIT), "every split batch is within 10MB");
+  ok("batching: splits only when a dimension truly exceeds 10MB");
 }
 {
   assert.ok(ari.validateAriBatch({ values: [] }), "empty batch rejected");
@@ -690,8 +706,13 @@ const code = (f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/
   ok("channex-ari.ts touches only POST /availability and POST /restrictions");
 }
 {
-  // no OTA / webhook / booking functionality was added
-  const changed = ["src/lib/channel/ari-sync.ts", "src/lib/channel/ari-projection.ts", "src/lib/channel/worker.ts", "src/lib/channel/ari-payloads.ts"];
+  // no OTA / webhook / booking functionality leaked into the PURE ARI-send
+  // modules. worker.ts is deliberately EXCLUDED: it is the shared PM2 job
+  // coordinator that dispatches BOTH ARI-send and inbound-import jobs, so it
+  // legitimately references the inbound webhook fallback poll (D76). The
+  // invariant that matters is that the send projection/payload/sync path stays
+  // send-only.
+  const changed = ["src/lib/channel/ari-sync.ts", "src/lib/channel/ari-projection.ts", "src/lib/channel/ari-payloads.ts"];
   for (const f of changed) {
     const src = read(f);
     for (const word of ["booking.com", "expedia", "webhook", "booking_revision", "pullBookingRevisions"]) {
@@ -761,7 +782,12 @@ const code = (f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/
     const src = read(p);
     assert.ok(!/from\s+["']next\/server["'][\s\S]{0,200}\bafter\b/.test(src) && !/\bunstable_after\b/.test(src),
       `${p} does not use Next after() as a drain trigger`);
-    assert.ok(!/node-cron|setInterval\(/.test(src) || p.includes("AriSyncSection"),
+    // setInterval is allowed ONLY in read-only status pollers (poll a *Status
+    // action, never a drain) and the SSE heartbeat — none of which trigger a
+    // drain. AriSyncSection + ChannelSyncControl poll status; api/events is the
+    // realtime SSE heartbeat (D77). node-cron is never allowed anywhere.
+    const intervalOk = /AriSyncSection|ChannelSyncControl|app\/api\/events\/route/.test(p);
+    assert.ok(!/node-cron/.test(src) && (!/setInterval\(/.test(src) || intervalOk),
       `${p} schedules no cron/interval drain`);
   }
   assert.ok(!existsSync(join(ROOT, "src/app/api/channel/drain")), "no internal drain HTTP route exists");

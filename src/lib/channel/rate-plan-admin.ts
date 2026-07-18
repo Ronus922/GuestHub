@@ -5,7 +5,8 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob, logChannelError } from "./queue";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl, type ChannexEnvironment } from "./config";
+import { effectiveChannexEnvironment } from "./production-guard";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
 import { isAmbiguous, type ChannexApiFailure, type ChannexApiErrorCategory } from "./channex-http";
 import {
@@ -57,7 +58,7 @@ import {
 //  • The api-key is decrypted per call, never returned, logged or audited.
 // ============================================================
 
-const CHANNEX_ENV = "staging" as const;
+const CHANNEX_ENV: ChannexEnvironment = effectiveChannexEnvironment();
 const PROVIDER = "channex" as const;
 
 const RUN_BUDGET_MS = 25_000;
@@ -202,7 +203,7 @@ async function isRunActive(connectionId: string, propertyId: string | null): Pro
 export type RatePlanSyncContext = {
   connected: boolean;
   configured: boolean; // secrets key + api key + mapped property all present
-  environment: "staging";
+  environment: ChannexEnvironment;
   /** eligible local plan names ("ללא דמי ביטול") — empty when none */
   planNames: string[];
   mappedRooms: number;
@@ -315,7 +316,7 @@ export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanR
     const ready = await requireReady(actor.tenantId);
     if ("error" in ready) return { success: false, error: ready.error };
     const { conn, propertyId, apiKey } = ready;
-    const baseUrl = CHANNEX_BASE_URLS.staging;
+    const baseUrl = channexBaseUrl(CHANNEX_ENV);
 
     // (a) durable run mutex FIRST (double-click / concurrent request safe).
     // Everything after this — the external listing, the ambiguity clearing and
@@ -868,7 +869,7 @@ export async function startChannexRatePlanTitleSyncAction(): Promise<Result<Titl
     const ready = await requireReady(actor.tenantId);
     if ("error" in ready) return { success: false, error: ready.error };
     const { conn, propertyId, apiKey } = ready;
-    const baseUrl = CHANNEX_BASE_URLS.staging;
+    const baseUrl = channexBaseUrl(CHANNEX_ENV);
 
     // durable run mutex (double-click / concurrent request safe). The job_type
     // CHECK constraint is closed, so the run reuses 'sync_rate_plans' — its

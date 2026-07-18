@@ -5,7 +5,7 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit } from "@/lib/audit";
 import { enqueueChannelJob } from "./queue";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import {
   channelSecretsConfigured,
   decryptSecret,
@@ -312,7 +312,7 @@ export async function setInboundEnabledAction(input: {
           const result = await ensureChannexWebhook(
             {
               apiKey: decryptSecret(conn.api_key_ciphertext),
-              baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+              baseUrl: channexBaseUrl(conn.environment),
             },
             conn.channex_property_id,
             `${appUrl}/api/channel/webhook/${token}`,
@@ -422,7 +422,7 @@ export async function reregisterWebhookAction(): Promise<Result<WebhookTestRepor
 
     const creds = {
       apiKey: decryptSecret(conn.api_key_ciphertext),
-      baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(conn.environment),
     };
     const token = generateWebhookToken();
     const callbackUrl = `${appUrl}/api/channel/webhook/${token}`;

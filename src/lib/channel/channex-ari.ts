@@ -96,7 +96,11 @@ export async function pushAri(
     body: { values: opts.batch.values },
   });
   if ("ok" in r) return r; // transport-level failure, already a safe category
-  if (r.status !== 200 && r.status !== 201) return fail(mapErrorStatus(r.status), r.status);
+  if (r.status !== 200 && r.status !== 201) {
+    const f = fail(mapErrorStatus(r.status), r.status);
+    // §16 — carry the 429 cooldown forward so the circuit opens for the right span
+    return r.retryAfterMs !== undefined ? { ...f, retryAfterMs: r.retryAfterMs } : f;
+  }
 
   const taskIds = extractTaskIds(r.body);
   const warnings = extractWarnings(r.body, opts.kind);

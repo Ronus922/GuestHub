@@ -28,6 +28,8 @@ export async function createClosureAction(raw: {
   startDate: string;
   endDate: string;
   reason?: string;
+  kind?: "ooo" | "oos";
+  category?: string;
 }): Promise<ActionResult> {
   try {
     const actor = await getActor();
@@ -35,46 +37,53 @@ export async function createClosureAction(raw: {
     const parsed = closureSchema.safeParse(raw);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
     const input = parsed.data;
+    const isOoo = input.kind === "ooo";
 
     await sql.begin(async (tx) => {
       await lockRooms(tx, actor.tenantId, [input.roomId]);
-      const conflicts = await checkRoomAvailability(tx, {
-        tenantId: actor.tenantId,
-        roomIds: [input.roomId],
-        checkIn: input.startDate,
-        checkOut: input.endDate,
-      });
-      if (conflicts.length > 0) throw new DomainError(CONFLICT_LABEL[conflicts[0].conflict_kind]);
+      // §8: only an OOO closure removes inventory, so only OOO must be conflict-
+      // free. An OOS note (dirty-but-sellable) never reduces availability, so it
+      // may overlap a stay or another closure harmlessly.
+      if (isOoo) {
+        const conflicts = await checkRoomAvailability(tx, {
+          tenantId: actor.tenantId,
+          roomIds: [input.roomId],
+          checkIn: input.startDate,
+          checkOut: input.endDate,
+        });
+        if (conflicts.length > 0) throw new DomainError(CONFLICT_LABEL[conflicts[0].conflict_kind]);
+      }
 
       const [closure] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.room_closures
-          (tenant_id, room_id, start_date, end_date, reason, created_by)
+          (tenant_id, room_id, start_date, end_date, reason, kind, category, created_by)
         VALUES (${actor.tenantId}, ${input.roomId}, ${input.startDate}, ${input.endDate},
-                ${input.reason || null}, ${actor.userId})
+                ${input.reason || null}, ${input.kind}, ${input.category || null}, ${actor.userId})
         RETURNING id`;
 
       await writeAudit(actor, {
         entityType: "room_closure",
         entityId: closure.id,
         action: "create",
-        after: { room_id: input.roomId, start: input.startDate, end: input.endDate, reason: input.reason },
+        after: { room_id: input.roomId, start: input.startDate, end: input.endDate, kind: input.kind, category: input.category ?? null },
       }, tx);
 
-      // a closure removes physical inventory for its nights → availability dirty.
-      // Restrictions are NOT marked: the canonical effective state derives
-      // stop_sell from commercial rows, never from a closure (§7).
-      await markAriDirty(tx, {
-        tenantId: actor.tenantId,
-        roomIds: [input.roomId],
-        dateFrom: input.startDate,
-        dateTo: input.endDate,
-      });
-      await publishDomainEvent(tx, actor.tenantId, {
-        type: "inventory.changed",
-        roomIds: [input.roomId],
-        dateFrom: input.startDate,
-        dateTo: input.endDate,
-      });
+      // Only an OOO closure changes availability → mark the ARI outbox + publish.
+      // An OOS note leaves availability untouched, so nothing is synced.
+      if (isOoo) {
+        await markAriDirty(tx, {
+          tenantId: actor.tenantId,
+          roomIds: [input.roomId],
+          dateFrom: input.startDate,
+          dateTo: input.endDate,
+        });
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds: [input.roomId],
+          dateFrom: input.startDate,
+          dateTo: input.endDate,
+        });
+      }
     });
 
     revalidatePath("/calendar");
@@ -90,9 +99,9 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
     requirePermission(actor, "rooms.edit");
     await sql.begin(async (tx) => {
       const [closure] = await tx<
-        { id: string; room_id: string; start_date: string; end_date: string }[]
+        { id: string; room_id: string; start_date: string; end_date: string; kind: string }[]
       >`
-        SELECT c.id, c.room_id, c.start_date::text, c.end_date::text
+        SELECT c.id, c.room_id, c.start_date::text, c.end_date::text, c.kind
         FROM guesthub.room_closures c
         WHERE c.id = ${id} AND c.tenant_id = ${actor.tenantId}
         FOR UPDATE OF c`;
@@ -105,21 +114,24 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
         entityType: "room_closure",
         entityId: id,
         action: "delete",
-        before: { room_id: closure.room_id, start: closure.start_date, end: closure.end_date },
+        before: { room_id: closure.room_id, start: closure.start_date, end: closure.end_date, kind: closure.kind },
       }, tx);
-      // lifting a closure returns those nights to sale → availability dirty
-      await markAriDirty(tx, {
-        tenantId: actor.tenantId,
-        roomIds: [closure.room_id],
-        dateFrom: closure.start_date,
-        dateTo: closure.end_date,
-      });
-      await publishDomainEvent(tx, actor.tenantId, {
-        type: "inventory.changed",
-        roomIds: [closure.room_id],
-        dateFrom: closure.start_date,
-        dateTo: closure.end_date,
-      });
+      // Lifting an OOO closure returns those nights to sale → availability dirty.
+      // An OOS note never affected availability, so removing it syncs nothing.
+      if (closure.kind === "ooo") {
+        await markAriDirty(tx, {
+          tenantId: actor.tenantId,
+          roomIds: [closure.room_id],
+          dateFrom: closure.start_date,
+          dateTo: closure.end_date,
+        });
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds: [closure.room_id],
+          dateFrom: closure.start_date,
+          dateTo: closure.end_date,
+        });
+      }
     });
 
     revalidatePath("/calendar");
