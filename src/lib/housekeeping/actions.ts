@@ -19,6 +19,8 @@ import { writeAudit } from "@/lib/audit";
 
 export type HousekeepingTaskView = {
   id: string;
+  taskType: string;
+  title: string | null;
   roomId: string | null;
   roomNumber: string | null;
   status: string;
@@ -26,9 +28,12 @@ export type HousekeepingTaskView = {
   notes: string | null;
   assignedTo: string | null;
   assignedToName: string | null;
+  dueDate: string | null;
   checkoutTime: string | null;
   createdAt: string;
 };
+
+export type OperationalTaskType = "housekeeping" | "maintenance" | "general";
 
 type Result<T = undefined> = { success: true; data?: T } | { success: false; error: string };
 
@@ -38,6 +43,8 @@ const CLEANER_NEXT: Record<string, string> = { pending: "in_progress", in_progre
 function mapRow(r: Record<string, unknown>): HousekeepingTaskView {
   return {
     id: r.id as string,
+    taskType: (r.task_type as string) ?? "housekeeping",
+    title: (r.title as string) ?? null,
     roomId: (r.room_id as string) ?? null,
     roomNumber: (r.room_number as string) ?? null,
     status: r.status as string,
@@ -45,6 +52,7 @@ function mapRow(r: Record<string, unknown>): HousekeepingTaskView {
     notes: (r.notes as string) ?? null,
     assignedTo: (r.assigned_to as string) ?? null,
     assignedToName: (r.assigned_to_name as string) ?? null,
+    dueDate: (r.due_date as string) ?? null,
     checkoutTime: r.checkout_time ? new Date(r.checkout_time as string).toISOString() : null,
     createdAt: new Date(r.created_at as string).toISOString(),
   };
@@ -59,7 +67,7 @@ export async function getMyTasksAction(): Promise<Result<HousekeepingTaskView[]>
     if (!hasPermission(actor, "housekeeping.my_tasks") && !hasPermission(actor, "housekeeping.view"))
       throw new AuthorizationError("חסרה הרשאה: housekeeping.my_tasks");
     const rows = await sql<Record<string, unknown>[]>`
-      SELECT h.id, h.room_id, rm.room_number, h.status, h.priority, h.notes,
+      SELECT h.id, h.task_type, h.title, h.due_date::text AS due_date, h.room_id, rm.room_number, h.status, h.priority, h.notes,
              h.assigned_to, u.full_name AS assigned_to_name,
              h.checkout_time::text AS checkout_time, h.created_at::text AS created_at
       FROM guesthub.housekeeping_tasks h
@@ -81,7 +89,7 @@ export async function listOpenTasksAction(): Promise<Result<HousekeepingTaskView
     const actor = await getActor();
     requirePermission(actor, "housekeeping.view");
     const rows = await sql<Record<string, unknown>[]>`
-      SELECT h.id, h.room_id, rm.room_number, h.status, h.priority, h.notes,
+      SELECT h.id, h.task_type, h.title, h.due_date::text AS due_date, h.room_id, rm.room_number, h.status, h.priority, h.notes,
              h.assigned_to, u.full_name AS assigned_to_name,
              h.checkout_time::text AS checkout_time, h.created_at::text AS created_at
       FROM guesthub.housekeeping_tasks h
@@ -131,6 +139,41 @@ export async function advanceMyTaskAction(taskId: string): Promise<Result> {
     revalidatePath("/housekeeping/my-tasks");
     revalidatePath("/rooms");
     return { success: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// Manager creates a task on the SAME unified store (§9) — maintenance or general
+// follow-ups, not only auto-generated housekeeping. housekeeping.manage.
+export async function createOperationalTaskAction(input: {
+  taskType: OperationalTaskType;
+  title: string;
+  roomId?: string | null;
+  priority?: "normal" | "high";
+  dueDate?: string | null;
+  notes?: string | null;
+}): Promise<Result<{ id: string }>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "housekeeping.manage");
+    const title = input.title?.trim();
+    if (!title) return { success: false, error: "נדרשת כותרת למשימה" };
+    if (!["housekeeping", "maintenance", "general"].includes(input.taskType))
+      return { success: false, error: "סוג משימה אינו תקין" };
+    const [row] = await sql<{ id: string }[]>`
+      INSERT INTO guesthub.housekeeping_tasks
+        (tenant_id, task_type, title, room_id, status, priority, due_date, notes)
+      VALUES (${actor.tenantId}, ${input.taskType}, ${title.slice(0, 200)},
+              ${input.roomId ?? null}, 'pending', ${input.priority ?? "normal"},
+              ${input.dueDate ?? null}, ${input.notes?.slice(0, 500) ?? null})
+      RETURNING id`;
+    await writeAudit(actor, {
+      entityType: "operational_task", entityId: row.id, action: "create",
+      after: { task_type: input.taskType, title, room_id: input.roomId ?? null },
+    });
+    revalidatePath("/housekeeping/my-tasks");
+    return { success: true, data: { id: row.id } };
   } catch (e) {
     return fail(e);
   }

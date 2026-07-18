@@ -73,7 +73,7 @@ export default async function MyTasksPage() {
             <div key={t.id} className="card">
               <div className="card-bd flex flex-col gap-3">
                 <div className="flex flex-row-reverse items-center justify-between gap-2">
-                  <span className="h4">חדר {t.roomNumber ?? "—"}</span>
+                  <span className="h4">{t.title ?? (t.roomNumber ? `חדר ${t.roomNumber}` : "משימה")}</span>
                   <span
                     className={`rounded-lg px-3 py-1 text-sm ${
                       t.status === "in_progress" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-700"

@@ -24,10 +24,17 @@ Ordered work items (each must connect to the real lifecycle + audit + outbox whe
 7. **Completeness** — permissions (multi-property readiness), business/integration settings, data import/export (CSV), production diagnostics.
 8. **`PMS_CAPABILITY_MATRIX.md`** — implemented vs deferred with reasons.
 
-### Stage 5 next step
-Begin item 1 (guest-language template selection in `src/lib/communications/automation.ts` — 521 lines; add `g.language` to the reservation-context SELECT, resolve the template/version variant by `guests.language` with a tenant-default fallback). Then items 2-8. Extend `check:inventory-integrity` for housekeeping/maintenance availability effects and `check:pms-domain-invariants` for report correctness (no new check names required; grow coverage — charter §Stage-5 checks).
+### Stage 5 progress
+- ✅ **Item 1 — guest-language template selection** (`automation.ts`): `resolveVersion(automation, guestLanguage)` prefers a published sibling template (same category, guest's language) with honest fallback; locked policy never overridden. `check:guest-communications-automation` extended (11 groups). Commit 9aa5232.
+- ✅ **Item 2 — Housekeeping**: checkout auto-generates a cleaning task (idempotent, `reservations/actions.ts`); `src/lib/housekeeping/actions.ts` (cleaner queue + advance dirty→cleaning→clean, manager assign/inspect); real my-tasks mobile page. `check:housekeeping` (static + DB idempotency). Commit 303581b.
+- ✅ **Item 3 — Maintenance OOO/OOS**: migration 040 (`room_closures.kind`/`category` + 3 availability functions filter `kind='ooo'`); OOO blocks+syncs, OOS dirty-but-sellable. `check:maintenance-closures` (DB proof OOS stays / OOO −1). Commit 9ce7353.
+- ⏳ **Item 4** — unified operational tasks foundation (avoid a parallel task system; `housekeeping_tasks` is the base — generalize with a task_type rather than a new table).
+- ⏳ **Item 5** — reports/exports (arrivals/departures/in-house, cancellations, occupancy, revenue ADR/RevPAR, balances-due, payments/cash-up, availability, channel-production, audit export, dashboard KPIs); safe server-side; only reliable-data reports.
+- ⏳ **Item 6** — Israel-market: tourist VAT zero-rating (`reservations.tax_exempt` exists, 0 refs + passport evidence), invoice/receipt external seam, PII retention + guest deletion/anonymization (Amendment 13).
+- ⏳ **Item 7-8** — completeness (permissions/settings/import-export/diagnostics) + `PMS_CAPABILITY_MATRIX.md` (implemented vs deferred).
+- New migrations this stage: **040** (typed closures) on staging :5434 only. New checks: `check:housekeeping`, `check:maintenance-closures` (+ extended `check:guest-communications-automation`).
 
-**NOTE (execution model):** Stage 4 was completed in full this session (Agent N 7/7). Per charter §1 fresh-session-per-stage, Stage 5 execution continues from this STATE handoff — a fresh session reads this file and resumes at "Stage 5 next step" without loss.
+**NOTE (execution model, charter §1 clarified):** continuous mode — on stage exit, proceed immediately to the next stage's entry gate in the SAME session; fresh-session = re-read from disk, NOT stop. Keep going until `stage-7-complete` exists. Stop only for a real external blocker (V2 §2).
 
 ## Prior stage
 

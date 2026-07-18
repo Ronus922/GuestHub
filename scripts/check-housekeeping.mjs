@@ -3,7 +3,7 @@
 // reservation lifecycle: a checkout generates a cleaning task (idempotent), the
 // cleaner flow advances dirty→cleaning→clean, and cleanliness does NOT change
 // availability (no outbox marking). Static invariants + a DB idempotency proof.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,21 @@ else pass("a cleaner cannot advance another cleaner's assigned task");
 // inspected lifecycle exists (clean/dirty/inspected)
 if (!/status = 'inspected'[\s\S]{0,120}status = 'completed'/.test(hk)) flag("no completed→inspected transition");
 else pass("completed→inspected lifecycle present");
+
+// §9 unified task foundation: ONE store (housekeeping_tasks) with a task_type —
+// no parallel task table, and a create action for maintenance/general tasks.
+const mig041 = read("db/migrations/041_operational_tasks.sql");
+if (!/task_type[\s\S]{0,120}'housekeeping','maintenance','general'/.test(mig041))
+  flag("no unified task_type on the operational task store");
+else pass("unified task store carries task_type (housekeeping/maintenance/general)");
+if (!/createOperationalTaskAction/.test(hk)) flag("no create action for non-housekeeping tasks");
+else pass("createOperationalTaskAction adds maintenance/general tasks to the same store");
+// there must be no SEPARATE task table (anti-fragmentation, V2 §9)
+const migsAll = readdirSync(join(root, "db/migrations"))
+  .map((f) => read(`db/migrations/${f}`)).join("\n");
+if (/CREATE TABLE[^;]*\b(operational_tasks|maintenance_tasks|tasks)\b/i.test(migsAll))
+  flag("a separate task table exists — tasks must live on the one unified store");
+else pass("no parallel task table (single unified operational store)");
 
 // ---- DB idempotency proof (staging owner DSN) ----
 function loadEnvStaging() {
