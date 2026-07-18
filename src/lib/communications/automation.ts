@@ -72,6 +72,7 @@ type ReservationSnapshot = {
   guest_full_name: string | null;
   guest_email: string | null;
   guest_phone: string | null;
+  guest_language: string | null;
   source_label: string | null;
   room_numbers: string | null;
   room_types: string | null;
@@ -129,6 +130,7 @@ async function loadReservationSnapshot(
            g.id AS guest_id, g.first_name AS guest_first_name,
            g.last_name AS guest_last_name, g.full_name AS guest_full_name,
            g.email AS guest_email, g.phone AS guest_phone,
+           g.language AS guest_language,
            src.label AS source_label,
            rooms.room_numbers, rooms.room_types, rooms.room_floors
     FROM guesthub.reservations r
@@ -234,7 +236,45 @@ async function markNeedsAttention(id: string, reason: string): Promise<void> {
     WHERE id = ${id} AND status = 'active'`;
 }
 
-async function resolveVersion(automation: AutomationRow): Promise<VersionRow | null> {
+// Map a free-text guests.language value to a supported template language, or null
+// when it is unknown/unset (→ no override, use the automation's configured
+// template). message_templates.language is constrained to 'he'/'en'.
+function normalizeLanguage(raw: string | null): "he" | "en" | null {
+  if (!raw) return null;
+  const s = raw.trim().toLowerCase();
+  if (!s) return null;
+  if (s.startsWith("en") || s.includes("english") || s.includes("אנגלית")) return "en";
+  if (s.startsWith("he") || s.startsWith("iw") || s.includes("hebrew") || s.includes("עברית")) return "he";
+  return null;
+}
+
+// §15/§21 — resolve the template version to send. Under the "latest_published"
+// policy, prefer a PUBLISHED sibling template in the guest's language (same tenant
+// + same category), falling back to the automation's configured template when no
+// such sibling exists. A "locked" policy is an explicit operator choice and is
+// NEVER language-overridden. Selection is honest: it only ever picks a real
+// published version, and never fabricates a translation.
+async function resolveVersion(
+  automation: AutomationRow,
+  guestLanguage?: string | null,
+): Promise<VersionRow | null> {
+  const target = automation.template_version_policy === "locked" ? null : normalizeLanguage(guestLanguage ?? null);
+  if (target) {
+    const [sibling] = await sql<VersionRow[]>`
+      SELECT v.id, v.template_id, v.sender_display_name, v.reply_to_behavior,
+             v.reply_to_address, v.subject, v.preheader, v.content
+      FROM guesthub.message_templates cfg
+      JOIN guesthub.message_templates t
+        ON t.tenant_id = cfg.tenant_id AND t.category = cfg.category AND t.language = ${target}
+      JOIN guesthub.message_template_versions v
+        ON v.id = t.current_published_version_id AND v.tenant_id = t.tenant_id
+      WHERE cfg.id = ${automation.template_id} AND cfg.tenant_id = ${automation.tenant_id}
+        AND t.archived_at IS NULL AND t.lifecycle_state <> 'archived'
+      LIMIT 1`;
+    if (sibling) return sibling;
+    // no published sibling in the guest's language → fall through to configured
+  }
+
   const [version] = await sql<VersionRow[]>`
     SELECT v.id, v.template_id, v.sender_display_name, v.reply_to_behavior,
            v.reply_to_address, v.subject, v.preheader, v.content
@@ -404,7 +444,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
             : null;
   if (globalSkipReason) {
     for (const automation of automations) {
-      await skipAutomation(summary, event, automation, reservation, globalSkipReason, await resolveVersion(automation));
+      await skipAutomation(summary, event, automation, reservation, globalSkipReason, await resolveVersion(automation, reservation.guest_language));
     }
     return summary;
   }
@@ -420,7 +460,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
   } catch {
     for (const automation of automations) {
       await markNeedsAttention(automation.id, "לא ניתן להרכיב את נתוני ההודעה (פרופיל העסק או לוח השעות)");
-      await skipAutomation(summary, event, automation, reservation, "render_context_failed", await resolveVersion(automation));
+      await skipAutomation(summary, event, automation, reservation, "render_context_failed", await resolveVersion(automation, reservation.guest_language));
     }
     return summary;
   }
@@ -432,15 +472,15 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       recipientConfigSchema.parse(automation.recipient_config);
       const timing = timingConfigSchema.parse(automation.timing_config);
       if (!sources.include.includes(reservation.booking_origin)) {
-        await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolveVersion(automation)); continue;
+        await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolveVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.ota && OTA_ORIGINS.has(reservation.booking_origin)) {
-        await skipAutomation(summary, event, automation, reservation, "ota_excluded", await resolveVersion(automation)); continue;
+        await skipAutomation(summary, event, automation, reservation, "ota_excluded", await resolveVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.guestCommunicationOptOut && reservation.guest_communication_opt_out) {
-        await skipAutomation(summary, event, automation, reservation, "guest_opted_out", await resolveVersion(automation)); continue;
+        await skipAutomation(summary, event, automation, reservation, "guest_opted_out", await resolveVersion(automation, reservation.guest_language)); continue;
       }
-      const version = await resolveVersion(automation);
+      const version = await resolveVersion(automation, reservation.guest_language);
       if (!reservation.guest_email || !EMAIL_RE.test(reservation.guest_email.trim())) {
         await skipAutomation(summary, event, automation, reservation, "missing_guest_email", version); continue;
       }
