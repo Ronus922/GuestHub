@@ -89,7 +89,8 @@
     "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs",
     "check:no-secrets": "node scripts/check-no-secrets.mjs",
     "check:supply-chain": "node scripts/check-supply-chain.mjs",
-    "check:retention": "node scripts/check-retention.mjs"
+    "check:retention": "node scripts/check-retention.mjs",
+    "check:performance": "node scripts/check-performance.mjs"
   },
   "engines": {
     "node": ">=20 <21"
