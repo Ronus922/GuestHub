@@ -72,6 +72,30 @@ assert.ok(rules.stayRestrictionViolation(idx([row({ date: "2026-07-11", ctd: tru
 assert.ok(rules.stayRestrictionViolation(idx([row({ date: "2026-07-10", ss: true })]), stay("2026-07-10", "2026-07-11", ["2026-07-10"]))?.includes("סגור"), "stop_sell blocks the night");
 assert.equal(rules.stayRestrictionViolation(idx([row({ date: "2026-07-10", price: 500 })]), stay("2026-07-10", "2026-07-11", ["2026-07-10"])), null, "unrestricted stay passes");
 
+// nightsRuleViolation — the calendar's manual-create gate: min/max NIGHTS only,
+// and deliberately NOT cta/ctd/stop_sell (front-desk staff may still place a
+// manual booking on a closed date). Same evaluation order + Hebrew messages.
+const nstay = (ci, nights) => ({ checkIn: ci, nights });
+assert.equal(
+  rules.nightsRuleViolation(idx([row({ date: "2026-07-10", msa: 4 })]), nstay("2026-07-10", ["2026-07-10", "2026-07-11"]))?.code,
+  "MIN_STAY_NOT_MET", "nights gate: 2 nights < arrival-min 4 is blocked");
+// the through-min case = the Group Update's primary "מינימום לילות" — THE reported bug
+assert.equal(
+  rules.nightsRuleViolation(idx([row({ date: "2026-07-10", mst: 4 })]), nstay("2026-07-10", ["2026-07-10", "2026-07-11"]))?.required,
+  4, "nights gate: through-min 4 is enforced at selection (the reported 2-vs-min-4 bug)");
+assert.equal(
+  rules.stayViolationMessage(rules.nightsRuleViolation(idx([row({ date: "2026-07-10", mst: 4 })]), nstay("2026-07-10", ["2026-07-10", "2026-07-11"]))),
+  "מינימום 4 לילות בטווח זה", "nights gate: the Hebrew message names the required minimum");
+assert.equal(
+  rules.nightsRuleViolation(idx([row({ date: "2026-07-10", max: 2 })]), nstay("2026-07-10", ["2026-07-10", "2026-07-11", "2026-07-12"]))?.code,
+  "MAX_STAY_EXCEEDED", "nights gate: 3 nights > max 2 is blocked");
+assert.equal(
+  rules.nightsRuleViolation(idx([row({ date: "2026-07-10", msa: 2, mst: 2, max: 5 })]), nstay("2026-07-10", ["2026-07-10", "2026-07-11"])),
+  null, "nights gate: a length within [min,max] passes");
+assert.equal(
+  rules.nightsRuleViolation(idx([row({ date: "2026-07-10", cta: true, ss: true })]), nstay("2026-07-10", ["2026-07-10"])),
+  null, "nights gate: CTA/stop_sell do NOT block a manual calendar create — only illegal length does");
+
 // applyPriceMode — the Group Update modes, clamped + rounded
 assert.equal(rules.applyPriceMode(100, "replace", 250, 300), 250);
 assert.equal(rules.applyPriceMode(100, "add", 50, 300), 150);

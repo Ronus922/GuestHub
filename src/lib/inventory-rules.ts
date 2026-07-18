@@ -80,14 +80,17 @@ export function formatBalance(totalPrice: number, paidAmount: number): BalanceVi
 // are derived from it per member room (room_id set, room_type_id null) so the
 // grid's O(1) room-priority lookup is unchanged. The canonical pricing +
 // restriction logic lives in src/lib/rates/rules.ts (the single validator);
-// this type is display-only. min_nights carries min_stay_arrival for the strip.
+// this type is display-only. min_nights carries min_stay_arrival for the strip;
+// min_stay_through is the through-min (the Group Update's primary "מינימום לילות")
+// carried alongside so the calendar can display AND enforce the binding minimum.
 export type RateRow = {
   date: string; // DateOnly
   room_id: string | null;
   room_type_id: string | null;
   price: string | number | null;
-  min_nights: number | null;
-  max_nights: number | null;
+  min_nights: number | null; // = min_stay_arrival
+  min_stay_through: number | null;
+  max_nights: number | null; // = max_stay
   closed: boolean;
   closed_to_arrival: boolean;
   closed_to_departure: boolean;

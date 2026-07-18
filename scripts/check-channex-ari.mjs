@@ -525,6 +525,42 @@ try {
       ok("projected rate for EVERY occupancy equals calculateQuote's night total — one pricing engine, two callers");
     });
 
+    // ---- THE min/max-NIGHTS source-of-truth check: the stay rules a booking
+    //      enforces and the Rate Grid shows are EXACTLY what is projected AND sent
+    //      to Channex. Price already had this guarantee (above); the stay
+    //      restrictions did not, so a divergence between the grid value and the
+    //      wire value could have slipped through. ----
+    await scenario(tx, async (sp) => {
+      // the canonical stay rules — the exact columns the Group Update / Rate Grid
+      // write — on the base commercial row for one date.
+      await sp`
+        UPDATE guesthub.pricing_plan_rates
+           SET min_stay_arrival = 3, min_stay_through = 2, max_stay = 5
+         WHERE tenant_id = ${f.T} AND sellable_unit_id = ${f.R1.suId}
+           AND pricing_plan_id = ${f.R1.basePlanId} AND date = ${D0}`;
+      const p = await project(sp, f);
+      const cell = p.commercial.find((c) => c.roomId === f.R1.roomId && c.planId === f.BASEPLAN && c.date === D0);
+      assert.equal(cell.minStayArrival, 3, "projected min_stay_arrival == canonical pricing_plan_rates");
+      assert.equal(cell.minStayThrough, 2, "projected min_stay_through == canonical pricing_plan_rates");
+      assert.equal(cell.maxStay, 5, "projected max_stay == canonical pricing_plan_rates");
+
+      // …and the same values survive 1:1 into the Channex wire payload — no
+      // coalescing, no min_stay_through→min_stay_arrival fallback, keys unchanged.
+      const combo = new Map([[`${f.R1.roomId}|${f.BASEPLAN}`, "cx-rp-1"]]);
+      const [wire] = ari.buildRestrictionValues(
+        [{
+          roomId: f.R1.roomId, planId: f.BASEPLAN, date: D0, rates: cell.rates,
+          minStayArrival: cell.minStayArrival, minStayThrough: cell.minStayThrough, maxStay: cell.maxStay,
+          stopSell: cell.stopSell, closedToArrival: cell.closedToArrival, closedToDeparture: cell.closedToDeparture,
+        }],
+        "cx-prop", combo,
+      ).batches[0].values;
+      assert.equal(wire.min_stay_arrival, 3, "wire min_stay_arrival is the canonical value");
+      assert.equal(wire.min_stay_through, 2, "wire min_stay_through is the canonical value");
+      assert.equal(wire.max_stay, 5, "wire max_stay is the canonical value");
+      ok("min/max nights: the canonical pricing_plan_rates value is EXACTLY what is projected and sent to Channex");
+    });
+
     // ---- derived plan uses the canonical chain (+5%), extra adult uses the canonical fee ----
     await scenario(tx, async (sp) => {
       const p = await project(sp, f);

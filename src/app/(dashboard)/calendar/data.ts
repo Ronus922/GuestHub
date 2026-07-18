@@ -98,7 +98,7 @@ export async function getCalendarData(
   const rates = await sql<RateRow[]>`
     SELECT ppr.date::text AS date, sur.room_id, NULL::uuid AS room_type_id,
            ppr.price::float8 AS price, ppr.min_stay_arrival AS min_nights,
-           ppr.max_stay AS max_nights, ppr.stop_sell AS closed,
+           ppr.min_stay_through, ppr.max_stay AS max_nights, ppr.stop_sell AS closed,
            ppr.closed_to_arrival, ppr.closed_to_departure
     FROM guesthub.pricing_plan_rates ppr
     JOIN guesthub.pricing_plans bp ON bp.id = ppr.pricing_plan_id AND bp.is_base

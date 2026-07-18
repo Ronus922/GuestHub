@@ -66,7 +66,9 @@ export function RateCellTooltip({
   // effective price mirrors the cell chip's fallback (rate price → base price)
   const price = rate?.price != null ? Number(rate.price) : room.base_price;
   const closed = rate?.closed ?? false;
-  const minN = rate?.min_nights ?? null;
+  // binding minimum = stricter of arrival-min and through-min (the Group Update's
+  // primary "מינימום לילות"), so the tooltip matches what the calendar blocks on.
+  const minN = rate ? Math.max(rate.min_nights ?? 0, rate.min_stay_through ?? 0) || null : null;
   const maxN = rate?.max_nights ?? null;
   const cta = rate?.closed_to_arrival ?? false;
   const ctd = rate?.closed_to_departure ?? false;
