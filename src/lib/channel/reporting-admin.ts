@@ -8,7 +8,7 @@ import { markAriDirty } from "./outbox";
 import { enqueueChannelJob } from "./queue";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { decryptSecret } from "./crypto";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import { otaSourceKey } from "./booking-normalize";
 import {
   cancelDueInvalidCard,
@@ -106,7 +106,7 @@ async function bookingCreds(connectionId: string): Promise<{
     tenantId: conn.tenant_id,
     creds: {
       apiKey: decryptSecret(conn.api_key_ciphertext),
-      baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(conn.environment),
     },
   };
 }

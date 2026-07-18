@@ -1,7 +1,7 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { decryptSecret } from "./crypto";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import {
   acknowledgeBookingRevision,
   fetchBookingRevision,
@@ -91,7 +91,7 @@ const REACK_BATCH = 50;
 export function inboundCreds(conn: InboundConnection): ChannexReqOpts {
   return {
     apiKey: decryptSecret(conn.api_key_ciphertext),
-    baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+    baseUrl: channexBaseUrl(conn.environment),
   };
 }
 

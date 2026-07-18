@@ -18,3 +18,16 @@ export const CHANNEX_BASE_URLS = {
   staging: "https://staging.channex.io/api/v1",
   production: "https://app.channex.io/api/v1",
 } as const;
+
+export type ChannexEnvironment = keyof typeof CHANNEX_BASE_URLS;
+
+// The ONE base-URL resolver. Every Channex HTTP call derives its baseUrl from a
+// connection's `environment` column through this function — never from a literal
+// member access at the call site. `check:channex-environment-routing` enforces
+// that CHANNEX_BASE_URLS is read nowhere else, so a staging/production crossover
+// cannot be introduced by a stray literal.
+export function channexBaseUrl(env: ChannexEnvironment): string {
+  const url = CHANNEX_BASE_URLS[env];
+  if (!url) throw new Error(`Unknown Channex environment: ${String(env)}`);
+  return url;
+}

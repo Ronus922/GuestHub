@@ -2,7 +2,7 @@ import "server-only";
 import type { Sql } from "postgres";
 import { sql } from "@/lib/db";
 import { addDays, todayInTz, type DateOnly } from "@/lib/dates";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest } from "./connection-test";
 import { projectAri, type AriProjection } from "./ari-projection";
@@ -108,7 +108,7 @@ function credentialsFor(conn: AriConnection, deps?: AriSyncDeps): Creds | { erro
       apiKey: decryptSecret(conn.api_key_ciphertext),
       // §11 canonical routing: resolve the base URL from the connection's own
       // environment — never a hardcoded staging constant (was defect CHX G6).
-      baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(conn.environment),
       propertyId: conn.channex_property_id,
       fetchImpl: deps?.fetchImpl,
     };

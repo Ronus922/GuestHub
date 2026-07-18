@@ -5,7 +5,7 @@ import { getActor, requirePermission, AuthorizationError, type Actor } from "@/l
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit } from "@/lib/audit";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl } from "./config";
 import {
   createStripePaymentMethod,
   installApplication,
@@ -62,7 +62,7 @@ async function loadConnection(tenantId: string): Promise<ConnRow | null> {
 function credsOf(conn: ConnRow): ChannexReqOpts {
   return {
     apiKey: decryptSecret(conn.api_key_ciphertext!),
-    baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
+    baseUrl: channexBaseUrl(conn.environment),
   };
 }
 

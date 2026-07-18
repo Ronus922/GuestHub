@@ -5,7 +5,8 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob, logChannelError } from "./queue";
-import { CHANNEX_BASE_URLS } from "./config";
+import { channexBaseUrl, type ChannexEnvironment } from "./config";
+import { effectiveChannexEnvironment } from "./production-guard";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
 import { isAmbiguous, type ChannexApiFailure, type ChannexApiErrorCategory } from "./channex-http";
 import {
@@ -46,7 +47,7 @@ import {
 //  • The api-key is decrypted per call, never returned, logged or audited.
 // ============================================================
 
-const CHANNEX_ENV = "staging" as const;
+const CHANNEX_ENV: ChannexEnvironment = effectiveChannexEnvironment();
 const PROVIDER = "channex" as const;
 
 // One run is bounded so a long sync can never exceed the reverse-proxy timeout.
@@ -158,7 +159,7 @@ export type RoomSyncContext = {
   apiKeyConfigured: boolean;
   propertyId: string | null;
   propertyTitle: string | null;
-  environment: "staging";
+  environment: ChannexEnvironment;
   plan: SyncPlan;
   /** true while a sync run holds the durable parent job */
   running: boolean;
@@ -271,7 +272,7 @@ export async function refreshChannexRoomTypesAction(): Promise<Result<RefreshRes
 
     const listed = await listChannexRoomTypes({
       apiKey: ready.apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(CHANNEX_ENV),
       propertyId: ready.propertyId,
     });
     if (!listed.ok) return apiFail(listed);
@@ -294,7 +295,7 @@ export async function refreshChannexRoomTypesAction(): Promise<Result<RefreshRes
       if (!rt) {
         const got = await getChannexRoomType({
           apiKey: ready.apiKey,
-          baseUrl: CHANNEX_BASE_URLS.staging,
+          baseUrl: channexBaseUrl(CHANNEX_ENV),
           id: m.channex_room_type_id,
         });
         if (got.ok) rt = got.roomType;
@@ -426,7 +427,7 @@ export async function refreshChannexRoomTypesAction(): Promise<Result<RefreshRes
 // nothing.
 
 export type SyncPreview = {
-  environment: "staging";
+  environment: ChannexEnvironment;
   propertyId: string;
   propertyTitle: string | null;
   activeRooms: number;
@@ -448,7 +449,7 @@ export async function previewChannexRoomTypeSyncAction(): Promise<Result<SyncPre
 
     const listed = await listChannexRoomTypes({
       apiKey: ready.apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(CHANNEX_ENV),
       propertyId: ready.propertyId,
     });
     if (!listed.ok) return apiFail(listed);
@@ -542,7 +543,7 @@ export async function startChannexRoomTypeSyncAction(): Promise<Result<SyncRunRe
     const ready = await requireReady(actor.tenantId);
     if ("error" in ready) return { success: false, error: ready.error };
     const { conn, propertyId, apiKey } = ready;
-    const baseUrl = CHANNEX_BASE_URLS.staging;
+    const baseUrl = channexBaseUrl(CHANNEX_ENV);
 
     // (a) refresh the external truth BEFORE anything is created (§11/§12)
     const listed = await listChannexRoomTypes({ apiKey, baseUrl, propertyId });
@@ -929,7 +930,7 @@ export async function adoptChannexRoomTypeAction(input: {
     // verify the external Room Type with GET before adoption
     const got = await getChannexRoomType({
       apiKey: ready.apiKey,
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      baseUrl: channexBaseUrl(CHANNEX_ENV),
       id: externalId,
     });
     if (!got.ok) return apiFail(got);
