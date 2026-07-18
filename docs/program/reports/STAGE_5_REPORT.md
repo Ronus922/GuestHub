@@ -1,6 +1,10 @@
 # Stage 5 Report — PMS Capability Completion
 
-**Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification` · **Tag:** `stage-5-complete` · **Independent verifier (Agent N):** lifecycle-connection + safety review
+**Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification` · **Tag:** `stage-5-complete` · **Independent verifier (Agent N):** PASS 6/6 (no must-fix items)
+
+## Agent N independent verdict — PASS 6/6
+
+Reproduced from source + databases: (1) lifecycle — checkout fires the idempotent cleaning-task INSERT with no outbox marking; all three availability functions filter `kind='ooo'` and only OOO closures conflict-check/sync. (2) safety — staging :5434 has the new columns; prod :5432 confirmed ABSENT of all three (untouched, read-only queries only). (3) Israel — VAT zero-rating, anonymize is UPDATE-not-DELETE + idempotent + names-only audit, invoice seam fails closed. (4) reports — all pure SELECT, tenant-scoped, canonical statuses; CSV injection-hardened. (5) all check suites + tsc + design PASS. (6) no parallel task table — single unified store. **No must-fix items.**
 
 ## Executive summary (Hebrew)
 
