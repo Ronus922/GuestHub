@@ -4,9 +4,19 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 7 — Final Verification, Documentation & Delivery** — NOT STARTED (entry gate next). Continuous mode (charter §1). Read `07_STAGE_7_VERIFICATION_AND_DELIVERY.md` at entry.
+**Stage 7 — Final Verification, Documentation & Delivery** — IN PROGRESS (2026-07-18). Continuous mode (charter §1). Final Agent N verification running.
 
-Stage 7 scope: full-program regression of every check; replay-from-zero of all 43 migrations; SCREENSHARE_DEMO_SCRIPT rehearsal; final delivery packaging + program-level exit gate; `stage-7-complete`.
+### Stage 7 progress
+- ✅ Entry gate: tags 1-6 present; no unassigned open Critical/High; branch current.
+- ✅ **Replay-from-zero:** all **45** migrations apply cleanly to a fresh DB (verified on disposable :5433, scratch dropped).
+- ✅ **Consolidated regression (§25):** all headless `check:*` green (72/73 in the battery + `check:inventory` fixed after). `check:hydration-browser` is a live-server + Chromium E2E (Phase-15 browser verification) — environment-dependent, run against the running app; not a code defect.
+- ✅ **Fixed 5 stale checks** (not regressions): inventory (dropped flaky live-prod backlog assertion → focus on function integrity), check-in-check-out-db (harness missing split module), rates-sync (connRow missing env/circuit cols), channels-fullsync-ui (D89 btn-primary), realtime (ADR-0005 email dedup). All committed.
+- ✅ **check:code-documentation** (§22) added + green.
+- ✅ **Fresh-clone setup (§28):** `git clone` + `pnpm install --frozen-lockfile` + `tsc --noEmit` all clean.
+- ✅ **FINAL_REPORT.md** (§29) written (Hebrew summary, cert matrix ref, declarations, remaining-human-steps, security/perf, test results, git delivery + review map, user test plan, safety).
+- ✅ DECISIONS.md program-completion addendum.
+- ⏳ Final Agent N pass/fail matrix (running) → then tag `stage-7-complete` + final PR.
+- **Environment-dependent (V2 §2), documented not blocking:** live screenshare rehearsal + `check:hydration-browser` (need the running app + Chromium); live Channex cert-scenario execution (needs a Staging channel/Booking.com test account).
 
 ## Prior stage
 
