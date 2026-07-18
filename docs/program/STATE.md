@@ -4,7 +4,24 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 3 — Core Domain Integrity** — COMPLETE (2026-07-18, Agent N spot-review PASS 5/5). Next: Stage 4 (Channex Integration & Certification Readiness), begins from ADR-0004. Continuous mode (charter §1).
+**Stage 4 — Channex Integration & Certification Readiness** — IN PROGRESS (2026-07-18). Continuous mode (charter §1). Not tagged.
+
+### Stage 4 progress
+- ✅ Entry gate: tags 1-3 present, Stage-3 outbox live (`markAriDirty`), branch current.
+- ✅ Milestone 1 (partial) — **CHX G6 environment routing, ARI send path**: `AriConnection.environment` added + `credentialsFor` resolves `CHANNEX_BASE_URLS[conn.environment]` (was hardcoded staging). Inbound/reporting/payments/inbound-admin already route by env.
+- ⏳ **Remaining Stage-4 scope** (large; much needs LIVE Channex Staging — external dependency per V2 §2):
+  - CHX G6 completion: property/room-type/rate-plan SETUP ops (`admin.ts`, `rate-plan-admin.ts`, `room-type-admin.ts`) still hardcode staging — parametrize with the §26 production flow. `check:channex-environment-routing`.
+  - Evidence ledger (H9/H10) + read-only certification console (§13) + `check:channex-certification-evidence`.
+  - Full Sync 500-day/two-request semantics + size preflight (§14) + `check:channex-full-sync-two-requests`.
+  - Group Update expansion + single-envelope batching (§15) + `check:channex-group-update-batching`; Min Stay Arrival/Through declaration.
+  - Rate-limit cooldown + circuit breaker (§16, M14) + fault tests + `check:channex-rate-limit-cooldown`.
+  - Inbound booking hardening + ACK + booking-receiving cert flow (§17) + `check:channex-booking-crs-flow`; `check:channel-security`, `check:channel-chaos`.
+  - Production activation guard (§26, built + inactive) + `check:production-activation-guard`.
+  - Certification property provisioned with varied realistic data; scenario execution with Task IDs (LIVE Channex).
+  - 9 `docs/channex/` docs (skeletons exist) incl. SCREENSHARE_DEMO_SCRIPT draft; declaration answers 12-14.
+  - **Note:** re-fetch official Channex docs at execution (Stage-1 capture in `docs/channex/PMS_CERTIFICATION_REQUIREMENTS.md` is from 2026-07-18; still current this session).
+
+## Prior stage
 
 ### Stage 3 deliverables (closed + proven)
 - **H1/H2/M3 — DB-level double-booking prevention (ADR-0003)** — migration 037: exclusion constraint on `reservation_rooms` (room + half-open stay range) scoped to a trigger-maintained `is_blocking` flag; `reservations.status` CHECK. Proven under true concurrency (`check:reservation-concurrency`).
