@@ -40,7 +40,7 @@ Where every secret lives, how it is encrypted, its blast radius, and how it rota
 | Item | Severity | Plan |
 |---|---|---|
 | Off-host backup destination + key custody | Medium | No off-host target exists on the host; local encrypted backup + restore drill are in place; `BACKUP_OFFHOST_CMD` hook warns when unset. User provides destination at/before production cutover (Stage 2 deferral). |
-| GREEN-API webhook token stored in provider config (messaging) | Low | Messaging module; move to the hashed-token model like Channex when the messaging surface is next touched. Not on the reservation/card critical path. |
+| GREEN-API webhook token stored in provider config (messaging) | Medium | Messaging module; move to the hashed-token model like Channex when the messaging surface is next touched. Not on the reservation/card critical path. |
 | Operator-controlled provider base host (messaging SSRF surface) | Low | Constrain to an allowlist when the messaging surface is next touched. |
 | `CARD_VAULT_KEY` automated rotation tooling | Low | `key_version` supports it; the procedure above is manual until a rotation cadence is required. |
 

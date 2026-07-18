@@ -1,6 +1,10 @@
 # Stage 6 Report — Security, Performance & Observability
 
-**Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification` · **Tag:** `stage-6-complete` · **Independent verifier (Agent N):** security-fix evidence review
+**Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification` · **Tag:** `stage-6-complete` · **Independent verifier (Agent N):** PASS 8/8 (no must-fix items)
+
+## Agent N independent verdict — PASS 8/8
+
+Reproduced from code + DB: (1) secrets — check:no-secrets PASS, `git ls-files`/history grep empty, keys read via process.env only; (2) supply-chain — audit "No known vulnerabilities", lockfile + Node/pm pinned; (3) retention — 043 purges out-of-window only, DB proof both directions, runner refuses :5432; (4) performance — 7 indexes present, 500-day projection 13ms; (5) fault-injection — all 7 §24 items present + PASS; (6) safety — 043 functions EXIST on :5434, ABSENT on prod :5432 (read-only verify); (7) docs — 4 security docs present, THREAT_MODEL finalized, zero unresolved Critical/High with residual tabulated; (8) tsc exit 0. **No must-fix items.** Minor doc reconciliations it flagged (GREEN-API severity Medium consistency; file-count 435) applied.
 
 ## Executive summary (Hebrew)
 

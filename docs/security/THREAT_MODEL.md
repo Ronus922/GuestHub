@@ -108,6 +108,6 @@ The full red-team review ran in Stage 6 (`SECURITY_TEST_REPORT.md`). Resolution 
 | Double-booking / sync attacks | Closed — DB exclusion constraint + idempotency + circuit breaker | `check:reservation-concurrency`, `check:channel-chaos` |
 | Webhook / app attacks | Closed — hashed token, no oracle, bounded, redacted, injection-hardened exports | `check:channel-security`, `check:reports` |
 
-**Residual (Medium/Low, accepted with plan):** Kong gateway (8000/8443) external hardening (needs ingress-path confirmation with the operator; DB ports already blocked); off-host backup destination (operator-provided); GREEN-API messaging token hashing + operator-host allowlist (messaging module, Low); automated `CARD_VAULT_KEY` rotation tooling (Low, `key_version` supports it). See `SECURITY_TEST_REPORT.md` + `SECRET_HANDLING.md`.
+**Residual (Medium/Low, accepted with plan):** Kong gateway (8000/8443) external hardening (needs ingress-path confirmation with the operator; DB ports already blocked); off-host backup destination (operator-provided); GREEN-API messaging token hashing + operator-host allowlist (messaging module, Medium — plaintext token asymmetric with Channex hashed model; impact limited to forged outbound delivery-status); automated `CARD_VAULT_KEY` rotation tooling (Low, `key_version` supports it). See `SECURITY_TEST_REPORT.md` + `SECRET_HANDLING.md`.
 
 **Zero unresolved Critical or High.**

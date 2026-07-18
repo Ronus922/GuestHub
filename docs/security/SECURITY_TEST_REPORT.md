@@ -16,7 +16,7 @@
 - **Privilege of the pooled DB role:** `guesthub_app` is DML-only, owns nothing, cannot DDL (`db/roles/roles.sql`, `check:db-isolation`). **Closed.**
 
 ### Secrets
-- **Committed secrets:** `check:no-secrets` — 430 tracked files, no secret material; no `.env*` in the tree or anywhere in git history; encryption/activation env vars never hardcoded. **Closed.**
+- **Committed secrets:** `check:no-secrets` — 435 tracked files, no secret material; no `.env*` in the tree or anywhere in git history; encryption/activation env vars never hardcoded. **Closed.**
 - **Key discipline:** PANs AES-256-GCM under `CARD_VAULT_KEY`; channel credentials under `CHANNEL_SECRETS_KEY`; both read only from `process.env`. CVV removed entirely (migration 018). PAN retention bounded (H8, migration 043). API key travels only in the `user-api-key` header, never a URL/log/audit (`check:channel-security`). **Closed.**
 - **Supabase key discipline:** service_role JWT pattern scanned by `check:no-secrets`; the app uses the pooled least-privilege role, not service_role, for domain work. **Closed.**
 
@@ -40,6 +40,7 @@
 | Item | Severity | Why accepted / plan |
 |---|---|---|
 | Kong gateway (8000/8443) external hardening | Medium | Restricting it risks the `db.bios.co.il` auth ingress; requires ingress-path confirmation with the operator. The DB ports themselves are already blocked (C2). Documented in the DB exposure runbook; apply with the operator during a maintenance window. |
+| GREEN-API webhook token stored in provider config (messaging) | Medium | Plaintext token, asymmetric with the Channex hashed-token model; impact limited to forged outbound-messaging delivery-status events (not bookings/payments/PAN). Move to the hashed model when the messaging surface is next touched. |
 | In-memory webhook rate-limit (per-process) | Low | Adequate for the single-process inbound worker; move to a shared store only if inbound goes multi-process (noted in the route). |
 | Real invoice provider not wired | Low (not a vuln) | Seam fails closed; external dependency (V2 §2). |
 
