@@ -78,6 +78,59 @@ try {
   (got.filter(id=>id===j4.id).length===1)
     ? ok("FOR UPDATE SKIP LOCKED: concurrent claimers never double-grab a job")
     : bad("skip-locked double grab", JSON.stringify(got));
+  await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null, locked_by=null where id=${j4.id}`;
+
+  // ---- §24 fault-injection (Stage 6): DB-behavioral proofs on the disposable DB ----
+  // failChannelJob logic mirrored from src/lib/channel/queue.ts (+ isPermanentError
+  // from ranges.ts) — a poison/corrupted job must dead-letter, never loop forever.
+  const PERMANENT=["validation_error","mapping_error","unauthorized","not_found"];
+  const failJob=async(id,err)=>{
+    const [j]=await sql`select attempts,max_attempts from guesthub.channel_sync_jobs where id=${id}`;
+    if(!j) return;
+    const dead=PERMANENT.includes(err.code)||j.attempts>=j.max_attempts;
+    await sql`update guesthub.channel_sync_jobs set
+      status=${dead?'dead_letter':'retry_wait'},
+      next_attempt_at=now()+make_interval(secs=>30),
+      finished_at=${dead?sql`now()`:null}, locked_at=null, locked_by=null,
+      last_error_code=${err.code??null}, last_error_message=${err.message}
+      where id=${id}`;
+  };
+
+  // 5. corrupted/poison queue payload → bounded retry then dead_letter, never re-claimed.
+  //   (a) a permanent (validation) error dead-letters on the first failure.
+  const [j5a]=await mkJob(C1,'queued',null,null);
+  await sql.begin((tx)=>claim(tx,'worker-A'));                 // attempts -> 1
+  await failJob(j5a.id,{code:'validation_error',message:'corrupted payload'});
+  const [s5a]=await sql`select status from guesthub.channel_sync_jobs where id=${j5a.id}`;
+  (s5a.status==='dead_letter') ? ok("§24 poison payload (permanent error) → dead_letter immediately")
+    : bad("permanent-error dead-letter", s5a.status);
+  //   (b) a transient error at the attempts ceiling dead-letters (retry exhaustion).
+  const [j5b]=await mkJob(C1,'queued',null,null);
+  await sql`update guesthub.channel_sync_jobs set attempts=max_attempts where id=${j5b.id}`;
+  await failJob(j5b.id,{message:'still failing'});
+  const [s5b]=await sql`select status from guesthub.channel_sync_jobs where id=${j5b.id}`;
+  (s5b.status==='dead_letter') ? ok("§24 retry exhaustion (attempts>=max) → dead_letter")
+    : bad("retry-exhaustion dead-letter", s5b.status);
+  //   (c) a dead_letter job is inert — the claim predicate never picks it up again.
+  const r5=await sql.begin((tx)=>claim(tx,'worker-A'));
+  (!r5.some(x=>x.id===j5a.id||x.id===j5b.id)) ? ok("§24 dead_letter job is never re-claimed")
+    : bad("dead-letter re-claimed", JSON.stringify(r5.map(x=>x.id)));
+  await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null, locked_by=null
+    where id in (${r5.map(x=>x.id)}) and status='processing'`.catch(()=>{});
+
+  // 6. DB unavailable / timeout after possible upstream success → the claim
+  //    transaction rolls back atomically: no half-claimed job, no leaked lock,
+  //    no lost work. The job is still claimable afterwards.
+  const [j6]=await mkJob(C1,'queued',null,null);
+  try { await sql.begin(async(tx)=>{ await claim(tx,'crashing-worker'); throw new Error('db dropped mid-claim'); }); }
+  catch { /* expected */ }
+  const [s6]=await sql`select status,locked_by,attempts from guesthub.channel_sync_jobs where id=${j6.id}`;
+  (s6.status==='queued' && s6.locked_by==null)
+    ? ok("§24 mid-claim DB failure rolls back → job intact, no leaked lock (no work lost)")
+    : bad("mid-claim rollback", JSON.stringify(s6));
+  const r6=await sql.begin((tx)=>claim(tx,'worker-A'));
+  (r6.some(x=>x.id===j6.id)) ? ok("§24 the rolled-back job is re-claimable by the next worker")
+    : bad("post-rollback reclaim", JSON.stringify(r6.map(x=>x.id)));
 
 } catch(e){ bad("run", e.message); }
 finally { if(T) await sql`delete from guesthub.tenants where id=${T}`.catch(()=>{}); await sql.end(); }
