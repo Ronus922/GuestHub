@@ -4,7 +4,9 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 7 — Final Verification, Documentation & Delivery** — IN PROGRESS (2026-07-18). Continuous mode (charter §1). Final Agent N verification running.
+**PROGRAM COMPLETE** (2026-07-18) — all 7 stages delivered, each independently Agent-N-verified, tagged `stage-1-complete` … `stage-7-complete`. Stage 7 final Agent N matrix: **PASS 9/9, no must-fix items.** Draft PR #92 (never merged, never deployed). Report: `FINAL_REPORT.md`. Remaining actions are the user's (FINAL_REPORT §7). One external dependency for live cert execution: a Channex Staging channel / Booking.com test account (V2 §2).
+
+### Stage 7 — Final Verification & Delivery — ✅ COMPLETE, tag `stage-7-complete`, Agent N PASS 9/9. Report `reports/STAGE_7_REPORT.md`.
 
 ### Stage 7 progress
 - ✅ Entry gate: tags 1-6 present; no unassigned open Critical/High; branch current.
@@ -133,6 +135,7 @@ All 9 milestones shipped; all 10 new checks green; prior battery still green; qu
 | 4 | `stage-4-complete` | (see tag) | 2026-07-18 |
 | 5 | `stage-5-complete` | (see tag) | 2026-07-18 |
 | 6 | `stage-6-complete` | (see tag) | 2026-07-18 |
+| 7 | `stage-7-complete` | (see tag) | 2026-07-18 |
 
 ### Stage 2 deliverables
 - **C2 mitigated**: DOCKER-USER DROP on ens3 for DB ports 5432/6543 (v4+v6), persisted via `guesthub-db-firewall.service`; localhost/apps unaffected. Runbook `docs/database/DB_EXPOSURE_MITIGATION.md`. (Kong 8000/8443 gateway hardening → Stage 6.)

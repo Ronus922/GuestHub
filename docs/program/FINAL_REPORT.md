@@ -30,7 +30,7 @@
 | 4 Channex Certification Readiness | `stage-4-complete` | PASS 7/7 |
 | 5 PMS Capability Completion | `stage-5-complete` | PASS 6/6 |
 | 6 Security, Performance, Observability | `stage-6-complete` | PASS 8/8 |
-| 7 Final Verification & Delivery | `stage-7-complete` | final matrix (this stage) |
+| 7 Final Verification & Delivery | `stage-7-complete` | PASS 9/9 (final independent matrix) |
 
 ## 2. Certification scenario matrix + declarations
 
