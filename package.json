@@ -86,7 +86,8 @@
     "check:payment-refund-void": "node scripts/check-payment-refund-void.mjs",
     "check:timezone-and-money-invariants": "node scripts/check-timezone-and-money-invariants.mjs",
     "check:pms-domain-invariants": "node scripts/check-pms-domain-invariants.mjs",
-    "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs"
+    "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs",
+    "check:no-secrets": "node scripts/check-no-secrets.mjs"
   },
   "dependencies": {
     "@hebcal/core": "^6.6.0",
