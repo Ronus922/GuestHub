@@ -7,7 +7,7 @@ import { decryptSecret, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest } from "./connection-test";
 import { projectAri, type AriProjection } from "./ari-projection";
 import {
-  buildAvailabilityValues, buildRestrictionValues,
+  buildAvailabilityValues, buildRestrictionValues, payloadByteSize,
   type AvailabilityInput, type RestrictionInput,
 } from "./ari-payloads";
 import { pushAri, summarizeWarnings, type AriPushResult, type SafeAriWarning } from "./channex-ari";
@@ -525,6 +525,8 @@ export async function runInitialFullSync(
   // actual counts + all Task IDs so the console can prove it against the official
   // expectation. Never discards Task IDs (H9/H10).
   const fullSyncOutcome: EvidenceOutcome = clean ? "success" : failure ? "failed" : "partial";
+  const availabilityBytes = avail.batches.reduce((n, b) => n + payloadByteSize(b), 0);
+  const restrictionBytes = restr.batches.reduce((n, b) => n + payloadByteSize(b), 0);
   await recordAriEvidence(db, {
     tenantId: conn.tenant_id,
     connectionId: conn.id,
@@ -536,6 +538,7 @@ export async function runInitialFullSync(
     firingFunction: "runInitialFullSync",
     requestCount: availabilityOutcome.requests + restrictionsOutcome.requests,
     expectedRequests: 2,
+    requestBytes: availabilityBytes + restrictionBytes,
     taskIds: [...availabilityOutcome.taskIds, ...restrictionsOutcome.taskIds],
     dateFrom: today,
     dateTo: dateToInclusive,
@@ -549,6 +552,8 @@ export async function runInitialFullSync(
       restrictionRequests: restrictionsOutcome.requests,
       availabilityValues,
       restrictionValues,
+      availabilityBytes,
+      restrictionBytes,
       deferredBatches: deferred,
       blocked: projectionBlocked,
     },

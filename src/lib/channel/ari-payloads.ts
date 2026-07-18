@@ -21,10 +21,19 @@
 //     we emit carries stop_sell, so that always holds.
 // ============================================================
 
-// One request carries at most this many value entries (Channex caps the JSON
-// body at 10MB; this is the conservative structural bound). Builders SPLIT —
-// they never truncate.
-export const MAX_VALUES_PER_PAYLOAD = 1000;
+// §14 size preflight — Channex rejects a request body over 10MB. We enforce a
+// real byte ceiling (not just the value-count bound) BEFORE anything leaves the
+// process, with a safety margin for the `{"values":[…]}` envelope + headers.
+export const PAYLOAD_BYTE_LIMIT = 10 * 1024 * 1024; // 10 MiB
+export const PAYLOAD_BYTE_MARGIN = 256 * 1024; // keep 256 KiB clear of the hard cap
+
+// Serialized size of the request body this batch becomes. Uses UTF-8 byte length
+// (not string length) so multi-byte content is measured honestly.
+export function payloadByteSize(batch: { values: unknown[] }): number {
+  const json = JSON.stringify({ values: batch.values });
+  // Buffer is always present in the Node/Next server runtime this module targets.
+  return Buffer.byteLength(json, "utf8");
+}
 
 export type OccupancyRate = { occupancy: number; rate: number };
 
@@ -93,11 +102,32 @@ function compressDays<T extends { date: string }>(
   return out;
 }
 
+// §14 — pack values into as FEW requests as the 10MB provider limit allows, so a
+// Full Sync is genuinely two requests (one availability, one rates/restrictions)
+// for any realistic property, splitting into more ONLY when a dimension truly
+// exceeds 10MB. Bounds by real serialized bytes (the earlier 1000-value count cap
+// forced spurious extra requests and broke the two-request certification
+// semantics). A single value larger than the budget still gets its own batch
+// rather than being dropped — validateAriBatch then rejects it honestly.
+const BATCH_BYTE_BUDGET = PAYLOAD_BYTE_LIMIT - PAYLOAD_BYTE_MARGIN;
+const ENVELOPE_BYTES = 12; // {"values":[]}
+
 function toBatches<V>(values: V[]): { values: V[] }[] {
   const batches: { values: V[] }[] = [];
-  for (let i = 0; i < values.length; i += MAX_VALUES_PER_PAYLOAD) {
-    batches.push({ values: values.slice(i, i + MAX_VALUES_PER_PAYLOAD) });
+  let current: V[] = [];
+  let bytes = ENVELOPE_BYTES;
+  for (const v of values) {
+    // +1 for the comma separator between values.
+    const size = Buffer.byteLength(JSON.stringify(v), "utf8") + 1;
+    if (current.length > 0 && bytes + size > BATCH_BYTE_BUDGET) {
+      batches.push({ values: current });
+      current = [];
+      bytes = ENVELOPE_BYTES;
+    }
+    current.push(v);
+    bytes += size;
   }
+  if (current.length > 0) batches.push({ values: current });
   return batches;
 }
 
@@ -200,8 +230,10 @@ export function buildRestrictionValues(
 export function validateAriBatch(batch: { values: unknown[] }): string | null {
   if (!Array.isArray(batch.values)) return "values must be an array";
   if (batch.values.length === 0) return "empty payload";
-  if (batch.values.length > MAX_VALUES_PER_PAYLOAD)
-    return `payload exceeds provider limit (${batch.values.length} > ${MAX_VALUES_PER_PAYLOAD})`;
+  // §14 size preflight — never dispatch a body Channex would reject at 10MB.
+  const bytes = payloadByteSize(batch);
+  if (bytes > PAYLOAD_BYTE_LIMIT - PAYLOAD_BYTE_MARGIN)
+    return `payload exceeds 10MB provider limit (${bytes} bytes)`;
   for (const v of batch.values as Record<string, unknown>[]) {
     if (!v.property_id) return "missing property_id";
     if (!v.date_from || !v.date_to) return "missing date range";
