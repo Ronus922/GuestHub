@@ -3,7 +3,7 @@
 - **Date:** 2026-07-18
 - **Branch:** `feat/pms-hardening-channex-certification`
 - **Author:** Agent I (security, read-only threat modeling)
-- **Status:** Initial — Stage 1. Full red-team review scheduled Stage 6.
+- **Status:** FINALIZED — Stage 6. Full red-team executed; see the resolution addendum at the end + `SECURITY_TEST_REPORT.md`.
 - **Scope:** Design-level threat model from static source review only. No exploitation, no attack traffic, no fixes. All references are `file:line` into the working tree. This document is written for a PUBLIC repo and contains no secrets, keys, tokens, or working exploit payloads.
 
 ---
@@ -89,3 +89,25 @@
 - Runtime reachability of `src/lib/channel/*-admin.ts` helpers via any unauthenticated path.
 - Multi-process webhook rate-limit behavior; backup/at-rest exposure of `config` JSON secrets.
 - Actual `.env.local` contents and key strength (not read; confirmed git-ignored and untracked).
+
+---
+
+## Stage 6 resolution addendum (finalization)
+
+The full red-team review ran in Stage 6 (`SECURITY_TEST_REPORT.md`). Resolution of the findings raised above:
+
+| Finding class | Resolution | Evidence |
+|---|---|---|
+| C1 dev/prod DB share | Closed (Stage 2) — dedicated staging DB, cutover runbook | `check:db-isolation` |
+| C2 DB exposed past UFW | Closed (Stage 2) — DOCKER-USER DROP, persisted | `DB_EXPOSURE_MITIGATION.md` |
+| Tenant isolation / authz | Closed — server-side canonical scoping + data backstop + composite FKs | `check:pms-domain-invariants`, `check:guards` |
+| Secrets in code/history | Closed — none present; env-only, fail-closed vaults | `check:no-secrets` |
+| PAN retention / PCI scope (H8) | Closed — `purge_expired_cards`, CVV never stored | `check:retention` |
+| Log growth (H11) | Closed — `purge_channel_sync_errors` | `check:retention` |
+| Supply chain | Closed — audit clean, pinned runtime | `check:supply-chain` |
+| Double-booking / sync attacks | Closed — DB exclusion constraint + idempotency + circuit breaker | `check:reservation-concurrency`, `check:channel-chaos` |
+| Webhook / app attacks | Closed — hashed token, no oracle, bounded, redacted, injection-hardened exports | `check:channel-security`, `check:reports` |
+
+**Residual (Medium/Low, accepted with plan):** Kong gateway (8000/8443) external hardening (needs ingress-path confirmation with the operator; DB ports already blocked); off-host backup destination (operator-provided); GREEN-API messaging token hashing + operator-host allowlist (messaging module, Low); automated `CARD_VAULT_KEY` rotation tooling (Low, `key_version` supports it). See `SECURITY_TEST_REPORT.md` + `SECRET_HANDLING.md`.
+
+**Zero unresolved Critical or High.**
