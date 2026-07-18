@@ -57,6 +57,7 @@
     "check:channel-security": "node scripts/check-channel-security.mjs",
     "check:channel-chaos": "node scripts/check-channel-chaos.mjs",
     "check:channex-booking-crs-flow": "node scripts/check-channex-booking-crs-flow.mjs",
+    "check:channex-certification": "node scripts/check-channex-certification.mjs",
     "db:replay": "node scripts/db/migrate.mjs",
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",
