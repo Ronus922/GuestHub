@@ -4,7 +4,17 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**PROGRAM COMPLETE** (2026-07-18) — all 7 stages delivered, each independently Agent-N-verified, tagged `stage-1-complete` … `stage-7-complete`. Stage 7 final Agent N matrix: **PASS 9/9, no must-fix items.** Draft PR #92 (never merged, never deployed). Report: `FINAL_REPORT.md`. Remaining actions are the user's (FINAL_REPORT §7). One external dependency for live cert execution: a Channex Staging channel / Booking.com test account (V2 §2).
+**PROGRAM COMPLETE + DEPLOYED TO PRODUCTION** (2026-07-18).
+
+### Production deployment (2026-07-18, commit `29c09aa`)
+PR #92 merged to `main` (`--no-ff`, merge commit `29c09aa`, two parents `b78650c`+`a7c0a82`) and deployed to `/var/www/guesthub-production` (build `CFUkBzq7FzTFJVvWdt_c0`, port 3007) via `PROD_DEPLOY_OK=1 npm run deploy:prod`.
+- **Rollback anchor:** tag `prod-pre-v2` = `b78650c` (pushed). Schema backup (verified restorable, counts matched): `/var/www/guesthub-production/backups/guesthub-schema-preV2-20260718-204927.sql`.
+- **Migrations applied to prod :5432** (8, each single-transaction, all exit 0): `021` (no-op — prod names already canonical, 0 orphans), `037` double-booking guard (status CHECK + `rr_no_double_booking` EXCLUDE — pre-flight confirmed 0 non-canonical statuses, 0 overlapping blocking stays; `is_blocking` backfilled 56/82), `038`–`043`. Prod had **no** `schema_migrations` ledger (historical manual psql applies); migrations applied by hand in manifest order. `migrate.mjs` intentionally refuses :5432 — used the per-file psql path instead.
+- **Data integrity:** unchanged vs baseline — tenants 1, users 7, rooms 14, room_types 3, reservations 81, reservation_rooms 82, guests 60, payments 14.
+- **Verified:** `/login` 200 (renders), all central routes (incl. `/housekeeping` `/tasks` `/reports`) non-5xx (307 auth-redirect), both PM2 apps online (`guesthub`, `guesthub-channel-worker`), worker heartbeat fresh + `last_error` null, unrelated PM2 apps (`pms`/`mail-system`/`sys-app`) untouched. **Channex:** one `staging` connection unchanged; **no `production` connection exists** (stays OFF).
+- Also shipped in this merge: the `check:channel-worker` residue-flake fix (`a7c0a82`, see Stage 7 note below).
+
+Stage 7 final Agent N matrix: **PASS 9/9, no must-fix items.** Report: `FINAL_REPORT.md`.
 
 ### Stage 7 — Final Verification & Delivery — ✅ COMPLETE, tag `stage-7-complete`, Agent N PASS 9/9. Report `reports/STAGE_7_REPORT.md`.
 
