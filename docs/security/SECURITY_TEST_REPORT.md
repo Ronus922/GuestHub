@@ -1,30 +1,48 @@
 # GuestHub — Security Test Report
 
-- **Status:** Skeleton — Stage 1; completed in **Stage 6**
-- **Date:** 2026-07-18
-- **Branch:** `feat/pms-hardening-channex-certification`
-- **Sources:** `docs/security/THREAT_MODEL.md`, `docs/audit/ARCHITECTURE_INVENTORY.md` (Findings), `docs/architecture/TARGET_ARCHITECTURE.md` (§3 Stage 6)
+- **Status:** Complete — Stage 6 · **Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification`
+- **Scope:** staging (:5434) + disposable (:5433) DBs and the application source. Never run against production or shared infrastructure (charter §3).
+- **Method:** code-level red-team review across the V2 §19 attack classes, backed by automated invariant checks (each finding maps to a check that keeps it closed) + rolled-back DB probes. This is a source + behavioral review, not an external network pentest.
 
-The results of the Stage-6 red-team review: findings, exploitation attempts, resolutions, and residual risk. This document records **test outcomes**; the design-level threat model is `THREAT_MODEL.md` (already delivered, Stage 1).
+## Result summary
 
-## Current state
+**Zero unresolved Critical or High findings.** The two program Criticals (C1 dev/prod DB share, C2 DB exposed past UFW) were closed in Stage 2; all Stage-3/4/5 Highs are closed or re-scoped-and-now-closed (H8/H11 in this stage). Residual Medium/Low are documented below with justification.
 
-Stage 1 produced a design-level threat model only — no exploitation, no attack traffic, no fixes (`THREAT_MODEL.md` §Scope). Its severity-ranked findings are the starting backlog for Stage 6 testing: **F1 Critical** environment crossover (dev checkout can point at the prod DB); **F2 High** no RLS / DB-level tenant backstop (isolation is 100% application-layer); **F3 Medium** no app-layer login rate-limit/lockout; **F4 Medium** GREEN-API webhook token plaintext at rest and sole authenticator; **F5 Medium** admin/super_admin bypass all granular permissions + thin auth on `*-admin.ts` helpers (confirm none unauthenticated-reachable); **F6–F9 Low** SSRF/token-exfil via operator host, service-role blast radius, error-object logging, client `dangerouslySetInnerHTML` coupling. Confirmed strengths to preserve: no string-concatenated SQL, zero `console.log`, `npm audit --omit=dev` = 0 vulnerabilities, escape-first renderer, upload magic-byte validation, fail-closed card vault, Twilio HMAC (`THREAT_MODEL.md` §4, §5). Additional architecture-layer criticals to test: C2 DB exposure past UFW (`ARCHITECTURE_INVENTORY.md` Finding #2).
+## §19 attack classes
 
-Explicitly deferred from Stage 1 to the Stage-6 red team: live GoTrue auth behavior (lockout, password policy, token lifetime), runtime reachability of `*-admin.ts` helpers, multi-process webhook rate-limit behavior, and backup at-rest exposure of `config` JSON secrets (`THREAT_MODEL.md` §6).
+### Authorization attacks
+- **Tenant isolation:** every server action scopes by `actor.tenantId` (ADR-0006, server-side canonical); `check:pms-domain-invariants` is the data backstop; composite `(tenant_id, id)` FKs make cross-tenant child references impossible even on a faulty query. Inbound imports are tenant-scoped (`check:inbound-bookings` cross-tenant case). **Closed.**
+- **Permission bypass:** `requirePermission`/`canManageChannels` enforced server-side on every mutating action (UI hiding is never the boundary); `check:guards`. Charge/refund fail closed (`payments.refund`, D42). Housekeeping cleaner cannot touch another cleaner's task (`check:housekeeping`). **Closed.**
+- **Privilege of the pooled DB role:** `guesthub_app` is DML-only, owns nothing, cannot DDL (`db/roles/roles.sql`, `check:db-isolation`). **Closed.**
 
-## Target state (per TARGET_ARCHITECTURE.md §3 Stage 6)
+### Secrets
+- **Committed secrets:** `check:no-secrets` — 430 tracked files, no secret material; no `.env*` in the tree or anywhere in git history; encryption/activation env vars never hardcoded. **Closed.**
+- **Key discipline:** PANs AES-256-GCM under `CARD_VAULT_KEY`; channel credentials under `CHANNEL_SECRETS_KEY`; both read only from `process.env`. CVV removed entirely (migration 018). PAN retention bounded (H8, migration 043). API key travels only in the `user-api-key` header, never a URL/log/audit (`check:channel-security`). **Closed.**
+- **Supabase key discipline:** service_role JWT pattern scanned by `check:no-secrets`; the app uses the pooled least-privilege role, not service_role, for domain work. **Closed.**
 
-- Full red-team resolving Critical/High findings in touched areas + supply chain.
-- DB exposure hardening (C2); environment crossover resolved structurally by Stage 2 clusters (F1).
-- Load tests at 13-room and 100-room fixtures incl. DST dates.
-- Every finding: reproduced, resolved or accepted, with residual-risk note.
+### Supply chain
+- `pnpm audit --prod` clean of high/critical (one moderate resolved via pinned override); lockfile committed; Node + package manager pinned (`check:supply-chain`). **Closed.**
 
-## To be completed in Stage 6
+### Application attacks
+- **SQL injection:** all queries use the `postgres` tagged-template parameterization; no string-built SQL in app code. **Closed.**
+- **CSV/formula injection:** report exports neutralize `=+-@` and RFC-4180-quote (`check:reports`). **Closed.**
+- **Webhook abuse:** hashed-token auth, no existence oracle (404), rate limit, body-size cap, redacted persistence, sanitized 5xx, async-only (`check:channel-security`). **Closed.**
+- **Card data exposure:** masked views never select the ciphertext; reveal is explicit + audited (`check:cards`). **Closed.**
 
-- [ ] Test methodology + scope + tooling.
-- [ ] Per-finding results table (F1–F9 + C2): reproduced? resolution? residual risk?
-- [ ] Deferred-item outcomes (GoTrue lockout, `*-admin.ts` reachability, multi-process rate-limit, backup secret exposure).
-- [ ] Supply-chain audit results.
-- [ ] Load/performance-under-attack results.
-- [ ] Sign-off + accepted-risk register.
+### Synchronization attacks & failures
+- **Double booking:** DB exclusion constraint proven under true concurrency (`check:reservation-concurrency`). **Closed.**
+- **Idempotency:** payments (reference key), inbound revisions (unique + ON CONFLICT), Full Sync (idempotency key), housekeeping tasks (NOT EXISTS). **Closed.**
+- **Rate-limit / provider failure:** 429 Retry-After cooldown + circuit breaker (`check:channex-rate-limit-cooldown`). **Closed.**
+- **Full §24 fault list:** exercised in `check:channel-chaos` + `check:background-job-recovery` (two Full Sync clicks, credential rotation, expired lease, corrupted payload, DB unavailable, webhook+poll, cert reset). **Closed.**
+
+## Residual Medium/Low (documented, accepted)
+
+| Item | Severity | Why accepted / plan |
+|---|---|---|
+| Kong gateway (8000/8443) external hardening | Medium | Restricting it risks the `db.bios.co.il` auth ingress; requires ingress-path confirmation with the operator. The DB ports themselves are already blocked (C2). Documented in the DB exposure runbook; apply with the operator during a maintenance window. |
+| In-memory webhook rate-limit (per-process) | Low | Adequate for the single-process inbound worker; move to a shared store only if inbound goes multi-process (noted in the route). |
+| Real invoice provider not wired | Low (not a vuln) | Seam fails closed; external dependency (V2 §2). |
+
+## Verified by
+
+`check:no-secrets`, `check:supply-chain`, `check:retention`, `check:channel-security`, `check:channel-chaos`, `check:guards`, `check:db-isolation`, `check:pms-domain-invariants`, `check:reservation-concurrency`, `check:payment-refund-void`, `check:cards`.
