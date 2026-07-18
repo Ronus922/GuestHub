@@ -258,7 +258,11 @@ async function probeStoredChannexKey(tenantId: string): Promise<ProbeResult> {
     return { ok: false, error: "פענוח המפתח נכשל — ייתכן שמפתח ההצפנה בשרת השתנה", category: "undecryptable" };
   }
 
-  const result = await runChannexConnectionTest({ apiKey, baseUrl: CHANNEX_BASE_URLS.staging });
+  // §11: base URL from the connection's environment, not a bare literal. The
+  // connection lifecycle here is staging-scoped (CHANNEX_ENV); production
+  // connections are introduced by the §26 activation guard, and this resolves
+  // with them automatically.
+  const result = await runChannexConnectionTest({ apiKey, baseUrl: CHANNEX_BASE_URLS[CHANNEX_ENV] });
 
   if (result.ok) {
     await sql`

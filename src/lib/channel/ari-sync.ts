@@ -53,6 +53,8 @@ export type AriConnection = {
   tenant_id: string;
   channex_property_id: string;
   api_key_ciphertext: string;
+  // §11: the connection's environment is the ONLY source of the Channex base URL.
+  environment: "staging" | "production";
 };
 
 export type SendOutcome = {
@@ -104,7 +106,9 @@ function credentialsFor(conn: AriConnection, deps?: AriSyncDeps): Creds | { erro
   try {
     return {
       apiKey: decryptSecret(conn.api_key_ciphertext),
-      baseUrl: CHANNEX_BASE_URLS.staging,
+      // §11 canonical routing: resolve the base URL from the connection's own
+      // environment — never a hardcoded staging constant (was defect CHX G6).
+      baseUrl: CHANNEX_BASE_URLS[conn.environment] ?? CHANNEX_BASE_URLS.staging,
       propertyId: conn.channex_property_id,
       fetchImpl: deps?.fetchImpl,
     };
@@ -704,7 +708,7 @@ async function failRanges(
 /** Connections whose baseline is established — the ONLY ones a drain may touch. */
 export async function loadDrainableConnections(db: Sql = sql): Promise<AriConnection[]> {
   return db<AriConnection[]>`
-    SELECT id, tenant_id, channex_property_id, api_key_ciphertext
+    SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment
     FROM guesthub.channel_connections
     WHERE state = 'active' AND outbound_sync_enabled = true AND full_sync_required = false
       AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;

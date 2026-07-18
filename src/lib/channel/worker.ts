@@ -58,7 +58,7 @@ export function resolveIntervalMs(raw: string | undefined): number {
 
 async function loadConnection(connectionId: string): Promise<AriConnection | null> {
   const [row] = await sql<AriConnection[]>`
-    SELECT id, tenant_id, channex_property_id, api_key_ciphertext
+    SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment
     FROM guesthub.channel_connections WHERE id = ${connectionId}`;
   return row ?? null;
 }
