@@ -65,7 +65,8 @@
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:design": "node scripts/check-design-system.mjs",
     "check:datepicker": "node scripts/check-datepicker.mjs",
-    "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs"
+    "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs",
+    "check:reservation-concurrency": "node scripts/check-reservation-concurrency.mjs"
   },
   "dependencies": {
     "@hebcal/core": "^6.6.0",
