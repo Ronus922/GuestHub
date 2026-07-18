@@ -1,45 +1,62 @@
 # GuestHub — Background Jobs & Queues
 
-- **Status:** Skeleton — Stage 1; completed in **Stage 3** (queue foundations) and **Stage 4** (Channex wiring)
-- **Date:** 2026-07-18
+- **Status:** Complete — Stage 3, 2026-07-18 (queue foundations); Channex wiring continues in **Stage 4**
 - **Branch:** `feat/pms-hardening-channex-certification`
-- **Sources:** `docs/audit/WORKFLOW_INVENTORY.md` (§12–§16), `docs/audit/ARCHITECTURE_INVENTORY.md` (§3), ADR-0004
+- **Sources:** `docs/audit/WORKFLOW_INVENTORY.md` (§12–§16), `docs/audit/ARCHITECTURE_INVENTORY.md` (§3), `docs/audit/OPERATIONS_OBSERVABILITY_AUDIT.md`, ADR-0004, `src/lib/channel/queue.ts`, `src/lib/channel/worker.ts`
+- **Enforced by:** `check:background-job-recovery`, `check:channel-worker`
 
 Every asynchronous path: the durable job queue, the ARI outbox, the communications outbox, the worker loop, leases, retries, and crash-safety.
 
-## Current state
+## 1. Queues are database tables
 
-All queues are **database tables** — no Redis/broker (`ARCHITECTURE_INVENTORY.md` §3). The durable `channel_sync_jobs` queue (15 job types) is claimed with `FOR UPDATE SKIP LOCKED`, FIFO per connection (one live job per connection), 10-minute leases reclaiming crashed workers' jobs, idempotency keys, priority ordering, and retry/backoff → `dead_letter` on permanent codes or exhausted `max_attempts=8` (`WORKFLOW_INVENTORY.md` §16, `queue.ts:76`). The `channel_dirty_ranges` outbox is written transactionally by every ARI-affecting save (`markAriDirty`), coalesced, and drained only for connections `active AND outbound_sync_enabled AND NOT full_sync_required` (§12). The communications queue (`communication_events` → `communication_delivery_attempts`) runs **inside the same channel-worker tick** (`runCommunicationTick` first each tick) — the M16 coupling: a Channex incident, long full-sync, or the 300 MB memory restart delays guest emails, and vice versa (`ARCHITECTURE_INVENTORY.md` Finding #7). Wake-up is `pg_notify` on `guesthub_jobs` + 20 s poll, max 5 jobs/tick. Crash-safety is genuinely sound: durable-then-wake, ack-after-commit, persist-then-quarantine, state-replacing (not delta) ARI payloads — no job-loss path was found (`OPERATIONS_OBSERVABILITY_AUDIT.md` F11).
+There is no Redis or external broker — all queues are Postgres tables (`ARCHITECTURE_INVENTORY.md` §3). This keeps the "durable-then-wake" and "ack-after-commit" properties inside one transactional store.
 
-Gaps: if PM2 exhausts `max_restarts:10` the worker sits `errored` with jobs queued and no consumer or alert (F3); dead (`failed`) dirty ranges have no requeue path or UI (F5); quarantined revisions re-import every ~5-min poll writing a fresh error row each cycle — unbounded growth (F2); no retention/pruning on any operational table (F9); no `/api/health` and the worker has no probe (F4).
+## 2. The durable job queue — `channel_sync_jobs`
 
-## Target state (per ADR-0004, TARGET_ARCHITECTURE.md)
+Claim semantics (`src/lib/channel/queue.ts`):
 
-- Keep the existing outbox seam as canonical; formalize and harden, do not replace (ADR-0004).
-- **Worker split** so ARI sync and communications no longer share a failure domain (Stage 3, M16).
-- Queue heartbeat/visibility foundations, quarantine-logging dedup, and retention/pruning policy (Stage 3 foundation, tuned Stage 6; ADR-0004 §7).
-- Stage 4 builds on top: single batched sync envelope, evidence ledger with Task IDs, 429 cooldown/circuit breaker.
-- Worker heartbeat staleness + dead-letter/quarantine alerts (Stage 6).
+- **`FOR UPDATE SKIP LOCKED`** — concurrent claimers never block each other.
+- **FIFO per connection, one live job per connection** — ordering is preserved without a global lock.
+- **10-minute leases** — a job held by a crashed worker is reclaimable once its lease expires; without the lease the FIFO guard would wedge the connection permanently.
+- **Idempotency keys** on enqueue — the same logical job is not queued twice.
+- **Priority ordering** and **retry/backoff** — a job moves to `retry_wait` on transient failure; a **permanent** error code or exhausted `max_attempts` (=8) moves it to **`dead_letter`**.
 
-## To be completed in Stage 3/4
+## 3. The ARI outbox — `channel_dirty_ranges` (ADR-0004)
 
-- [ ] Queue anatomy table (job types, priorities, idempotency keys, retry policy).
-- [ ] Worker tick sequence + lease/claim semantics.
-- [ ] Worker-split design (Stage 3) — separate communications from channel sync.
-- [ ] Retention/pruning policy for jobs/ranges/errors/webhook-events.
-- [ ] Dead-range and dead-letter requeue surface.
-- [ ] Mermaid worker-queue diagram (replace seed).
+Every canonical ARI-affecting save writes `channel_dirty_ranges` **in the same transaction** via `markAriDirty` — this transactional marking is the **only** way an ARI change enters the outbox (no save handler calls Channex directly). Ranges are coalesced and drained only for connections that are `active AND outbound_sync_enabled AND NOT full_sync_required`. Batching/coalescing lives in the drain, not the producer, so many dirty rows collapse into one envelope.
+
+## 4. The communications outbox
+
+`communication_events` → `communication_delivery_attempts` is an analogous events→deliveries queue. Wake-up across queues is `pg_notify` on `guesthub_jobs` + a 20 s poll, max 5 jobs per tick.
+
+## 5. Worker loop and heartbeat
+
+The PM2 `channel-worker` (`src/lib/channel/worker.ts`) claims with `FOR UPDATE SKIP LOCKED`, refuses to run two jobs for one connection, and writes a **heartbeat** to **`channel_worker_state`** each tick (`worker_id`, `beat_at`, `last_drain_at`, `last_error`) via UPSERT — a heartbeat failure never kills the worker. This gives Stage-6 monitoring a staleness signal. `check:background-job-recovery` proves lease reclaim, dead-letter routing, and no-job-loss.
+
+Crash-safety is genuinely sound: durable-then-wake, ack-after-commit, persist-then-quarantine, and **state-replacing (not delta) ARI payloads** — no job-loss path was found (`OPERATIONS_OBSERVABILITY_AUDIT.md` F11).
+
+## 6. Remaining gaps (owning stage)
+
+- **Shared failure domain (M16):** communications run in the same worker tick as channel sync (`runCommunicationTick` first each tick), so a Channex incident or a long full-sync delays guest emails and vice versa. **Worker split** is owned by **Stage 3+**.
+- If PM2 exhausts `max_restarts:10` the worker sits `errored` with jobs queued and no consumer/alert (F3) — **Stage 6** alerting.
+- Dead (`failed`) dirty ranges and dead-letter jobs have no requeue surface (F5) — **Stage 3/6**.
+- Quarantined revisions re-import every poll, writing a fresh error row each cycle (unbounded growth, F2); no retention/pruning on any operational table (F9) — **Stage 3 foundation, tuned Stage 6** (ADR-0004 §7).
+- No `/api/health` and no worker probe (F4) — **Stage 6**.
+
+## 7. Queue / worker diagram
 
 ```mermaid
-%% TODO(Stage 3/4): finalize after worker split. Seed = WORKFLOW_INVENTORY.md §12–§16.
 flowchart LR
-    SAVE[canonical save] -->|same tx| DR[(channel_dirty_ranges\noutbox)]
-    SAVE -->|enqueue| Q[(channel_sync_jobs)]
-    WH[webhook] -->|enqueue pull| Q
-    EV[(communication_events)] --> Q2[comms tick]
-    Q --> WRK[PM2 channel-worker\nSKIP LOCKED, leases]
+    SAVE["canonical save"] -->|"same tx"| DR[("channel_dirty_ranges (outbox)")]
+    SAVE -->|"enqueue"| Q[("channel_sync_jobs")]
+    WH["Channex webhook"] -->|"enqueue pull"| Q
+    EV[("communication_events")] --> Q2["comms tick"]
+
+    Q -->|"FOR UPDATE SKIP LOCKED, leases, FIFO/conn"| WRK["PM2 channel-worker"]
     Q2 --> WRK
-    WRK -->|drain ARI| CHX[Channex]
-    WRK -->|pull + ack| CHX
-    WRK -->|send| MAIL[email/WhatsApp]
+    WRK -->|"heartbeat UPSERT"| HB[("channel_worker_state")]
+    WRK -->|"coalesce + drain ARI"| CHX["Channex"]
+    WRK -->|"pull + ack post-commit"| CHX
+    WRK -->|"send"| MAIL["email / WhatsApp"]
+    Q -->|"permanent err / attempts>=8"| DL[("dead_letter")]
 ```

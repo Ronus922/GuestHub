@@ -1,45 +1,85 @@
 # GuestHub — Domain Model
 
-- **Status:** Skeleton — Stage 1; completed in **Stage 3**
-- **Date:** 2026-07-18
+- **Status:** Complete — Stage 3, 2026-07-18
 - **Branch:** `feat/pms-hardening-channex-certification`
-- **Sources:** `docs/audit/DOMAIN_INVENTORY.md`, `docs/architecture/adr/ADR-0001-canonical-sources-of-truth.md`, ADR-0003, ADR-0005
+- **Sources:** `docs/audit/DOMAIN_INVENTORY.md`, `docs/architecture/adr/ADR-0001-canonical-sources-of-truth.md`, ADR-0003, ADR-0005, ADR-0006
+- **Enforced by:** `check:pms-domain-invariants`
 
-Canonical entities, their relationships, and which table/function owns each business concept. This document is the reader-facing companion to the raw `DOMAIN_INVENTORY.md` and the enforcement contract in ADR-0001.
+The canonical entities of the `guesthub` schema, their relationships, and which table or function owns each business concept. This is the reader-facing companion to the raw `DOMAIN_INVENTORY.md` and to the enforcement contract in ADR-0001.
 
-## Current state
+## 1. Schema and migration ledger
 
-The `guesthub` schema is a single isolated schema created by `000_init_schema.sql`; every business table carries `tenant_id NOT NULL` but only the newest tables (026, 036) use composite tenant-safe FKs — older children rely on app discipline, and there is **zero RLS** (`DOMAIN_INVENTORY.md` §1, Finding #5). The canonical commercial spine is: `rooms` (physical identity, D74/028, mirror trigger), `sellable_units`/`sellable_unit_rooms` (1:1 with rooms today), `pricing_plans` (dual-scope, 016) → `pricing_plan_rates` (6,633 rows, the canonical nightly ARI store that replaced legacy `rates`), `reservations` → `reservation_rooms` (per-room stays with immutable `pricing_snapshot`, 017), `guests`, and the `payments` ledger (`paid_amount`/`balance` are derived caches, 019) (`DOMAIN_INVENTORY.md` §2).
+The whole product lives in one isolated Postgres schema, `guesthub`, created by `000_init_schema.sql`. It is **not exposed through PostgREST** — `anon`/`authenticated` are revoked and all access is server-side through the porsager `postgres` driver (see ADR-0006 and `AUTHORIZATION_AND_TENANCY.md`). Every business table carries `tenant_id NOT NULL`.
 
-The audit found real modeling debt the Stage-3 work must resolve: **no DB-level double-booking guard** — zero exclusion constraints, prevention is purely `lockRooms` + `check_room_availability` (`DOMAIN_INVENTORY.md` §5, Finding #1); **`reservations.status` has no CHECK constraint** although it drives inventory via `inventory_blocking_statuses()` (Finding #2); competing/dead models — legacy `rates` (0 rows, one live read at `rooms/actions.ts:463`), four channel-mapping tables across two generations (two permanently empty but still FK-referenced), the `sellable_units_backup_028` orphan, and the triple room/SU/room_type identity kept consistent only by two triggers (Findings #4, #6, #9; §4). Duplicate FKs on `outbound_messages` (020 SET NULL vs 036 RESTRICT) silently block hard-deleting messaged guests (Finding #7).
+Schema evolution is tracked by **`guesthub.schema_migrations`**, applied strictly in order by `scripts/db/migrate.mjs` from **`db/migrations/manifest.txt`** — **39 migration files** through `037_double_booking_guard.sql`. The manifest, not the directory listing, is the source of apply-order truth.
 
-## Target state (per ADR-0001, ADR-0003, ADR-0005)
+## 2. Canonical sources (ADR-0001)
 
-- Declared canonical source per concept enforced by `check:pms-domain-invariants`; second paths removed or made thin projections (ADR-0001 table).
-- DB-level exclusion constraint on `reservation_rooms (room_id, daterange)` scoped to blocking status + `btree_gist`, added `NOT VALID` then validated (ADR-0003).
-- `reservations.status` CHECK + generated blocking-status column landing together with the exclusion constraint (ADR-0003).
-- Canonical guest record + immutable per-reservation snapshot + deterministic import dedup seam; reconcile the M13 `outbound_messages` FK so guests can be anonymized (ADR-0005).
-- Dead paths removed: legacy `rates`, `sellable_units_backup_028`, 005-era mapping tables (after FK migration).
+Exactly one source of truth per concept; any second path is a thin projection or is slated for removal:
 
-## To be completed in Stage 3
+| Concept | Canonical source | Notes |
+|---|---|---|
+| Physical room identity | `rooms` (D74, migration 028) | `sellable_units` and `room_types` are projections kept 1:1 by mirror triggers (026/028). |
+| Availability / conflict | `guesthub.check_room_availability()` + `src/lib/inventory.ts` | See `INVENTORY_AND_AVAILABILITY.md`. |
+| Price / quote | `calculateReservationPrice` / `calculateQuote` (`src/lib/pricing/engine.ts`) | Canonical nightly ARI store is `pricing_plan_rates`. |
+| Restrictions | `stayRestrictionViolationStructured` (`src/lib/rates/rules.ts`) | Min-stay is dual (arrival + through). |
+| Reservation state | `reservations` + `reservation_rooms`; status ∈ CHECK set (037) | `paid_amount`/`balance` are derived caches only. |
+| Payment state / balance | `guesthub.payments` ledger; `recomputePaymentAggregates` | See `PAYMENTS_AND_LEDGER.md`. |
+| Guest identity | `guests` (canonical) + immutable per-reservation snapshot (ADR-0005) | Import gets a dedup/merge seam. |
+| Channel mapping | live `channel_room_mappings`, `channel_room_rate_mappings` | 005-era 0-row tables are dead; consolidation is Stage 4. |
+| Audit trail | `audit_logs` (append-only) via `audit-write.ts` | — |
 
-- [ ] Final canonical-entity catalog with owning module per entity (from ADR-0001).
-- [ ] Documented aggregate boundaries (reservation aggregate = reservation + rooms + payments + card + snapshot).
-- [ ] Status model + blocking-status derivation, referencing the new CHECK + generated column.
-- [ ] Guest two-layer model (canonical + snapshot) diagram and dedup-key rule.
-- [ ] List of removed/converted legacy models with migration references.
-- [ ] Refined ER diagram (replace seed below).
+## 3. The reservation aggregate
+
+The transactional consistency boundary is the **reservation aggregate**: `reservations` (the root) + its `reservation_rooms` (per-room stays, each carrying an immutable `pricing_snapshot` from migration 017) + its `payments` ledger rows + its optional `reservation_cards` vault row + the policy/guest snapshots. Every create/edit/reschedule/cancel path mutates the whole aggregate inside one `sql.begin` transaction — reservation row, rooms, payment recompute, audit, and the `channel_dirty_ranges` outbox all commit atomically (see `RESERVATION_LIFECYCLE.md`).
+
+## 4. Guest two-layer model (ADR-0005)
+
+Guests exist in two layers: the **canonical `guests` record** (deduplicated identity, mergeable) and the **per-reservation snapshot** captured at booking time so historical reservations never mutate when a guest record is later corrected. The dedup key is deterministic (email/phone-normalized). The M13 `outbound_messages` FK was reconciled so a messaged guest can still be anonymized.
+
+## 5. Stage-3 constraints landed
+
+- **`reservations.status` CHECK** (037) restricts status to `draft/confirmed/checked_in/checked_out/no_show/blocked/cancelled` — a typo can no longer silently free a room.
+- **`rr_no_double_booking`** exclusion constraint on `reservation_rooms` (037, ADR-0003) — the DB-level last line of defense against overlap, scoped by the trigger-maintained `is_blocking` flag. See `INVENTORY_AND_AVAILABILITY.md`.
+- **Tenant-isolation invariants** are now continuously asserted by `check:pms-domain-invariants` (ADR-0006): no `reservation_rooms`, `payments`, or `reservation_cards` row may cross the tenant boundary of its parent.
+
+## 6. Remaining modeling debt (owning stage)
+
+- Legacy `rates` table and `sellable_units_backup_028` orphan — removal tracked (Stage 3/4 cleanup).
+- 005-era channel-mapping tables — FK migration then drop (**Stage 4**).
+- Retrofitting composite `(tenant_id, id)` FKs across all legacy children — larger migration, tracked not done (**Stage 3+**, ADR-0006 §3).
+
+## 7. Entity–relationship diagram
 
 ```mermaid
-%% TODO(Stage 3): finalize after canonical-source cleanup + new constraints.
-%% Seed = DOMAIN_INVENTORY.md §6 main entities.
 erDiagram
-    TENANTS ||--o{ ROOMS : has
-    ROOMS ||--|| SELLABLE_UNIT_ROOMS : "UNIQUE(room_id)"
+    TENANTS ||--o{ USERS : "has"
+    TENANTS ||--o{ ROOMS : "has"
+    TENANTS ||--o{ RESERVATIONS : "has"
+    TENANTS ||--o{ GUESTS : "has"
+
+    USERS }o--|| ROLES : "has role"
+    ROLES ||--o{ ROLE_PERMISSIONS : "grants"
+    PERMISSIONS ||--o{ ROLE_PERMISSIONS : "in"
+    USERS ||--o{ USER_PERMISSION_OVERRIDES : "override"
+    PERMISSIONS ||--o{ USER_PERMISSION_OVERRIDES : "on"
+
+    ROOMS }o--|| ROOM_TYPES : "typed as"
+    ROOMS ||--|| SELLABLE_UNIT_ROOMS : "UNIQUE room_id"
+    SELLABLE_UNITS ||--|| SELLABLE_UNIT_ROOMS : "1:1"
     SELLABLE_UNITS ||--o{ PRICING_PLANS : "SU base plan"
     PRICING_PLANS ||--o{ PRICING_PLAN_RATES : "canonical nightly ARI"
-    RESERVATIONS ||--o{ RESERVATION_ROOMS : stays
-    ROOMS ||--o{ RESERVATION_ROOMS : "RESTRICT + (Stage 3) EXCLUDE"
-    RESERVATIONS ||--o{ PAYMENTS : ledger
-    GUESTS ||--o{ RESERVATIONS : primary_guest
+
+    RESERVATIONS ||--o{ RESERVATION_ROOMS : "stays"
+    ROOMS ||--o{ RESERVATION_ROOMS : "RESTRICT + EXCLUDE"
+    RESERVATIONS ||--o{ PAYMENTS : "ledger"
+    RESERVATIONS ||--o| RESERVATION_CARDS : "vault"
+    GUESTS ||--o{ RESERVATIONS : "primary guest"
+
+    CHANNEL_CONNECTIONS ||--o{ CHANNEL_ROOM_MAPPINGS : "maps"
+    CHANNEL_CONNECTIONS ||--o{ CHANNEL_ROOM_RATE_MAPPINGS : "maps"
+    CHANNEL_CONNECTIONS ||--o{ CHANNEL_SYNC_JOBS : "queue"
+    CHANNEL_CONNECTIONS ||--o{ CHANNEL_DIRTY_RANGES : "outbox"
+    CHANNEL_CONNECTIONS ||--o{ CHANNEL_REVISIONS : "inbound"
+    RESERVATIONS ||--o{ AUDIT_LOGS : "audited"
 ```
