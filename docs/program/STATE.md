@@ -4,13 +4,22 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 1 — Foundation, System Audit and Target Architecture** — COMPLETE (2026-07-18). Next: Stage 2 (Dedicated Database Infrastructure), begins from ADR-0002.
+**Stage 2 — Dedicated Database Infrastructure** — COMPLETE (2026-07-18, Agent N PASS on all 8 claims). Next: Stage 3 (Core Domain Integrity), begins from ADR-0001/0003. Running in **continuous mode** (charter §1 — no inter-stage checkpoint).
 
 ## Completed stages
 
 | Stage | Tag | Commit | Date |
 |---|---|---|---|
 | 1 | `stage-1-complete` | (see tag) | 2026-07-18 |
+| 2 | `stage-2-complete` | (see tag) | 2026-07-18 |
+
+### Stage 2 deliverables
+- **C2 mitigated**: DOCKER-USER DROP on ens3 for DB ports 5432/6543 (v4+v6), persisted via `guesthub-db-firewall.service`; localhost/apps unaffected. Runbook `docs/database/DB_EXPOSURE_MITIGATION.md`. (Kong 8000/8443 gateway hardening → Stage 6.)
+- **H5 fixed**: migration 021 recovered into branch; `db/migrations/manifest.txt` + `scripts/db/migrate.mjs` ledger runner (`guesthub.schema_migrations`); replay-from-zero 38/38, schema structurally identical to prod.
+- **Dedicated staging DB**: container `guesthub-staging-db` (`supabase/postgres:15.8.1.085`, **127.0.0.1:5434**, volume `guesthub-staging-db-data`, 2g/2cpu), db `guesthub_staging`; 4 least-privilege roles (`db/roles/roles.sql`); data-copy validated (58/59 content-identical); app+worker smoke PASSED as `guesthub_app`.
+- **H4 fixed**: `scripts/ops/guesthub-backup.sh` (guesthub+**auth**, AES-256, retention, off-host hook) + `guesthub-restore-drill.sh`; systemd timers nightly/weekly; old auth-less cron superseded; restore drill PASSED (14 auth.users recovered).
+- **check:db-isolation** (`npm run check:db-isolation`) — PASSES on staging, FAILS on shared DB.
+- Cutover runbook + rollback + 4 `docs/database/` docs (cutover NOT executed).
 
 ### Stage 1 deliverables
 - `docs/program/` (charter, V2, 7 stage docs, STATE) + `reports/STAGE_1_REPORT.md`.
@@ -85,14 +94,27 @@ Full matrix: `docs/audit/DEFECT_MATRIX.md`. Highest-severity, by owning stage:
 - PM2 (untouched): prod `guesthub` (:3007) + `guesthub-channel-worker`, both cwd `/var/www/guesthub-production`; unrelated apps `pms`, `mail-system`, `sys-app`.
 - Draft PR: #92 (https://github.com/Ronus922/GuestHub/pull/92).
 
+## Verified environment facts (Stage 2 addendum)
+
+- **Dedicated staging DB**: `guesthub-staging-db` container, `127.0.0.1:5434`, db `guesthub_staging`, PG 15.8. Credentials (owner/app/readonly/backup DSNs) in gitignored `/var/www/guesthub/.env.staging`.
+- **Backup key**: `/home/ubuntu/.guesthub-backup-key` (chmod 600) — must be stored off-host separately before enabling off-host copies.
+- **Stage-2 backup evidence**: `/home/ubuntu/guesthub-backups/stage2/guesthub_full_20260718T140913.sql.enc` (encrypted, guesthub+auth).
+- **systemd units added** (host, not repo): `guesthub-db-firewall.service`, `guesthub-backup.{service,timer}`, `guesthub-restore-drill.{service,timer}`.
+- **App root path** returns 307→`/login` (D77 middleware); `/login` is 200 — use `/login` for liveness checks.
+- Production dedicated DB: **not yet provisioned**; cutover prepared, not executed (`MIGRATION_AND_CUTOVER_RUNBOOK.md`).
+
 ## Deferred items
 
-None yet.
+| Item | Justification | Target |
+|---|---|---|
+| Off-host backup copy destination + credential | No off-host destination/credential exists on the host (no rclone/mount); `BACKUP_OFFHOST_CMD` hook is built and warns when unset. Local encrypted backup + restore drill are in place. | User provides destination; wired at/ before production cutover |
+| Kong gateway (8000/8443) external hardening | Blocking could break `db.bios.co.il` auth ingress; needs ingress-path confirmation | Stage 6 |
+| Execute production cutover | Forbidden during the program (V2 §3/§26); runbook + tooling prepared | Post-program, user-approved |
 
 ## Re-scoping log
 
-None yet.
+None.
 
 ## Blockers requiring the user
 
-None yet.
+- **Off-host backup destination** (not blocking Stage 2 completion): to fully satisfy H4's off-host requirement in production, the user must provide an off-host backup target (e.g. an object store or a second host) and its credential; then set `BACKUP_OFFHOST_CMD` in `guesthub-backup.service`. Documented in `BACKUP_RESTORE_AND_ROLLBACK.md`.
