@@ -7,9 +7,9 @@ import { Icon, type IconName } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, formatBalance } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
-import { normalizePan, parseExpiry } from "@/lib/card-rules";
+import { normalizePan, parseExpiry, resolveCardMode } from "@/lib/card-rules";
 import { describeCancellationTier } from "@/lib/commercial/cancellation";
-import { statusTintPalette } from "@/lib/colors";
+import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
 import { paymentTriplet } from "@/lib/status-colors";
 import {
   COLLECTION_LABEL,
@@ -173,8 +173,10 @@ export function EditReservationPanel({
       // Card-entry MODE survives background refreshes. A realtime event may
       // reload a clean panel while the operator has just opened the manual
       // form (an empty draft is not "dirty", so the reload proceeds) — that
-      // reload must not snap the section back to the imported card. Only an
-      // explicit load (open / reservation switch / post-cancel) resets it.
+      // reload must not snap the section back to the imported card. Identity
+      // changes reset the mode synchronously in the [reservationId] effect;
+      // this force-path reset covers SAME-reservation explicit boundaries
+      // (e.g. the post-cancel reload).
       if (opts?.force) setReplacingCard(false);
       setConfirmDiscard(false);
       setNotes(d.notes ?? "");
@@ -196,6 +198,16 @@ export function EditReservationPanel({
   }, []);
 
   useEffect(() => {
+    // Manual card-entry mode is scoped to ONE editor session on ONE
+    // reservation. ANY identity change — open, switch to another reservation,
+    // close — discards the mode and the sensitive manual draft SYNCHRONOUSLY,
+    // before any in-flight response can render. (Resetting only inside the
+    // async force-load response proved lossy: a dropped/failed load left the
+    // stale mode behind, and the next same-reservation realtime reload — which
+    // deliberately preserves the mode — painted a leaked blank manual form as
+    // the INITIAL view of a different reservation.)
+    setReplacingCard(false);
+    setCc(EMPTY_CARD);
     if (!reservationId) {
       setDetail(null);
       return;
@@ -417,6 +429,21 @@ export function EditReservationPanel({
   const showCardSection = Boolean(cardMeta || guarantee || (canSaveCard && canEditNow));
   // a card may be keyed in only with the permission, on a live reservation
   const canManageCard = canSaveCard && canEditNow;
+  // External-channel reservation (channel-imported, or carrying an external
+  // booking source per the ONE canonical channel mapping). Such a reservation
+  // NEVER falls through to the editable fresh form — without card data it gets
+  // the read-only "external_unavailable" state instead.
+  const detailSource = detail ? bookingSources.find((s) => s.id === detail.source_id) : undefined;
+  const externalReservation =
+    Boolean(detail?.ota) || normalizeVisibleChannel(detailSource?.key ?? null) !== null;
+  // the explicit section mode — the save action below is reachable only from
+  // the two editable modes, never from a read-only external state
+  const cardMode = resolveCardMode({
+    stored: cardMeta,
+    channel: guarantee,
+    manualEntry: replacingCard,
+    externalSource: externalReservation,
+  });
   // canonical balance (D52 §7/§9): NOT floored — a negative balance is shown as a
   // customer credit, never as a zero balance. Formatted here, computed centrally.
   const bal = formatBalance(total, paidAfter);
@@ -862,7 +889,13 @@ export function EditReservationPanel({
                 )}
               </div>
 
-              {canEditNow && (
+              {/* payment-ADJUSTMENT row (method / additional payment / discount).
+                  Hidden — not disabled — while the operator is explicitly keying
+                  a card in (replacingCard): during manual card entry only the
+                  card-storage workflow is visible, so two payment interfaces
+                  never stack. The values live in panel state (method/addPay/
+                  discount), so returning restores them intact. */}
+              {canEditNow && !replacingCard && (
                 <div className="bw-grid3 mt-4">
                   <Field label="אמצעי תשלום">
                     <select className="field-input" value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -951,10 +984,13 @@ export function EditReservationPanel({
                     stored={cardMeta}
                     channel={guarantee}
                     channelName={
-                      otaDisplayName(detail.ota?.otaName ?? null) ?? detail.ota?.otaName ?? null
+                      otaDisplayName(detail.ota?.otaName ?? null) ??
+                      detail.ota?.otaName ??
+                      (externalReservation ? detailSource?.label ?? null : null)
                     }
                     stateLabel={detail.ota ? COLLECTION_LABEL[detail.collection.state] : null}
                     manualEntry={replacingCard}
+                    externalSource={externalReservation}
                     onToggleManual={
                       canManageCard
                         ? (manual) => {
@@ -978,9 +1014,11 @@ export function EditReservationPanel({
                     }
                     deleting={cardBusy}
                   />
-                  {/* the guarded save action — only reachable from the editable
-                      (manual-entry / empty) state of the same fields */}
-                  {canManageCard && (replacingCard || (!cardMeta && !guarantee)) && (
+                  {/* the guarded save action — only reachable from the two
+                      EDITABLE modes (explicit manual replacement / genuinely
+                      fresh direct entry); the read-only external_unavailable
+                      state never renders it */}
+                  {canManageCard && (cardMode === "manual" || cardMode === "fresh") && (
                     <div className="mt-3 flex items-center gap-3">
                       <button
                         type="button"
