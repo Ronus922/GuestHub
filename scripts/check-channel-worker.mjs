@@ -441,16 +441,31 @@ try {
 
   // ---- the job queue: claim, dedup, FIFO-per-connection, stale-lease reclaim ----
   {
-    await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
+    // These assertions test queue SEMANTICS by count (exactly-one-claim,
+    // FIFO-blocks-the-next, idle-claims-nothing). claimChannelJobs() is GLOBAL —
+    // it claims any connection's runnable jobs — so the count invariants only
+    // hold against an otherwise-empty queue. The shared :5433 test DB accumulates
+    // jobs from prior CRASHED runs (each run cleans only its own tenant; a killed
+    // run — e.g. the agents-rtl loop — leaves 'processing'/'retry_wait' rows), and
+    // those become claimable as their lease/backoff expires: a global claim here
+    // would then return them too, so `claimed.length` reads 6–10 instead of 1.
+    // The atomicity guarantee (SKIP LOCKED) is real and asserted directly below;
+    // the count assertions merely need a clean queue, and this check is the sole
+    // legitimate actor on the isolated test DB — so start from an empty queue.
+    await sql`DELETE FROM guesthub.channel_sync_jobs`;
     const a = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "sync_ari_range", idempotencyKey: `ari_drain:${f.conn}` });
     const b = await queue.enqueueChannelJob(sql, { tenantId: f.T, connectionId: f.conn, jobType: "sync_ari_range", idempotencyKey: `ari_drain:${f.conn}` });
     assert.ok(a.id, "first enqueue creates the job");
     assert.ok(b.duplicate, "a second enqueue while queued is deduplicated");
 
-    // two workers claim concurrently — exactly one wins
+    // two workers claim concurrently. The invariant is atomicity: the SAME job is
+    // never taken by both (FOR UPDATE SKIP LOCKED) — asserted directly, so it holds
+    // no matter what else is runnable. With one runnable job they claim it exactly once.
     const [c1, c2] = await Promise.all([queue.claimChannelJobs("worker-1", 5), queue.claimChannelJobs("worker-2", 5)]);
+    const s2 = new Set(c2.map((j) => j.id));
+    assert.ok(!c1.some((j) => s2.has(j.id)), "two concurrent workers never claim the same job");
     const claimed = [...c1, ...c2];
-    assert.equal(claimed.length, 1, "two concurrent workers never claim the same job");
+    assert.equal(claimed.length, 1, "exactly one worker claims the single runnable job");
     assert.equal(claimed[0].id, a.id);
 
     // a second job on the SAME connection is not claimable while one is live
