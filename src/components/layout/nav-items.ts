@@ -38,12 +38,15 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     title: "תפעול",
-    hidden: true,
     items: [
-      { label: "ניקיון", icon: "cleaning", permission: "housekeeping.view", hidden: true },
+      // ניקיון = the cleaning queue (/housekeeping); משימות = every operational
+      // task (/tasks). Both read the one housekeeping_tasks store and are gated by
+      // housekeeping.view. The cleaner's own screen (/housekeeping/my-tasks) stays
+      // outside the sidebar. The rest have no screen yet, so they stay hidden.
+      { label: "ניקיון", icon: "cleaning", href: "/housekeeping", permission: "housekeeping.view" },
+      { label: "משימות", icon: "my-requests", href: "/tasks", permission: "housekeeping.view" },
       { label: "תחזוקה", icon: "maintenance", permission: "housekeeping.view", hidden: true },
       { label: "נוכחות", icon: "attendance", permission: "users.view", hidden: true },
-      { label: "הבקשות שלי", icon: "my-requests", hidden: true },
       { label: "אישור בקשות", icon: "approve-requests", permission: "users.edit", hidden: true },
     ],
   },
