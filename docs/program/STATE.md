@@ -4,9 +4,17 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 6 — Security, Performance & Observability** — IN PROGRESS. Entry gate PASSED (2026-07-18). Continuous mode (charter §1).
+**Stage 7 — Final Verification, Documentation & Delivery** — NOT STARTED (entry gate next). Continuous mode (charter §1). Read `07_STAGE_7_VERIFICATION_AND_DELIVERY.md` at entry.
 
-### Stage 6 progress
+Stage 7 scope: full-program regression of every check; replay-from-zero of all 43 migrations; SCREENSHARE_DEMO_SCRIPT rehearsal; final delivery packaging + program-level exit gate; `stage-7-complete`.
+
+## Prior stage
+
+### Stage 6 — Security, Performance & Observability — ✅ COMPLETE (2026-07-18), tag `stage-6-complete`
+
+Zero unresolved Critical/High; report `reports/STAGE_6_REPORT.md`. New checks: `check:no-secrets`, `check:supply-chain`, `check:retention`, `check:performance` (+ §24 coverage in `check:channel-chaos`). Migration 043 (retention purge) on staging :5434 only. 4 security docs complete + THREAT_MODEL finalized. Residual (Medium/Low, documented): Kong hardening (operator ingress), off-host backup, GREEN-API token, card-key rotation tooling. Node runtime now pinned; postcss advisory resolved.
+
+### Stage 6 progress (historical)
 - ✅ Entry gate: `stage-5-complete` tag present, branch current, headroom OK, residual backlog loaded (H8, H11, Kong from Stage-2/3 reports).
 - ✅ **Secrets (§19)** — `check:no-secrets`: 430 tracked files scanned, no secret material, no `.env*` ever committed, encryption/activation env vars never hardcoded. Commit 5e8712a.
 - ✅ **Supply-chain (§19)** — resolved the one moderate advisory (postcss<8.5.10 via next) with a pinned pnpm override → audit clean; pinned Node (engines >=20<21, `.nvmrc`, packageManager pnpm@10.32.1). `check:supply-chain`. Commit 60062c4.
@@ -114,6 +122,7 @@ All 9 milestones shipped; all 10 new checks green; prior battery still green; qu
 | 3 | `stage-3-complete` | (see tag) | 2026-07-18 |
 | 4 | `stage-4-complete` | (see tag) | 2026-07-18 |
 | 5 | `stage-5-complete` | (see tag) | 2026-07-18 |
+| 6 | `stage-6-complete` | (see tag) | 2026-07-18 |
 
 ### Stage 2 deliverables
 - **C2 mitigated**: DOCKER-USER DROP on ens3 for DB ports 5432/6543 (v4+v6), persisted via `guesthub-db-firewall.service`; localhost/apps unaffected. Runbook `docs/database/DB_EXPOSURE_MITIGATION.md`. (Kong 8000/8443 gateway hardening → Stage 6.)
