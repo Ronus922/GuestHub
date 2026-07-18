@@ -4,9 +4,30 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 5 — PMS Capability Completion** — NOT STARTED (entry gate next). Continuous mode (charter §1).
+**Stage 5 — PMS Capability Completion** — IN PROGRESS. Entry gate PASSED (2026-07-18). Continuous mode (charter §1).
 
-Stage 5 scope (from coverage matrix + re-scoping log): H13 audit read/search UI; H14/H15 reports/exports + Israel VAT/invoice/PII; M1 (dead holds), M2 (optimistic concurrency), M4 (OTA rr churn), M5 (reservation-number allocator); maintainability refactor (round-2 dedup + large-module splits) guarded by the Stage-3/4 checks.
+### Stage 5 entry gate (passed)
+- ✅ Prior tag `stage-4-complete` present; Stage-4 exit checklist recorded passed (report + Agent N 7/7).
+- ✅ Branch `feat/pms-hardening-channex-certification` current, clean tree.
+- ✅ Safety (V2 §3): dev DB resolves to shared :5432 (read-only; NO migrations/destructive there — use :5434 staging / :5433 disposable). Headroom OK (disk 109G, mem 12Gi, load ~1).
+- ✅ Requirements refresh: Channex requirements snapshot still current (Stage 4). No external doc changes for Stage 5.
+- ✅ Regression guard: Stage 1-4 checks pass (full battery run at Stage-4 exit; note the 3 destructive Stage-3 checks need `CHECK_CONCURRENCY_DB_URL`/`CHECK_DB_URL`=staging owner DSN).
+
+### Stage 5 scope (from `docs/audit/PMS_GAP_MATRIX.md`, all HV/Stage-5)
+Ordered work items (each must connect to the real lifecycle + audit + outbox where availability is affected; deferrals → `PMS_CAPABILITY_MATRIX.md` with justification):
+1. **Communications** — guest-language template selection in `automation.ts` (data exists: `guests.language` + template `language`; absent in automation path). §10/§21.
+2. **Housekeeping module** — auto task generation from checkout/stayover, assignment, my-tasks flow, clean/dirty/inspected lifecycle tied to arrivals; must affect availability + outbox. (`housekeeping_tasks`, stub `housekeeping/my-tasks/page.tsx`, `rooms/actions.ts:752`).
+3. **Maintenance** — typed OOO (removed from inventory) vs OOS (dirty but sellable) closures + categories; OOO must remove availability + sync. (`room_closures`, free-text reason).
+4. **Operational tasks** — unified task foundation (avoid a separate incompatible system per module).
+5. **Reports/exports** — arrivals/departures/in-house, cancellations, occupancy, revenue (ADR/RevPAR), balances-due, payments/cash-up, availability, channel-production, audit export, dashboard KPIs; safe server-side generation; only reports whose data is reliable.
+6. **Israel-market** — tourist VAT zero-rating (`reservations.tax_exempt` exists, 0 code refs; + passport/foreign-guest evidence), invoice/receipt external seam (Green-Invoice class), guest-language comms (item 1), privacy/Amendment-13 PII retention + guest deletion/anonymization.
+7. **Completeness** — permissions (multi-property readiness), business/integration settings, data import/export (CSV), production diagnostics.
+8. **`PMS_CAPABILITY_MATRIX.md`** — implemented vs deferred with reasons.
+
+### Stage 5 next step
+Begin item 1 (guest-language template selection in `src/lib/communications/automation.ts` — 521 lines; add `g.language` to the reservation-context SELECT, resolve the template/version variant by `guests.language` with a tenant-default fallback). Then items 2-8. Extend `check:inventory-integrity` for housekeeping/maintenance availability effects and `check:pms-domain-invariants` for report correctness (no new check names required; grow coverage — charter §Stage-5 checks).
+
+**NOTE (execution model):** Stage 4 was completed in full this session (Agent N 7/7). Per charter §1 fresh-session-per-stage, Stage 5 execution continues from this STATE handoff — a fresh session reads this file and resumes at "Stage 5 next step" without loss.
 
 ## Prior stage
 
