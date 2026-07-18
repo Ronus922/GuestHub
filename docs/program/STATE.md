@@ -4,7 +4,23 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 2 — Dedicated Database Infrastructure** — COMPLETE (2026-07-18, Agent N PASS on all 8 claims). Next: Stage 3 (Core Domain Integrity), begins from ADR-0001/0003. Running in **continuous mode** (charter §1 — no inter-stage checkpoint).
+**Stage 3 — Core Domain Integrity** — IN PROGRESS (2026-07-18). Running in **continuous mode** (charter §1). Not yet tagged: exit gate requires the remaining Stage-3 items below.
+
+### Stage 3 progress
+- ✅ **Flagship: DB-level double-booking prevention (H1/H2/M3, ADR-0003)** — migration 037: exclusion constraint on `reservation_rooms` (room + half-open stay range) scoped to a trigger-maintained `is_blocking` flag; `reservations.status` CHECK. **Proven under true concurrency** by `check:reservation-concurrency` (overlapping blocking inserts rejected; concurrent draft-confirmations rejected; adjacent stays allowed). Replay-from-zero 39/39; applied to staging.
+- ✅ `check:inventory-integrity` + `check:payment-ledger-integrity` (invariant guards) — PASS on staging. Payment ledger confirmed sound (paid=SUM captured; balance=total−paid unfloored; idempotency unique; no orphans).
+- ⏳ **Pending Stage-3 items** (each carries its defect id; not started or partial):
+  - M7: reschedule path (`reservations/actions.ts` ~882) still uses an inline balance formula bypassing `recomputePaymentAggregates` — fix = update total_price then call the canonical recompute. (bounded product-code change)
+  - H7: refund/void ledger operations (statuses + idempotency exist in schema; no writer yet) + M6 idempotency-key population in payment writers.
+  - H6: OTA modification wipes local discount/extra_charges (`channel/booking-import.ts` ~541).
+  - H3: tenant-isolation decision (RLS backstop vs server-side canonical) — ADR addendum.
+  - H8/§18: provider-neutral payment-method model + `docs/payments/` docs + PAN-vault retention job.
+  - Guest model foundation (ADR-0005): canonical record + snapshot + import dedup seam.
+  - Sync-outbox generalization doc (dirty-range seam already transactional — ADR-0004).
+  - Remaining checks: `check:pms-domain-invariants`, `check:pricing-equality` (exists — verify green), `check:background-job-recovery`, `check:timezone-and-money-invariants`.
+  - 7 domain docs (§23) + maintainability refactor with characterization tests.
+
+## Prior stage
 
 ## Completed stages
 
