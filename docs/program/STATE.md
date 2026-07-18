@@ -4,21 +4,19 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 3 — Core Domain Integrity** — IN PROGRESS (2026-07-18). Running in **continuous mode** (charter §1). Not yet tagged: exit gate requires the remaining Stage-3 items below.
+**Stage 3 — Core Domain Integrity** — COMPLETE (2026-07-18, Agent N spot-review PASS 5/5). Next: Stage 4 (Channex Integration & Certification Readiness), begins from ADR-0004. Continuous mode (charter §1).
 
-### Stage 3 progress
-- ✅ **Flagship: DB-level double-booking prevention (H1/H2/M3, ADR-0003)** — migration 037: exclusion constraint on `reservation_rooms` (room + half-open stay range) scoped to a trigger-maintained `is_blocking` flag; `reservations.status` CHECK. **Proven under true concurrency** by `check:reservation-concurrency` (overlapping blocking inserts rejected; concurrent draft-confirmations rejected; adjacent stays allowed). Replay-from-zero 39/39; applied to staging.
-- ✅ `check:inventory-integrity` + `check:payment-ledger-integrity` (invariant guards) — PASS on staging. Payment ledger confirmed sound (paid=SUM captured; balance=total−paid unfloored; idempotency unique; no orphans).
-- ⏳ **Pending Stage-3 items** (each carries its defect id; not started or partial):
-  - M7: reschedule path (`reservations/actions.ts` ~882) still uses an inline balance formula bypassing `recomputePaymentAggregates` — fix = update total_price then call the canonical recompute. (bounded product-code change)
-  - H7: refund/void ledger operations (statuses + idempotency exist in schema; no writer yet) + M6 idempotency-key population in payment writers.
-  - H6: OTA modification wipes local discount/extra_charges (`channel/booking-import.ts` ~541).
-  - H3: tenant-isolation decision (RLS backstop vs server-side canonical) — ADR addendum.
-  - H8/§18: provider-neutral payment-method model + `docs/payments/` docs + PAN-vault retention job.
-  - Guest model foundation (ADR-0005): canonical record + snapshot + import dedup seam.
-  - Sync-outbox generalization doc (dirty-range seam already transactional — ADR-0004).
-  - Remaining checks: `check:pms-domain-invariants`, `check:pricing-equality` (exists — verify green), `check:background-job-recovery`, `check:timezone-and-money-invariants`.
-  - 7 domain docs (§23) + maintainability refactor with characterization tests.
+### Stage 3 deliverables (closed + proven)
+- **H1/H2/M3 — DB-level double-booking prevention (ADR-0003)** — migration 037: exclusion constraint on `reservation_rooms` (room + half-open stay range) scoped to a trigger-maintained `is_blocking` flag; `reservations.status` CHECK. Proven under true concurrency (`check:reservation-concurrency`).
+- **H7/M6 — refund/void ledger ops** (`src/lib/payments/mutations.ts` + `refundPaymentAction`/`voidPaymentAction`) + reference-based idempotency. Proven by `check:payment-refund-void`.
+- **M7 — reschedule balance** now via canonical `recomputePaymentAggregates` (no inline formula).
+- **H6 — OTA modify** preserves local discount/extra_charges (`booking-import.ts`).
+- **H3 — tenant isolation** decided (ADR-0006: server-side canonical + `check:pms-domain-invariants` backstop; RLS deferred with re-eval triggers).
+- **Guest dedup seam (ADR-0005, M24 foundation)** — `upsertChannelGuest` reuses on unique normalized-email match.
+- **§18** payment docs (`docs/payments/`) + provider-neutral model documented.
+- **7 Stage-3 checks all green** (+ existing `check:pricing-equality` 22/22): pms-domain-invariants, reservation-concurrency, inventory-integrity, payment-ledger-integrity, background-job-recovery, timezone-and-money-invariants, payment-refund-void.
+- **7 domain docs** (§23) complete.
+- Sync-outbox seam is transactional (`markAriDirty` in canonical writes) per ADR-0004 — Channex wiring in Stage 4.
 
 ## Prior stage
 
@@ -28,6 +26,7 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 |---|---|---|---|
 | 1 | `stage-1-complete` | (see tag) | 2026-07-18 |
 | 2 | `stage-2-complete` | (see tag) | 2026-07-18 |
+| 3 | `stage-3-complete` | (see tag) | 2026-07-18 |
 
 ### Stage 2 deliverables
 - **C2 mitigated**: DOCKER-USER DROP on ens3 for DB ports 5432/6543 (v4+v6), persisted via `guesthub-db-firewall.service`; localhost/apps unaffected. Runbook `docs/database/DB_EXPOSURE_MITIGATION.md`. (Kong 8000/8443 gateway hardening → Stage 6.)
@@ -129,7 +128,15 @@ Full matrix: `docs/audit/DEFECT_MATRIX.md`. Highest-severity, by owning stage:
 
 ## Re-scoping log
 
-None.
+Charter §4 — items moved between stages, with justification (never dropped):
+
+| Item | From → To | Justification |
+|---|---|---|
+| H8 — PAN-vault retention purge job + full PCI-scope review | Stage 3 → **Stage 6** | Stage-3 portion done (provider-neutral model, `docs/payments/` boundaries, ciphertext moved off shared DB in Stage 2). A scheduled purge job + full PCI review are red-team/observability concerns (V2 §19/§21 = Stage 6). |
+| H11 — quarantined-revision error re-log growth (retention/dedup of `channel_sync_errors`) | Stage 3 → **Stage 6** | Stage-3 queue foundation present (dead_letter, structured errors, heartbeat, `check:background-job-recovery`). Log retention + hygiene is explicitly Stage 6 (V2 §21 coverage matrix). |
+| H13 — audit read/search UI | Stage 3 → **Stage 5** | Audit write-integrity is sound (append-only, tenant-scoped); the display half is already Stage 5 in the coverage matrix. No read surface is a UI feature, built with the other operator UIs. |
+| Maintainability refactor: `round2` dedup (8 modules) + large-module split (CalendarGrid, reservations/actions, EditReservationPanel, channel/admin, RoomWizard) — L2/L7, M-large-modules | Stage 3 → **Stage 5/6** | Low/Medium maintainability, not Critical/High. Characterization guards (the 7 Stage-3 checks) are in place first, so the refactor can prove behavior-preservation when done. |
+| M1 (dead holds), M2 (optimistic concurrency), M4 (OTA rr churn), M5 (reservation-number allocator) | Stage 3 → **Stage 5** | Medium reliability/UX items; the Critical/High integrity core is closed. Tracked in `DEFECT_MATRIX.md`. |
 
 ## Blockers requiring the user
 
