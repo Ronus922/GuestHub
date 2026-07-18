@@ -878,12 +878,16 @@ export async function rescheduleReservationRoomAction(raw: {
           WHERE id = ${rr.id} AND tenant_id = ${actor.tenantId}`;
       }
 
-      // recompute parent aggregates from ALL rooms
+      // recompute parent dates + canonical total from ALL rooms, then derive
+      // paid_amount/balance from the LEDGER (M7 fix, D51/D52 one-source-of-truth):
+      // no inline balance formula — recomputePaymentAggregates owns balance and
+      // re-derives paid_amount from guesthub.payments, so a stale cached
+      // paid_amount can never leak into the balance on a reschedule. The
+      // total_price expression matches reservationTotal() (max(0, rooms+extra−disc)).
       await tx`
         UPDATE guesthub.reservations res SET
           check_in = x.min_ci, check_out = x.max_co,
-          total_price = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges),
-          balance = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges) - res.paid_amount
+          total_price = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges)
         FROM (
           SELECT MIN(check_in) AS min_ci, MAX(check_out) AS max_co,
                  COALESCE(SUM(price_total), 0) AS rooms_total
@@ -891,6 +895,7 @@ export async function rescheduleReservationRoomAction(raw: {
           WHERE reservation_id = ${rr.reservation_id} AND tenant_id = ${actor.tenantId}
         ) x
         WHERE res.id = ${rr.reservation_id} AND res.tenant_id = ${actor.tenantId}`;
+      await recomputePaymentAggregates(tx, actor.tenantId, rr.reservation_id);
 
       await writeAudit(actor, {
         entityType: "reservation_room",
