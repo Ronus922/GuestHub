@@ -55,6 +55,19 @@ else pass("CSV neutralizes formula-injection (=+-@ prefixed)");
 if (!out.includes('"line\nbreak"')) flag("CSV does not quote embedded newlines");
 else pass("CSV quotes embedded newlines");
 
+// ---- data export (§1 completeness) is read-only, tenant-scoped, audited ----
+const exp = read("src/lib/reports/export.ts");
+if (/\b(INSERT|UPDATE|DELETE)\b/i.test(exp.replace(/\/\/[^\n]*/g, ""))) flag("export contains a write statement");
+else pass("data export is read-only");
+if (!/exportReservationsCsvAction/.test(exp) || !/exportGuestsCsvAction/.test(exp)) flag("missing reservation/guest CSV export");
+else pass("reservation + guest CSV exports present");
+if (!/toCsv\(/.test(exp)) flag("export does not use the hardened CSV serializer");
+else pass("exports use the injection-hardened CSV serializer");
+if ((exp.match(/requirePermission\(/g) || []).length < 2) flag("export actions not permission-gated");
+else pass("export actions are permission-gated");
+if (!/action: "export_csv"/.test(exp)) flag("exports are not audited");
+else pass("exports are audited (fact of export, not the PII)");
+
 // ---- DB smoke: the aggregate sources run against the real schema ----
 function loadEnvStaging() {
   try {
