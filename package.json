@@ -52,6 +52,7 @@
     "check:production-activation-guard": "node scripts/check-production-activation-guard.mjs",
     "check:channex-certification-evidence": "node scripts/check-channex-certification-evidence.mjs",
     "check:channex-full-sync-two-requests": "node scripts/check-channex-full-sync-two-requests.mjs",
+    "check:channex-group-update-batching": "node scripts/check-channex-group-update-batching.mjs",
     "db:replay": "node scripts/db/migrate.mjs",
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",
