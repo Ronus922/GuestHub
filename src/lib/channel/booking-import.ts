@@ -339,6 +339,32 @@ async function upsertChannelGuest(
       WHERE id = ${existingGuestId} AND tenant_id = ${tenantId}`;
     return existingGuestId;
   }
+
+  // ADR-0005 import dedup seam: before creating a new guest, reuse the canonical
+  // guest matched by a STRONG key (normalized email). Only a UNIQUE match is
+  // reused; zero or ambiguous (>1) matches fall through to a new record — never
+  // a silent wrong merge (fail-visible, V2 §8). This stops the "new guest per
+  // OTA booking" duplication (defect M24 foundation); operator merge UI = Stage 5.
+  const dedupEmail = (customer.email ?? "").trim().toLowerCase() || null;
+  if (dedupEmail) {
+    const matches = await tx<{ id: string }[]>`
+      SELECT id FROM guesthub.guests
+      WHERE tenant_id = ${tenantId} AND lower(email) = ${dedupEmail} LIMIT 2`;
+    if (matches.length === 1) {
+      await tx`
+        UPDATE guesthub.guests SET
+          first_name = ${customer.firstName}, last_name = ${customer.lastName},
+          full_name = ${fullName},
+          phone = COALESCE(${customer.phone}, phone),
+          email = COALESCE(${customer.email}, email),
+          address = COALESCE(${address}, address),
+          city = COALESCE(${customer.city}, city),
+          country = COALESCE(${customer.country}, country)
+        WHERE id = ${matches[0].id} AND tenant_id = ${tenantId}`;
+      return matches[0].id;
+    }
+  }
+
   const [created] = await tx<{ id: string }[]>`
     INSERT INTO guesthub.guests
       (tenant_id, first_name, last_name, full_name, phone, email, country, language,
