@@ -12,6 +12,7 @@ import { getChannexRoomSyncContextAction } from "@/lib/channel/room-type-admin";
 import { getChannexRatePlanSyncContextAction } from "@/lib/channel/rate-plan-admin";
 import { getInboundStatusAction } from "@/lib/channel/inbound-admin";
 import { getExternalChangesAction } from "@/lib/channel/external-changes-admin";
+import { getCertificationEvidenceAction } from "@/lib/channel/certification";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
@@ -20,6 +21,7 @@ import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
 import { AriSyncSection } from "./AriSyncSection";
 import { InboundBookingsSection } from "./InboundBookingsSection";
 import { ExternalChangesSection } from "./ExternalChangesSection";
+import { CertificationConsoleSection } from "./CertificationConsoleSection";
 
 export const dynamic = "force-dynamic";
 
@@ -128,7 +130,7 @@ export default async function ChannelsPage() {
 
   // Every one of these is a DB read. Loading /channels performs no Channex call
   // and creates nothing upstream.
-  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges] =
+  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges, certification] =
     await Promise.all([
       getChannelStatusAction(),
       getChannexConnectionAction(),
@@ -137,6 +139,7 @@ export default async function ChannelsPage() {
       getChannexRatePlanSyncContextAction(),
       getInboundStatusAction(),
       getExternalChangesAction(),
+      getCertificationEvidenceAction({ limit: 100 }),
     ]);
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
@@ -198,6 +201,10 @@ export default async function ChannelsPage() {
 
       {/* External date changes from the OTA — pending reconciliation + ops email (D82) */}
       {externalChanges.success && <ExternalChangesSection initial={externalChanges.data!} />}
+
+      {/* Read-only certification console — evidence ledger + activation status (§13).
+          Triggers no scenario; displays what the real workflows produced. */}
+      {certification.success && <CertificationConsoleSection initial={certification.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">

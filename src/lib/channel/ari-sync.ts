@@ -11,6 +11,7 @@ import {
   type AvailabilityInput, type RestrictionInput,
 } from "./ari-payloads";
 import { pushAri, summarizeWarnings, type AriPushResult, type SafeAriWarning } from "./channex-ari";
+import { recordAriEvidence, type EvidenceOutcome } from "./evidence";
 import { logChannelError } from "./queue";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
 import {
@@ -519,6 +520,40 @@ export async function runInitialFullSync(
     });
   }
 
+  // §13 — durable certification evidence. A Full Sync is expected to be exactly
+  // two Channex requests (one availability, one rates/restrictions); record the
+  // actual counts + all Task IDs so the console can prove it against the official
+  // expectation. Never discards Task IDs (H9/H10).
+  const fullSyncOutcome: EvidenceOutcome = clean ? "success" : failure ? "failed" : "partial";
+  await recordAriEvidence(db, {
+    tenantId: conn.tenant_id,
+    connectionId: conn.id,
+    environment: conn.environment,
+    scenarioKey: "full_sync",
+    kind: "availability+restrictions",
+    uiWorkflow: "Channels → Full Sync",
+    firingFile: "src/lib/channel/ari-sync.ts",
+    firingFunction: "runInitialFullSync",
+    requestCount: availabilityOutcome.requests + restrictionsOutcome.requests,
+    expectedRequests: 2,
+    taskIds: [...availabilityOutcome.taskIds, ...restrictionsOutcome.taskIds],
+    dateFrom: today,
+    dateTo: dateToInclusive,
+    warnings,
+    outcome: fullSyncOutcome,
+    errorCode: failure ? failure.code : warnings.length ? "partial_warnings" : null,
+    errorMessage,
+    jobId,
+    context: {
+      availabilityRequests: availabilityOutcome.requests,
+      restrictionRequests: restrictionsOutcome.requests,
+      availabilityValues,
+      restrictionValues,
+      deferredBatches: deferred,
+      blocked: projectionBlocked,
+    },
+  });
+
   return {
     ok: clean,
     dateFrom: today,
@@ -642,6 +677,28 @@ export async function drainAriDirtyRanges(
   const failure = outcomes.find((o) => o.failure)?.failure ?? null;
   const warnings = outcomes.flatMap((o) => o.warnings);
   const deferred = outcomes.reduce((n, o) => n + o.deferredBatches, 0);
+  // H9/H10 — incremental Task IDs were previously discarded here. Capture them.
+  const taskIds = outcomes.flatMap((o) => o.taskIds);
+
+  // §13 — record incremental-sync evidence with the Task IDs Channex returned.
+  const recordIncrementalEvidence = (outcome: EvidenceOutcome, code: string | null, msg: string | null) =>
+    recordAriEvidence(db, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      environment: conn.environment,
+      scenarioKey: "incremental_sync",
+      kind: "availability+restrictions",
+      uiWorkflow: "canonical save → dirty-range drain",
+      firingFile: "src/lib/channel/ari-sync.ts",
+      firingFunction: "drainAriDirtyRanges",
+      requestCount: summary.requests,
+      taskIds,
+      warnings,
+      outcome,
+      errorCode: code,
+      errorMessage: msg,
+      context: { claimed: summary.claimed, sentValues: summary.sentValues, deferredBatches: deferred },
+    });
 
   if (failure || warnings.length > 0 || deferred > 0) {
     const err = failure ?? { code: "partial_warnings", message: summarizeWarnings(warnings) };
@@ -654,6 +711,7 @@ export async function drainAriDirtyRanges(
     const outcome = await failRanges(db, conn, rows, err);
     summary.retried = outcome.retried;
     summary.failed = outcome.failed;
+    await recordIncrementalEvidence(failure ? "failed" : "partial", err.code, err.message);
     return summary;
   }
 
@@ -664,6 +722,7 @@ export async function drainAriDirtyRanges(
     UPDATE guesthub.channel_connections SET last_outbound_sync_at = now(), last_error = NULL
     WHERE id = ${conn.id}`;
   summary.synced = rows.length;
+  await recordIncrementalEvidence("success", null, null);
   return summary;
 }
 

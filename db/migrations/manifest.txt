@@ -43,3 +43,4 @@
 035_channel_external_changes.sql
 036_guest_communications.sql
 037_double_booking_guard.sql
+038_channel_evidence_ledger.sql
