@@ -111,14 +111,29 @@ function classCandidates(src) {
     ?? card.match(/<button\b[\s\S]{0,400}?className="([^"]*)"[\s\S]{0,200}?בצע סנכרון מלא/);
   assert.ok(primary, "the primary confirmation button exists with a literal className");
   const classes = primary[1].split(/\s+/);
+  // Post-D89 the primary action uses the design-system component class
+  // `btn btn-primary` (a real painted CSS rule), not a raw `bg-*` utility. Accept
+  // either, and prove whichever it uses paints a real background — the D72
+  // invisible-button defect stays guarded regardless of which styling path is used.
   const bg = classes.find((c) => /^bg-/.test(c));
-  assert.ok(bg, "the primary button declares a background color");
-  assert.ok(resolves(bg), `the primary button's background (${bg}) is a real generated rule`);
+  const usesBtnPrimary = classes.includes("btn-primary");
+  assert.ok(bg || usesBtnPrimary, "the primary button declares a painted class (bg-* utility or btn-primary)");
+  if (bg) {
+    assert.ok(resolves(bg), `the primary button's background (${bg}) is a real generated rule`);
+  } else {
+    // .btn-primary is a design-system component class in an @import-ed partial
+    // (not inlined by the tailwind-only compile). Verify it paints a real
+    // background token in its source definition.
+    const ds = read("src/app/styles/design-system.css");
+    assert.ok(/\.btn-primary\s*\{[^}]*background:\s*var\(--/s.test(ds),
+      "btn-primary paints a real background token in design-system.css");
+  }
+  // the design-system primary token is still present + painting
   assert.ok(resolves("bg-primary") && compiled.match(/\.bg-primary\s*\{[^}]*var\(--color-primary\)/),
     "bg-primary paints with the design-system --color-primary token");
   assert.ok(!/hidden|sr-only|invisible|opacity-0(?:\s|")/.test(primary[1]),
     "the primary button has no hidden/invisible/zero-opacity variant");
-  ok("the primary button paints bg-primary — a real token — and carries no hiding class");
+  ok("the primary button paints a real class (btn-primary / bg-primary) and carries no hiding class");
 }
 
 // ---- 4. cancel creates nothing; creation is invoked from exactly one place ----

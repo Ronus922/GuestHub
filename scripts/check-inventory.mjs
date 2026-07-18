@@ -157,18 +157,20 @@ try {
     if (e.message !== "ROLLBACK") throw e;
   });
 
-  // ---- no connection is active ⇒ zero outbound backlog (§S) ----
-  const [{ active }] = await sql`
-    SELECT COUNT(*)::int AS active FROM guesthub.channel_connections
-    WHERE state = 'active'`;
-  assert.equal(active, 0, "no active connection exists in Phase 3");
-  const [{ dirty }] = await sql`
-    SELECT COUNT(*)::int AS dirty FROM guesthub.channel_dirty_ranges`;
-  assert.equal(dirty, 0, "no dirty-range backlog accumulates while disconnected");
-  const [{ runnable }] = await sql`
-    SELECT COUNT(*)::int AS runnable FROM guesthub.channel_sync_jobs
-    WHERE status IN ('queued','processing','retry_wait')`;
-  assert.equal(runnable, 0, "no runnable jobs exist while disconnected");
+  // ---- outbound backlog is bounded, never STUCK (§S) ----
+  // (Channel sync was intentionally activated after Phase 3 — D68/D72 — so an
+  // active connection + transient backlog are legitimate. The durable invariant
+  // is that nothing gets STUCK: no dirty range left pending for over a day, and
+  // no job wedged in a runnable state for over an hour. The worker drains both.)
+  const [{ stuckDirty }] = await sql`
+    SELECT COUNT(*)::int AS "stuckDirty" FROM guesthub.channel_dirty_ranges
+    WHERE status = 'pending' AND next_attempt_at < now() - interval '1 day'`;
+  assert.equal(stuckDirty, 0, "no dirty range is stuck pending beyond a day");
+  const [{ stuckJobs }] = await sql`
+    SELECT COUNT(*)::int AS "stuckJobs" FROM guesthub.channel_sync_jobs
+    WHERE status IN ('queued','processing','retry_wait')
+      AND created_at < now() - interval '1 hour'`;
+  assert.equal(stuckJobs, 0, "no job is wedged in a runnable state beyond an hour");
 
   console.log("check-inventory: all assertions passed");
 } finally {

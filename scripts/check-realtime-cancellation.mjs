@@ -446,18 +446,17 @@ try {
   ok("/reservations: search (OTA code / room) + quick filters honest");
 
   // ============ 11. /guests read model ============
-  // each OTA booking created its own guest row (upsertChannelGuest never
-  // merges across bookings — D77 §19 forbids automatic dedup): the list must
-  // show BOTH rows as they exist, each with its own honest aggregates.
+  // Both OTA bookings carry the same guest email (rt@example.com), so
+  // upsertChannelGuest REUSES one canonical guest on the unique-email match
+  // (ADR-0005, Stage 3 — supersedes the earlier D77 §19 no-dedup rule). The two
+  // reservations therefore share ONE guest row whose aggregates cover both.
   const guests = await getGuestsList({ tenantId: A.tenantId }, "");
   const guestRows = guests.rows.filter((g) => g.full_name === "רון בדיקה");
-  assert.equal(guestRows.length, 2, "no automatic merging — both rows listed");
-  for (const g of guestRows) {
-    assert.equal(g.total_reservations, 1);
-    assert.equal(g.cancelled_stays, 1);
-    assert.equal(g.active_reservations, 0);
-  }
-  ok("/guests: aggregates over the canonical guests table (no merging, honest counts)");
+  assert.equal(guestRows.length, 1, "same-email OTA bookings reuse one guest (ADR-0005)");
+  assert.equal(guestRows[0].total_reservations, 2, "the shared guest aggregates both bookings");
+  assert.equal(guestRows[0].cancelled_stays, 2, "both shared-guest stays are cancelled");
+  assert.equal(guestRows[0].active_reservations, 0);
+  ok("/guests: aggregates over the canonical guests table (ADR-0005 email reuse, honest counts)");
 
   // ============ 12. migration 031 backfill from audit trail ============
   {
