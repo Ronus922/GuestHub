@@ -90,7 +90,8 @@
     "check:no-secrets": "node scripts/check-no-secrets.mjs",
     "check:supply-chain": "node scripts/check-supply-chain.mjs",
     "check:retention": "node scripts/check-retention.mjs",
-    "check:performance": "node scripts/check-performance.mjs"
+    "check:performance": "node scripts/check-performance.mjs",
+    "check:code-documentation": "node scripts/check-code-documentation.mjs"
   },
   "engines": {
     "node": ">=20 <21"
