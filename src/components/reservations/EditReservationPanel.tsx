@@ -889,7 +889,13 @@ export function EditReservationPanel({
                 )}
               </div>
 
-              {canEditNow && (
+              {/* payment-ADJUSTMENT row (method / additional payment / discount).
+                  Hidden — not disabled — while the operator is explicitly keying
+                  a card in (replacingCard): during manual card entry only the
+                  card-storage workflow is visible, so two payment interfaces
+                  never stack. The values live in panel state (method/addPay/
+                  discount), so returning restores them intact. */}
+              {canEditNow && !replacingCard && (
                 <div className="bw-grid3 mt-4">
                   <Field label="אמצעי תשלום">
                     <select className="field-input" value={method} onChange={(e) => setMethod(e.target.value)}>

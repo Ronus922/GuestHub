@@ -344,6 +344,14 @@ assert.ok(/Boolean\(detail\?\.ota\) \|\| normalizeVisibleChannel\(detailSource\?
   "externality derives from the OTA linkage + the ONE canonical channel mapping (no parallel source list)");
 assert.ok(/canManageCard && \(cardMode === "manual" \|\| cardMode === "fresh"\)/.test(editPanelD77),
   "the card-save action is reachable only from the two EDITABLE modes — never from a read-only external state");
+// During explicit manual card entry, the payment-ADJUSTMENT row (method /
+// additional payment / discount) is HIDDEN — removed from render, not merely
+// disabled — so two payment interfaces never stack. Its values live in panel
+// state and return intact when manual mode ends.
+assert.ok(/\{canEditNow && !replacingCard && \([\s\S]{0,200}אמצעי תשלום/.test(editPanelD77),
+  "the payment-adjustment row renders only while manual card entry is OFF");
+assert.ok(!/disabled=\{replacingCard/.test(editPanelD77),
+  "the row is hidden, never disabled-in-place, during manual card entry");
 assert.ok(/bw-ccbox-off/.test(src("src/components/reservations/CardFields.tsx")),
   "the deactivated card area renders visibly grey/disabled (new-reservation flow)");
 // The manual fields lock ONLY on entryOff (view.editable && disabled) — i.e. the
