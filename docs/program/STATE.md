@@ -8,18 +8,16 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ### Stage 4 progress
 - ✅ Entry gate: tags 1-3 present, Stage-3 outbox live (`markAriDirty`), branch current.
-- ✅ Milestone 1 (partial) — **CHX G6 environment routing, ARI send path**: `AriConnection.environment` added + `credentialsFor` resolves `CHANNEX_BASE_URLS[conn.environment]` (was hardcoded staging). Inbound/reporting/payments/inbound-admin already route by env.
-- ⏳ **Remaining Stage-4 scope** (large; much needs LIVE Channex Staging — external dependency per V2 §2):
-  - CHX G6 completion: property/room-type/rate-plan SETUP ops (`admin.ts`, `rate-plan-admin.ts`, `room-type-admin.ts`) still hardcode staging — parametrize with the §26 production flow. `check:channex-environment-routing`.
-  - Evidence ledger (H9/H10) + read-only certification console (§13) + `check:channex-certification-evidence`.
-  - Full Sync 500-day/two-request semantics + size preflight (§14) + `check:channex-full-sync-two-requests`.
-  - Group Update expansion + single-envelope batching (§15) + `check:channex-group-update-batching`; Min Stay Arrival/Through declaration.
-  - Rate-limit cooldown + circuit breaker (§16, M14) + fault tests + `check:channex-rate-limit-cooldown`.
-  - Inbound booking hardening + ACK + booking-receiving cert flow (§17) + `check:channex-booking-crs-flow`; `check:channel-security`, `check:channel-chaos`.
-  - Production activation guard (§26, built + inactive) + `check:production-activation-guard`.
-  - Certification property provisioned with varied realistic data; scenario execution with Task IDs (LIVE Channex).
-  - 9 `docs/channex/` docs (skeletons exist) incl. SCREENSHARE_DEMO_SCRIPT draft; declaration answers 12-14.
-  - **Note:** re-fetch official Channex docs at execution (Stage-1 capture in `docs/channex/PMS_CERTIFICATION_REQUIREMENTS.md` is from 2026-07-18; still current this session).
+- ✅ **M1 — environment routing canonical (CHX G6 complete)**: `config.channexBaseUrl(env)` is the SOLE base-URL resolver; all setup ops (`admin.ts`, `room-type-admin.ts`, `rate-plan-admin.ts`) resolve env via `production-guard.effectiveChannexEnvironment()` (no `"staging"` literal); runtime paths route off `conn.environment`. `check:channex-environment-routing` PASS.
+- ✅ **M8 — production activation guard (built + inactive)**: `production-guard.ts` — production only behind `CHANNEX_PRODUCTION_ACTIVATION` on-flag; staging by default; `assertProductionActivationAuthorized` fails closed; prod-connection creation gated. `check:production-activation-guard` PASS (transpiles + executes the real guard).
+- ✅ **M2 — evidence ledger (H9/H10) + read-only console (§13)**: migration **038** `channel_evidence_ledger` (append-only, applied to staging :5434, roundtrip proven); `evidence.ts` (sole writer `recordAriEvidence`, reader `loadEvidenceLedger`); wired into full-sync AND incremental drain (incremental Task IDs no longer discarded); `certification.ts` read-only console action + `CertificationConsoleSection.tsx`. `check:channex-certification-evidence` PASS.
+- ✅ **M4 — Full Sync two-request semantics + 10MB size preflight (§14)**: batching is now byte-bounded to the real 10MB limit (removed the artificial 1000-value cap that broke two-request semantics); `payloadByteSize`/`PAYLOAD_BYTE_LIMIT`; full-sync evidence records `requestBytes`+`expectedRequests:2`; delta-only after. `check:channex-full-sync-two-requests` PASS. Also fixed 3 pre-existing stale assertions in `check:channex-ari` (was fully red at HEAD) → now 46/46.
+- ⏳ **Remaining Stage-4 scope**:
+  - **M5** Group Update expansion + single-envelope batching (§15) + Min Stay Arrival/Through declaration + `check:channex-group-update-batching`.
+  - **M6** Rate-limit cooldown + circuit breaker (§16, M14) + fault tests + `check:channex-rate-limit-cooldown`.
+  - **M7** Inbound hardening + ACK + booking-receiving cert flow (§17) + `check:channex-booking-crs-flow`, `check:channel-security`, `check:channel-chaos`.
+  - **M3+M9** Certification property provisioned + scenario execution with Task IDs (**LIVE Channex Staging — external dependency per V2 §2; build harness/mocks + document blocker**); 9 `docs/channex/` docs incl. SCREENSHARE_DEMO_SCRIPT draft; declaration answers 12-14 + `check:channex-certification`.
+  - **Note:** re-fetch official Channex docs at execution (Stage-1 capture in `docs/channex/PMS_CERTIFICATION_REQUIREMENTS.md` from 2026-07-18; still current this session).
 
 ## Prior stage
 
