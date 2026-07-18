@@ -1,6 +1,10 @@
 # Stage 4 Report — Channex Integration & Certification Readiness
 
-**Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification` · **Tag:** `stage-4-complete` · **Independent verifier (Agent N):** environment-crossover impossibility + guard review
+**Date:** 2026-07-18 · **Branch:** `feat/pms-hardening-channex-certification` · **Tag:** `stage-4-complete` · **Independent verifier (Agent N):** PASS 7/7 (no must-fix items)
+
+## Agent N independent verdict — PASS 7/7
+
+Reproduced every claim from source: (1) crossover impossibility — `CHANNEX_BASE_URLS` read only in config.ts; the only host literals elsewhere are comments; setup ops via `effectiveChannexEnvironment()`, runtime via `conn.environment`. (2) guard — staging by default, `upsertChannelConnectionAction` gates production creation, no committed env activates it, no path reaches production without the flag. (3) evidence ledger — `recordAriEvidence` sole writer, append-only, both full-sync AND incremental record; incremental Task IDs captured (H9/H10); console triggers nothing. (4) byte-bounded 10MB batching, no value-count cap. (5) breaker gates the drain + persists transitions; Retry-After extracted+propagated. (6) all 10 checks + `tsc` PASS. (7) migrations 038/039 on staging :5434 only — shared prod DB (:5432) confirmed untouched (ledger table + columns ABSENT there); no secrets committed; production not activated. **No must-fix items.**
 
 ## Executive summary (Hebrew)
 
