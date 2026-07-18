@@ -87,7 +87,17 @@
     "check:timezone-and-money-invariants": "node scripts/check-timezone-and-money-invariants.mjs",
     "check:pms-domain-invariants": "node scripts/check-pms-domain-invariants.mjs",
     "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs",
-    "check:no-secrets": "node scripts/check-no-secrets.mjs"
+    "check:no-secrets": "node scripts/check-no-secrets.mjs",
+    "check:supply-chain": "node scripts/check-supply-chain.mjs"
+  },
+  "engines": {
+    "node": ">=20 <21"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "overrides": {
+      "postcss@<8.5.10": ">=8.5.10"
+    }
   },
   "dependencies": {
     "@hebcal/core": "^6.6.0",
