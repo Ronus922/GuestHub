@@ -627,6 +627,26 @@ export async function updateReservationAction(
         dateTo: eventDates[eventDates.length - 1],
         lifecycle: input.status,
       });
+      // §7 Housekeeping — a checkout makes the room(s) dirty and generates a
+      // cleaning task, connecting housekeeping to the real reservation lifecycle.
+      // Fires ONLY on the transition into checked_out; idempotent per room (skips a
+      // room that already has an open task for this reservation). Cleanliness does
+      // not reduce availability (a dirty room is still sellable before the next
+      // arrival — the D64 0/1 model), so no outbox marking here.
+      if (input.status !== existing.status && input.status === "checked_out") {
+        const cleanRoomIds = [...new Set(eventRoomIds.filter((r): r is string => !!r))];
+        if (cleanRoomIds.length > 0) {
+          await tx`
+            INSERT INTO guesthub.housekeeping_tasks
+              (tenant_id, room_id, reservation_id, checkout_time, status, priority, notes)
+            SELECT ${actor.tenantId}, rid, ${input.id}, now(), 'pending', 'normal', 'נוצר אוטומטית ביציאת אורח'
+            FROM unnest(${cleanRoomIds}::uuid[]) AS rid
+            WHERE NOT EXISTS (
+              SELECT 1 FROM guesthub.housekeeping_tasks h
+              WHERE h.tenant_id = ${actor.tenantId} AND h.room_id = rid
+                AND h.reservation_id = ${input.id} AND h.status IN ('pending','in_progress'))`;
+        }
+      }
       if (addPay > 0) {
         await publishDomainEvent(tx, actor.tenantId, {
           type: "reservation.payment_changed",
