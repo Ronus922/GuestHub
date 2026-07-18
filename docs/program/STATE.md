@@ -4,7 +4,15 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 5 — PMS Capability Completion** — IN PROGRESS. Entry gate PASSED (2026-07-18). Continuous mode (charter §1).
+**Stage 6 — Security, Performance & Observability** — NOT STARTED (entry gate next). Continuous mode (charter §1). Read `06_STAGE_6_SECURITY_PERFORMANCE_OBSERVABILITY.md` at entry.
+
+Stage 6 scope: full red-team/threat-model execution; re-scoped **H8** (PAN purge job + full PCI review) and **H11** (quarantine log retention/dedup); performance/load; observability (metrics/alerting/structured logs); **Kong gateway (8000/8443) external hardening** (Stage-2 deferral); maintainability refactor round-2 guarded by the accumulated checks.
+
+## Prior stage
+
+### Stage 5 — PMS Capability Completion — ✅ COMPLETE (2026-07-18), tag `stage-5-complete`
+
+All 8 items shipped; new checks green; prior battery green. Report `reports/STAGE_5_REPORT.md`; capability matrix `docs/audit/PMS_CAPABILITY_MATRIX.md`. Migrations 040 (typed closures), 041 (operational tasks), 042 (guest anonymization) on staging :5434 only. New checks: `check:housekeeping`, `check:maintenance-closures`, `check:reports`, `check:israel-market`. Deferred items (report UIs, real invoice provider, bulk import, maintenance ticketing, multi-property perms, audit read UI) documented with justification in the capability matrix.
 
 ### Stage 5 entry gate (passed)
 - ✅ Prior tag `stage-4-complete` present; Stage-4 exit checklist recorded passed (report + Agent N 7/7).
@@ -91,6 +99,7 @@ All 9 milestones shipped; all 10 new checks green; prior battery still green; qu
 | 2 | `stage-2-complete` | (see tag) | 2026-07-18 |
 | 3 | `stage-3-complete` | (see tag) | 2026-07-18 |
 | 4 | `stage-4-complete` | (see tag) | 2026-07-18 |
+| 5 | `stage-5-complete` | (see tag) | 2026-07-18 |
 
 ### Stage 2 deliverables
 - **C2 mitigated**: DOCKER-USER DROP on ens3 for DB ports 5432/6543 (v4+v6), persisted via `guesthub-db-firewall.service`; localhost/apps unaffected. Runbook `docs/database/DB_EXPOSURE_MITIGATION.md`. (Kong 8000/8443 gateway hardening → Stage 6.)
