@@ -21,7 +21,7 @@ Rules:
 * Work belonging to a later stage must not be pulled forward, except when a genuine dependency demands it; every such move is recorded in the re-scoping log (see State file).
 * Re-scoping between stages is allowed only by updating the coverage matrix and the State file with justification. Deleting scope is never allowed.
 * Critical data-integrity or security defects are always in scope for the current stage, regardless of the matrix, and are recorded in the re-scoping log.
-* One user checkpoint exists between stages: the user reads the stage report and launches the next stage. Within a stage, execute without routine questions per V2 §2.
+* **Continuous run mode (no inter-stage checkpoint).** There is no user checkpoint between stages. When a stage's exit gate has fully passed (State file updated, stage report written, tag created, draft PR updated), proceed immediately to the next stage's entry gate without waiting for user input. Within a stage, execute without routine questions per V2 §2. Each stage is still treated as a fresh session: at every stage entry, re-read this charter, `GUESTHUB_PROGRAM_V2.md`, the stage document, `docs/program/STATE.md` and the previous stage report from disk — never rely on in-conversation memory to carry state between stages. Stop only for a genuine external blocker as defined in V2 §2 (a missing credential, an unprovisionable paid account, absent DNS access, or an irreversible live-production action); even then, document the blocker in the State file, complete everything else possible, and continue. The absolute safety boundaries of V2 §3 remain binding at all times.
 
 ## 2. Universal rules — binding in every stage
 
