@@ -31,7 +31,20 @@ export type ChannexApiFailure = {
   category: ChannexApiErrorCategory;
   message: string;
   httpStatus?: number;
+  /** §16 — cooldown the provider asked for (429 Retry-After), in ms, when present */
+  retryAfterMs?: number;
 };
+
+// Parse a Retry-After header: either delta-seconds ("120") or an HTTP-date.
+// Returns ms, or null when absent/unparseable. `now` is injectable for tests.
+export function parseRetryAfterMs(headerValue: string | null, now: number = Date.now()): number | null {
+  if (!headerValue) return null;
+  const secs = Number(headerValue.trim());
+  if (Number.isFinite(secs)) return Math.max(0, Math.round(secs * 1000));
+  const when = Date.parse(headerValue);
+  if (Number.isNaN(when)) return null;
+  return Math.max(0, when - now);
+}
 
 export const DEFAULT_TIMEOUT_MS = 12_000;
 
@@ -104,7 +117,7 @@ export type ChannexReqOpts = {
 
 export async function channexRequest(
   opts: ChannexReqOpts & { method: string; path: string; body?: unknown },
-): Promise<{ status: number; body: unknown } | ChannexApiFailure> {
+): Promise<{ status: number; body: unknown; retryAfterMs?: number } | ChannexApiFailure> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -129,5 +142,11 @@ export async function channexRequest(
     clearTimeout(timer);
   }
   const body = await safeJson(res);
+  // §16 — surface the provider's requested cooldown on a 429 so the caller can
+  // open the circuit for exactly that long instead of guessing.
+  if (res.status === 429) {
+    const retryAfterMs = parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) ?? undefined;
+    return { status: res.status, body, retryAfterMs };
+  }
   return { status: res.status, body };
 }

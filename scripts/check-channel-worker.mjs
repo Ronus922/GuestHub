@@ -182,7 +182,8 @@ async function seed() {
 }
 
 const connRow = async (id) => (await sql`
-  SELECT id, tenant_id, channex_property_id, api_key_ciphertext
+  SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
+         circuit_open_until::text AS circuit_open_until, consecutive_failures
   FROM guesthub.channel_connections WHERE id = ${id}`)[0];
 
 let f;
@@ -426,10 +427,13 @@ try {
     const [job] = await sql`
       INSERT INTO guesthub.channel_sync_jobs (tenant_id, connection_id, job_type, status, priority)
       VALUES (${f.T}, ${f.conn}, 'full_sync', 'queued', 10) RETURNING id`;
-    const summary = await workerMod.runTick("fs-worker", () => {});
-    assert.equal(summary.failed, 1, "an unready property fails the Full Sync");
+    // runTick operates GLOBALLY (it ensures + claims inbound-pull / drain jobs for
+    // every connection in the shared test DB), so its aggregate summary.failed is
+    // not a per-job invariant. Assert the SPECIFIC job's outcome: our unready Full
+    // Sync must dead-letter and never re-send.
+    await workerMod.runTick("fs-worker", () => {});
     const [j] = await sql`SELECT status FROM guesthub.channel_sync_jobs WHERE id = ${job.id}`;
-    assert.equal(j.status, "dead_letter", "a failed Full Sync dead-letters — it is never re-sent automatically");
+    assert.equal(j.status, "dead_letter", "an unready Full Sync dead-letters — it is never re-sent automatically");
     await sql`UPDATE guesthub.channel_room_mappings SET status = 'mapped' WHERE connection_id = ${f.conn}`;
     await sql`DELETE FROM guesthub.channel_sync_jobs WHERE connection_id = ${f.conn}`;
     ok("a failed Full Sync dead-letters; ARI is never re-sent without an operator click");

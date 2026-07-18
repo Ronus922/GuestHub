@@ -12,6 +12,10 @@ import {
 } from "./ari-payloads";
 import { pushAri, summarizeWarnings, type AriPushResult, type SafeAriWarning } from "./channex-ari";
 import { recordAriEvidence, type EvidenceOutcome } from "./evidence";
+import {
+  circuitAllowsRequest, onCircuitFailure, onCircuitSuccess, failureKindOf,
+  type CircuitState,
+} from "./circuit-breaker";
 import { logChannelError } from "./queue";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
 import {
@@ -56,6 +60,9 @@ export type AriConnection = {
   api_key_ciphertext: string;
   // §11: the connection's environment is the ONLY source of the Channex base URL.
   environment: "staging" | "production";
+  // §16 circuit-breaker state, persisted between drains.
+  circuit_open_until: string | null;
+  consecutive_failures: number;
 };
 
 export type SendOutcome = {
@@ -63,7 +70,7 @@ export type SendOutcome = {
   taskIds: string[];
   warnings: SafeAriWarning[];
   /** a transport/auth/validation failure — the range stays retryable */
-  failure: { code: string; message: string } | null;
+  failure: { code: string; message: string; retryAfterMs?: number } | null;
   /** batches left unsent because the per-run request ceiling was reached */
   deferredBatches: number;
 };
@@ -85,7 +92,24 @@ export type DrainSummary = {
   failed: number;
   requests: number;
   sentValues: number;
+  /** §16 — true when the circuit breaker skipped this connection (still cooling) */
+  circuitOpen?: boolean;
 };
+
+// §16 — read/write the persisted breaker state on the connection row.
+function circuitStateOf(conn: AriConnection): CircuitState {
+  return {
+    consecutiveFailures: conn.consecutive_failures ?? 0,
+    openUntil: conn.circuit_open_until ? Date.parse(conn.circuit_open_until) : null,
+  };
+}
+async function persistCircuit(db: Sql, connId: string, next: CircuitState): Promise<void> {
+  await db`
+    UPDATE guesthub.channel_connections
+    SET circuit_open_until = ${next.openUntil ? new Date(next.openUntil).toISOString() : null},
+        consecutive_failures = ${next.consecutiveFailures}
+    WHERE id = ${connId}`;
+}
 
 // The one seam a check may substitute: the same `fetchImpl` channex-http already
 // accepts. Absent everywhere in production — the worker never passes it — so a
@@ -206,7 +230,10 @@ async function sendBatches(
     });
     outcome.requests += 1;
     if (!res.ok) {
-      outcome.failure = { code: res.category, message: res.message };
+      outcome.failure = {
+        code: res.category, message: res.message,
+        ...(res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}),
+      };
       return outcome; // stop this kind — the caller keeps the ranges retryable
     }
     outcome.taskIds.push(...res.taskIds);
@@ -594,6 +621,16 @@ export async function drainAriDirtyRanges(
   deps?: AriSyncDeps,
 ): Promise<DrainSummary> {
   const summary: DrainSummary = { claimed: 0, synced: 0, retried: 0, failed: 0, requests: 0, sentValues: 0 };
+  const now = deps?.now ?? (() => Date.now());
+
+  // §16 — if the circuit is open (cooling after a 429 or repeated failures), skip
+  // this connection entirely. The dirty ranges stay pending and drain once the
+  // cooldown elapses; we never hammer a provider that just told us to back off.
+  const circuit = circuitStateOf(conn);
+  if (!circuitAllowsRequest(circuit, now())) {
+    summary.circuitOpen = true;
+    return summary;
+  }
 
   // The worker holds this connection's job lease (FIFO per connection), so a
   // plain SELECT is enough — no second claim protocol, no 'queued' limbo.
@@ -716,6 +753,10 @@ export async function drainAriDirtyRanges(
     const outcome = await failRanges(db, conn, rows, err);
     summary.retried = outcome.retried;
     summary.failed = outcome.failed;
+    // §16 — advance the breaker. A 429 opens it for the provider's Retry-After;
+    // repeated server/transport failures open it once the threshold is crossed.
+    await persistCircuit(db, conn.id,
+      onCircuitFailure(circuit, failureKindOf(err.code), now(), { retryAfterMs: failure?.retryAfterMs }));
     await recordIncrementalEvidence(failure ? "failed" : "partial", err.code, err.message);
     return summary;
   }
@@ -727,6 +768,10 @@ export async function drainAriDirtyRanges(
     UPDATE guesthub.channel_connections SET last_outbound_sync_at = now(), last_error = NULL
     WHERE id = ${conn.id}`;
   summary.synced = rows.length;
+  // §16 — a clean drain fully closes the breaker.
+  if (circuit.consecutiveFailures > 0 || circuit.openUntil !== null) {
+    await persistCircuit(db, conn.id, onCircuitSuccess());
+  }
   await recordIncrementalEvidence("success", null, null);
   return summary;
 }
@@ -772,7 +817,8 @@ async function failRanges(
 /** Connections whose baseline is established — the ONLY ones a drain may touch. */
 export async function loadDrainableConnections(db: Sql = sql): Promise<AriConnection[]> {
   return db<AriConnection[]>`
-    SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment
+    SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
+           circuit_open_until::text AS circuit_open_until, consecutive_failures
     FROM guesthub.channel_connections
     WHERE state = 'active' AND outbound_sync_enabled = true AND full_sync_required = false
       AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;
