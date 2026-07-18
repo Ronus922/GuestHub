@@ -121,6 +121,10 @@ export const closureSchema = z
     startDate: dateOnlySchema,
     endDate: dateOnlySchema,
     reason: z.string().trim().max(200).optional(),
+    // §8 typed closures: ooo = out of order (removed from inventory), oos = out
+    // of service (dirty but still sellable — never reduces availability).
+    kind: z.enum(["ooo", "oos"]).default("ooo"),
+    category: z.string().trim().max(60).optional(),
   })
   .refine((s) => s.endDate > s.startDate, {
     message: "נדרש לילה אחד לפחות",

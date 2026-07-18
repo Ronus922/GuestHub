@@ -45,3 +45,5 @@
 037_double_booking_guard.sql
 038_channel_evidence_ledger.sql
 039_channel_circuit_breaker.sql
+040_typed_room_closures.sql
+040_maintenance_closure_type.sql

@@ -59,6 +59,7 @@
     "check:channex-booking-crs-flow": "node scripts/check-channex-booking-crs-flow.mjs",
     "check:channex-certification": "node scripts/check-channex-certification.mjs",
     "check:housekeeping": "node scripts/check-housekeeping.mjs",
+    "check:maintenance-closures": "node scripts/check-maintenance-closures.mjs",
     "db:replay": "node scripts/db/migrate.mjs",
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",
