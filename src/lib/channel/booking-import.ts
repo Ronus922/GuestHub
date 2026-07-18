@@ -545,7 +545,12 @@ async function applyLiveRevision(
         status = ${status},
         check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
         adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
-        total_price = ${total}, currency = ${norm.currency ?? "ILS"},
+        -- H6: preserve locally-added discount/extra_charges across an OTA
+        -- modification. The channel total is folded through the reservation's
+        -- own adjustments (reservationTotal semantics: max(0, channel+extra−disc))
+        -- instead of blindly overwriting total_price with the raw channel amount.
+        total_price = GREATEST(0, ${total} + extra_charges - discount_amount),
+        currency = ${norm.currency ?? "ILS"},
         notes = ${norm.notes},
         expected_arrival_time = COALESCE(${norm.arrivalHour}, expected_arrival_time),
         expected_arrival_time_source = CASE
