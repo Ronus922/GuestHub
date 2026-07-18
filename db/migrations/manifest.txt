@@ -1,0 +1,44 @@
+# GuestHub migration manifest — deterministic apply order (source of truth for replay).
+# One filename per line, in APPLY order. Blank lines and # comments ignored.
+# The only lexical ambiguity is the duplicate 009 prefix; real build order was
+# 009_phase4a_sellable_units (2026-07-04) THEN 009_phase4_card_channel (2026-07-05),
+# validated by replay-from-zero (scripts/db/migrate.mjs).
+
+000_init_schema.sql
+001_phase2_permissions.sql
+002_users_unique_ci.sql
+003_user_permission_overrides.sql
+004_phase3_calendar.sql
+005_phase3_channel_foundation.sql
+006_availability_unknown_rooms.sql
+007_phase3_tenant_settings.sql
+008_phase3_reservation_cards.sql
+009_phase4a_sellable_units.sql
+009_phase4_card_channel.sql
+010_card_cvv_channel_ingest.sql
+011_commercial_settings.sql
+012_room_occupancy_commercial.sql
+013_rooms_module.sql
+014_rooms_reference_fidelity.sql
+015_room_history_integrity.sql
+016_rate_plans.sql
+017_reservation_pricing.sql
+018_remove_stored_cvv.sql
+019_payment_status_ledger_reconcile.sql
+020_messaging_providers.sql
+021_room_inventory_cleanup.sql
+022_channex_connection_test.sql
+023_channex_property_mapping.sql
+024_channex_room_type_mappings.sql
+025_channex_rate_plan_mappings.sql
+026_sellable_unit_lifecycle.sql
+027_channex_ari_room_dimension.sql
+028_canonical_room_identity.sql
+029_inbound_booking_identity.sql
+030_workflow_statuses_payment_methods.sql
+031_cancellation_history_realtime.sql
+032_inbound_rate_plan_aliases.sql
+033_expected_arrival_time.sql
+034_cancellation_snapshot_arrival_source.sql
+035_channel_external_changes.sql
+036_guest_communications.sql
