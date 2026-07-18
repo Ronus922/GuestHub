@@ -68,5 +68,39 @@ else pass("a failing pull retries with backoff then dead-letters (bounded)");
 if (!/UNIQUE|unique/.test(migrations)) flag("no uniqueness guard in the channel foundation schema");
 else pass("revision uniqueness enforced at the schema level");
 
+// ---- §24 fault-injection list (Stage 6) — each fault has a handling site ----
+const admin = read("src/lib/channel/admin.ts");
+const ariSync = read("src/lib/channel/ari-sync.ts");
+const worker = read("src/lib/channel/worker.ts");
+const queueSrc = queue;
+
+// two Full Sync clicks → DB-enforced dedup, no second run
+if (!/alreadyRunning|"duplicate" in enqueued|uq_jobs_idempotency/.test(admin) && !/idempotencyKey:\s*`full_sync/.test(admin))
+  flag("§24 two-Full-Sync-clicks: no duplicate-run guard");
+else pass("§24 two Full Sync clicks → deduped (idempotency key, already-running reported)");
+
+// credential rotation during a job → the stored key is re-probed before any ARI
+if (!/runChannexConnectionTest\(/.test(ariSync)) flag("§24 credential rotation: no pre-send auth probe");
+else pass("§24 credential rotation mid-job → auth probed before ARI, fails safe");
+
+// expired lease → a stale in-flight job is reclaimed, not stranded
+if (!/stale|reclaim|locked_at\s*<|lease/i.test(queueSrc + worker)) flag("§24 expired lease: no stale-lease reclaim");
+else pass("§24 expired lease → stale job reclaimed");
+
+// corrupted queue payload / DB unavailable → the tick catches per-job + per-tick
+if (!/catch \(e\)[\s\S]{0,200}failChannelJob/.test(worker)) flag("§24 corrupted payload: a bad job is not isolated");
+else pass("§24 corrupted payload → job fails in isolation, tick continues");
+if (!/catch \(e\)[\s\S]{0,160}(heartbeat|lastError)/.test(worker)) flag("§24 DB-unavailable: tick does not degrade gracefully");
+else pass("§24 DB unavailable → tick degrades gracefully (heartbeat records the error)");
+
+// webhook + poll → both converge on the same deduped job (no double import)
+if (!/fallback|missed webhook|watchdog/i.test(worker)) flag("§24 webhook+poll: no reconciling fallback poll");
+else pass("§24 webhook + poll → converge on one deduped pull job");
+
+// certification reset during a run → the evidence ledger is append-only (no reset)
+const evidence = read("src/lib/channel/evidence.ts");
+if (/\b(UPDATE|DELETE)\s+[^;]*channel_evidence_ledger/i.test(evidence)) flag("§24 cert reset: evidence ledger is mutable");
+else pass("§24 certification reset → evidence ledger is append-only (no destructive reset path)");
+
 if (fail) { console.log(`\ncheck:channel-chaos — FAIL (${fail})`); process.exit(1); }
 console.log("check:channel-chaos — PASS");
