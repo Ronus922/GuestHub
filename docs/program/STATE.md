@@ -4,9 +4,29 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 ## Current stage
 
-**Stage 4 — Channex Integration & Certification Readiness** — IN PROGRESS (2026-07-18). Continuous mode (charter §1). Not tagged.
+**Stage 5 — PMS Capability Completion** — NOT STARTED (entry gate next). Continuous mode (charter §1).
 
-### Stage 4 progress
+Stage 5 scope (from coverage matrix + re-scoping log): H13 audit read/search UI; H14/H15 reports/exports + Israel VAT/invoice/PII; M1 (dead holds), M2 (optimistic concurrency), M4 (OTA rr churn), M5 (reservation-number allocator); maintainability refactor (round-2 dedup + large-module splits) guarded by the Stage-3/4 checks.
+
+## Prior stage
+
+### Stage 4 — Channex Integration & Certification Readiness — ✅ COMPLETE (2026-07-18), tag `stage-4-complete`
+
+All 9 milestones shipped; all 10 new checks green; prior battery still green; quote-to-ARI equality 22/22. Report: `reports/STAGE_4_REPORT.md`.
+
+- **M1** env routing canonical — `config.channexBaseUrl` sole resolver; setup ops via `effectiveChannexEnvironment()`, runtime via `conn.environment`. `check:channex-environment-routing`.
+- **M8** production activation guard — `production-guard.ts`, staging-by-default, gated prod-connection creation. `check:production-activation-guard`.
+- **M2** evidence ledger (migration 038, staging :5434) + read-only console; H9/H10 fixed (incremental Task IDs captured). `check:channex-certification-evidence`.
+- **M4** Full Sync 500d/2 requests + byte-bounded 10MB preflight (removed 1000-value cap). `check:channex-full-sync-two-requests`.
+- **M5** Group Update single envelope + Min Stay declaration (`MIN_STAY_SEMANTICS.md`). `check:channex-group-update-batching`.
+- **M6** rate-limit cooldown (429 Retry-After) + circuit breaker (`circuit-breaker.ts`, migration 039). `check:channex-rate-limit-cooldown`.
+- **M7** inbound security/chaos + booking-receiving cert flow. `check:channel-security`, `check:channel-chaos`, `check:channex-booking-crs-flow`.
+- **M3+M9** scenario matrix (14 tests, traceable), declarations 12-14, complete `SCREENSHARE_DEMO_SCRIPT.md`, env/activation runbooks. `check:channex-certification`.
+- Fixed pre-existing stale assertions in `check:channex-ari` (46/46) and `check:channel-worker` (16/16).
+- **External dependency (V2 §2):** live scenario execution with real Task IDs needs an active Channex Staging channel / Booking.com test account — offline harness+mocks+evidence+docs built; live run documented in the scenario matrix + booking-receiving doc.
+- New migrations: 038 (evidence ledger), 039 (circuit breaker) — applied to staging :5434 ONLY.
+
+### Stage 4 progress (historical)
 - ✅ Entry gate: tags 1-3 present, Stage-3 outbox live (`markAriDirty`), branch current.
 - ✅ **M1 — environment routing canonical (CHX G6 complete)**: `config.channexBaseUrl(env)` is the SOLE base-URL resolver; all setup ops (`admin.ts`, `room-type-admin.ts`, `rate-plan-admin.ts`) resolve env via `production-guard.effectiveChannexEnvironment()` (no `"staging"` literal); runtime paths route off `conn.environment`. `check:channex-environment-routing` PASS.
 - ✅ **M8 — production activation guard (built + inactive)**: `production-guard.ts` — production only behind `CHANNEX_PRODUCTION_ACTIVATION` on-flag; staging by default; `assertProductionActivationAuthorized` fails closed; prod-connection creation gated. `check:production-activation-guard` PASS (transpiles + executes the real guard).
@@ -42,6 +62,7 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 | 1 | `stage-1-complete` | (see tag) | 2026-07-18 |
 | 2 | `stage-2-complete` | (see tag) | 2026-07-18 |
 | 3 | `stage-3-complete` | (see tag) | 2026-07-18 |
+| 4 | `stage-4-complete` | (see tag) | 2026-07-18 |
 
 ### Stage 2 deliverables
 - **C2 mitigated**: DOCKER-USER DROP on ens3 for DB ports 5432/6543 (v4+v6), persisted via `guesthub-db-firewall.service`; localhost/apps unaffected. Runbook `docs/database/DB_EXPOSURE_MITIGATION.md`. (Kong 8000/8443 gateway hardening → Stage 6.)
