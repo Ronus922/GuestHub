@@ -88,7 +88,8 @@
     "check:pms-domain-invariants": "node scripts/check-pms-domain-invariants.mjs",
     "check:background-job-recovery": "node scripts/check-background-job-recovery.mjs",
     "check:no-secrets": "node scripts/check-no-secrets.mjs",
-    "check:supply-chain": "node scripts/check-supply-chain.mjs"
+    "check:supply-chain": "node scripts/check-supply-chain.mjs",
+    "check:retention": "node scripts/check-retention.mjs"
   },
   "engines": {
     "node": ">=20 <21"
