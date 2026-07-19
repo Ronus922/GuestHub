@@ -31,10 +31,9 @@ import { CertificationConsoleSection } from "./CertificationConsoleSection";
 
 export const dynamic = "force-dynamic";
 
-// D77 — Hospitable is the live provider; the whole Channex operator surface is
-// HIDDEN (not removed) while its connection/data stay intact. Flip to true to
-// bring every Channex card back exactly as it was.
-const SHOW_CHANNEX = false;
+// D79 — the page shows ONLY the active provider's surface: pick Beds24 and
+// every Hospitable/Channex card disappears (and vice versa). Nothing is
+// removed — switching the selector brings a provider's cards straight back.
 
 // /channels — Channel Manager DIAGNOSTIC screen (§AA observability). DISPLAY-ONLY,
 // super_admin only. This screen diagnoses channel sync (connection state, mapping
@@ -155,6 +154,10 @@ export default async function ChannelsPage() {
       getBeds24ConnectionAction(),
     ]);
   const activeProvider = await getActiveProviderAction();
+  const activeKey = activeProvider.success
+    ? activeProvider.data!.choices.find((c) => c.isActive)?.provider ?? null
+    : null;
+  const showChannex = activeKey === "channex";
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
   // UNIQUE per tenant+provider+environment). Still a pure DB read.
@@ -192,32 +195,32 @@ export default async function ChannelsPage() {
       </div>
 
       {/* Channex Staging connection — secure credential + real test (D59) */}
-      {SHOW_CHANNEX && channex.success && <ChannexStagingSection initial={channex.data!} />}
+      {showChannex && channex.success && <ChannexStagingSection initial={channex.data!} />}
 
       {/* Channex Staging property mapping — existing tenant → one Channex property (D60) */}
-      {SHOW_CHANNEX && channexProperty.success && <ChannexPropertySection initial={channexProperty.data!} />}
+      {showChannex && channexProperty.success && <ChannexPropertySection initial={channexProperty.data!} />}
 
       {/* Physical room → Channex Room Type synchronization (D64) */}
-      {SHOW_CHANNEX && roomSync.success && <ChannexRoomTypesSection initial={roomSync.data!} />}
+      {showChannex && roomSync.success && <ChannexRoomTypesSection initial={roomSync.data!} />}
 
       {/* (Local Rate Plan × mapped room) → Channex Rate Plan synchronization (D65) */}
-      {SHOW_CHANNEX && ratePlanSync.success && <ChannexRatePlansSection initial={ratePlanSync.data!} />}
+      {showChannex && ratePlanSync.success && <ChannexRatePlansSection initial={ratePlanSync.data!} />}
 
       {/* ARI status + THE Full Sync control (D68). Replaces the disabled
           "סנכרון מלא · בקרוב" placeholder. Reconcile stays out of scope. */}
-      {SHOW_CHANNEX && channexConnectionId && ariStatus && (
+      {showChannex && channexConnectionId && ariStatus && (
         <AriSyncSection connectionId={channexConnectionId} initial={ariStatus} />
       )}
 
       {/* Inbound OTA bookings — Channex status + manual pull (D76). */}
-      {SHOW_CHANNEX && inbound.success && <InboundBookingsSection initial={inbound.data!} />}
+      {showChannex && inbound.success && <InboundBookingsSection initial={inbound.data!} />}
 
       {/* External date changes from the OTA — pending reconciliation + ops email
           (D82). Provider-agnostic: the Hospitable inbound writes these too. */}
       {externalChanges.success && <ExternalChangesSection initial={externalChanges.data!} />}
 
       {/* Read-only Channex certification console — evidence ledger (§13). */}
-      {SHOW_CHANNEX && certification.success && <CertificationConsoleSection initial={certification.data!} />}
+      {showChannex && certification.success && <CertificationConsoleSection initial={certification.data!} />}
 
       {/* D79 — ONE working provider selector. Beds24 first (the default);
           switching stops the dormant provider at worker+webhook level. */}
@@ -229,11 +232,11 @@ export default async function ChannelsPage() {
           phase: invite-code setup, token cache, test, mapping. No sync yet.
           Page load is still a pure DB read — the Beds24 properties list loads
           only on explicit operator click. FIRST — the default working provider. */}
-      {beds24.success && <Beds24Section initial={beds24.data!} />}
+      {activeKey === "beds24" && beds24.success && <Beds24Section initial={beds24.data!} />}
 
       {/* Hospitable PRODUCTION connection + room↔property mapping (D77) —
           kept connected as the dormant BACKUP provider (D79). */}
-      {hospitable.success && <HospitableSection initial={hospitable.data!} />}
+      {activeKey === "hospitable" && hospitable.success && <HospitableSection initial={hospitable.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">
@@ -241,19 +244,17 @@ export default async function ChannelsPage() {
           <p className="t-secondary text-status-danger">{res.error}</p>
         </div>
       ) : (
-        <StatusView data={res.data as ChannelStatus} />
+        <StatusView data={res.data as ChannelStatus} activeKey={activeKey} />
       )}
     </div>
   );
 }
 
-function StatusView({ data }: { data: ChannelStatus }) {
+function StatusView({ data, activeKey }: { data: ChannelStatus; activeKey: string | null }) {
   const { counts, errors } = data;
-  // Channex hidden (D77): its connection card disappears with the rest of the
-  // Channex surface; queue/health/error cards stay — they are provider-neutral.
-  const connections = SHOW_CHANNEX
-    ? data.connections
-    : data.connections.filter((c) => c.provider !== "channex");
+  // D79 — only the ACTIVE provider's connection card is shown; queue/health/
+  // error cards stay (provider-neutral).
+  const connections = data.connections.filter((c) => c.provider === activeKey);
 
   const statCards: { label: string; value: number; danger?: boolean }[] = [
     { label: "עבודות ממתינות", value: counts.pending_jobs },
@@ -337,7 +338,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
           DESCRIPTIVE metadata — they are deliberately NOT presented as Channex
           mapping progress (the old "0/3" read as if they were the inventory
           unit). The Channex inventory unit is the individual physical room. */}
-      {SHOW_CHANNEX && (
+      {activeKey === "channex" && (
       <section className="flex flex-col gap-3">
         <h2 className="h3">מיפוי מלאי ל-Channex</h2>
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
