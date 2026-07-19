@@ -51,17 +51,32 @@ const PLATFORM_LABELS: Record<string, string> = {
   homeaway: "Vrbo",
 };
 
-// "Booking 1494747110 · Airbnb 53219877" — Booking first (the id the operator
-// quotes), other platforms after; empty string when no listings arrived.
+// "Booking 1494747110 · Airbnb 53219877" — REAL OTAs only. Hospitable also
+// returns internal listings (manual/direct/gvr) whose ids are meaningless
+// UUIDs — pure noise for the operator, dropped here.
 function listingIdsLine(p: HospitablePropertySummary): string {
-  const sorted = [...p.listings].sort((a, b) => {
+  const known = p.listings.filter((l) => PLATFORM_LABELS[l.platform] !== undefined);
+  const sorted = [...known].sort((a, b) => {
     const aB = PLATFORM_LABELS[a.platform] === "Booking" ? 0 : 1;
     const bB = PLATFORM_LABELS[b.platform] === "Booking" ? 0 : 1;
     return aB - bB;
   });
-  return sorted
-    .map((l) => `${PLATFORM_LABELS[l.platform] ?? l.platform} ${l.platformId}`)
-    .join(" · ");
+  return sorted.map((l) => `${PLATFORM_LABELS[l.platform]} ${l.platformId}`).join(" · ");
+}
+
+// Strip the building prefix every unit shares ("מגדל הים - בניין אלמוג - ")
+// so the option reads as the ROOM name — the part that differs.
+function stripCommonPrefix(names: string[]): (name: string) => string {
+  if (names.length < 2) return (n) => n;
+  let prefix = names[0];
+  for (const n of names.slice(1)) {
+    while (prefix && !n.startsWith(prefix)) prefix = prefix.slice(0, -1);
+    if (!prefix) break;
+  }
+  // only cut at a separator boundary so we never split mid-word
+  const cut = Math.max(prefix.lastIndexOf(" - "), prefix.lastIndexOf(" · "));
+  const safe = cut > 0 ? cut + 3 : 0;
+  return (n) => (safe > 0 && n.length > safe ? n.slice(safe) : n);
 }
 
 // Same-building units often share one public name — the label prefers the
@@ -71,21 +86,19 @@ function listingIdsLine(p: HospitablePropertySummary): string {
 function propertyLabels(
   properties: HospitablePropertySummary[],
 ): { property: HospitablePropertySummary; label: string }[] {
+  // The operator asked for exactly two things per option: the ROOM name and
+  // the Booking Room ID. Everything else (address, capacity, internal ids)
+  // lives in the identification card below the select, not in the option.
+  const shorten = stripCommonPrefix(
+    properties.map((p) => p.name ?? p.publicName ?? p.id),
+  );
   const base = properties.map((p) => {
-    const name = p.name ?? p.publicName ?? p.id;
-    // host tags first — hosts tag units with their apartment number, which is
-    // the ONLY human-meaningful discriminator inside one building
+    const name = shorten(p.name ?? p.publicName ?? p.id);
     const tagPrefix = p.tags.length > 0 ? `[${p.tags.join(" ")}] ` : "";
-    // the OTA listing ids are what the operator actually recognises —
-    // Booking room id first, then any other platform
     const ids = listingIdsLine(p);
-    const cap =
-      p.bedrooms !== null || p.maxGuests !== null
-        ? ` · ${p.bedrooms ?? "?"} חד׳ · עד ${p.maxGuests ?? "?"} אורחים`
-        : "";
     return {
       property: p,
-      label: `${tagPrefix}${name}${ids ? ` · ${ids}` : ""}${cap}`,
+      label: `${tagPrefix}${name}${ids ? ` · ${ids}` : ""}`,
     };
   });
   const counts = new Map<string, number>();
