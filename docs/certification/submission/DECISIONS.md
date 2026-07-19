@@ -88,6 +88,62 @@ scenario screenshots. Scenario screenshots are produced during the live run (D-1
 
 ---
 
+## D-5 — Provisioning attempt (2026-07-19) blocked: no certification Channex Staging key ❌
+
+**Attempt.** Ran the "provision staging property + fixture" task (audit → provision →
+seed → verify). Halted at STEP 0's mandatory precondition — *"verify staging credentials
+load and `GET /properties` succeeds BEFORE creating anything"* — because the credential to
+authenticate a certification-property Channex call does not exist. **No live entity was
+created; the dev hotel was not touched; no app was restarted.**
+
+**Root cause (three compounding, verified facts):**
+
+1. **No dedicated certification Channex Staging API key.** `createChannexPropertyAction`
+   resolves the key via `withChannexKey(tenantId)` → `loadChannexRow(tenantId).api_key_ciphertext`,
+   i.e. it needs the **certification tenant's own stored, encrypted Channex key**. On
+   staging there is **no certification tenant/connection at all** — the only
+   `channel_connections` row is the dev hotel (`גינות הים · תל אביב`, `environment=staging`,
+   key hint `••••IBaJ`), which HARD RULES forbid touching. `CHANNEL_SECRETS_KEY` (needed to
+   encrypt/decrypt any key) is present **only** in `/var/www/guesthub-production/.env.local`,
+   not in this checkout's env. So the first Channex request cannot authenticate.
+
+2. **Create + reservation flows are authenticated Next server actions, not scriptable.**
+   `createChannexPropertyAction`, `createChannexRoomType`/`room-type-admin`,
+   `rate-plan-admin`, `upsertChannelConnectionAction`, and `createReservationAction` are all
+   `"use server"` and gated by `requireChannelAdmin()` / `getActor()` / `requirePermission()`
+   — they need a super_admin browser session (cookies), so a standalone
+   `scripts/provision-channex-certification.mjs` cannot invoke them. Reimplementing them in a
+   script would (a) still need the key from (1), (b) duplicate server-action logic, and (c) be
+   the Channex-**rejected** anti-pattern ("standalone script / certification-only tooling",
+   `PMS_CERTIFICATION_REQUIREMENTS.md` §3). No such script was written, by design.
+
+3. **App topology.** The running staging GuestHub app is pm2 **`guesthub`** @
+   `/var/www/guesthub-production` (:3007). pm2 **`pms`** is an **unrelated** repo at
+   `/var/www/pms` — the task's "pm2 restart pms" targets the wrong app; not run.
+
+**The correct provisioning path (UI-driven, what the code is built for).** Provisioning is
+designed to be operated by Ronen from the running app, needing only the one missing input:
+
+1. Obtain a **Channex Staging** account/property API key for certification (separate from the
+   dev hotel's). Confirm `GET /properties` on `staging.channex.io` succeeds with it.
+2. In GuestHub (`:3007`, super_admin) create the isolated tenant **GuestHub Certification**
+   with its Business Profile (property name `Test Property - GuestHub`, currency **USD**), 2
+   physical rooms (Twin Room, Double Room, occ 2) and 2 local rate plans (BAR / B&B).
+3. `/channels` → save the certification Channex Staging API key on this tenant's connection
+   (`environment=staging`), then **Create property** → room-type sync → rate-plan sync; map
+   the 4 room×rate-plan pairs and verify **4/4**. All IDs come back from the API list
+   endpoints (never hardcoded).
+4. Seed varied 500-day rates/min-stay/restrictions in the Rate Grid, and create a few test
+   reservations from `/reservations` (the real path) so some dates read sold (0/1 model).
+5. Read the real Channex UUIDs from the `/channels` console into `01-cover.md` (replacing
+   *"assigned at provisioning"*), then run the scenarios per `CERTIFICATION_RUNBOOK.md`.
+
+Everything from step 2 on is a live, authenticated, UI operation; the only external
+dependency is the key in step 1. Until that key exists, provisioning cannot proceed safely
+(STAGING-ONLY, no-secrets, don't-touch-dev-hotel all hold).
+
+---
+
 ## Status summary
 
 - **Ready to send today:** declarations (12–14), adaptations, demo script, cover
@@ -95,4 +151,8 @@ scenario screenshots. Scenario screenshots are produced during the live run (D-1
 - **Blocked on the live run (external dependency V2 §2):** the executable-scenario
   Task IDs (1–11), the certification-property Channex UUIDs, test-11 booking
   evidence, and scenario screenshots.
-- No application code was changed. No secrets are bundled (scan: `SUBMISSION_STATUS.md`).
+- **Provisioning (D-5) blocked on one input:** a dedicated certification **Channex
+  Staging API key**; then provisioning is a UI operation on `guesthub`:3007 (not a script,
+  not `pms`).
+- No application code was changed. No live entity was created. No secrets are bundled
+  (scan: `SUBMISSION_STATUS.md`).
