@@ -107,7 +107,8 @@ export async function loadInboundConnections(db: Sql): Promise<InboundConnection
   return db<InboundConnection[]>`
     SELECT id, tenant_id, environment, channex_property_id, api_key_ciphertext
     FROM guesthub.channel_connections
-    WHERE provider = 'channex' AND state = 'active' AND inbound_sync_enabled = true
+    WHERE provider = 'channex' AND is_active_provider = true
+      AND state = 'active' AND inbound_sync_enabled = true
       AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;
 }
 

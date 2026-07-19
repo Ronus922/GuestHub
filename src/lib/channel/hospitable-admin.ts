@@ -89,6 +89,7 @@ function decodeHospitablePatExpiry(token: string): Date | null {
 type HospitableRow = {
   id: string;
   state: string;
+  is_active_provider: boolean;
   api_key_ciphertext: string | null;
   api_key_hint: string | null;
   api_key_expires_at: Date | null;
@@ -105,7 +106,7 @@ type HospitableRow = {
 
 async function loadHospitableRow(tenantId: string): Promise<HospitableRow | null> {
   const [row] = await sql<HospitableRow[]>`
-    SELECT id, state, api_key_ciphertext, api_key_hint, api_key_expires_at,
+    SELECT id, state, is_active_provider, api_key_ciphertext, api_key_hint, api_key_expires_at,
            inbound_sync_enabled, outbound_sync_enabled, full_sync_required,
            webhook_token_hash, last_outbound_sync_at,
            last_test_ok_at, last_test_failed_at, last_test_error_code, last_error
@@ -636,6 +637,9 @@ export async function enableHospitableInboundAction(): Promise<
     const actor = await requireChannelAdmin();
     const conn = await loadHospitableRow(actor.tenantId);
     if (!conn) return { success: false, error: "אין חיבור Hospitable מוגדר" };
+    // D79 — a dormant backup provider must not be armed by mistake
+    if (!conn.is_active_provider)
+      return { success: false, error: "Hospitable במצב גיבוי — בחר אותו כספק פעיל בראש המסך תחילה" };
     // D77 read-first rollout: inbound (import-only, no OTA writes) is allowed
     // from state='ready' — a validated connection — NOT only 'active'. 'active'
     // is reached via a successful Full Sync, which needs a WRITE-scope PAT;
@@ -750,6 +754,8 @@ export async function runHospitableFullSyncAction(): Promise<Result<HospitableFu
     const conn = await loadHospitableRow(actor.tenantId);
     if (!conn) return { success: false, error: "אין חיבור Hospitable מוגדר" };
 
+    if (!conn.is_active_provider)
+      return { success: false, error: "Hospitable במצב גיבוי — בחר אותו כספק פעיל בראש המסך תחילה" };
     const runnable = FULL_SYNC_RUNNABLE_STATES.has(conn.state);
     if (runnable) {
       // the Hospitable analogue of "a mapped property": at least one room mapped

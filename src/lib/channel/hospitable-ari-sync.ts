@@ -573,7 +573,7 @@ export async function loadDrainableHospitableConnections(db: Sql = sql): Promise
     SELECT c.id, c.tenant_id, c.api_key_ciphertext, c.environment,
            c.circuit_open_until::text AS circuit_open_until, c.consecutive_failures
     FROM guesthub.channel_connections c
-    WHERE c.provider = 'hospitable'
+    WHERE c.provider = 'hospitable' AND c.is_active_provider = true
       AND c.state = 'active' AND c.outbound_sync_enabled = true AND c.full_sync_required = false
       AND c.api_key_ciphertext IS NOT NULL
       AND EXISTS (

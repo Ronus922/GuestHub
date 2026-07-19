@@ -66,11 +66,15 @@ export function resolveIntervalMs(raw: string | undefined): number {
 // carries `provider`, and runJob branches on it. Structurally the row satisfies
 // both AriConnection (Channex) and HospitableAriConnection (channex_property_id
 // is simply NULL on hospitable rows and unread by the hospitable path).
-type WorkerConnection = AriConnection & { provider: "channex" | "hospitable" };
+type WorkerConnection = AriConnection & {
+  provider: "channex" | "hospitable" | "beds24";
+  is_active_provider: boolean;
+};
 
 async function loadConnection(connectionId: string): Promise<WorkerConnection | null> {
   const [row] = await sql<WorkerConnection[]>`
-    SELECT id, tenant_id, provider, channex_property_id, api_key_ciphertext, environment,
+    SELECT id, tenant_id, provider, is_active_provider, channex_property_id,
+           api_key_ciphertext, environment,
            circuit_open_until::text AS circuit_open_until, consecutive_failures
     FROM guesthub.channel_connections WHERE id = ${connectionId}`;
   return row ?? null;
@@ -108,6 +112,19 @@ async function runJob(
 ): Promise<{ sentValues: number }> {
   const conn = await loadConnection(connectionId);
   if (!conn) throw Object.assign(new Error("connection not found"), { code: "not_found" });
+
+  // D79 — ONE working provider at a time. A dormant (backup) provider's job
+  // must neither push nor import: full_sync dead-letters loudly (it is
+  // operator-triggered — the operator picked the wrong provider), while
+  // pull/drain no-op quietly (a stale webhook or pre-switch job is expected).
+  if (!conn.is_active_provider) {
+    if (jobType === "full_sync") {
+      throw Object.assign(new Error("הספק אינו הספק הפעיל — בחר אותו במסך הערוצים תחילה"), {
+        code: "validation_error",
+      });
+    }
+    return { sentValues: 0 };
+  }
 
   // ---- Hospitable dispatch (D77) — same job types, provider-specific runners ----
   if (conn.provider === "hospitable") {

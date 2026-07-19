@@ -78,6 +78,7 @@ export async function POST(
   const [conn] = await sql<{ id: string; tenant_id: string; provider: string }[]>`
     SELECT id, tenant_id, provider FROM guesthub.channel_connections
     WHERE webhook_token_hash = ${sha256Hex(token)}
+      AND is_active_provider = true
       AND state IN ('ready', 'active') AND inbound_sync_enabled = true
     LIMIT 1`;
   if (!conn) {

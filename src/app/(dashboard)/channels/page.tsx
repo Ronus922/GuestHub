@@ -15,6 +15,8 @@ import { getExternalChangesAction } from "@/lib/channel/external-changes-admin";
 import { getCertificationEvidenceAction } from "@/lib/channel/certification";
 import { getHospitableConnectionAction } from "@/lib/channel/hospitable-admin";
 import { getBeds24ConnectionAction } from "@/lib/channel/beds24-admin";
+import { getActiveProviderAction } from "@/lib/channel/provider-admin";
+import { ProviderSelectorSection } from "./ProviderSelectorSection";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { HospitableSection } from "./HospitableSection";
@@ -152,6 +154,7 @@ export default async function ChannelsPage() {
       getHospitableConnectionAction(),
       getBeds24ConnectionAction(),
     ]);
+  const activeProvider = await getActiveProviderAction();
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
   // UNIQUE per tenant+provider+environment). Still a pure DB read.
@@ -216,16 +219,21 @@ export default async function ChannelsPage() {
       {/* Read-only Channex certification console — evidence ledger (§13). */}
       {SHOW_CHANNEX && certification.success && <CertificationConsoleSection initial={certification.data!} />}
 
-      {/* Hospitable PRODUCTION connection + room↔property mapping (D77). A second
-          provider alongside Channex; page load is still a pure DB read — the
-          Hospitable properties list loads only on explicit operator click. */}
-      {hospitable.success && <HospitableSection initial={hospitable.data!} />}
+      {/* D79 — ONE working provider selector. Beds24 first (the default);
+          switching stops the dormant provider at worker+webhook level. */}
+      {activeProvider.success && (
+        <ProviderSelectorSection initial={activeProvider.data!.choices} />
+      )}
 
       {/* Beds24 PRODUCTION connection + room↔room mapping (D78) — read-only
           phase: invite-code setup, token cache, test, mapping. No sync yet.
           Page load is still a pure DB read — the Beds24 properties list loads
-          only on explicit operator click. */}
+          only on explicit operator click. FIRST — the default working provider. */}
       {beds24.success && <Beds24Section initial={beds24.data!} />}
+
+      {/* Hospitable PRODUCTION connection + room↔property mapping (D77) —
+          kept connected as the dormant BACKUP provider (D79). */}
+      {hospitable.success && <HospitableSection initial={hospitable.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">

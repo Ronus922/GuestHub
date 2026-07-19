@@ -820,7 +820,7 @@ export async function loadDrainableConnections(db: Sql = sql): Promise<AriConnec
     SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
            circuit_open_until::text AS circuit_open_until, consecutive_failures
     FROM guesthub.channel_connections
-    WHERE provider = 'channex'
+    WHERE provider = 'channex' AND is_active_provider = true
       AND state = 'active' AND outbound_sync_enabled = true AND full_sync_required = false
       AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;
 }
