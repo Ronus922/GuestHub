@@ -27,6 +27,11 @@ import { CertificationConsoleSection } from "./CertificationConsoleSection";
 
 export const dynamic = "force-dynamic";
 
+// D77 — Hospitable is the live provider; the whole Channex operator surface is
+// HIDDEN (not removed) while its connection/data stay intact. Flip to true to
+// bring every Channex card back exactly as it was.
+const SHOW_CHANNEX = false;
+
 // /channels — Channel Manager DIAGNOSTIC screen (§AA observability). DISPLAY-ONLY,
 // super_admin only. This screen diagnoses channel sync (connection state, mapping
 // completeness, queue health, recent errors) — it is NOT the rate editor (that is the
@@ -181,33 +186,32 @@ export default async function ChannelsPage() {
       </div>
 
       {/* Channex Staging connection — secure credential + real test (D59) */}
-      {channex.success && <ChannexStagingSection initial={channex.data!} />}
+      {SHOW_CHANNEX && channex.success && <ChannexStagingSection initial={channex.data!} />}
 
       {/* Channex Staging property mapping — existing tenant → one Channex property (D60) */}
-      {channexProperty.success && <ChannexPropertySection initial={channexProperty.data!} />}
+      {SHOW_CHANNEX && channexProperty.success && <ChannexPropertySection initial={channexProperty.data!} />}
 
       {/* Physical room → Channex Room Type synchronization (D64) */}
-      {roomSync.success && <ChannexRoomTypesSection initial={roomSync.data!} />}
+      {SHOW_CHANNEX && roomSync.success && <ChannexRoomTypesSection initial={roomSync.data!} />}
 
       {/* (Local Rate Plan × mapped room) → Channex Rate Plan synchronization (D65) */}
-      {ratePlanSync.success && <ChannexRatePlansSection initial={ratePlanSync.data!} />}
+      {SHOW_CHANNEX && ratePlanSync.success && <ChannexRatePlansSection initial={ratePlanSync.data!} />}
 
       {/* ARI status + THE Full Sync control (D68). Replaces the disabled
           "סנכרון מלא · בקרוב" placeholder. Reconcile stays out of scope. */}
-      {channexConnectionId && ariStatus && (
+      {SHOW_CHANNEX && channexConnectionId && ariStatus && (
         <AriSyncSection connectionId={channexConnectionId} initial={ariStatus} />
       )}
 
-      {/* Inbound OTA bookings — status + manual pull (D76). The pull is a durable
-          worker job; nothing here imports in the request. */}
-      {inbound.success && <InboundBookingsSection initial={inbound.data!} />}
+      {/* Inbound OTA bookings — Channex status + manual pull (D76). */}
+      {SHOW_CHANNEX && inbound.success && <InboundBookingsSection initial={inbound.data!} />}
 
-      {/* External date changes from the OTA — pending reconciliation + ops email (D82) */}
+      {/* External date changes from the OTA — pending reconciliation + ops email
+          (D82). Provider-agnostic: the Hospitable inbound writes these too. */}
       {externalChanges.success && <ExternalChangesSection initial={externalChanges.data!} />}
 
-      {/* Read-only certification console — evidence ledger + activation status (§13).
-          Triggers no scenario; displays what the real workflows produced. */}
-      {certification.success && <CertificationConsoleSection initial={certification.data!} />}
+      {/* Read-only Channex certification console — evidence ledger (§13). */}
+      {SHOW_CHANNEX && certification.success && <CertificationConsoleSection initial={certification.data!} />}
 
       {/* Hospitable PRODUCTION connection + room↔property mapping (D77). A second
           provider alongside Channex; page load is still a pure DB read — the
@@ -227,7 +231,12 @@ export default async function ChannelsPage() {
 }
 
 function StatusView({ data }: { data: ChannelStatus }) {
-  const { connections, counts, errors } = data;
+  const { counts, errors } = data;
+  // Channex hidden (D77): its connection card disappears with the rest of the
+  // Channex surface; queue/health/error cards stay — they are provider-neutral.
+  const connections = SHOW_CHANNEX
+    ? data.connections
+    : data.connections.filter((c) => c.provider !== "channex");
 
   const statCards: { label: string; value: number; danger?: boolean }[] = [
     { label: "עבודות ממתינות", value: counts.pending_jobs },
@@ -267,7 +276,9 @@ function StatusView({ data }: { data: ChannelStatus }) {
                     {stateBadge(c.state)}
                   </div>
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                    <InfoRow label="Channex Property" value={c.channex_property_id ?? "—"} code />
+                    {c.provider === "channex" && (
+                      <InfoRow label="Channex Property" value={c.channex_property_id ?? "—"} code />
+                    )}
                     <InfoRow label="מפתח API" value={c.api_key_hint ?? "—"} code />
                     <InfoRow label="סנכרון יוצא" value={c.outbound_sync_enabled ? "פעיל" : "כבוי"} />
                     <InfoRow label="ייבוא נכנס" value={c.inbound_sync_enabled ? "פעיל" : "כבוי"} />
@@ -309,6 +320,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
           DESCRIPTIVE metadata — they are deliberately NOT presented as Channex
           mapping progress (the old "0/3" read as if they were the inventory
           unit). The Channex inventory unit is the individual physical room. */}
+      {SHOW_CHANNEX && (
       <section className="flex flex-col gap-3">
         <h2 className="h3">מיפוי מלאי ל-Channex</h2>
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
@@ -359,6 +371,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
           </div>
         </div>
       </section>
+      )}
 
       {/* Recent unresolved sync errors */}
       <section className="flex flex-col gap-3">
