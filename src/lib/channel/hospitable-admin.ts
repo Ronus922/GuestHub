@@ -625,10 +625,13 @@ export async function enableHospitableInboundAction(): Promise<
     const actor = await requireChannelAdmin();
     const conn = await loadHospitableRow(actor.tenantId);
     if (!conn) return { success: false, error: "אין חיבור Hospitable מוגדר" };
-    // Same gate as Channex — and the webhook route itself only authenticates
-    // state='active' connections, so an earlier enable would be a dead callback.
-    if (conn.state !== "active")
-      return { success: false, error: "החיבור אינו פעיל — בצע סנכרון מלא מוצלח תחילה" };
+    // D77 read-first rollout: inbound (import-only, no OTA writes) is allowed
+    // from state='ready' — a validated connection — NOT only 'active'. 'active'
+    // is reached via a successful Full Sync, which needs a WRITE-scope PAT;
+    // requiring it here would make the read-scope-first phase impossible. The
+    // webhook route + inbound loader accept ready|active accordingly.
+    if (conn.state !== "ready" && conn.state !== "active")
+      return { success: false, error: "החיבור לא אומת — שמור טוקן והרץ בדיקת חיבור תחילה" };
     if (!conn.api_key_ciphertext)
       return { success: false, error: "טוקן PAT לא הוגדר — שמור טוקן Hospitable תחילה" };
     if (!channelSecretsConfigured())

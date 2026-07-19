@@ -36,6 +36,9 @@ export type HospitablePropertySummary = {
   calendarRestricted: boolean;
   /** listed/visible on the connected channels; null when absent from the body */
   listed: boolean | null;
+  /** street + number + apt + city, best-effort — the operator's ONLY way to
+   *  tell apart same-named units in one building */
+  addressLine: string | null;
 };
 
 // Hospitable caps per_page at 100; MAX_PAGES bounds the loop so a malformed
@@ -46,6 +49,20 @@ const MAX_PAGES = 50;
 // ---- pure body extractors (unit-checkable, never surface raw bodies) ----
 
 const asBool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
+
+// address → one display line. Field names probed defensively (street/number/
+// apt/city appear across Hospitable payload variants); empty → null.
+export function extractAddressLine(v: unknown): string | null {
+  const a = asObj(v);
+  if (!a) return null;
+  const parts = [
+    asStr(a.street),
+    asStr(a.number) ?? (typeof a.number === "number" ? String(a.number) : null),
+    asStr(a.apt) ?? asStr(a.apartment) ?? asStr(a.unit),
+    asStr(a.city),
+  ].filter((p): p is string => p !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
 
 // One property object → safe summary. Accepts both `id` (documented) and `uuid`
 // defensively; ignores anything unrecognisable.
@@ -62,6 +79,7 @@ export function extractHospitableProperty(item: unknown): HospitablePropertySumm
     timezone: asStr(o.timezone) ?? asStr(o.time_zone),
     calendarRestricted: asBool(o.calendar_restricted) ?? false,
     listed: asBool(o.listed),
+    addressLine: extractAddressLine(o.address),
   };
 }
 

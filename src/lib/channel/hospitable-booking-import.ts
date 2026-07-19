@@ -87,7 +87,7 @@ export async function loadHospitableInboundConnections(
   return db<HospitableInboundConnection[]>`
     SELECT id, tenant_id, api_key_ciphertext
     FROM guesthub.channel_connections
-    WHERE provider = 'hospitable' AND state = 'active'
+    WHERE provider = 'hospitable' AND state IN ('ready', 'active')
       AND inbound_sync_enabled = true AND api_key_ciphertext IS NOT NULL`;
 }
 

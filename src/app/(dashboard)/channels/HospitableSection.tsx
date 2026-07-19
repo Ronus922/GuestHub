@@ -42,6 +42,26 @@ const fmtDate = (v: string | null) => (v ? dFmt.format(new Date(v)) : "—");
 
 type Status = "not_configured" | "configured" | "testing" | "connected" | "failed";
 
+// Same-building units often share one public name — the label prefers the
+// internal name, appends the address line, and when the result STILL collides
+// (or nothing but the public name exists) appends the UUID tail so every
+// option is visually distinct and the operator can cross-check in Hospitable.
+function propertyLabels(
+  properties: HospitablePropertySummary[],
+): { property: HospitablePropertySummary; label: string }[] {
+  const base = properties.map((p) => {
+    const name = p.name ?? p.publicName ?? p.id;
+    return { property: p, label: p.addressLine ? `${name} · ${p.addressLine}` : name };
+  });
+  const counts = new Map<string, number>();
+  for (const b of base) counts.set(b.label, (counts.get(b.label) ?? 0) + 1);
+  return base.map((b) =>
+    (counts.get(b.label) ?? 0) > 1
+      ? { ...b, label: `${b.label} · ‎…${b.property.id.slice(-6)}` }
+      : b,
+  );
+}
+
 function deriveStatus(v: HospitableConnectionView, testing: boolean): Status {
   if (testing) return "testing";
   if (!v.configured) return "not_configured";
@@ -492,10 +512,9 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                             aria-label={`נכס Hospitable לחדר ${r.roomNumber}`}
                           >
                             <option value="">בחר נכס…</option>
-                            {properties.map((p) => (
+                            {propertyLabels(properties).map(({ property: p, label }) => (
                               <option key={p.id} value={p.id} disabled={p.calendarRestricted}>
-                                {(p.publicName ?? p.name ?? p.id) +
-                                  (p.calendarRestricted ? " — מוגבל יומן" : "")}
+                                {label + (p.calendarRestricted ? " — מוגבל יומן" : "")}
                               </option>
                             ))}
                             {/* a mapped id missing from the fresh list stays selectable-visible */}
@@ -646,9 +665,15 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
               <button
                 type="button"
                 onClick={onEnableInbound}
-                disabled={busy || view.state !== "active"}
+                disabled={busy || (view.state !== "ready" && view.state !== "active") || view.mappedCount === 0}
                 className="btn btn-secondary"
-                title={view.state !== "active" ? "החיבור יהפוך פעיל לאחר סנכרון מלא מוצלח" : undefined}
+                title={
+                  view.state !== "ready" && view.state !== "active"
+                    ? "שמור טוקן והרץ בדיקת חיבור תחילה"
+                    : view.mappedCount === 0
+                      ? "מפה חדר אחד לפחות תחילה"
+                      : undefined
+                }
               >
                 הפעלת ייבוא הזמנות
               </button>

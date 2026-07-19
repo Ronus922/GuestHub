@@ -69,14 +69,16 @@ export async function POST(
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  // The token authenticates a specific ACTIVE, inbound-enabled connection.
-  // Stored hashed only; while nothing is active (all of Phase 3) this is
-  // always a 404 — the endpoint does not exist as far as the outside world
-  // can tell, and no tenant/existence oracle leaks.
+  // The token authenticates a specific validated, inbound-enabled connection.
+  // Stored hashed only; while nothing is enabled this is always a 404 — the
+  // endpoint does not exist as far as the outside world can tell, and no
+  // tenant/existence oracle leaks. 'ready' is accepted for the D77 read-first
+  // rollout (hospitable inbound before the write-scope Full Sync); Channex
+  // rows can only be inbound-enabled at 'active', so its gate is unchanged.
   const [conn] = await sql<{ id: string; tenant_id: string; provider: string }[]>`
     SELECT id, tenant_id, provider FROM guesthub.channel_connections
     WHERE webhook_token_hash = ${sha256Hex(token)}
-      AND state = 'active' AND inbound_sync_enabled = true
+      AND state IN ('ready', 'active') AND inbound_sync_enabled = true
     LIMIT 1`;
   if (!conn) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
