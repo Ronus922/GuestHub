@@ -14,9 +14,11 @@ import { getInboundStatusAction } from "@/lib/channel/inbound-admin";
 import { getExternalChangesAction } from "@/lib/channel/external-changes-admin";
 import { getCertificationEvidenceAction } from "@/lib/channel/certification";
 import { getHospitableConnectionAction } from "@/lib/channel/hospitable-admin";
+import { getBeds24ConnectionAction } from "@/lib/channel/beds24-admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
 import { HospitableSection } from "./HospitableSection";
+import { Beds24Section } from "./Beds24Section";
 import { ChannexPropertySection } from "./ChannexPropertySection";
 import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
 import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
@@ -137,7 +139,7 @@ export default async function ChannelsPage() {
 
   // Every one of these is a DB read. Loading /channels performs no Channex call
   // and creates nothing upstream.
-  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges, certification, hospitable] =
+  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges, certification, hospitable, beds24] =
     await Promise.all([
       getChannelStatusAction(),
       getChannexConnectionAction(),
@@ -148,6 +150,7 @@ export default async function ChannelsPage() {
       getExternalChangesAction(),
       getCertificationEvidenceAction({ limit: 100 }),
       getHospitableConnectionAction(),
+      getBeds24ConnectionAction(),
     ]);
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
@@ -217,6 +220,12 @@ export default async function ChannelsPage() {
           provider alongside Channex; page load is still a pure DB read — the
           Hospitable properties list loads only on explicit operator click. */}
       {hospitable.success && <HospitableSection initial={hospitable.data!} />}
+
+      {/* Beds24 PRODUCTION connection + room↔room mapping (D78) — read-only
+          phase: invite-code setup, token cache, test, mapping. No sync yet.
+          Page load is still a pure DB read — the Beds24 properties list loads
+          only on explicit operator click. */}
+      {beds24.success && <Beds24Section initial={beds24.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">

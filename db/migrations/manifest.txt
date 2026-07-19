@@ -50,3 +50,4 @@
 042_guest_anonymization.sql
 043_retention_purge.sql
 044_hospitable_provider.sql
+045_beds24_provider.sql

@@ -44,3 +44,18 @@ export const HOSPITABLE_BASE_URLS = {
 export function hospitableBaseUrl(): string {
   return HOSPITABLE_BASE_URLS.production;
 }
+
+// ---- Beds24 (D78) ----
+// Beds24 exposes ONE production API v2 — no staging/sandbox exists. The API is
+// reachable at both api.beds24.com/v2 and beds24.com/api/v2; api.beds24.com is
+// the canonical host and the ONLY one used here. A `provider='beds24'`
+// connection row is always environment='production' (enforced in
+// beds24-admin.ts). Same single-resolver rule as Channex/Hospitable: every
+// Beds24 HTTP call derives its baseUrl through this function only.
+export const BEDS24_BASE_URLS = {
+  production: "https://api.beds24.com/v2",
+} as const;
+
+export function beds24BaseUrl(): string {
+  return BEDS24_BASE_URLS.production;
+}
