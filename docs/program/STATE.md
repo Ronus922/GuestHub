@@ -6,6 +6,9 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 **PROGRAM COMPLETE + DEPLOYED TO PRODUCTION** (2026-07-18).
 
+### Post-program: Hospitable provider (D77, 2026-07-19)
+The Channex→Booking.com certification blocker (external Staging/Booking.com test-account provisioning, V2 §2) was routed around: the operator connected the properties via **Hospitable** (channel manager fanning out to Airbnb/Booking/Vrbo). GuestHub gained Hospitable as a second provider — `hospitable-*.ts` modules mirroring `channex-*.ts`, dispatch-by-provider at the worker seams, migration `044_hospitable_provider.sql`, docs at `docs/hospitable/ARCHITECTURE.md`. GuestHub stays ARI source of truth (pushes price/availability/min-stay; imports reservations). Channex staging connection unchanged; Channex certification docs remain historical. Rollout gates: read-scope PAT first, single far-future date write test, operator Full Sync before any drain. Also: `/var/www/guesthub-production` was consolidated into `/var/www/guesthub` (single dir; pm2 runs from here) on 2026-07-19.
+
 ### Production deployment (2026-07-18, commit `29c09aa`)
 PR #92 merged to `main` (`--no-ff`, merge commit `29c09aa`, two parents `b78650c`+`a7c0a82`) and deployed to `/var/www/guesthub-production` (build `CFUkBzq7FzTFJVvWdt_c0`, port 3007) via `PROD_DEPLOY_OK=1 npm run deploy:prod`.
 - **Rollback anchor:** tag `prod-pre-v2` = `b78650c` (pushed). Schema backup (verified restorable, counts matched): `/var/www/guesthub-production/backups/guesthub-schema-preV2-20260718-204927.sql`.

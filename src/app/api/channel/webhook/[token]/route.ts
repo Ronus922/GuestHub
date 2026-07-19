@@ -26,6 +26,28 @@ const MAX_PER_WINDOW = 120;
 const MAX_TRACKED_KEYS = 5_000;
 const hits = new Map<string, { windowStart: number; count: number }>();
 
+// Hospitable webhook bodies carry the reservation, but the shape is not
+// contractual — the uuid is probed defensively at the few observed paths and
+// validated as a UUID. A miss is fine: the job runs as a full window pull.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function hospitableReservationUuid(body: Record<string, unknown>): string | null {
+  const obj = (v: unknown): Record<string, unknown> | null =>
+    v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  const data = obj(body.data);
+  const candidates = [
+    data?.uuid,
+    obj(body.reservation)?.uuid,
+    obj(data?.reservation)?.uuid,
+    obj(data?.reservation)?.id,
+    data?.id,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && UUID_RE.test(c)) return c;
+  }
+  return null;
+}
+
 function rateLimited(key: string): boolean {
   const now = Date.now();
   const h = hits.get(key);
@@ -51,8 +73,8 @@ export async function POST(
   // Stored hashed only; while nothing is active (all of Phase 3) this is
   // always a 404 — the endpoint does not exist as far as the outside world
   // can tell, and no tenant/existence oracle leaks.
-  const [conn] = await sql<{ id: string; tenant_id: string }[]>`
-    SELECT id, tenant_id FROM guesthub.channel_connections
+  const [conn] = await sql<{ id: string; tenant_id: string; provider: string }[]>`
+    SELECT id, tenant_id, provider FROM guesthub.channel_connections
     WHERE webhook_token_hash = ${sha256Hex(token)}
       AND state = 'active' AND inbound_sync_enabled = true
     LIMIT 1`;
@@ -74,6 +96,11 @@ export async function POST(
   const eventType = String(body.event ?? body.event_type ?? "unknown");
   // dedupe by the provider event id when present, else by body hash
   const dedupKey = String(body.event_id ?? body.id ?? sha256Hex(raw));
+  // Hospitable only (D77): the reservation uuid rides the pull job's payload
+  // so the worker can take the single-reservation fast path. Channex jobs are
+  // enqueued exactly as before (empty payload).
+  const reservationUuid =
+    conn.provider === "hospitable" ? hospitableReservationUuid(body) : null;
 
   // Persist redacted (§Z) + dedupe + enqueue in ONE transaction (D77 §3):
   // the event row and its pull job commit together, so a crash between them
@@ -96,6 +123,7 @@ export async function POST(
         connectionId: conn.id,
         jobType: "pull_booking_revisions",
         priority: 20,
+        payload: reservationUuid ? { reservation_uuid: reservationUuid } : undefined,
         idempotencyKey: `pull:${conn.id}:${dedupKey}`,
       });
       return false;

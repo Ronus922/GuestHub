@@ -70,6 +70,14 @@ export type InboundConnection = {
   api_key_ciphertext: string;
 };
 
+// The provider-neutral subset the post-normalize import core needs (D77):
+// identity only — never credentials, never a provider property id. Every
+// InboundConnection is structurally assignable to it.
+export type ImportConnection = {
+  id: string;
+  tenant_id: string;
+};
+
 export type InboundPullSummary = {
   pulled: number;
   imported: number;
@@ -99,7 +107,7 @@ export async function loadInboundConnections(db: Sql): Promise<InboundConnection
   return db<InboundConnection[]>`
     SELECT id, tenant_id, environment, channex_property_id, api_key_ciphertext
     FROM guesthub.channel_connections
-    WHERE state = 'active' AND inbound_sync_enabled = true
+    WHERE provider = 'channex' AND state = 'active' AND inbound_sync_enabled = true
       AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;
 }
 
@@ -119,22 +127,45 @@ type ResolvedStay = {
   nights: number;
 };
 
-async function resolveStays(
+// ---------------------------------------------------------------
+// room resolution seam (D77) — the ONE provider-specific step inside the
+// otherwise provider-neutral import core. The DEFAULT resolver is the original
+// Channex channel_room_mappings lookup, verbatim; the Hospitable path injects
+// its own resolver (channel_hospitable_property_mappings) via ImportCoreOptions.
+// An unresolvable room returns { error } and the core quarantines — never a
+// guessed room.
+// ---------------------------------------------------------------
+
+export type RoomResolution = { roomId: string } | { error: string };
+export type RoomResolver = (
   db: Sql | TransactionSql,
-  conn: InboundConnection,
-  rooms: NormalizedRoom[],
-): Promise<ResolvedStay[]> {
-  const stays: ResolvedStay[] = [];
-  for (const room of rooms) {
+  room: NormalizedRoom,
+) => Promise<RoomResolution>;
+
+function channexRoomResolver(conn: ImportConnection): RoomResolver {
+  return async (db, room) => {
     const [mapping] = await db<{ room_id: string }[]>`
       SELECT room_id FROM guesthub.channel_room_mappings
       WHERE connection_id = ${conn.id}
         AND channex_room_type_id = ${room.channexRoomTypeId}
         AND status = 'mapped'`;
-    if (!mapping) {
-      throw new QuarantineError(
-        `חדר ערוץ ללא מיפוי לחדר פיזי (Room Type ${room.channexRoomTypeId.slice(0, 8)}…)`,
-      );
+    return mapping
+      ? { roomId: mapping.room_id }
+      : { error: `חדר ערוץ ללא מיפוי לחדר פיזי (Room Type ${room.channexRoomTypeId.slice(0, 8)}…)` };
+  };
+}
+
+async function resolveStays(
+  db: Sql | TransactionSql,
+  conn: ImportConnection,
+  rooms: NormalizedRoom[],
+  resolveRoom: RoomResolver,
+): Promise<ResolvedStay[]> {
+  const stays: ResolvedStay[] = [];
+  for (const room of rooms) {
+    const resolved = await resolveRoom(db, room);
+    if ("error" in resolved) {
+      throw new QuarantineError(resolved.error);
     }
     let localRatePlanId: string | null = null;
     if (room.channexRatePlanId) {
@@ -158,13 +189,13 @@ async function resolveStays(
           `תוכנית תעריף של הערוץ ללא מיפוי מקומי (Rate Plan ${room.channexRatePlanId.slice(0, 8)}…)`,
         );
       }
-      if (alias.room_id !== mapping.room_id) {
+      if (alias.room_id !== resolved.roomId) {
         throw new QuarantineError("מיפוי תוכנית התעריף אינו תואם את חדר ההזמנה");
       }
       localRatePlanId = alias.local_rate_plan_id;
     }
     stays.push({
-      roomId: mapping.room_id,
+      roomId: resolved.roomId,
       localRatePlanId,
       checkIn: room.checkinDate,
       checkOut: room.checkoutDate,
@@ -401,7 +432,7 @@ type ExistingReservation = {
 
 async function lockExternalReservation(
   tx: TransactionSql,
-  conn: InboundConnection,
+  conn: ImportConnection,
   bookingId: string,
 ): Promise<{ existing: ExistingReservation | null; rrIds: string[]; oldRoomIds: string[] }> {
   const [existing] = await tx<ExistingReservation[]>`
@@ -430,7 +461,7 @@ async function lockExternalReservation(
 // calendar still shows the old ones.
 async function recordConflictDateChange(
   db: Sql,
-  conn: InboundConnection,
+  conn: ImportConnection,
   norm: NormalizedRevision,
   conflictDetail: string,
 ): Promise<void> {
@@ -520,11 +551,12 @@ type RevisionRow = {
 
 async function applyLiveRevision(
   tx: TransactionSql,
-  conn: InboundConnection,
+  conn: ImportConnection,
   norm: NormalizedRevision,
+  resolveRoom: RoomResolver,
 ): Promise<string> {
   const liveRooms = norm.rooms.filter((r) => !r.isCancelled);
-  const stays = await resolveStays(tx, conn, liveRooms);
+  const stays = await resolveStays(tx, conn, liveRooms, resolveRoom);
   const agg = aggregate(stays);
   const total = round2(norm.amount ?? agg.roomsTotal);
 
@@ -729,7 +761,7 @@ async function applyLiveRevision(
 
 async function applyCancellation(
   tx: TransactionSql,
-  conn: InboundConnection,
+  conn: ImportConnection,
   norm: NormalizedRevision,
 ): Promise<string | null> {
   const { existing, oldRoomIds } = await lockExternalReservation(tx, conn, norm.bookingId);
@@ -842,33 +874,57 @@ export async function importRevisionRow(
     await reconcileInboundRatePlans(db, conn, norm.value.rooms);
   }
 
+  return importNormalizedRevision(db, conn, rev.id, norm.value);
+}
+
+export type ImportCoreOptions = {
+  /** provider-specific room resolution; default = Channex channel_room_mappings */
+  resolveRoom?: RoomResolver;
+};
+
+// The post-normalize import core (D77) — the SHARED half of importRevisionRow,
+// lifted mechanically so a second provider (Hospitable) can feed its own
+// normalized revisions through the identical transaction / quarantine /
+// failure path. The caller has already: loaded the revision row, checked
+// import_status, normalized the payload, and run its provider-specific
+// property-ownership guard. `norm.revisionId` must equal the row's
+// provider_revision_id and `norm.bookingId` its provider_booking_id (true for
+// Channex by construction — persist stored both from the same payload).
+export async function importNormalizedRevision(
+  db: Sql,
+  conn: ImportConnection,
+  revisionRowId: string,
+  norm: NormalizedRevision,
+  opts?: ImportCoreOptions,
+): Promise<ImportOutcome> {
+  const resolveRoom = opts?.resolveRoom ?? channexRoomResolver(conn);
   try {
     const reservationId = await db.begin(async (tx) => {
       const id =
-        norm.value.kind === "cancelled"
-          ? await applyCancellation(tx, conn, norm.value)
-          : await applyLiveRevision(tx, conn, norm.value);
-      await markRevisionImported(tx, conn.tenant_id, rev.id, id);
+        norm.kind === "cancelled"
+          ? await applyCancellation(tx, conn, norm)
+          : await applyLiveRevision(tx, conn, norm, resolveRoom);
+      await markRevisionImported(tx, conn.tenant_id, revisionRowId, id);
       return id;
     });
     return { status: "imported", reservationId: reservationId ?? null };
   } catch (e) {
     if (e instanceof QuarantineError) {
-      await quarantineRevision(db, rev.id, e.message);
+      await quarantineRevision(db, revisionRowId, e.message);
       await logChannelError(db, {
         tenantId: conn.tenant_id,
         connectionId: conn.id,
         code: "inbound_quarantine",
         message: e.message,
-        context: { revision_id: rev.provider_revision_id, booking_id: rev.provider_booking_id },
+        context: { revision_id: norm.revisionId, booking_id: norm.bookingId },
       });
       // a PARKED revision that moves an EXISTING stay must still be visible as
       // an unresolved external change — the calendar keeps the old dates and
       // the OTA already regards the new ones as confirmed. Best-effort: a
       // failure here never masks the quarantine outcome.
-      if (norm.value.kind !== "cancelled") {
+      if (norm.kind !== "cancelled") {
         try {
-          await recordConflictDateChange(db, conn, norm.value, e.message);
+          await recordConflictDateChange(db, conn, norm, e.message);
         } catch {
           /* the quarantine row itself remains the durable record */
         }
@@ -876,13 +932,13 @@ export async function importRevisionRow(
       return { status: "quarantined", reason: e.message };
     }
     const message = e instanceof Error ? e.message : "ייבוא הרוויזיה נכשל";
-    await markRevisionFailed(db, rev.id, message);
+    await markRevisionFailed(db, revisionRowId, message);
     await logChannelError(db, {
       tenantId: conn.tenant_id,
       connectionId: conn.id,
       code: "inbound_import_failed",
       message,
-      context: { revision_id: rev.provider_revision_id },
+      context: { revision_id: norm.revisionId },
     });
     return { status: "failed", error: message };
   }

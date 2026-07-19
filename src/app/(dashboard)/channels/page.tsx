@@ -13,8 +13,10 @@ import { getChannexRatePlanSyncContextAction } from "@/lib/channel/rate-plan-adm
 import { getInboundStatusAction } from "@/lib/channel/inbound-admin";
 import { getExternalChangesAction } from "@/lib/channel/external-changes-admin";
 import { getCertificationEvidenceAction } from "@/lib/channel/certification";
+import { getHospitableConnectionAction } from "@/lib/channel/hospitable-admin";
 import { Icon } from "@/components/shared/Icon";
 import { ChannexStagingSection } from "./ChannexStagingSection";
+import { HospitableSection } from "./HospitableSection";
 import { ChannexPropertySection } from "./ChannexPropertySection";
 import { ChannexRoomTypesSection } from "./ChannexRoomTypesSection";
 import { ChannexRatePlansSection } from "./ChannexRatePlansSection";
@@ -130,7 +132,7 @@ export default async function ChannelsPage() {
 
   // Every one of these is a DB read. Loading /channels performs no Channex call
   // and creates nothing upstream.
-  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges, certification] =
+  const [res, channex, channexProperty, roomSync, ratePlanSync, inbound, externalChanges, certification, hospitable] =
     await Promise.all([
       getChannelStatusAction(),
       getChannexConnectionAction(),
@@ -140,6 +142,7 @@ export default async function ChannelsPage() {
       getInboundStatusAction(),
       getExternalChangesAction(),
       getCertificationEvidenceAction({ limit: 100 }),
+      getHospitableConnectionAction(),
     ]);
 
   // ARI status hangs off the one Channex connection this tenant has (the row is
@@ -205,6 +208,11 @@ export default async function ChannelsPage() {
       {/* Read-only certification console — evidence ledger + activation status (§13).
           Triggers no scenario; displays what the real workflows produced. */}
       {certification.success && <CertificationConsoleSection initial={certification.data!} />}
+
+      {/* Hospitable PRODUCTION connection + room↔property mapping (D77). A second
+          provider alongside Channex; page load is still a pure DB read — the
+          Hospitable properties list loads only on explicit operator click. */}
+      {hospitable.success && <HospitableSection initial={hospitable.data!} />}
 
       {!res.success ? (
         <div className="flex items-start gap-3 rounded-2xl border border-status-danger bg-status-danger-050 p-4">

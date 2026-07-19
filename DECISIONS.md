@@ -757,3 +757,23 @@ The 7-stage hardening program (branch `feat/pms-hardening-channex-certification`
 **Security/ops (Stage 6).** No secrets in code or git history; dependency audit clean; runtime pinned; PAN + log retention purges (H8/H11); performance measured (500-day projection ~13ms); observability + actionable alerts documented. Zero unresolved Critical/High; residual Medium/Low documented with plans.
 
 **Verification discipline.** Every claim is guarded by a runnable `check:*` script; each stage was independently verified by Agent N (a non-implementing verifier) before its tag. No implementing agent self-certifies.
+
+---
+
+## Mobile Readiness Audit — scope reconciliation (2026-07-19)
+
+**Module list mismatch (resolved by auditing what exists).** The audit brief named 17 modules (automations, billing, bulk-update, documents, finance, maintenance, permissions, rate-plans, reports, reservations, rooms, settings, staff, suppliers, calendar, channels, dashboard, guests, housekeeping). The live app under `src/app/(dashboard)/` has **14**: calendar, channels, communications, dashboard, guests, housekeeping, permissions, rate-plans, rates, reservations, rooms, settings, staff, tasks. Non-existent in code: automations, billing, bulk-update, documents, finance, maintenance, reports, suppliers. Not in the brief but present: communications, rates, tasks. Mapping: the brief's "bulk-update / yield / rate-grid" = the **`rates`** module. Decision: audit the 14 modules that exist; `claude/MOBILE_AUDIT.md` is authored against the real routes.
+
+---
+
+## D77 — Hospitable as second channel provider (dispatch-by-provider, no interface)
+
+**Why.** Booking.com certification via Channex stalled on external staging provisioning (STATE.md). The operator connected the properties through Hospitable — itself a channel manager fanning out to Airbnb/Booking/Vrbo — so GuestHub integrates with ONE upstream: pushes price+availability+min-stay to Hospitable's per-property calendar and imports reservations from it. GuestHub remains the ARI source of truth from day one. Channex code, tables, and behavior are untouched; both providers coexist per tenant (`UNIQUE (tenant_id, provider, environment)` already allows it).
+
+**No provider interface — deliberately.** Consistent with D68 (the dead `ChannelManagerProvider` factory was deleted), the second provider is per-provider modules (`hospitable-*.ts` mirroring `channex-*.ts`) plus explicit `provider` dispatch at exactly three seams: `worker.ts#runJob`, the worker's connection loaders, and provider-named admin actions. The provider-neutral core — outbox → `channel_dirty_ranges` → `channel_sync_jobs` → PM2 worker, `projectAri`, evidence ledger, circuit breaker, quarantine — is reused verbatim.
+
+**Model mapping.** Hospitable has no room-type/rate-plan axes: one physical room (sellable unit) ↔ one Hospitable property UUID (`channel_hospitable_property_mappings`, migration 044) plus ONE designated local pricing plan whose base-occupancy rate is the pushed price. `stopSell` → `available:false`; CTA/CTD → `closed_for_checkin/checkout`; `minStayArrival` → `min_stay`. Prices push as integer cents.
+
+**Inbound without a feed.** Hospitable exposes reservation GETs + UI-registered webhooks — no revision feed, no ack. Inbound reuses `channel_booking_revisions` with a synthetic content-hash revision id (`"{reservation_uuid}:{sha256(payload)[:16]}"`): the existing `UNIQUE (connection_id, provider_revision_id)` makes re-polls idempotent, and a changed reservation naturally produces a new revision row → the D76 modified-import path. Rows insert pre-acknowledged. The webhook stays a wake-up signal; the 5-minute fallback poll is the correctness backstop. The post-normalize import core was lifted out of `booking-import.ts` as `importNormalizedRevision` (pure mechanical extraction; Channex path behavior-identical).
+
+**Production-only + PAT expiry.** Hospitable has no sandbox — `environment='production'` is the only value for hospitable rows, and every write reaches live OTA listings; the D-gate (nothing drains before an operator Full Sync) plus a read-scope-first rollout bounds the blast radius. PATs are JWTs expiring after one year: `exp` is decoded at save time into `channel_connections.api_key_expires_at` and the /channels UI warns ≥30 days ahead. Webhooks carry no HMAC — authentication is the existing hashed webhook-token URL (source IP range 38.80.170.0/24 optionally allowlisted at nginx).

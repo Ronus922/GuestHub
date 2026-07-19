@@ -31,3 +31,16 @@ export function channexBaseUrl(env: ChannexEnvironment): string {
   if (!url) throw new Error(`Unknown Channex environment: ${String(env)}`);
   return url;
 }
+
+// ---- Hospitable (D77) ----
+// Hospitable exposes ONE production API — no staging/sandbox exists. A
+// `provider='hospitable'` connection row is always environment='production'
+// (enforced in hospitable-admin.ts). Same single-resolver rule as Channex:
+// every Hospitable HTTP call derives its baseUrl through this function only.
+export const HOSPITABLE_BASE_URLS = {
+  production: "https://public.api.hospitable.com/v2",
+} as const;
+
+export function hospitableBaseUrl(): string {
+  return HOSPITABLE_BASE_URLS.production;
+}
