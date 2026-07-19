@@ -42,6 +42,28 @@ const fmtDate = (v: string | null) => (v ? dFmt.format(new Date(v)) : "—");
 
 type Status = "not_configured" | "configured" | "testing" | "connected" | "failed";
 
+const PLATFORM_LABELS: Record<string, string> = {
+  booking: "Booking",
+  bookingcom: "Booking",
+  "booking.com": "Booking",
+  airbnb: "Airbnb",
+  vrbo: "Vrbo",
+  homeaway: "Vrbo",
+};
+
+// "Booking 1494747110 · Airbnb 53219877" — Booking first (the id the operator
+// quotes), other platforms after; empty string when no listings arrived.
+function listingIdsLine(p: HospitablePropertySummary): string {
+  const sorted = [...p.listings].sort((a, b) => {
+    const aB = PLATFORM_LABELS[a.platform] === "Booking" ? 0 : 1;
+    const bB = PLATFORM_LABELS[b.platform] === "Booking" ? 0 : 1;
+    return aB - bB;
+  });
+  return sorted
+    .map((l) => `${PLATFORM_LABELS[l.platform] ?? l.platform} ${l.platformId}`)
+    .join(" · ");
+}
+
 // Same-building units often share one public name — the label prefers the
 // internal name, appends the address line, and when the result STILL collides
 // (or nothing but the public name exists) appends the UUID tail so every
@@ -54,13 +76,16 @@ function propertyLabels(
     // host tags first — hosts tag units with their apartment number, which is
     // the ONLY human-meaningful discriminator inside one building
     const tagPrefix = p.tags.length > 0 ? `[${p.tags.join(" ")}] ` : "";
+    // the OTA listing ids are what the operator actually recognises —
+    // Booking room id first, then any other platform
+    const ids = listingIdsLine(p);
     const cap =
       p.bedrooms !== null || p.maxGuests !== null
         ? ` · ${p.bedrooms ?? "?"} חד׳ · עד ${p.maxGuests ?? "?"} אורחים`
         : "";
     return {
       property: p,
-      label: `${tagPrefix}${name}${p.addressLine ? ` · ${p.addressLine}` : ""}${cap}`,
+      label: `${tagPrefix}${name}${ids ? ` · ${ids}` : ""}${cap}`,
     };
   });
   const counts = new Map<string, number>();
@@ -580,6 +605,11 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                                   .filter(Boolean)
                                   .join(" · ") || "—"}
                               </span>
+                              {selected.listings.length > 0 && (
+                                <bdi className="ltr-num t-label font-mono text-ink">
+                                  {listingIdsLine(selected)}
+                                </bdi>
+                              )}
                               <a
                                 href={`https://my.hospitable.com/properties/${selected.id}`}
                                 target="_blank"

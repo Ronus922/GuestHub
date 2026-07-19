@@ -46,6 +46,15 @@ export type HospitablePropertySummary = {
   maxGuests: number | null;
   /** host-defined tags — hosts often tag units with their apartment number */
   tags: string[];
+  /** connected OTA listings — the platform ids (Booking room id, Airbnb id)
+   *  are the ids the operator actually recognises */
+  listings: HospitableListingRef[];
+};
+
+export type HospitableListingRef = {
+  /** e.g. "airbnb" | "booking" | "bookingcom" | "vrbo" (verbatim, lowercased) */
+  platform: string;
+  platformId: string;
 };
 
 // Hospitable caps per_page at 100; MAX_PAGES bounds the loop so a malformed
@@ -93,7 +102,25 @@ export function extractHospitableProperty(item: unknown): HospitablePropertySumm
     tags: Array.isArray(o.tags)
       ? o.tags.map((t) => asStr(t)).filter((t): t is string => t !== null)
       : [],
+    listings: extractListings(o.listings),
   };
+}
+
+// listings[] → safe refs. platform_id may arrive as string or number; the
+// platform key name varies (platform / channel) — probed defensively.
+export function extractListings(v: unknown): HospitableListingRef[] {
+  if (!Array.isArray(v)) return [];
+  const refs: HospitableListingRef[] = [];
+  for (const item of v) {
+    const l = asObj(item);
+    if (!l) continue;
+    const platform = (asStr(l.platform) ?? asStr(l.channel) ?? "").toLowerCase();
+    const rawId = l.platform_id ?? l.platformId ?? l.listing_id;
+    const platformId =
+      asStr(rawId) ?? (typeof rawId === "number" && Number.isFinite(rawId) ? String(rawId) : null);
+    if (platform && platformId) refs.push({ platform, platformId });
+  }
+  return refs;
 }
 
 // GET /properties → { data: [...], meta: { current_page, last_page, ... } }.
@@ -140,7 +167,7 @@ export async function listHospitableProperties(
     const r = await hospitableRequest({
       ...opts,
       method: "GET",
-      path: `/properties?page=${page}&per_page=${HOSPITABLE_PROPERTIES_PER_PAGE}`,
+      path: `/properties?page=${page}&per_page=${HOSPITABLE_PROPERTIES_PER_PAGE}&include=listings`,
     });
     if ("ok" in r) return r;
     if (r.status !== 200) return hospitableFail(mapErrorStatus(r.status), r.status);
@@ -159,7 +186,7 @@ export async function getHospitableProperty(
   const r = await hospitableRequest({
     ...opts,
     method: "GET",
-    path: `/properties/${encodeURIComponent(opts.id)}`,
+    path: `/properties/${encodeURIComponent(opts.id)}?include=listings`,
   });
   if ("ok" in r) return r;
   if (r.status !== 200) return hospitableFail(mapErrorStatus(r.status), r.status);
