@@ -63,6 +63,12 @@ CREATE TABLE IF NOT EXISTS guesthub.channel_hospitable_property_mappings (
 CREATE INDEX IF NOT EXISTS idx_hospitable_property_mappings_tenant
   ON guesthub.channel_hospitable_property_mappings (tenant_id);
 
+-- display-only snapshot of the property name at map time (never a credential;
+-- refreshed on every re-map) — lets the mapping table read like the Channex
+-- one without an HTTP call per page load
+ALTER TABLE guesthub.channel_hospitable_property_mappings
+  ADD COLUMN IF NOT EXISTS hospitable_property_name text;
+
 -- app + service roles (guesthub_app is the per-project app role; new tables do
 -- not inherit its grants automatically)
 GRANT SELECT, INSERT, UPDATE, DELETE

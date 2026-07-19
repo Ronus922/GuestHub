@@ -134,15 +134,20 @@ async function withHospitableToken(
 export type HospitableMappingRow = {
   roomId: string;
   hospitablePropertyId: string;
+  /** display-only snapshot from map time — refreshed on every re-map */
+  hospitablePropertyName: string | null;
   localRatePlanId: string | null;
   currency: string | null;
   calendarRestricted: boolean;
   status: "mapped" | "unmapped" | "quarantined";
+  updatedAt: string | null;
 };
 
 export type HospitableRoomOption = {
   roomId: string;
   roomNumber: string;
+  categoryName: string | null;
+  floor: number | null;
   isActive: boolean;
 };
 
@@ -197,16 +202,20 @@ export async function getHospitableConnectionAction(): Promise<Result<Hospitable
       row
         ? sql<HospitableMappingRow[]>`
             SELECT room_id AS "roomId", hospitable_property_id AS "hospitablePropertyId",
+                   hospitable_property_name AS "hospitablePropertyName",
                    local_rate_plan_id AS "localRatePlanId", currency,
-                   calendar_restricted AS "calendarRestricted", status
+                   calendar_restricted AS "calendarRestricted", status,
+                   updated_at::text AS "updatedAt"
             FROM guesthub.channel_hospitable_property_mappings
             WHERE tenant_id = ${actor.tenantId} AND connection_id = ${row.id}`
         : Promise.resolve([] as HospitableMappingRow[]),
       sql<HospitableRoomOption[]>`
-        SELECT id AS "roomId", room_number AS "roomNumber", is_active AS "isActive"
-        FROM guesthub.rooms
-        WHERE tenant_id = ${actor.tenantId}
-        ORDER BY room_number`,
+        SELECT r.id AS "roomId", r.room_number AS "roomNumber",
+               rt.name AS "categoryName", r.floor, r.is_active AS "isActive"
+        FROM guesthub.rooms r
+        LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
+        WHERE r.tenant_id = ${actor.tenantId}
+        ORDER BY r.room_number`,
       // Same eligibility as the Channex rate-plan flow: TENANT-scoped plans
       // (sellable_unit_id IS NULL), active, not archived, channel-visible.
       sql<HospitableRatePlanOption[]>`
@@ -536,12 +545,14 @@ export async function mapHospitablePropertyAction(input: {
 
     const [row] = await sql<{ id: string }[]>`
       INSERT INTO guesthub.channel_hospitable_property_mappings
-        (tenant_id, connection_id, room_id, hospitable_property_id, local_rate_plan_id,
-         currency, calendar_restricted, status)
+        (tenant_id, connection_id, room_id, hospitable_property_id, hospitable_property_name,
+         local_rate_plan_id, currency, calendar_restricted, status)
       VALUES (${actor.tenantId}, ${key.connectionId}, ${input.roomId}, ${propertyId},
+              ${got.property.name ?? got.property.publicName},
               ${input.localRatePlanId}, ${got.property.currency}, false, 'mapped')
       ON CONFLICT (connection_id, room_id) DO UPDATE SET
         hospitable_property_id = EXCLUDED.hospitable_property_id,
+        hospitable_property_name = EXCLUDED.hospitable_property_name,
         local_rate_plan_id = EXCLUDED.local_rate_plan_id,
         currency = EXCLUDED.currency,
         calendar_restricted = EXCLUDED.calendar_restricted,

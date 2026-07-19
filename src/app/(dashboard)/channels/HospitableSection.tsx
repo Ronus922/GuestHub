@@ -104,6 +104,8 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
   // Properties load ONLY on explicit click — never on page load.
   const [properties, setProperties] = useState<HospitablePropertySummary[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  // mapped rows render as a static, Channex-style row; "שינוי" opens the selects
+  const [editRows, setEditRows] = useState<Set<string>>(new Set());
   const [rowBusy, setRowBusy] = useState<string | null>(null);
 
   // Activation (F4): inline Full-Sync confirm (§12 pattern from AriSyncSection)
@@ -214,6 +216,11 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
         setDrafts((prev) => {
           const next = { ...prev };
           delete next[roomId];
+          return next;
+        });
+        setEditRows((prev) => {
+          const next = new Set(prev);
+          next.delete(roomId);
           return next;
         });
         setMsg({ tone: "ok", text: "החדר מופה לנכס Hospitable" });
@@ -475,14 +482,18 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
           )}
 
           <div className="overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-[880px] text-sm">
+            <table className="w-full min-w-[1080px] text-sm">
               <thead>
                 <tr className="border-b border-line bg-hover/40">
                   <th className="t-label px-4 py-3 text-start text-faint">חדר</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">קטגוריה</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">קומה</th>
                   <th className="t-label px-4 py-3 text-start text-faint">נכס Hospitable</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">מזהה Hospitable</th>
                   <th className="t-label px-4 py-3 text-start text-faint">תוכנית תעריף</th>
                   <th className="t-label px-4 py-3 text-start text-faint">מטבע</th>
                   <th className="t-label px-4 py-3 text-start text-faint">סטטוס</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">עודכן</th>
                   <th className="t-label px-4 py-3 text-start text-faint">פעולות</th>
                 </tr>
               </thead>
@@ -493,56 +504,79 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                   const statusMeta = MAPPING_STATUS_META[mapping?.status ?? "unmapped"];
                   const selected = properties?.find((p) => p.id === d.propertyId);
                   const thisBusy = rowBusy === r.roomId;
+                  const editing = !mapping || editRows.has(r.roomId);
                   const unchanged =
                     !!mapping &&
                     mapping.hospitablePropertyId === d.propertyId &&
                     (mapping.localRatePlanId ?? "") === d.planId;
+                  const planName = mapping?.localRatePlanId
+                    ? (view.ratePlans.find((p) => p.id === mapping.localRatePlanId)?.name ?? "—")
+                    : "—";
                   return (
                     <tr key={r.roomId} className="border-b border-line last:border-0">
                       <td className="px-4 py-3 text-ink">
                         <bdi className="ltr-num font-bold">{r.roomNumber}</bdi>
                       </td>
+                      <td className="px-4 py-3 text-text2">{r.categoryName ?? "—"}</td>
+                      <td className="px-4 py-3 text-muted">
+                        <bdi className="ltr-num">{r.floor ?? "—"}</bdi>
+                      </td>
                       <td className="px-4 py-3">
-                        {properties ? (
-                          <select
-                            className="field-input min-w-[220px]"
-                            value={d.propertyId}
-                            onChange={(e) => setDraft(r.roomId, { propertyId: e.target.value })}
-                            disabled={busy}
-                            aria-label={`נכס Hospitable לחדר ${r.roomNumber}`}
-                          >
-                            <option value="">בחר נכס…</option>
-                            {propertyLabels(properties).map(({ property: p, label }) => (
-                              <option key={p.id} value={p.id} disabled={p.calendarRestricted}>
-                                {label + (p.calendarRestricted ? " — מוגבל יומן" : "")}
-                              </option>
-                            ))}
-                            {/* a mapped id missing from the fresh list stays selectable-visible */}
-                            {d.propertyId && !properties.some((p) => p.id === d.propertyId) && (
-                              <option value={d.propertyId}>{d.propertyId}</option>
-                            )}
-                          </select>
+                        {editing ? (
+                          properties ? (
+                            <select
+                              className="field-input min-w-[220px]"
+                              value={d.propertyId}
+                              onChange={(e) => setDraft(r.roomId, { propertyId: e.target.value })}
+                              disabled={busy}
+                              aria-label={`נכס Hospitable לחדר ${r.roomNumber}`}
+                            >
+                              <option value="">בחר נכס…</option>
+                              {propertyLabels(properties).map(({ property: p, label }) => (
+                                <option key={p.id} value={p.id} disabled={p.calendarRestricted}>
+                                  {label + (p.calendarRestricted ? " — מוגבל יומן" : "")}
+                                </option>
+                              ))}
+                              {/* a mapped id missing from the fresh list stays selectable-visible */}
+                              {d.propertyId && !properties.some((p) => p.id === d.propertyId) && (
+                                <option value={d.propertyId}>{d.propertyId}</option>
+                              )}
+                            </select>
+                          ) : (
+                            <span className="t-label text-muted">טען נכסים כדי לבחור</span>
+                          )
                         ) : (
-                          <bdi className="ltr-num font-mono text-text2">
-                            {mapping?.hospitablePropertyId ?? "—"}
-                          </bdi>
+                          <span className="text-ink">
+                            {mapping?.hospitablePropertyName ??
+                              properties?.find((p) => p.id === mapping?.hospitablePropertyId)?.name ??
+                              "—"}
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <select
-                          className="field-input min-w-[180px]"
-                          value={d.planId}
-                          onChange={(e) => setDraft(r.roomId, { planId: e.target.value })}
-                          disabled={busy}
-                          aria-label={`תוכנית תעריף לחדר ${r.roomNumber}`}
-                        >
-                          <option value="">בחר תוכנית…</option>
-                          {view.ratePlans.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
+                        <bdi className="ltr-num font-mono text-text2">
+                          {(editing ? d.propertyId : mapping?.hospitablePropertyId) || "—"}
+                        </bdi>
+                      </td>
+                      <td className="px-4 py-3">
+                        {editing ? (
+                          <select
+                            className="field-input min-w-[180px]"
+                            value={d.planId}
+                            onChange={(e) => setDraft(r.roomId, { planId: e.target.value })}
+                            disabled={busy}
+                            aria-label={`תוכנית תעריף לחדר ${r.roomNumber}`}
+                          >
+                            <option value="">בחר תוכנית…</option>
+                            {view.ratePlans.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-text2">{planName}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-muted">
                         <bdi className="ltr-num">{selected?.currency ?? mapping?.currency ?? "—"}</bdi>
@@ -553,25 +587,57 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                           {statusMeta.label}
                         </span>
                       </td>
+                      <td className="px-4 py-3 text-muted">{fmt(mapping?.updatedAt ?? null)}</td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => onMap(r.roomId)}
-                            disabled={busy || !d.propertyId || !d.planId || unchanged || !properties}
-                            className="btn btn-sm btn-primary"
-                          >
-                            {thisBusy ? "ממפה…" : mapping ? "עדכון מיפוי" : "מיפוי"}
-                          </button>
-                          {mapping && (
-                            <button
-                              type="button"
-                              onClick={() => onUnmap(r.roomId)}
-                              disabled={busy}
-                              className="btn btn-sm btn-secondary"
-                            >
-                              ביטול מיפוי
-                            </button>
+                          {editing ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => onMap(r.roomId)}
+                                disabled={busy || !d.propertyId || !d.planId || unchanged || !properties}
+                                className="btn btn-sm btn-primary"
+                              >
+                                {thisBusy ? "ממפה…" : mapping ? "עדכון מיפוי" : "מיפוי"}
+                              </button>
+                              {mapping && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setEditRows((prev) => {
+                                      const next = new Set(prev);
+                                      next.delete(r.roomId);
+                                      return next;
+                                    })
+                                  }
+                                  disabled={busy}
+                                  className="btn btn-sm btn-secondary"
+                                >
+                                  ביטול עריכה
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setEditRows((prev) => new Set(prev).add(r.roomId))
+                                }
+                                disabled={busy}
+                                className="btn btn-sm btn-secondary"
+                              >
+                                שינוי
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onUnmap(r.roomId)}
+                                disabled={busy}
+                                className="btn btn-sm btn-secondary"
+                              >
+                                ביטול מיפוי
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -580,7 +646,7 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                 })}
                 {activeRooms.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-sm text-muted">
+                    <td colSpan={10} className="px-4 py-6 text-center text-sm text-muted">
                       אין חדרים פעילים להצגה.
                     </td>
                   </tr>
