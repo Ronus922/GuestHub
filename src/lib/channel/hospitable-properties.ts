@@ -39,6 +39,13 @@ export type HospitablePropertySummary = {
   /** street + number + apt + city, best-effort — the operator's ONLY way to
    *  tell apart same-named units in one building */
   addressLine: string | null;
+  /** main photo URL — the practical way to tell same-named units apart */
+  pictureUrl: string | null;
+  /** bedrooms / max guests, when present */
+  bedrooms: number | null;
+  maxGuests: number | null;
+  /** host-defined tags — hosts often tag units with their apartment number */
+  tags: string[];
 };
 
 // Hospitable caps per_page at 100; MAX_PAGES bounds the loop so a malformed
@@ -80,6 +87,12 @@ export function extractHospitableProperty(item: unknown): HospitablePropertySumm
     calendarRestricted: asBool(o.calendar_restricted) ?? false,
     listed: asBool(o.listed),
     addressLine: extractAddressLine(o.address),
+    pictureUrl: asStr(o.picture) ?? asStr(asObj(o.picture)?.url) ?? null,
+    bedrooms: asInt(asObj(o.capacity)?.bedrooms),
+    maxGuests: asInt(asObj(o.capacity)?.max),
+    tags: Array.isArray(o.tags)
+      ? o.tags.map((t) => asStr(t)).filter((t): t is string => t !== null)
+      : [],
   };
 }
 

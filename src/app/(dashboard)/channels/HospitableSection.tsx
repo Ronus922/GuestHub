@@ -51,7 +51,17 @@ function propertyLabels(
 ): { property: HospitablePropertySummary; label: string }[] {
   const base = properties.map((p) => {
     const name = p.name ?? p.publicName ?? p.id;
-    return { property: p, label: p.addressLine ? `${name} · ${p.addressLine}` : name };
+    // host tags first — hosts tag units with their apartment number, which is
+    // the ONLY human-meaningful discriminator inside one building
+    const tagPrefix = p.tags.length > 0 ? `[${p.tags.join(" ")}] ` : "";
+    const cap =
+      p.bedrooms !== null || p.maxGuests !== null
+        ? ` · ${p.bedrooms ?? "?"} חד׳ · עד ${p.maxGuests ?? "?"} אורחים`
+        : "";
+    return {
+      property: p,
+      label: `${tagPrefix}${name}${p.addressLine ? ` · ${p.addressLine}` : ""}${cap}`,
+    };
   });
   const counts = new Map<string, number>();
   for (const b of base) counts.set(b.label, (counts.get(b.label) ?? 0) + 1);
@@ -545,13 +555,49 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                           ) : (
                             <span className="t-label text-muted">טען נכסים כדי לבחור</span>
                           )
-                        ) : (
+                        ) : null}
+                        {editing && selected ? (
+                          /* identification card — recognise the unit by PHOTO before mapping */
+                          <div className="mt-2 flex items-center gap-3 rounded-lg border border-line bg-hover/30 p-2">
+                            {selected.pictureUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element -- external Hospitable CDN, display-only thumbnail
+                              <img
+                                src={selected.pictureUrl}
+                                alt={selected.name ?? "נכס Hospitable"}
+                                className="h-14 w-20 shrink-0 rounded-md object-cover"
+                              />
+                            ) : null}
+                            <div className="flex min-w-0 flex-col gap-0.5">
+                              <span className="t-label truncate text-ink">
+                                {selected.name ?? selected.publicName ?? selected.id}
+                              </span>
+                              <span className="t-label text-muted">
+                                {[
+                                  selected.addressLine,
+                                  selected.bedrooms !== null ? `${selected.bedrooms} חד׳` : null,
+                                  selected.maxGuests !== null ? `עד ${selected.maxGuests} אורחים` : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" · ") || "—"}
+                              </span>
+                              <a
+                                href={`https://my.hospitable.com/properties/${selected.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="t-label text-primary underline-offset-2 hover:underline"
+                              >
+                                פתח ב-Hospitable לאימות ↗
+                              </a>
+                            </div>
+                          </div>
+                        ) : null}
+                        {!editing ? (
                           <span className="text-ink">
                             {mapping?.hospitablePropertyName ??
                               properties?.find((p) => p.id === mapping?.hospitablePropertyId)?.name ??
                               "—"}
                           </span>
-                        )}
+                        ) : null}
                       </td>
                       <td className="px-4 py-3">
                         <bdi className="ltr-num font-mono text-text2">
