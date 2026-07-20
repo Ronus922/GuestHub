@@ -8,6 +8,9 @@ import {
   listBeds24PropertiesAction,
   mapBeds24RoomAction,
   unmapBeds24RoomAction,
+  enableBeds24InboundAction,
+  disableBeds24InboundAction,
+  runBeds24FullSyncAction,
   type Beds24ConnectionView,
 } from "@/lib/channel/beds24-admin";
 import type { Beds24PropertySummary } from "@/lib/channel/beds24-properties";
@@ -27,8 +30,12 @@ import { Beds24InviteCodeForm } from "./Beds24InviteCodeForm";
 //
 // Mapping model: one PHYSICAL ROOM ↔ one Beds24 room (propertyId+roomId) + ONE
 // local pricing plan. The properties list loads only on explicit click — page
-// load performs no Beds24 call. READ-ONLY PHASE: no activation / full-sync /
-// inbound controls exist yet.
+// load performs no Beds24 call.
+//
+// Activation (D79): the §12 inline-confirm Full Sync trigger + poll-only
+// inbound enable/disable (Beds24 has NO webhook — the worker pulls bookings
+// every ~5 minutes). Both are rejected server-side while Beds24 is a dormant
+// backup (is_active_provider=false).
 
 const dtFmt = new Intl.DateTimeFormat("he-IL", {
   dateStyle: "short",
@@ -92,6 +99,9 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
   // mapped rows render as a static row; "שינוי" opens the selects
   const [editRows, setEditRows] = useState<Set<string>>(new Set());
   const [rowBusy, setRowBusy] = useState<string | null>(null);
+
+  // Activation (D79): inline Full-Sync confirm (§12 pattern from AriSyncSection)
+  const [confirmingSync, setConfirmingSync] = useState(false);
 
   const status = deriveStatus(view, testing);
   const meta = STATUS_META[status];
@@ -217,7 +227,47 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
     });
   }
 
+  function onConfirmFullSync() {
+    setConfirmingSync(false);
+    setMsg(null);
+    startTransition(async () => {
+      const res = await runBeds24FullSyncAction();
+      if (!res.success) return setMsg({ tone: "err", text: res.error });
+      await reload();
+      setMsg({
+        tone: "ok",
+        text: res.data!.alreadyRunning
+          ? "סנכרון מלא כבר מתבצע — לא נוצרה ריצה שנייה"
+          : "סנכרון מלא נכנס לתור — עובד הרקע מריץ אותו כעת",
+      });
+    });
+  }
+
+  function onEnableInbound() {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await enableBeds24InboundAction();
+      if (!res.success) return setMsg({ tone: "err", text: res.error });
+      await reload();
+      setMsg({ tone: "ok", text: "ייבוא הזמנות הופעל — עובד הרקע מושך הזמנות כל כ-5 דקות" });
+    });
+  }
+
+  function onDisableInbound() {
+    setMsg(null);
+    startTransition(async () => {
+      const res = await disableBeds24InboundAction();
+      if (!res.success) return setMsg({ tone: "err", text: res.error });
+      await reload();
+      setMsg({ tone: "ok", text: "ייבוא הזמנות כובה" });
+    });
+  }
+
   const activeRooms = view.rooms.filter((r) => r.isActive);
+  const canFullSync =
+    view.isActiveProvider &&
+    (view.state === "ready" || view.state === "active") &&
+    view.mappedCount > 0;
 
   return (
     <section className="card">
@@ -233,14 +283,23 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
       </div>
 
       <div className="card-bd flex flex-col gap-4">
-        {/* Read-only phase notice — no sync control exists on this card yet */}
-        <div className="flex items-start gap-2.5 rounded-xl border border-line bg-primary-050 p-3">
-          <Icon name="info" size={17} className="mt-0.5 shrink-0 text-primary" />
-          <p className="t-label leading-relaxed text-text2">
-            <strong>שלב קריאה בלבד</strong> — סנכרון יופעל בשלב הבא. כל הפעולות בכרטיס
-            (בדיקת חיבור, רשימת נכסים, מיפוי) הן קריאה בלבד ואינן משנות דבר ב-Beds24.
+        {/* Production notice — like Hospitable, this IS the live account */}
+        <div className="flex items-start gap-2.5 rounded-xl border border-status-warning bg-status-warning-050 p-3">
+          <Icon name="warning" size={17} className="mt-0.5 shrink-0 text-status-warning" />
+          <p className="t-label leading-relaxed text-status-warning">
+            ל-Beds24 אין סביבת בדיקות — זהו חיבור לחשבון <strong>הייצור</strong> האמיתי.
+            &quot;סנכרון מלא&quot; שולח את המחירים והזמינות הקנוניים דרך Beds24 ליומני
+            Booking.com <strong>החיים</strong>; שאר הפעולות בכרטיס (בדיקה, רשימת נכסים,
+            מיפוי) הן קריאה בלבד.
           </p>
         </div>
+
+        {!view.isActiveProvider && (
+          <p className="t-label rounded-lg bg-hover px-3 py-2 text-muted">
+            Beds24 במצב גיבוי (ספק לא פעיל) — ניתן להגדיר, לבדוק ולמפות, אך הפעלת סנכרון
+            וייבוא חסומות עד לבחירתו כספק הפעיל בראש המסך.
+          </p>
+        )}
 
         {!view.secretsKeyConfigured && (
           <p className="t-label rounded-lg bg-status-danger-050 px-3 py-2 text-status-danger">
@@ -564,6 +623,112 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+
+        {/* ---- Activation (D79): Full Sync + poll-only inbound import ---- */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <Icon name="refresh" size={17} className="text-muted" />
+            <h3 className="h4">הפעלת סנכרון Beds24</h3>
+          </div>
+
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+            <dt className="t-label text-faint">סנכרון יוצא (ARI)</dt>
+            <dd className="t-secondary text-text2">
+              {view.outboundEnabled ? "פעיל — סנכרון מצטבר רץ" : view.fullSyncRequired ? "נדרש סנכרון מלא" : "לא פעיל"}
+            </dd>
+            <dt className="t-label text-faint">סנכרון מלא מוצלח אחרון</dt>
+            <dd className="t-secondary text-text2">
+              <bdi className="ltr-num">{fmt(view.lastOutboundSyncAt)}</bdi>
+            </dd>
+            <dt className="t-label text-faint">ייבוא הזמנות נכנס</dt>
+            <dd className="t-secondary text-text2">
+              {view.inboundEnabled ? "פעיל — משיכה כל כ-5 דקות" : "כבוי"}
+            </dd>
+            <dt className="t-label text-faint">ייבוא אחרון</dt>
+            <dd className="t-secondary text-text2">
+              <bdi className="ltr-num">{fmt(view.lastInboundImportAt)}</bdi>
+            </dd>
+          </dl>
+
+          <p className="t-label rounded-lg bg-hover px-3 py-2 text-muted">
+            ל-Beds24 אין webhook — ההזמנות נמשכות אוטומטית כל כ-5 דקות על-ידי עובד הרקע.
+            אין כתובת לרשום ואין טוקן להעתיק.
+          </p>
+
+          {/* THE Full Sync control — same §12 inline-confirm pattern as the
+              Channex/Hospitable cards: trigger is secondary; confirm is primary. */}
+          <div className="flex flex-wrap items-center gap-2">
+            {!confirmingSync ? (
+              <button
+                type="button"
+                onClick={() => setConfirmingSync(true)}
+                disabled={busy || !canFullSync || view.fullSyncRunning}
+                aria-disabled={busy || !canFullSync || view.fullSyncRunning}
+                className="btn btn-secondary"
+                title={!view.isActiveProvider ? "Beds24 אינו הספק הפעיל — בחר אותו בראש המסך תחילה" : undefined}
+              >
+                {view.fullSyncRunning ? "סנכרון מלא כבר מתבצע" : "סנכרון מלא"}
+              </button>
+            ) : (
+              <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-4">
+                <p className="t-secondary text-text2">
+                  יישלחו דרך Beds24 ליומני Booking.com <strong>החיים</strong> המחירים
+                  והזמינות הקנוניים של החדרים הממופים (<bdi className="ltr-num">{view.mappedCount}</bdi>),
+                  לפי תוכנית התעריף שנבחרה לכל חדר. ריצה נקייה מפעילה את הסנכרון המצטבר
+                  אוטומטית. הפעולה אינה משנה מחיר, חדר, תוכנית או הזמנה ב-GuestHub.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onConfirmFullSync}
+                    disabled={busy}
+                    aria-disabled={busy}
+                    className="btn btn-primary"
+                  >
+                    בצע סנכרון מלא
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingSync(false)}
+                    disabled={pending}
+                    className="btn btn-secondary"
+                  >
+                    ביטול
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!view.inboundEnabled ? (
+              <button
+                type="button"
+                onClick={onEnableInbound}
+                disabled={
+                  busy ||
+                  !view.isActiveProvider ||
+                  (view.state !== "ready" && view.state !== "active") ||
+                  view.mappedCount === 0
+                }
+                className="btn btn-secondary"
+                title={
+                  !view.isActiveProvider
+                    ? "Beds24 אינו הספק הפעיל — בחר אותו בראש המסך תחילה"
+                    : view.state !== "ready" && view.state !== "active"
+                      ? "הזן קוד הזמנה והרץ בדיקת חיבור תחילה"
+                      : view.mappedCount === 0
+                        ? "מפה חדר אחד לפחות תחילה"
+                        : undefined
+                }
+              >
+                הפעלת ייבוא הזמנות
+              </button>
+            ) : (
+              <button type="button" onClick={onDisableInbound} disabled={busy} className="btn btn-secondary">
+                כיבוי ייבוא הזמנות
+              </button>
+            )}
           </div>
         </div>
       </div>

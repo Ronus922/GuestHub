@@ -5,6 +5,7 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { beds24BaseUrl } from "./config";
+import { enqueueChannelJob } from "./queue";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { beds24Request, beds24AuthRequest, beds24Fail, mapErrorStatus } from "./beds24-http";
 import type { Beds24ApiErrorCategory, Beds24ApiFailure } from "./beds24-http";
@@ -76,10 +77,16 @@ const iso = (v: Date | null): string | null => (v ? v.toISOString() : null);
 type Beds24Row = {
   id: string;
   state: string;
+  is_active_provider: boolean;
   api_key_ciphertext: string | null; // the encrypted REFRESH token
   api_key_hint: string | null;
   access_token_ciphertext: string | null; // 24h access-token cache (encrypted)
   access_token_expires_at: Date | null;
+  inbound_sync_enabled: boolean;
+  outbound_sync_enabled: boolean;
+  full_sync_required: boolean;
+  last_outbound_sync_at: Date | null;
+  last_inbound_import_at: Date | null;
   last_test_ok_at: Date | null;
   last_test_failed_at: Date | null;
   last_test_error_code: string | null;
@@ -88,8 +95,10 @@ type Beds24Row = {
 
 async function loadBeds24Row(tenantId: string): Promise<Beds24Row | null> {
   const [row] = await sql<Beds24Row[]>`
-    SELECT id, state, api_key_ciphertext, api_key_hint,
+    SELECT id, state, is_active_provider, api_key_ciphertext, api_key_hint,
            access_token_ciphertext, access_token_expires_at,
+           inbound_sync_enabled, outbound_sync_enabled, full_sync_required,
+           last_outbound_sync_at, last_inbound_import_at,
            last_test_ok_at, last_test_failed_at, last_test_error_code, last_error
     FROM guesthub.channel_connections
     WHERE tenant_id = ${tenantId} AND provider = 'beds24' AND environment = ${BEDS24_ENV}`;
@@ -219,6 +228,19 @@ export type Beds24ConnectionView = {
   lastTestErrorCode: string | null;
   lastError: string | null;
   mappedCount: number;
+  // ---- activation surface (D79) ----
+  /** D79 — this connection is the tenant's WORKING provider; a dormant backup
+   *  cannot be armed (enable-inbound / full-sync are rejected server-side) */
+  isActiveProvider: boolean;
+  /** inbound is POLL-ONLY for Beds24 — the worker pulls bookings periodically;
+   *  no webhook URL/token exists for this provider */
+  inboundEnabled: boolean;
+  outboundEnabled: boolean;
+  fullSyncRequired: boolean;
+  /** a full_sync job is live — the button stays disabled */
+  fullSyncRunning: boolean;
+  lastOutboundSyncAt: string | null;
+  lastInboundImportAt: string | null;
   /** the tenant currency — pricing plans have no own currency column; the
    *  tenant currency IS the plan currency (see rate-plan-admin loadCurrency) */
   tenantCurrency: string;
@@ -232,7 +254,7 @@ export async function getBeds24ConnectionAction(): Promise<Result<Beds24Connecti
     const actor = await requireChannelAdmin();
     const row = await loadBeds24Row(actor.tenantId);
 
-    const [mappings, rooms, plans, [tenant]] = await Promise.all([
+    const [mappings, rooms, plans, [tenant], [liveFullSync]] = await Promise.all([
       row
         ? sql<Beds24MappingRow[]>`
             SELECT room_id AS "roomId", beds24_property_id AS "beds24PropertyId",
@@ -260,6 +282,13 @@ export async function getBeds24ConnectionAction(): Promise<Result<Beds24Connecti
         ORDER BY name`,
       sql<{ currency: string | null }[]>`
         SELECT currency FROM guesthub.tenants WHERE id = ${actor.tenantId}`,
+      row
+        ? sql<{ id: string }[]>`
+            SELECT id FROM guesthub.channel_sync_jobs
+            WHERE connection_id = ${row.id} AND job_type = 'full_sync'
+              AND status IN ('queued','processing','retry_wait')
+            LIMIT 1`
+        : Promise.resolve([] as { id: string }[]),
     ]);
 
     return {
@@ -277,6 +306,13 @@ export async function getBeds24ConnectionAction(): Promise<Result<Beds24Connecti
         lastTestErrorCode: row?.last_test_error_code ?? null,
         lastError: row?.last_error ?? null,
         mappedCount: mappings.filter((m) => m.status === "mapped").length,
+        isActiveProvider: row?.is_active_provider ?? false,
+        inboundEnabled: row?.inbound_sync_enabled ?? false,
+        outboundEnabled: row?.outbound_sync_enabled ?? false,
+        fullSyncRequired: row?.full_sync_required ?? false,
+        fullSyncRunning: !!liveFullSync,
+        lastOutboundSyncAt: iso(row?.last_outbound_sync_at ?? null),
+        lastInboundImportAt: iso(row?.last_inbound_import_at ?? null),
         tenantCurrency: tenant?.currency || "ILS",
         rooms,
         ratePlans: plans,
@@ -699,6 +735,181 @@ export async function unmapBeds24RoomAction(input: { roomId: string }): Promise<
       session: ctx.session,
     });
     return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ============================================================
+// Activation (D79) — inbound enable/disable + THE Full Sync trigger.
+// ============================================================
+
+const NOT_ACTIVE_PROVIDER_ERROR = "Beds24 אינו הספק הפעיל — בחר אותו בראש המסך תחילה";
+
+// ---- 7) enable inbound booking import ----
+// Mirrors enableHospitableInboundAction with the ONE Beds24 difference:
+// inbound is POLL-ONLY — the PM2 worker pulls bookings periodically (~5 min);
+// there is NO webhook, so no token is minted, nothing is returned once, and
+// disable→enable is not a rotation path. D79: a dormant backup provider must
+// never be armed — enabling requires is_active_provider.
+export async function enableBeds24InboundAction(): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    const conn = await loadBeds24Row(actor.tenantId);
+    if (!conn) return { success: false, error: "אין חיבור Beds24 מוגדר" };
+    // D79 — a dormant backup provider must not be armed by mistake
+    if (!conn.is_active_provider)
+      return { success: false, error: NOT_ACTIVE_PROVIDER_ERROR };
+    // Read-first rollout (same doctrine as Hospitable): inbound (import-only,
+    // no OTA writes) is allowed from state='ready' — a validated connection —
+    // NOT only 'active' ('active' is reached via a successful Full Sync).
+    if (conn.state !== "ready" && conn.state !== "active")
+      return { success: false, error: "החיבור לא אומת — הזן קוד הזמנה והרץ בדיקת חיבור תחילה" };
+    if (!conn.api_key_ciphertext)
+      return { success: false, error: "חיבור Beds24 לא הוגדר — הזן קוד הזמנה תחילה" };
+    const [mapped] = await sql<{ n: number }[]>`
+      SELECT COUNT(*)::int AS n FROM guesthub.channel_beds24_room_mappings
+      WHERE connection_id = ${conn.id} AND status = 'mapped'`;
+    if ((mapped?.n ?? 0) === 0)
+      return { success: false, error: "אין חדרים ממופים לחדרי Beds24 — מפה חדר אחד לפחות תחילה" };
+
+    await sql`
+      UPDATE guesthub.channel_connections
+      SET inbound_sync_enabled = true
+      WHERE id = ${conn.id}`;
+    const ctx = await auditRequestContext();
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: conn.id,
+      action: "inbound_enable",
+      // poll-only: no webhook token exists for this provider
+      after: { provider: "beds24", inbound_sync_enabled: true, webhook: "none_poll_only" },
+      ip: ctx.ip,
+      session: ctx.session,
+    });
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ---- 8) disable inbound booking import ----
+// Poll-only inbound: flipping the flag is the whole story — the worker's
+// loader filters on inbound_sync_enabled, so the next poll cycle skips this
+// connection. There is no webhook hash to clear (deliberate difference from
+// the Hospitable disable). Nothing external is touched.
+export async function disableBeds24InboundAction(): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    const conn = await loadBeds24Row(actor.tenantId);
+    if (!conn) return { success: false, error: "אין חיבור Beds24 מוגדר" };
+
+    await sql`
+      UPDATE guesthub.channel_connections
+      SET inbound_sync_enabled = false
+      WHERE id = ${conn.id}`;
+    const ctx = await auditRequestContext();
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: conn.id,
+      action: "inbound_disable",
+      after: { provider: "beds24", inbound_sync_enabled: false },
+      ip: ctx.ip,
+      session: ctx.session,
+    });
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+// ---- 9) THE Beds24 Full Sync trigger ----
+// Mirrors runHospitableFullSyncAction: enqueues a durable `full_sync` job and
+// returns immediately — the PM2 channel worker (provider-branched) runs
+// runBeds24FullSync (beds24-ari-sync.ts) out of band, and a clean run is what
+// flips the connection to state='active' + outbound_sync_enabled=true (the
+// sync layer owns activation; this action only ENQUEUES — it deliberately
+// imports nothing from beds24-ari-sync.ts). Duplicate prevention is the
+// DATABASE's (uq_jobs_idempotency on `full_sync:${connectionId}`); D70 §7 —
+// the STORED credential is probed (read-only) before a runnable job is created.
+const FULL_SYNC_RUNNABLE_STATES = new Set(["ready", "active"]);
+const ACTIVE_JOB_STATES = ["queued", "processing", "retry_wait"];
+
+export type Beds24FullSyncRequestResult = {
+  /** the channel_sync_jobs row id of the live run */
+  runId: string | null;
+  status: string;
+  /** true ⇒ a Full Sync was ALREADY running; no second one was created */
+  alreadyRunning: boolean;
+};
+
+export async function runBeds24FullSyncAction(): Promise<Result<Beds24FullSyncRequestResult>> {
+  try {
+    const actor = await requireChannelAdmin();
+    const conn = await loadBeds24Row(actor.tenantId);
+    if (!conn) return { success: false, error: "אין חיבור Beds24 מוגדר" };
+
+    // D79 — a dormant backup provider must never push ARI
+    if (!conn.is_active_provider)
+      return { success: false, error: NOT_ACTIVE_PROVIDER_ERROR };
+    const runnable = FULL_SYNC_RUNNABLE_STATES.has(conn.state);
+    if (runnable) {
+      // the Beds24 analogue of "a mapped property": at least one room mapped
+      // WITH a designated pricing plan — otherwise the projection is empty.
+      const [mapped] = await sql<{ n: number }[]>`
+        SELECT COUNT(*)::int AS n FROM guesthub.channel_beds24_room_mappings
+        WHERE connection_id = ${conn.id} AND status = 'mapped' AND local_rate_plan_id IS NOT NULL`;
+      if ((mapped?.n ?? 0) === 0)
+        return { success: false, error: "אין חדרים ממופים לחדרי Beds24 — מפה חדר ותוכנית תעריף תחילה" };
+
+      // D70 §7 — never START a Full Sync on a credential that cannot
+      // authenticate. Read-only probe (GET /authentication/details +
+      // GET /properties) of the stored credential; on failure no job row.
+      const auth = await probeStoredBeds24Credential(actor.tenantId);
+      if (!auth.ok) return { success: false, error: auth.error };
+    }
+
+    const enqueued = await enqueueChannelJob(sql, {
+      tenantId: actor.tenantId,
+      connectionId: conn.id,
+      jobType: "full_sync",
+      priority: 10,
+      idempotencyKey: `full_sync:${conn.id}`,
+      suppressed: !runnable,
+    });
+    const alreadyRunning = "duplicate" in enqueued;
+
+    // Only a genuinely NEW run re-arms the flag; a duplicate click changes nothing.
+    if (!alreadyRunning) {
+      await sql`
+        UPDATE guesthub.channel_connections SET full_sync_required = true
+        WHERE id = ${conn.id}`;
+    }
+    await writeAudit(actor, {
+      entityType: "channel_connection",
+      entityId: conn.id,
+      action: "request_full_sync",
+      after: { provider: "beds24", state: conn.state, runnable, duplicate: alreadyRunning },
+    });
+
+    if (!runnable)
+      return { success: false, error: "החיבור אינו מוכן לסנכרון — אמת את החיבור (בדיקת חיבור) תחילה" };
+
+    // Report the run that is actually live — the existing one on a duplicate.
+    const [active] = await sql<{ id: string; status: string }[]>`
+      SELECT id, status FROM guesthub.channel_sync_jobs
+      WHERE connection_id = ${conn.id} AND job_type = 'full_sync'
+        AND status = ANY(${ACTIVE_JOB_STATES})
+      ORDER BY created_at DESC LIMIT 1`;
+
+    return {
+      success: true,
+      data: {
+        runId: active?.id ?? ("id" in enqueued ? enqueued.id : null),
+        status: active?.status ?? "queued",
+        alreadyRunning,
+      },
+    };
   } catch (e) {
     return failFrom(e);
   }
