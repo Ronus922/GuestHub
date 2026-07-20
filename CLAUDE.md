@@ -35,6 +35,25 @@
 
 ---
 
+## GuestHub — עובדות פרויקט (עודכן /init 2026-07-20)
+
+**PMS מרובה-דיירים בעברית (RTL) לניהול מלון דירות.** מקורות אמת: `PROJECT_OVERVIEW.md` (ספסיפיקציה), `DESIGN_SYSTEM.md` + `GUIDELINES.md` (עיצוב), `STATE.md` (מה קפוא), `DECISIONS.md`, `docs/`.
+
+| שכבה | בפועל |
+|------|--------|
+| Framework | Next.js 15.5.20 (App Router, RSC + Server Actions, Turbopack) · React 19.1 |
+| שפה | TypeScript strict · Node 20 · pnpm 10 |
+| UI | Tailwind v4 (`@theme inline` ב-`app/styles/`, אין tailwind.config) · lucide-react · framer-motion · sonner |
+| Data | PostgreSQL (schema `guesthub`, 46 מיגרציות ב-`db/migrations/`) דרך porsager `postgres` (`lib/db.ts`) · Supabase Auth self-hosted = **אימות בלבד** |
+| טפסים/State | react-hook-form + Zod · nuqs · @tanstack/react-table |
+| Channels | ספק פעיל אחד בכל רגע (beds24 ברירת מחדל; Channex, Hospitable) · PM2 channel worker |
+| Runtime | dev + prod תחת pm2, פורט 3007 · prod נפרד: `/var/www/guesthub-production` (`PROD_DEPLOY_OK=1 npm run deploy:prod`) |
+| בדיקות | ‎90+ סקריפטי `check:*` ב-package.json (כולל `check:design`, `check:status-default`) · `pnpm typecheck && pnpm lint && pnpm build` בסוף כל שלב |
+
+14 מסכי dashboard (`src/app/(dashboard)/`): calendar, reservations, rates, rate-plans, rooms, guests, channels, communications, settings, staff, permissions, dashboard (+housekeeping/tasks — קפואים, ראה STATE.md). Env (שמות בלבד): DATABASE_URL, SUPABASE_*, CARD_VAULT_KEY, CHANNEL_SECRETS_KEY, MESSAGING_SECRETS_ENCRYPTION_KEY, GOOGLE_MAPS.
+
+---
+
 ## Ruflo — תמיד פעיל (ALWAYS ON)
 
 **Ruflo/claude-flow v3 הוא שכבת האורקסטרציה הקבועה של כל שיחה.**
