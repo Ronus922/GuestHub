@@ -38,12 +38,17 @@ type DrainableConn = { id: string };
 // predicate as loadDrainableConnections (ari-sync.ts), scoped to the tenant.
 // A connection still awaiting its Full Sync is NOT "connected" for /rates: its
 // ranges would sit forever and "מסנכרן…" would be a lie.
+// D79 — provider-neutral: the ACTIVE provider's connection qualifies once its
+// baseline is established, whichever provider it is (Channex's extra
+// channex_property_id requirement is enforced by its own worker loader; the
+// per-provider mapping-existence checks live in each drain loader too).
 async function drainableConnections(db: Sql, tenantId: string): Promise<DrainableConn[]> {
   return db<DrainableConn[]>`
     SELECT id FROM guesthub.channel_connections
     WHERE tenant_id = ${tenantId}
+      AND is_active_provider = true
       AND state = 'active' AND outbound_sync_enabled = true AND full_sync_required = false
-      AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;
+      AND api_key_ciphertext IS NOT NULL`;
 }
 
 export async function getRatesSyncStatus(db: Sql, tenantId: string): Promise<RatesSyncStatus> {
