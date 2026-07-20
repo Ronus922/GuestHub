@@ -57,6 +57,19 @@ ALTER DEFAULT PRIVILEGES FOR ROLE guesthub_owner IN SCHEMA guesthub GRANT SELECT
 ALTER DEFAULT PRIVILEGES FOR ROLE guesthub_owner IN SCHEMA guesthub GRANT USAGE, SELECT ON SEQUENCES TO guesthub_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE guesthub_owner IN SCHEMA guesthub GRANT EXECUTE ON ROUTINES TO guesthub_app;
 
+-- 3b. Shared-instance auth read (staff last-sign-in display) ------------------
+-- On the shared Supabase instance the app LEFT JOINs auth.users for
+-- last_sign_in_at (src/app/(dashboard)/staff/page.tsx). Column-level only:
+-- never the password hash or token columns. No-op on a dedicated DB without
+-- GoTrue (schema absent) — guarded so the script stays idempotent everywhere.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='auth') THEN
+    GRANT USAGE ON SCHEMA auth TO guesthub_app;
+    GRANT SELECT (id, last_sign_in_at, created_at) ON auth.users TO guesthub_app;
+  END IF;
+END $$;
+
 -- 4. Read-only diagnostics ---------------------------------------------------
 GRANT USAGE ON SCHEMA guesthub TO guesthub_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA guesthub TO guesthub_readonly;
