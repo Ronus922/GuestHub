@@ -48,6 +48,10 @@ export async function middleware(request: NextRequest) {
   // 307'd to /login and swallowed as a 200 — the D76/D77 "webhook registered
   // but zero events ever received" root cause.
   const isChannelWebhook = path.startsWith("/api/channel/webhook/");
+  // Public booking API (sea-tower): server-to-server over loopback, no user
+  // session. Authenticated inside the route via the x-booking-secret header
+  // (timingSafeEqual against PUBLIC_BOOKING_API_SECRET; env unset = API off).
+  const isPublicBookingApi = path.startsWith("/api/public/");
 
   // Redirect while carrying over any refreshed auth cookies staged on `response`
   // (a fresh NextResponse.redirect would otherwise drop a rotated refresh token).
@@ -60,7 +64,14 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook && !isChannelWebhook)
+  if (
+    !user &&
+    !isLogin &&
+    !isOauthCallback &&
+    !isMessagingWebhook &&
+    !isChannelWebhook &&
+    !isPublicBookingApi
+  )
     return redirectTo("/login");
   if (user && isLogin) return redirectTo("/");
 

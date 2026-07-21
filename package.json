@@ -32,6 +32,7 @@
     "check:calendar": "node scripts/check-calendar.mjs",
     "check:channels-badge": "node scripts/check-channels-badge.mjs",
     "check:cards": "node scripts/check-cards.mjs",
+    "check:gateway": "node scripts/check-gateway.mjs",
     "check:payments": "node scripts/check-payments.mjs",
     "check:channel-card-ingest": "node scripts/check-channel-card-ingest.mjs",
     "check:messaging": "node scripts/check-messaging.mjs",

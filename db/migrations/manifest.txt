@@ -55,3 +55,5 @@
 047_restore_stored_cvv.sql
 048_task_board_order.sql
 049_maintenance_role.sql
+050_website_booking_source.sql
+051_psp_readiness.sql
