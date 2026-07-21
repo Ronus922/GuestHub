@@ -35,6 +35,25 @@
 
 ---
 
+## GuestHub — עובדות פרויקט (עודכן /init 2026-07-20)
+
+**PMS מרובה-דיירים בעברית (RTL) לניהול מלון דירות.** מקורות אמת: `PROJECT_OVERVIEW.md` (ספסיפיקציה), `DESIGN_SYSTEM.md` + `GUIDELINES.md` (עיצוב), `STATE.md` (מה קפוא), `DECISIONS.md`, `docs/`.
+
+| שכבה | בפועל |
+|------|--------|
+| Framework | Next.js 15.5.20 (App Router, RSC + Server Actions, Turbopack) · React 19.1 |
+| שפה | TypeScript strict · Node 20 · pnpm 10 |
+| UI | Tailwind v4 (`@theme inline` ב-`app/styles/`, אין tailwind.config) · lucide-react · framer-motion · sonner |
+| Data | PostgreSQL (schema `guesthub`, 46 מיגרציות ב-`db/migrations/`) דרך porsager `postgres` (`lib/db.ts`) · Supabase Auth self-hosted = **אימות בלבד** |
+| טפסים/State | react-hook-form + Zod · nuqs · @tanstack/react-table |
+| Channels | ספק פעיל אחד בכל רגע (beds24 ברירת מחדל; Channex, Hospitable) · PM2 channel worker |
+| Runtime | dev + prod תחת pm2, פורט 3007 · prod נפרד: `/var/www/guesthub-production` (`PROD_DEPLOY_OK=1 npm run deploy:prod`) |
+| בדיקות | ‎90+ סקריפטי `check:*` ב-package.json (כולל `check:design`, `check:status-default`) · `pnpm typecheck && pnpm lint && pnpm build` בסוף כל שלב |
+
+14 מסכי dashboard (`src/app/(dashboard)/`): calendar, reservations, rates, rate-plans, rooms, guests, channels, communications, settings, staff, permissions, dashboard (+housekeeping/tasks — קפואים, ראה STATE.md). Env (שמות בלבד): DATABASE_URL, SUPABASE_*, CARD_VAULT_KEY, CHANNEL_SECRETS_KEY, MESSAGING_SECRETS_ENCRYPTION_KEY, GOOGLE_MAPS.
+
+---
+
 ## Ruflo — תמיד פעיל (ALWAYS ON)
 
 **Ruflo/claude-flow v3 הוא שכבת האורקסטרציה הקבועה של כל שיחה.**
@@ -122,12 +141,13 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 
 ## 📚 מדריכים לפי נושא
 
-טען את המדריך הרלוונטי לפי הצורך (נוצר אוטומטית — 85 skills, 38 agents):
+טען את המדריך הרלוונטי לפי הצורך (נוצר אוטומטית — 92 skills, 45 agents):
 
 | Skill | תיאור |
 |------|------|
 | **מצב הפרויקט** | `@PROJECT.md` |
 | `/agent-browser` | Browser automation CLI for AI agents (vercel-labs/agent-browser) — drives headless Chrome… |
+| `/agent-reach` | Give agents read+search access to the wider internet through one CLI… |
 | `/agent-skills-2026` | Agent Skills 2026 master skill — loads Code Reviewer, Excalidraw diagram generator, Google… |
 | `/agent-zero` | Deploy & manage Agent Zero (agent0ai) — an autonomous, "organic" multi-agent framework that… |
 | `/agentmemory` | Deploy & manage AgentMemory (rohitg00) — a rich LOCAL memory service for AI coding agents… |
@@ -140,6 +160,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/cli-anything` | CLI-Anything — מסגרת להפיכת תוכנה בעלת source code ל-CLI agent-native. |
 | `/clone-website` | AI Website Cloner — reverse-engineers any website into a pixel-perfect Next.js clone using… |
 | `/code-reviewer` | Automated code quality review — identifies unnecessary complexity, duplicated logic, SRP… |
+| `/codebase-memory` | Code-intelligence memory MCP (DeusData/codebase-memory-mcp, MIT) — indexes a repo into a… |
 | `/codex` | OpenAI Codex CLI (@openai/codex) under the oh-my-codex (omx) runtime — the 🟢 implementation… |
 | `/components` | Extended UI components library - complex patterns, forms, tables, modals, and reusable… |
 | `/content` | Hebrew content & copywriting guidelines - UI copy, marketing text, SEO content, and proper… |
@@ -167,6 +188,7 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/hermes-workspace` | Deploy & run Hermes Workspace (outsourc-e) — a web + Electron control plane that sits ON… |
 | `/incident-commander` | Incident response framework for production outages — severity classification, timeline… |
 | `/init` | Initialize or update project documentation (CLAUDE.md, PROJECT.md) based on codebase analysis |
+| `/kanban` | Kanban dispatch board patterns — multi-container drag-and-drop עם @dnd-kit, שיבוץ בגרירה,… |
 | `/keyboard-shortcuts` | Complete keyboard shortcuts & tooltips system for Next.js/React apps — ShortcutDef types,… |
 | `/manychat` | ManyChat Infrastructure Template - Server-side orchestration, WhatsApp/IG chatbot, state… |
 | `/mcp-builder` | Guide for building MCP (Model Context Protocol) servers — integrates external APIs/services… |
@@ -176,7 +198,9 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/monitoring` | Error Monitoring & Alerting - Sentry + Next.js 15, Better Stack, Error Boundaries,… |
 | `/nano-banana` | Generate images with the Gemini API and turn them into TRANSPARENT PNGs for websites and… |
 | `/native` | React Native & Expo development - Monorepo architecture, code sharing between web and… |
+| `/no-mistakes` | Pre-push AI quality gate (kunchenguid/no-mistakes, MIT) — a local git proxy. |
 | `/observability` | Production observability design — SLI/SLO/SLA frameworks, error budgets, multi-window burn… |
+| `/openwa` | Deploy & operate OpenWA (rmyndharis/OpenWA) — a self-hosted WhatsApp API gateway (NestJS +… |
 | `/optimization` | Performance optimization - Caching strategies, Core Web Vitals, bundle optimization for… |
 | `/parallel-strategy` | Parallel Agents Strategy - מדריך מקיף לעבודה עם סוכנים מקבילים ב-Claude Code, מתי לחלק ומתי לא. |
 | `/patterstage` | Deploy & operate PatterStage "Control Hub" (Daniel-Parke/PatterStage) — a Next.js web… |
@@ -191,9 +215,11 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | `/remotion` | Remotion - Video creation in React. |
 | `/review-all` | Complete project review orchestrator - runs Code Review + UI/UX Review + QA Testing in… |
 | `/ruflo` | Ruflo / claude-flow v3 — Dual-Mode AI Orchestration (Claude Code + Codex). |
+| `/scale` | The kit's three-tier model-routing policy ("the perfect scale") — 🔵 Fable 5… |
 | `/security` | Security guidelines - Authentication, RLS policies, input validation, OWASP best practices… |
 | `/self-improving` | Memory lifecycle management — promote proven patterns from MEMORY.md to CLAUDE.md rules,… |
 | `/side-panel` | Side Panel Pattern — מחליף את כל הפופאפים/מודאלים בפאנל צדדי RTL שנפתח מצד שמאל ותופס 55%… |
+| `/simplex` | Deploy a private, metadata-free ops-alert bot on SimpleX Chat (simplex-chat/simplex-chat,… |
 | `/site-health` | End-to-end site monitoring + self-heal for every app on a server — probes each site through… |
 | `/skill-creator` | Meta-skill for creating, evaluating, and improving Claude Code skills. |
 | `/skill-security-auditor` | Security audit for AI skills before installation — scans for command injection, prompt… |
@@ -238,20 +264,27 @@ pnpm add zustand next-safe-action @formkit/auto-animate sonner cmdk
 | Hermes | `@.claude/agents/hermes.md` | Deploy & manage self-hosted Hermes Agent (Nous Research) Docker containers — gateway API,… |
 | Hermes Dashboard | `@.claude/agents/hermes-dashboard.md` | Deploy & operate Hermes Dashboard Hub (chrisryugj/hermes-dashboard) — a lightweight… |
 | Hermes Workspace | `@.claude/agents/hermes-workspace.md` | Deploy & run Hermes Workspace (outsourc-e) — web + Electron control plane over the Nous… |
+| Kanban Agent | `@.claude/agents/kanban.md` | Kanban Dispatch Board Expert - לוחות שיבוץ עם גרירה (dnd-kit multi-container), order_index… |
 | ManyChat Agent | `@.claude/agents/manychat.md` | ManyChat Infrastructure Expert - Server-side chatbot orchestration, WhatsApp/IG flows,… |
 | Mission Control | `@.claude/agents/mission-control.md` | Deploy & operate Mission Control (builderz-labs) — self-hosted Next.js dashboard for… |
 | Mobile Agent | `@.claude/agents/mobile.md` | Responsive Adaptation Expert - Makes every page/component fully responsive across 9 screen… |
 | Native Agent | `@.claude/agents/native.md` | React Native & Expo Expert - Native mobile app development with Monorepo architecture |
+| OpenWA | `@.claude/agents/openwa.md` | Deploy & operate OpenWA (rmyndharis/OpenWA) — a self-hosted WhatsApp API gateway (NestJS +… |
 | Patterstage | `@.claude/agents/patterstage.md` | Deploy & operate PatterStage "Control Hub" (Daniel-Parke) — a Next.js web command-center… |
 | Performance Agent | `@.claude/agents/performance.md` | Optimization Expert - Web Vitals, Caching |
 | Ponytail | `@.claude/agents/ponytail.md` | Ponytail — the "lazy senior dev" minimalism reviewer (DietrichGebert/ponytail, vendored &… |
 | QA Agent | `@.claude/agents/qa.md` | Automated Testing Expert - Browser automation, E2E testing, QA reports |
 | Remotion Agent | `@.claude/agents/remotion.md` | Video creation expert with React + Remotion. |
 | Ruflo Orchestrator Agent | `@.claude/agents/ruflo.md` | Dual-Mode AI Orchestrator — coordinates Claude Code (🔵) + Codex (🟢) via Ruflo/claude-flow v3. |
+| Scale | `@.claude/agents/scale.md` | Three-tier model-routing specialist ("the perfect scale", iron-rule #14) — classifies every… |
 | Security Agent | `@.claude/agents/security.md` | Application Security Expert - Auth, RLS |
 | Site Health | `@.claude/agents/site-health.md` | Uptime & self-heal expert — deploys and operates the site-health mechanism (DB-touching… |
 | Supabase CLI | `@.claude/agents/supabase-cli.md` | Operate the Supabase CLI (supabase/cli) fleet-wide — link projects, run DB migrations… |
 | Supabase MCP | `@.claude/agents/supabase-mcp.md` | Register & operate the official Supabase MCP server (@supabase/mcp-server-supabase) for… |
 | UI/UX Review Agent | `@.claude/agents/uiux-review.md` | Visual Quality Expert - Reviews existing UI for design consistency, RTL, spacing,… |
+| agent-reach | `@.claude/agents/agent-reach.md` | Deploy & operate Agent-Reach (Panniantong/Agent-Reach, MIT) — a one-CLI capability layer… |
+| codebase-memory | `@.claude/agents/codebase-memory.md` | Operate codebase-memory-mcp (DeusData/codebase-memory-mcp, MIT) — the code-structure memory… |
 | fs-dev | `@.claude/agents/hebrew-fullstack-dev.md` | Use this agent when working on Next.js/React projects that require Hebrew communication,… |
 | n8n Agent | `@.claude/agents/n8n.md` | Automation & Workflows Expert |
+| no-mistakes | `@.claude/agents/no-mistakes.md` | Operate no-mistakes (kunchenguid/no-mistakes, MIT) — the pre-push AI quality gate. |
+| simplex | `@.claude/agents/simplex.md` | Deploy & operate a private, metadata-free SimpleX ops-alert bot (simplex-chat/simplex-chat,… |

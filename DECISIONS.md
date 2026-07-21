@@ -777,3 +777,48 @@ The 7-stage hardening program (branch `feat/pms-hardening-channex-certification`
 **Inbound without a feed.** Hospitable exposes reservation GETs + UI-registered webhooks — no revision feed, no ack. Inbound reuses `channel_booking_revisions` with a synthetic content-hash revision id (`"{reservation_uuid}:{sha256(payload)[:16]}"`): the existing `UNIQUE (connection_id, provider_revision_id)` makes re-polls idempotent, and a changed reservation naturally produces a new revision row → the D76 modified-import path. Rows insert pre-acknowledged. The webhook stays a wake-up signal; the 5-minute fallback poll is the correctness backstop. The post-normalize import core was lifted out of `booking-import.ts` as `importNormalizedRevision` (pure mechanical extraction; Channex path behavior-identical).
 
 **Production-only + PAT expiry.** Hospitable has no sandbox — `environment='production'` is the only value for hospitable rows, and every write reaches live OTA listings; the D-gate (nothing drains before an operator Full Sync) plus a read-scope-first rollout bounds the blast radius. PATs are JWTs expiring after one year: `exp` is decoded at save time into `channel_connections.api_key_expires_at` and the /channels UI warns ≥30 days ahead. Webhooks carry no HMAC — authentication is the existing hashed webhook-token URL (source IP range 38.80.170.0/24 optionally allowlisted at nginx).
+
+---
+
+## D87 — Reservation-card UX: holder auto-fill, paid-amount default, CVV restored, full-card auto-reveal
+
+**Owner decision (Ronen), made with the trade-off stated explicitly.** Four changes to the one credit-card section (D86) and the payment block, driven by the front-desk flow of keying card details into an EXTERNAL terminal (no PSP is integrated in GuestHub).
+
+1. **Holder auto-fill.** שם בעל הכרטיס now defaults to the guest's `firstName lastName`, editable. BookingPanel syncs it via an effect until the operator edits the field (a `holderTouched` ref); EditReservationPanel seeds it when the operator opts into manual entry.
+
+2. **Paid-amount default = total (create only).** In BookingPanel סכום ששולם defaults to the running סה״כ לתשלום until the operator edits it or picks another payment chip (`paidTouched` ref). Deliberately NOT applied to EditReservationPanel: its "תשלום נוסף" field feeds the append-only ledger, and auto-defaulting it to the balance would record a phantom payment on any incidental save.
+
+3. **CVV storage restored — reverses D52 for the MANUAL card only** (migration 047 re-adds `reservation_cards.cvv_encrypted`; migration 018 is the drop template). Encrypted at rest with the same AES-256-GCM vault (`encryptCvv`/`decryptCvv`), validated 3–4 digits, never logged/audited/echoed, returned only by the audited reveal. The channel-ingest path is UNTOUCHED — an OTA-attached card is always `cvv_encrypted IS NULL`, and the only cvv column in the schema is the manual card's.
+   ⚠️ **PCI-DSS Req. 3.2 ceiling:** retaining a CVV after authorization is a violation. This is accepted ONLY because no PSP authorizes inside GuestHub. The moment a real gateway is wired, DROP the column again and collect the CVV transiently per-authorization.
+
+4. **Full-card auto-reveal (D52 masking friction removed).** For a viewer with `payments.card_reveal`, a stored card's PAN + CVV are shown automatically on open — the audited `revealReservationCardAction` fires once per stored card (still permission-guarded, still audit-logged), and the inactivity auto-mask (`REVEAL_TIMEOUT_MS`) is gone. Encryption-at-rest is unchanged; the manual hide affordance remains; values still drop from client state on card/reservation switch and unmount.
+
+The D52/D87 guardians (`check-cards.mjs`, `check-channel-card-ingest.mjs`) were flipped to assert the new manual-path behavior while still proving the channel path carries no CVV.
+
+---
+
+## D88 — Drag-and-drop dispatch board for /housekeeping + /tasks (the PMS board, reproduced)
+
+**Why.** The two manager boards were flat lists with a per-row assign `<select>`. The owner wanted the PMS housekeeping dispatch board — columns per worker, drag a task onto a worker to assign, drag inside a column to reorder — reproduced faithfully in GuestHub.
+
+**No new task store.** The board runs on the existing unified `housekeeping_tasks` table (D-Stage5 §9). Migration 048 adds only `order_index integer NOT NULL DEFAULT 0` (+ `(tenant_id, assigned_to, order_index)` index) — the persisted manual order, the same contract the PMS board uses. `/housekeeping` renders `scope="housekeeping"` (type-locked cleaning queue), `/tasks` renders `scope="all"` (every type, with a type filter + free-type create); both are the same `TaskDispatchBoard` client component on the same guarded Server Actions.
+
+**Server Actions (housekeeping.manage).** `getTaskBoardAction(scope, date)` groups tasks into `byUser` + `unassigned`, columns = active users; date rule mirrors PMS (today → every active task; another day → that day's tasks by checkout/due). `assignTaskAction` now renumbers the destination bucket by natural sort (urgent → soonest checkout/due → age) so a dropped card lands in its natural place; `reorderTasksAction` persists a manual in-column order via `unnest … WITH ORDINALITY`; `setTaskStatusAction` / `updateTaskAction` / `deleteTaskAction` back the card pills and edit panel. Cleaner lifecycle (pending→in_progress→completed→inspected) is unchanged — `completed→inspected` stays the dedicated verify action.
+
+**Drag engine ported verbatim.** The load-bearing concurrency machinery from the PMS board is copied exactly: three sensors (mouse 8px / touch 250ms long-press / keyboard), `pointerWithin`→`closestCenter` collision, the `dragSourceRef`/`dragDestRef`/`loadSeq`/`dragInFlight` quartet, the `onDragOver` optimistic move with the anti-bounce guard, 5s polling paused mid-drag, and Hebrew screen-reader announcements. Adapted to GuestHub: its own tokens (`bg-primary`/`bg-primary-050`/`bg-surface`/`border-line`), the canonical `SidePanel` (`open` prop) for the edit/create panels, an inline delete-confirm strip (GuestHub idiom, avoids the panel's blur/containing-block trap), no areas/image/guest-count axes (GuestHub schema has none), and `dnd-kit` added as a dependency. The old `TasksBoard.tsx` + `data.ts` were removed.
+
+---
+
+## D88.1 — Boards scoped by worker role; /tasks removed
+
+**Columns are workers of the board's type, not "everyone".** `/housekeeping` columns = users with role key `cleaner`; `/maintenance` columns = users with role key `maintenance` (new system role "עובד תחזוקה", migration 049, seeded with `housekeeping.my_tasks` like the cleaner role — added to `scripts/seed.mjs` and `role-meta.ts` too). Managers, reception, admins and super-admins are never board columns. A task assigned to a non-worker of that board falls back to the unassigned pool (visible + reassignable), never an invisible bucket.
+
+**`/tasks` deleted.** The unified "all types" board was not the right spec — a separate tasks module will be built elsewhere. Removed: the route, the sidebar item, and the `scope="all"` path (type filter chips, free-type create, the null type filter in `getTaskBoardAction`). The board now has exactly two type-locked scopes; `/tasks` revalidations were repointed to `/maintenance`. The `housekeeping_tasks` store, the auto-generation on checkout, and the `general` task_type value are untouched.
+
+---
+
+## D89 — סטטוס העבודה "הזמנה אושרה" מעיד על תשלום מלא (תצוגת טבלת ההזמנות)
+
+**החלטת בעלים (2026-07-20, דיוק 2026-07-21).** סטטוס **העבודה** `approved` ("הזמנה אושרה") — ורק הוא — מעיד על תשלום מלא: **טבלת ההזמנות** מציגה הזמנה כזו כ"שולם מלא" עם יתרה 0, בלי קשר ל-ledger. כל עוד ההזמנה לא הועברה ל"הזמנה אושרה" (ישלם בהגעה / יתרה בהגעה / ממתין לאישור וכו') היא מוצגת לפי מצב התשלום האמיתי מה-ledger. הכלל אינו נגזר מסטטוס מחזור החיים (`confirmed`) — ניסיון ראשון שנגזר ממנו תוקן. המימוש: `displayPaymentState()` ב-`src/lib/inventory-rules.ts` (מקור יחיד), בשימוש ב-read model של `/reservations` (שורות, טאבי לא-שולם/חלקי, ופילטר התשלום — כולם מאותו כלל, כך שטאב לעולם לא סותר את השורות שהוא פותח).
+
+**מה לא השתנה:** ה-ledger (`guesthub.payments`, `paid_amount`, `balance`, גבייה, PDF, פאנל ההזמנה) נשאר אמת חשבונאית — שום רשומת תשלום לא מפוברקת. "שולם ביתר" (זיכוי לאורח) לעולם לא מוסתר (D52 §7).
