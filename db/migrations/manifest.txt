@@ -52,3 +52,6 @@
 044_hospitable_provider.sql
 045_beds24_provider.sql
 046_active_provider_selector.sql
+047_restore_stored_cvv.sql
+048_task_board_order.sql
+049_maintenance_role.sql
