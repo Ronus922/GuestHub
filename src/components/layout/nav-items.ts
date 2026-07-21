@@ -39,20 +39,13 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     title: "תפעול",
     items: [
-      // ניקיון = the cleaning queue (/housekeeping); משימות = every operational
-      // task (/tasks). Both read the one housekeeping_tasks store and are gated by
-      // housekeeping.view. The cleaner's own screen (/housekeeping/my-tasks) stays
-      // outside the sidebar.
-      //
-      // FROZEN (owner decision, focus shifted to Channex certification): ניקיון +
-      // משימות are hidden from the nav until the owner delivers a UI spec. Nothing
-      // is deleted — the routes, the housekeeping_tasks store and the automatic
-      // background task creation are all untouched; this only unlists the two
-      // screens. Re-enable by deleting the two `hidden: true` below. With every
-      // item hidden the whole תפעול section drops out of the sidebar (Sidebar.tsx).
-      { label: "ניקיון", icon: "cleaning", href: "/housekeeping", permission: "housekeeping.view", hidden: true },
-      { label: "משימות", icon: "my-requests", href: "/tasks", permission: "housekeeping.view", hidden: true },
-      { label: "תחזוקה", icon: "maintenance", permission: "housekeeping.view", hidden: true },
+      // Two role-scoped dispatch boards (D88), both on the one housekeeping_tasks
+      // store, both gated by housekeeping.view, both the same drag-and-drop board:
+      // ניקיון (/housekeeping) — cleaning tasks, columns = cleaners; תחזוקה
+      // (/maintenance) — maintenance tasks, columns = maintenance workers. The
+      // worker's own mobile screen (/housekeeping/my-tasks) stays outside the sidebar.
+      { label: "ניקיון", icon: "cleaning", href: "/housekeeping", permission: "housekeeping.view" },
+      { label: "תחזוקה", icon: "maintenance", href: "/maintenance", permission: "housekeeping.view" },
       { label: "נוכחות", icon: "attendance", permission: "users.view", hidden: true },
       { label: "אישור בקשות", icon: "approve-requests", permission: "users.edit", hidden: true },
     ],
