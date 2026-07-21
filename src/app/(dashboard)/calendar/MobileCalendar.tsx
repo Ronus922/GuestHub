@@ -19,12 +19,15 @@ export function MobileCalendar({
   data,
   days,
   canCreate,
+  flashId,
   onBarTap,
   onEmptyTap,
 }: {
   data: CalendarData;
   days: number;
   canCreate: boolean;
+  /** reservation_id of a just-created booking — its bar(s) pulse ~3s */
+  flashId?: string | null;
   onBarTap: (rrId: string) => void;
   onEmptyTap: (roomId: string, checkIn: DateOnly) => void;
 }) {
@@ -102,7 +105,14 @@ export function MobileCalendar({
                   ))}
                   {/* reservation bars */}
                   {(staysByRoom.get(room.id) ?? []).map((stay) => (
-                    <StayBarMobile key={stay.rr_id} stay={stay} from={data.from} days={days} onTap={onBarTap} />
+                    <StayBarMobile
+                      key={stay.rr_id}
+                      stay={stay}
+                      from={data.from}
+                      days={days}
+                      flash={flashId != null && stay.reservation_id === flashId}
+                      onTap={onBarTap}
+                    />
                   ))}
                 </div>
               </div>
@@ -118,11 +128,13 @@ function StayBarMobile({
   stay,
   from,
   days,
+  flash,
   onTap,
 }: {
   stay: CalendarStay;
   from: DateOnly;
   days: number;
+  flash: boolean;
   onTap: (rrId: string) => void;
 }) {
   const geo = barGeometry(from, days, stay.check_in, stay.check_out);
@@ -134,7 +146,7 @@ function StayBarMobile({
       type="button"
       title={stay.guest_name}
       aria-label={`הזמנה ${stay.reservation_number} · ${stay.guest_name}`}
-      className={`cb-m-bar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""}`}
+      className={`cb-m-bar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""} ${flash ? "flash" : ""}`}
       style={{
         insetInlineStart: `${geo.start * 100}%`,
         width: `${geo.width * 100}%`,

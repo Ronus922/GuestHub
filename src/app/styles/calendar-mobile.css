@@ -255,6 +255,11 @@
   border-start-end-radius: 0;
   border-end-end-radius: 0;
 }
+/* new-booking pulse — reuses the cb-plsb ring keyframe from calendar.css */
+.cb-m-bar.flash {
+  animation: cb-plsb 1s ease-in-out 3;
+  z-index: 5;
+}
 .cb-m-bar-nm {
   font-size: 12px;
   font-weight: 700;

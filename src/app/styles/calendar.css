@@ -432,8 +432,8 @@
   top: 0;
   bottom: 0;
   inset-inline-start: calc(var(--cb-room-col) + (100% - var(--cb-room-col)) * var(--cb-sep));
-  width: 3px;
-  background: color-mix(in srgb, var(--faint) 75%, #fff);
+  width: 0.5px; /* reference month-boundary hairline */
+  background: #8e9ab8; /* ds-allow: reference month-separator */
   pointer-events: none;
 }
 
@@ -789,14 +789,34 @@
   flex: none;
   font-variant-numeric: tabular-nums;
 }
-/* a clipped edge reads as "continues beyond the view" — the corner is cut off */
+/* a clipped edge reads as "continues beyond the view" — the FLAT edge sits at
+   the table boundary. cutR = stay begins before the window → continues off the
+   RIGHT (RTL earliest=right) → flatten the RIGHT corners (inline-start). cutL =
+   continues off the LEFT → flatten the LEFT corners (inline-end). Matches the
+   reference §3.3 and the mobile .cb-m-bar rules. */
 .cb-resbar.cutR {
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+.cb-resbar.cutL {
   border-start-end-radius: 0;
   border-end-end-radius: 0;
 }
-.cb-resbar.cutL {
-  border-start-start-radius: 0;
-  border-end-start-radius: 0;
+/* new-booking pulse (~3s) — the reference plsB box-shadow ring. A DISTINCT
+   keyframe from @keyframes pulse (the .pending opacity). Starts on mount, so the
+   ~3s survives the create→refetch delay; 3 iterations of 1s = ~3s then stops. */
+@keyframes cb-plsb {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 64, 200, 0); /* ds-allow: reference pulse ring */
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(37, 64, 200, 0.4); /* ds-allow: reference pulse ring */
+  }
+}
+.cb-resbar.flash {
+  animation: cb-plsb 1s ease-in-out 3;
+  z-index: 6;
 }
 .cb-resbar.dim {
   opacity: 0.18;
@@ -1107,12 +1127,11 @@
 .cb-pl .ch-badge {
   margin-inline-start: auto;
 }
-/* "ערוצים" opens the channel legend beside the payment filter — a hairline
-   divider separates the two families; the row itself wraps (flex-wrap) */
+/* "ערוצים" opens the channel legend — pushed FLUSH-LEFT (reference .clg
+   margin-inline-start:auto): the free space collapses between the payment
+   filter and the channel group, so channels hug the inline-end (left in RTL). */
 .cb-leg-h {
-  margin-inline-start: 10px;
-  padding-inline-start: 14px;
-  border-inline-start: 1px solid var(--line);
+  margin-inline-start: auto;
 }
 .cb-leg-h ~ .ch-leg {
   margin-inline-start: 8px;
@@ -1135,6 +1154,7 @@
    cell. Reads the already-fetched rate row for one room/date; informational
    only. Unlike .cb-pop it stays pointer-interactive (hover keep-alive). */
 .cb-rtip {
+  width: 272px; /* compact override of the 316px .popover (mirrors TIP_W) */
   animation: cb-pop-in 0.14s ease-out;
 }
 /* anchor caret on the edge facing the cell — band-coloured below the card,
@@ -1163,7 +1183,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 11px 14px;
+  padding: 9px 12px;
   background: var(--brand);
   border-radius: 16px 16px 0 0;
 }
@@ -1181,7 +1201,7 @@
   font-variant-numeric: tabular-nums;
 }
 .cb-rtip-b {
-  padding: 2px 14px;
+  padding: 2px 12px;
   display: flex;
   flex-direction: column;
 }
@@ -1190,7 +1210,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 0;
+  padding: 5px 0;
   border-bottom: 1px solid var(--line);
 }
 .cb-rtip-row:last-child {
@@ -1224,7 +1244,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   font-size: 13.5px;
   font-weight: 800;
   border-radius: 0 0 16px 16px;

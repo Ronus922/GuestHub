@@ -185,6 +185,7 @@ export function CalendarGrid({
   paymentFilter,
   statusLabel,
   can,
+  flashId,
   onOpenReservation,
   onNewBooking,
   onNewClosure,
@@ -193,6 +194,8 @@ export function CalendarGrid({
   paymentFilter: PaymentState | "all";
   statusLabel: Map<string, string>;
   can: CalendarCan;
+  /** reservation_id of a just-created booking — its bar(s) pulse ~3s */
+  flashId?: string | null;
   onOpenReservation: (id: string) => void;
   onNewBooking: (prefill: NewReservationPrefill) => void;
   onNewClosure: (prefill: ClosurePrefill) => void;
@@ -1107,6 +1110,7 @@ export function CalendarGrid({
                   cellRate={cellRate}
                   paymentFilter={paymentFilter}
                   pending={pending}
+                  flashRid={flashId ?? null}
                   dragRrId={room.id === dimRoomId && dragUi ? dragUi.rrId : null}
                   selectedRrId={room.id === selRoomId && tip ? tip.stay.rr_id : null}
                   can={can}
@@ -1293,6 +1297,7 @@ const RoomRow = memo(function RoomRow({
   cellRate,
   paymentFilter,
   pending,
+  flashRid,
   dragRrId,
   selectedRrId,
   can,
@@ -1325,6 +1330,7 @@ const RoomRow = memo(function RoomRow({
   cellRate: (room: CalendarRoom, date: DateOnly) => RateRow | undefined;
   paymentFilter: PaymentState | "all";
   pending: Set<string>;
+  flashRid: string | null;
   dragRrId: string | null;
   selectedRrId: string | null;
   can: CalendarCan;
@@ -1470,6 +1476,7 @@ const RoomRow = memo(function RoomRow({
             days={days}
             dimmed={paymentFilter !== "all" && stay.payment !== paymentFilter}
             pending={pending.has(stay.rr_id)}
+            flash={flashRid != null && stay.reservation_id === flashRid}
             dragSource={dragRrId === stay.rr_id}
             selected={selectedRrId === stay.rr_id}
             canEdit={can.edit}
@@ -1500,6 +1507,7 @@ const StayBar = memo(function StayBar({
   days,
   dimmed,
   pending,
+  flash,
   dragSource,
   selected,
   canEdit,
@@ -1520,6 +1528,7 @@ const StayBar = memo(function StayBar({
   days: number;
   dimmed: boolean;
   pending: boolean;
+  flash: boolean;
   dragSource: boolean;
   selected: boolean;
   canEdit: boolean;
@@ -1548,8 +1557,8 @@ const StayBar = memo(function StayBar({
       className={`cb-resbar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""} ${
         stay.status === "draft" ? "draft" : ""
       } ${dimmed ? "dim" : ""} ${dragSource ? "src" : ""} ${selected ? "sel" : ""} ${pending ? "pending" : ""} ${
-        draggable ? "" : canView ? "viewonly" : "lk"
-      }`}
+        flash ? "flash" : ""
+      } ${draggable ? "" : canView ? "viewonly" : "lk"}`}
       style={{
         insetInlineStart: `${geo.start * 100}%`,
         width: `${geo.width * 100}%`,

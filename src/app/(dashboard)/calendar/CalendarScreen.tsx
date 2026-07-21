@@ -77,7 +77,7 @@ export function CalendarScreen({
   vatRate: number;
 }) {
   const router = useRouter();
-  const { openNewReservation } = useNewReservation();
+  const { openNewReservation, flashId } = useNewReservation();
   const [paymentFilter, setPaymentFilter] = useState<PaymentState | "all">("all");
   const [panel, setPanel] = useState<PanelState>(null);
   // mobile: which reservation's quick-view bottom-sheet is open (null = none)
@@ -225,6 +225,7 @@ export function CalendarScreen({
             paymentFilter={paymentFilter}
             statusLabel={statusLabel}
             can={can}
+            flashId={flashId}
             onOpenReservation={openReservation}
             onNewBooking={openNewReservation}
             onNewClosure={(prefill) => can.close && setPanel({ kind: "closure", prefill })}
@@ -290,6 +291,7 @@ export function CalendarScreen({
           data={data}
           days={mobileDays}
           canCreate={can.create}
+          flashId={flashId}
           onBarTap={(id) => can.viewReservation && setSheetId(id)}
           onEmptyTap={(roomId, checkIn) =>
             can.create &&

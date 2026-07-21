@@ -19,9 +19,9 @@ export type CellTipTarget = {
   anchor: { x: number; top: number; bottom: number };
 };
 
-// §8: the ONE canonical popover width (.popover in design-system.css). The
-// clamp math below derives from this constant, so it MUST mirror the CSS.
-const TIP_W = 316;
+// Compact width — narrower than the canonical .popover (316); .cb-rtip overrides
+// the width in CSS and this constant MUST mirror it for the clamp math.
+const TIP_W = 272;
 const MARGIN = 12; // §8 viewport margin
 const DASH = "—";
 

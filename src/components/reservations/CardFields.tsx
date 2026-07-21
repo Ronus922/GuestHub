@@ -133,7 +133,10 @@ export function CardFields({
   onDelete,
   onPaymentRecorded,
   deleting = false,
+  showErrors = false,
 }: {
+  /** red the empty required card fields when a partial card blocks create */
+  showErrors?: boolean;
   value: CardDraft;
   // functional updater (owners pass setCc): each field patches the PREVIOUS
   // draft, never a captured snapshot, so keystrokes can never clobber each other
@@ -214,6 +217,13 @@ export function CardFields({
     value.exp.length > 0 &&
     (exp === null || expiryInPast(exp.month, exp.year, new Date()));
   const idBad = view.editable && value.idNum.length > 0 && !/^\d{5,9}$/.test(value.idNum);
+  // when a partially-typed card blocks "צור הזמנה" (showErrors), also red the
+  // EMPTY required fields (holder / number / expiry) — not only the format-bad
+  // ones — so the operator sees exactly what to complete or clear.
+  const partialBlock = showErrors && view.editable && cardDraftState(value) === "invalid";
+  const holderMissing = partialBlock && !value.holder.trim();
+  const numberMissing = partialBlock && digits.length === 0;
+  const expiryMissing = partialBlock && value.exp.trim().length === 0;
 
   // grey-out applies to MANUAL ENTRY only — a read-only card that actually holds
   // data is never rendered as if it were empty
@@ -300,7 +310,8 @@ export function CardFields({
               שם בעל הכרטיס {view.editable && <span className="bw-req">*</span>}
             </span>
             <input
-              className={`field-input ${roCls}`}
+              className={`field-input ${roCls} ${holderMissing ? "field-error" : ""}`}
+              aria-invalid={holderMissing || undefined}
               placeholder={ro ? "לא התקבל" : "שם כפי שמופיע על הכרטיס"}
               autoComplete="off"
               readOnly={ro}
@@ -316,7 +327,7 @@ export function CardFields({
             <div className="bw-fld-wrap">
               <Icon name="credit-card" size={17} className="bw-fi" />
               <input
-                className={`field-input bw-ic ltr-num ${roCls} ${numberBad ? "field-error" : ""}`}
+                className={`field-input bw-ic ltr-num ${roCls} ${numberBad || numberMissing ? "field-error" : ""}`}
                 dir="ltr"
                 inputMode="numeric"
                 placeholder={ro ? "לא התקבל" : "0000 0000 0000 0000"}
@@ -336,7 +347,7 @@ export function CardFields({
               {revealed && <CopyBtn value={view.exp} label="תוקף" />}
             </span>
             <input
-              className={`field-input ltr-num ${roCls} ${expiryBad ? "field-error" : ""}`}
+              className={`field-input ltr-num ${roCls} ${expiryBad || expiryMissing ? "field-error" : ""}`}
               dir="ltr"
               inputMode="numeric"
               placeholder={ro ? "לא התקבל" : "MM/YY"}

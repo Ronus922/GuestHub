@@ -79,6 +79,7 @@ function formSnapshot(
 export function BookingPanel({
   open,
   onClose,
+  onCreated,
   prefill,
   bookingSources,
   paymentMethods,
@@ -90,6 +91,8 @@ export function BookingPanel({
 }: {
   open: boolean;
   onClose: () => void;
+  /** called with the new reservation_id on success (calendar pulses its bar) */
+  onCreated?: (reservationId: string) => void;
   prefill: BookingPrefill;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
@@ -101,6 +104,9 @@ export function BookingPanel({
   canPriceOverride: boolean;
 }) {
   const [step, setStep] = useState(0);
+  // validation feedback: set true when a blocked "הבא"/"צור הזמנה" click reds the
+  // missing fields; cleared on every step change so a fresh step starts clean.
+  const [showErrors, setShowErrors] = useState(false);
   const [guest, setGuest] = useState<GuestForm>(EMPTY_GUEST);
   const [sourceId, setSourceId] = useState<string>("");
   const [stays, setStays] = useState<StayDraft[]>([]);
@@ -224,10 +230,54 @@ export function BookingPanel({
     return true;
   }, [step, guest, staysValid]);
 
+  // per-field red flags for step 0 (only while errors are shown for this step)
+  const guestErr = {
+    firstName: showErrors && step === 0 && guest.firstName.trim() === "",
+    lastName: showErrors && step === 0 && guest.lastName.trim() === "",
+    phone: showErrors && step === 0 && guest.phone.trim() === "",
+  };
+
+  // move to `to` cleanly — navigation always leaves the error state behind
+  const goStep = (to: number) => {
+    setShowErrors(false);
+    setStep(to);
+  };
+  // "הבא": advance only when the step is valid; otherwise red the fields + stay
+  const handleNext = () => {
+    if (!stepValid) {
+      setShowErrors(true);
+      return;
+    }
+    goStep(step + 1);
+  };
+
   // a partially-typed invalid card blocks creation; an empty one is skipped.
   // Manual card entry is available on ANY booking, independent of the chosen
   // payment method or source (D46) — not gated on method === "credit_card".
   const ccState = canSaveCard ? cardDraftState(cc) : "empty";
+
+  // "צור הזמנה" is never a silent dead-click: jump to the first incomplete step,
+  // red its fields, and say what's missing — only a fully valid form submits.
+  const handleCreate = () => {
+    if (guest.firstName.trim() === "" || guest.lastName.trim() === "" || guest.phone.trim() === "") {
+      setStep(0);
+      setShowErrors(true);
+      toast.error("יש להשלים את פרטי האורח המסומנים באדום");
+      return;
+    }
+    if (!staysValid) {
+      setStep(1);
+      setShowErrors(true);
+      toast.error("יש להשלים את פרטי השהות והחדרים המסומנים באדום");
+      return;
+    }
+    if (ccState === "invalid") {
+      setShowErrors(true);
+      toast.error("פרטי הכרטיס אינם תקינים — השלימו אותם או נקו את השדות");
+      return;
+    }
+    submit();
+  };
 
   const submit = () =>
     startSaving(async () => {
@@ -289,6 +339,7 @@ export function BookingPanel({
         if (!saved.success) toast.error(`ההזמנה נוצרה, אך שמירת הכרטיס נכשלה: ${saved.error}`);
       }
       setCc(EMPTY_CARD);
+      if (res.data) onCreated?.(res.data.reservationId);
       toast.success(`הזמנה #${res.data?.reservationNumber} נוצרה בהצלחה`);
       onClose();
     });
@@ -320,7 +371,7 @@ export function BookingPanel({
                 key={label}
                 type="button"
                 className={`bw-stp-item ${i === step ? "active" : ""} ${i < step ? "done" : ""}`}
-                onClick={() => i < step && setStep(i)}
+                onClick={() => i < step && goStep(i)}
                 disabled={i > step}
               >
                 <span className="bw-stp-num">
@@ -354,12 +405,7 @@ export function BookingPanel({
              right; the step label is pushed to the far right. */
           <>
             {step < 3 ? (
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!stepValid}
-                onClick={() => setStep((s) => s + 1)}
-              >
+              <button type="button" className="btn btn-primary" onClick={handleNext}>
                 <Icon name="chevron-left" size={20} />
                 הבא
               </button>
@@ -367,16 +413,15 @@ export function BookingPanel({
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={saving || !staysValid || ccState === "invalid"}
-                title={ccState === "invalid" ? "פרטי הכרטיס שהוזנו אינם תקינים" : undefined}
-                onClick={submit}
+                disabled={saving}
+                onClick={handleCreate}
               >
                 <Icon name="check" size={20} />
                 {saving ? "יוצר…" : "צור הזמנה"}
               </button>
             )}
             {step > 0 && (
-              <button type="button" className="btn btn-secondary" onClick={() => setStep((s) => s - 1)}>
+              <button type="button" className="btn btn-secondary" onClick={() => goStep(step - 1)}>
                 הקודם
                 <Icon name="chevron-right" size={20} />
               </button>
@@ -395,6 +440,17 @@ export function BookingPanel({
     >
       <div className="bw-main">
         <div className="bw-col-main">
+          {/* validation banner — shown when a blocked "הבא" reds the step's
+              missing required fields (steps 0/1 have required fields) */}
+          {showErrors && !stepValid && (
+            <p
+              role="alert"
+              className="mb-4 flex items-center gap-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-bold text-status-danger"
+            >
+              <Icon name="warning" size={17} />
+              יש למלא את כל שדות החובה המסומנים באדום כדי להמשיך.
+            </p>
+          )}
           {/* ---- step 1: guest ---- */}
           {step === 0 && (
             <>
@@ -468,7 +524,8 @@ export function BookingPanel({
                 <div className="bw-grid2">
                   <Field label="שם פרטי" required>
                     <input
-                      className="field-input"
+                      className={`field-input${guestErr.firstName ? " field-error" : ""}`}
+                      aria-invalid={guestErr.firstName || undefined}
                       placeholder="שם פרטי"
                       value={guest.firstName}
                       onChange={(e) => setGuest({ ...guest, firstName: e.target.value, id: undefined })}
@@ -476,7 +533,8 @@ export function BookingPanel({
                   </Field>
                   <Field label="שם משפחה" required>
                     <input
-                      className="field-input"
+                      className={`field-input${guestErr.lastName ? " field-error" : ""}`}
+                      aria-invalid={guestErr.lastName || undefined}
                       placeholder="שם משפחה"
                       value={guest.lastName}
                       onChange={(e) => setGuest({ ...guest, lastName: e.target.value, id: undefined })}
@@ -484,7 +542,8 @@ export function BookingPanel({
                   </Field>
                   <Field label="טלפון" required>
                     <input
-                      className="field-input ltr-num"
+                      className={`field-input ltr-num${guestErr.phone ? " field-error" : ""}`}
+                      aria-invalid={guestErr.phone || undefined}
                       placeholder="050-0000000"
                       dir="ltr"
                       value={guest.phone}
@@ -550,6 +609,7 @@ export function BookingPanel({
                         ? () => setStays((all) => all.filter((x) => x.key !== s.key))
                         : undefined
                     }
+                    showErrors={showErrors}
                   />
                 ))}
                 <button
@@ -764,6 +824,7 @@ export function BookingPanel({
                 {canSaveCard ? (
                   <CardFields
                     value={cc}
+                    showErrors={showErrors}
                     onChange={setCc}
                     chargeAmount={Math.max(0, total - paid)}
                     disabled={method !== "credit_card"}
