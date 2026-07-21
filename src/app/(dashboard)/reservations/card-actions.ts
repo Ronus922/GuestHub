@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/actor";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import {
+  cvvValid,
   detectBrand,
   expiryInPast,
   MANUAL_CARD_SOURCES,
@@ -21,6 +22,8 @@ import {
   cardVaultConfigured,
   encryptPan,
   decryptPan,
+  encryptCvv,
+  decryptCvv,
   CARD_KEY_VERSION,
 } from "@/lib/card-vault";
 import { getPaymentGateway, NO_GATEWAY_MESSAGE } from "@/lib/payments/gateway";
@@ -79,6 +82,7 @@ export type RevealedCard = {
   holderIdNumber: string | null;
   expMonth: number;
   expYear: number;
+  cvv: string | null; // D87 — stored CVV, decrypted here only
   brand: string | null;
   source: CardSource;
   sourceChannel: string | null;
@@ -109,6 +113,7 @@ export async function saveReservationCardAction(raw: {
   pan: string;
   expMonth: number;
   expYear: number;
+  cvv?: string;
   source?: CardSource;
   billingNotes?: string;
 }): Promise<ActionResult<StoredCardMeta>> {
@@ -134,7 +139,12 @@ export async function saveReservationCardAction(raw: {
     const pan = normalizePan(String(raw.pan ?? ""));
     if (!panValid(pan)) return fail("מספר כרטיס אינו תקין");
 
-    // CVV is intentionally NOT accepted or stored (D52 §2).
+    // D87 — CVV stored (owner decision, migration 047). Optional; when present it
+    // must be 3–4 digits. Encrypted at rest, NEVER logged/audited/echoed. See the
+    // PCI ceiling note in card-vault.ts.
+    const cvvRaw = String(raw.cvv ?? "").trim();
+    if (cvvRaw && !cvvValid(cvvRaw)) return fail("קוד אבטחה (CVV) אינו תקין");
+    const cvvEncrypted = cvvRaw ? encryptCvv(cvvRaw) : null;
 
     const expMonth = Number(raw.expMonth);
     const expYear = Number(raw.expYear);
@@ -157,15 +167,16 @@ export async function saveReservationCardAction(raw: {
       const [row] = await tx<StoredCardMeta[]>`
         INSERT INTO guesthub.reservation_cards
           (tenant_id, reservation_id, holder_name, holder_id_number,
-           pan_encrypted, key_version, brand, last4, exp_month, exp_year,
+           pan_encrypted, cvv_encrypted, key_version, brand, last4, exp_month, exp_year,
            source, billing_notes, received_at, created_by, updated_by)
         VALUES (${actor.tenantId}, ${raw.reservationId}, ${holderName}, ${holderId || null},
-                ${encrypted}, ${CARD_KEY_VERSION}, ${brand}, ${last4}, ${expMonth}, ${expYear},
+                ${encrypted}, ${cvvEncrypted}, ${CARD_KEY_VERSION}, ${brand}, ${last4}, ${expMonth}, ${expYear},
                 ${source}, ${billingNotes}, now(), ${actor.userId}, ${actor.userId})
         ON CONFLICT (reservation_id) DO UPDATE SET
           holder_name = EXCLUDED.holder_name,
           holder_id_number = EXCLUDED.holder_id_number,
           pan_encrypted = EXCLUDED.pan_encrypted,
+          cvv_encrypted = EXCLUDED.cvv_encrypted,
           key_version = EXCLUDED.key_version,
           brand = EXCLUDED.brand,
           last4 = EXCLUDED.last4,
@@ -230,13 +241,13 @@ export async function revealReservationCardAction(
 
     const [row] = await sql<
       {
-        id: string; reservation_id: string; pan_encrypted: string;
+        id: string; reservation_id: string; pan_encrypted: string; cvv_encrypted: string | null;
         holder_name: string; holder_id_number: string | null; exp_month: number; exp_year: number;
         brand: string | null; source: CardSource; source_channel: string | null;
         is_virtual: boolean; available_until: string | null;
       }[]
     >`
-      SELECT id, reservation_id, pan_encrypted,
+      SELECT id, reservation_id, pan_encrypted, cvv_encrypted,
              holder_name, holder_id_number, exp_month, exp_year, brand,
              source, source_channel, is_virtual, available_until::text AS available_until
       FROM guesthub.reservation_cards
@@ -244,7 +255,14 @@ export async function revealReservationCardAction(
     if (!row) return fail("כרטיס שמור לא נמצא");
 
     const pan = decryptPan(row.pan_encrypted);
-    const fields = ["pan", "expiry", "holder", ...(row.holder_id_number ? ["holder_id"] : [])];
+    const cvv = row.cvv_encrypted ? decryptCvv(row.cvv_encrypted) : null;
+    const fields = [
+      "pan",
+      "expiry",
+      "holder",
+      ...(row.cvv_encrypted ? ["cvv"] : []),
+      ...(row.holder_id_number ? ["holder_id"] : []),
+    ];
     await writeAudit(actor, {
       entityType: "reservation_card",
       entityId: row.id,
@@ -261,6 +279,7 @@ export async function revealReservationCardAction(
         holderIdNumber: row.holder_id_number,
         expMonth: row.exp_month,
         expYear: row.exp_year,
+        cvv,
         brand: row.brand,
         source: row.source,
         sourceChannel: row.source_channel,
@@ -274,23 +293,34 @@ export async function revealReservationCardAction(
 }
 
 // ---- immediate charge via PSP (server-enforced permission, audited) ----
-// Routes through the payment-gateway seam (src/lib/payments/gateway.ts). No PSP
-// is integrated today, so getPaymentGateway() is null and this fails closed. When
-// a real gateway lands, the else-branch decrypts the stored PAN and calls
-// gateway.charge() (a CVV, if the flow needs one, is collected transiently at
-// that moment and discarded — never stored); nothing at the call sites changes.
+// Routes through the payment-gateway seam (src/lib/payments/gateway.ts): no
+// configured PSP → fails closed with NO_GATEWAY_MESSAGE. With a gateway, the
+// stored PAN (+CVV, transiently) is decrypted for THIS request only and sent to
+// the provider; success is returned ONLY on real provider evidence, and the
+// captured payment lands in the ledger idempotently (keyed by the provider's
+// transaction id) with paid/balance reconciled from it (D51). No digits or CVV
+// ever reach a log, an audit row or an error message.
 export async function chargeReservationCardAction(input: {
   cardId: string;
   amount: number;
-}): Promise<ActionResult<{ charged: false }>> {
+}): Promise<
+  ActionResult<{ charged: boolean; paid?: number; balance?: number; reference?: string | null }>
+> {
   try {
     const actor = await getActor();
     requirePermission(actor, "payments.card_charge");
     const ctx = await auditRequestContext();
     const amount = Math.max(0, Math.round(Number(input.amount) || 0));
 
-    const [row] = await sql<{ id: string; reservation_id: string }[]>`
-      SELECT id, reservation_id FROM guesthub.reservation_cards
+    const [row] = await sql<
+      {
+        id: string; reservation_id: string; pan_encrypted: string; cvv_encrypted: string | null;
+        holder_name: string; holder_id_number: string | null; exp_month: number; exp_year: number;
+      }[]
+    >`
+      SELECT id, reservation_id, pan_encrypted, cvv_encrypted,
+             holder_name, holder_id_number, exp_month, exp_year
+      FROM guesthub.reservation_cards
       WHERE id = ${input.cardId} AND tenant_id = ${actor.tenantId}`;
     if (!row) return fail("כרטיס שמור לא נמצא");
 
@@ -305,11 +335,79 @@ export async function chargeReservationCardAction(input: {
       session: ctx.session,
     });
 
-    // ponytail: no PSP integrated yet → always fail closed rather than fabricate
-    // a success. A real gateway (getPaymentGateway() non-null) decrypts the
-    // stored card via the vault, calls gateway.charge(), then records the
-    // payment — wire that here; the call sites already handle this null case.
-    return fail(NO_GATEWAY_MESSAGE);
+    // fail closed rather than fabricate a success (D46)
+    if (!gateway) return fail(NO_GATEWAY_MESSAGE);
+    if (amount <= 0) return fail("סכום החיוב חייב להיות חיובי");
+    if (!cardVaultConfigured()) return fail("אחסון כרטיסים אינו מוגדר בשרת");
+
+    // transient decrypt for THIS request only — the plaintext exists solely in
+    // the charge call below and is discarded with this scope (D52 §2)
+    const pan = decryptPan(row.pan_encrypted);
+    const cvv = row.cvv_encrypted ? decryptCvv(row.cvv_encrypted) : null;
+
+    // unique per attempt: PSP-side idempotency — a double-submit of the same
+    // attempt is rejected by the provider instead of double-charging
+    const reference = `res:${row.reservation_id}:${crypto.randomUUID()}`;
+    const result = await gateway.charge({
+      amount,
+      currency: "ILS",
+      pan,
+      expMonth: row.exp_month,
+      expYear: row.exp_year,
+      cvv,
+      holderName: row.holder_name,
+      holderIdNumber: row.holder_id_number,
+      reference,
+    });
+
+    if (!result.success) {
+      await writeAudit(actor, {
+        entityType: "reservation_card",
+        entityId: row.id,
+        action: "card_charge_result",
+        after: {
+          reservation_id: row.reservation_id, amount,
+          outcome: "declined", provider: gateway.id, error: result.error ?? null,
+        },
+        ip: ctx.ip,
+        session: ctx.session,
+      });
+      return fail(result.error ?? "החיוב נדחה על ידי ספק הסליקה");
+    }
+
+    // money moved at the provider — record it in the canonical ledger (D51/D52),
+    // idempotently keyed by the provider transaction id (a replay recomputes but
+    // never double-counts), and reconcile paid/balance from the ledger.
+    const data = await sql.begin(async (tx) => {
+      const idempotencyKey = `psp:${gateway.id}:${result.providerRef ?? reference}`;
+      await tx`
+        INSERT INTO guesthub.payments
+          (tenant_id, reservation_id, amount, method, status, paid_at, reference, idempotency_key)
+        VALUES (${actor.tenantId}, ${row.reservation_id}, ${amount}, 'credit_card',
+                'paid', now(), ${result.providerRef ?? null}, ${idempotencyKey})
+        ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`;
+      const { paid, balance } = await recomputePaymentAggregates(
+        tx, actor.tenantId, row.reservation_id,
+      );
+      await writeAudit(actor, {
+        entityType: "reservation",
+        entityId: row.reservation_id,
+        action: "card_charge_captured",
+        after: {
+          amount, provider: gateway.id,
+          reference: result.providerRef ?? null, outcome: "captured",
+        },
+        ip: ctx.ip,
+        session: ctx.session,
+      }, tx);
+      await publishDomainEvent(tx, actor.tenantId, {
+        type: "reservation.payment_changed",
+        reservationId: row.reservation_id,
+      });
+      return { charged: true, paid, balance, reference: result.providerRef ?? null };
+    });
+
+    return { success: true, data };
   } catch (e) {
     return fail(errorMessage(e));
   }

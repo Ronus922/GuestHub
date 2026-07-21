@@ -4,10 +4,10 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import {
-  CARD_SOURCE_LABEL,
-  MANUAL_CARD_SOURCES,
+  cvvValid,
   expiryInPast,
   formatCardNumber,
+  formatCvv,
   formatExpiry,
   normalizePan,
   panValid,
@@ -45,20 +45,22 @@ export type RecordedPayment = {
 // second component. Before D86 an OTA reservation stacked a read-only channel
 // summary card ON TOP of an empty-looking form — that duplicate is gone.
 //
-// SECURITY (D41/D42/D52 — unchanged by the visual merge): the PAN is sent ONLY
-// through the dedicated guarded save action (encrypted server-side, AES-256-GCM)
-// and read back ONLY via the explicit, permission-guarded, audited reveal. The
-// CVV is NEVER collected, stored or revealed — there is no CVV field anywhere.
-// The number field renders the masked PAN (•••• last4); the plaintext appears
-// only after "הצגת פרטי אשראי" and is dropped from client state on hide, card
-// change, unmount and after a short inactivity window. Saving never charges.
-// Masked channel fragments are never padded out into a full card number.
+// SECURITY (D41/D42 · CVV per D87): the PAN and CVV are sent ONLY through the
+// dedicated guarded save action (encrypted server-side, AES-256-GCM) and read
+// back ONLY via the explicit, permission-guarded, audited reveal (the
+// "הצגת פרטי אשראי" button). A stored card renders MASKED by default; the
+// plaintext PAN + CVV appear only after that click, and are dropped from client
+// state on hide, card change and unmount. Saving never charges. Masked channel
+// fragments are never padded out into a full card number.
+// ⚠️ Storing CVV violates PCI-DSS Req. 3.2 — retained only because no PSP
+// authorizes inside GuestHub; see the ceiling note in card-vault.ts.
 // ============================================================
 
 export type CardDraft = {
   holder: string;
   number: string;
   exp: string;
+  cvv: string;
   idNum: string;
   source: CardSource;
   billingNotes: string;
@@ -68,6 +70,7 @@ export const EMPTY_CARD: CardDraft = {
   holder: "",
   number: "",
   exp: "",
+  cvv: "",
   idNum: "",
   source: "back_office",
   billingNotes: "",
@@ -76,7 +79,7 @@ export const EMPTY_CARD: CardDraft = {
 // "empty" → nothing entered; "valid" → save-ready; "invalid" → block submit.
 // source/billingNotes never make a card "non-empty" on their own.
 export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
-  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.idNum.trim())
+  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.cvv.trim() && !c.idNum.trim())
     return "empty";
   const pan = normalizePan(c.number);
   const exp = parseExpiry(c.exp);
@@ -85,12 +88,10 @@ export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
     panValid(pan) &&
     exp !== null &&
     !expiryInPast(exp.month, exp.year, new Date()) &&
+    (!c.cvv || cvvValid(c.cvv)) &&
     (!c.idNum || /^\d{5,9}$/.test(c.idNum));
   return ok ? "valid" : "invalid";
 }
-
-// how long revealed details stay on screen without interaction
-const REVEAL_TIMEOUT_MS = 45_000;
 
 // copy affordance for a revealed value — never logged, never toasted with the value
 function CopyBtn({ value, label }: { value: string; label: string }) {
@@ -217,6 +218,7 @@ export function CardFields({
     value.exp.length > 0 &&
     (exp === null || expiryInPast(exp.month, exp.year, new Date()));
   const idBad = view.editable && value.idNum.length > 0 && !/^\d{5,9}$/.test(value.idNum);
+  const cvvBad = view.editable && value.cvv.length > 0 && !cvvValid(value.cvv);
   // when a partially-typed card blocks "צור הזמנה" (showErrors), also red the
   // EMPTY required fields (holder / number / expiry) — not only the format-bad
   // ones — so the operator sees exactly what to complete or clear.
@@ -224,6 +226,9 @@ export function CardFields({
   const holderMissing = partialBlock && !value.holder.trim();
   const numberMissing = partialBlock && digits.length === 0;
   const expiryMissing = partialBlock && value.exp.trim().length === 0;
+  // CVV shares the ID field's visibility: shown while editable, and on a stored
+  // card (where the audited reveal fills it in)
+  const showCvvField = view.editable || view.origin === "stored";
 
   // grey-out applies to MANUAL ENTRY only — a read-only card that actually holds
   // data is never rendered as if it were empty
@@ -246,8 +251,6 @@ export function CardFields({
         return;
       }
       setRevealed(res.data);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-      hideTimer.current = setTimeout(() => setRevealed(null), REVEAL_TIMEOUT_MS);
     });
 
   const charge = () =>
@@ -357,7 +360,35 @@ export function CardFields({
               onChange={(e) => onChange((p) => ({ ...p, exp: formatExpiry(e.target.value) }))}
             />
           </label>
-          {showIdField && (
+          {/* CVV — משמאל לתוקף (D87). editable: נשמר מוצפן; read-only: מתמלא
+              מהחשיפה המבוקרת. אורך 3–4 ספרות (Amex=4). */}
+          {showCvvField && (
+            <label className="field">
+              <span className="field-label">
+                CVV{" "}
+                <span className="field-hint">(3–4 ספרות)</span>
+                {revealed && view.cvv && <CopyBtn value={view.cvv} label="CVV" />}
+              </span>
+              <div className="bw-fld-wrap">
+                <Icon name="credit-card" size={17} className="bw-fi" />
+                <input
+                  className={`field-input bw-ic ltr-num ${roCls} ${cvvBad ? "field-error" : ""}`}
+                  dir="ltr"
+                  inputMode="numeric"
+                  placeholder={ro ? (revealed ? "לא נשמר" : "מוצג לאחר הצגת פרטי אשראי") : "123"}
+                  autoComplete="off"
+                  maxLength={4}
+                  readOnly={ro}
+                  value={view.cvv}
+                  onChange={(e) => onChange((p) => ({ ...p, cvv: formatCvv(e.target.value) }))}
+                />
+              </div>
+            </label>
+          )}
+        </div>
+
+        {showIdField && (
+          <div className="bw-grid2 mt-4">
             <label className="field">
               <span className="field-label">
                 תעודת זהות <span className="field-hint">(לא חובה)</span>
@@ -375,28 +406,8 @@ export function CardFields({
                 onChange={(e) => onChange((p) => ({ ...p, idNum: e.target.value.replace(/\D/g, "") }))}
               />
             </label>
-          )}
-        </div>
-
-        <label className="field mt-4">
-          <span className="field-label">מקור פרטי הכרטיס</span>
-          {view.editable ? (
-            <select
-              className="field-input"
-              value={value.source}
-              onChange={(e) => onChange((p) => ({ ...p, source: e.target.value as CardSource }))}
-            >
-              {MANUAL_CARD_SOURCES.map((s) => (
-                <option key={s} value={s}>
-                  {CARD_SOURCE_LABEL[s]}
-                </option>
-              ))}
-            </select>
-          ) : (
-            /* the REAL origin of the values above — never hardcoded back-office */
-            <input className="field-input bw-ro" readOnly value={view.sourceLabel} />
-          )}
-        </label>
+          </div>
+        )}
 
         <label className="field mt-4">
           <span className="field-label">

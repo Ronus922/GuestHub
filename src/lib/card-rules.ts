@@ -47,6 +47,15 @@ export function formatExpiry(v: string): string {
   return d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d;
 }
 
+// D87 — CVV/CVC: 3 digits (4 for Amex). digits only, capped at 4.
+export function formatCvv(v: string): string {
+  return (v.match(/\d/g) ?? []).slice(0, 4).join("");
+}
+
+export function cvvValid(v: string): boolean {
+  return /^\d{3,4}$/.test(v);
+}
+
 export function normalizePan(v: string): string {
   return (v.match(/\d/g) ?? []).join("");
 }
@@ -149,6 +158,7 @@ export type RevealedCardInput = {
   holderIdNumber: string | null;
   expMonth: number;
   expYear: number;
+  cvv: string | null; // D87 — stored CVV, decrypted only by the audited reveal
 };
 
 export type CardViewOrigin = "stored" | "channel" | "manual" | "empty";
@@ -161,6 +171,10 @@ export type CardView = {
   /** masked (•••• •••• •••• 1111) unless an authorized reveal was passed in */
   number: string;
   exp: string; // MM/YY — the format the manual field already uses
+  /** D87 — CVV: the editable draft value, or the revealed stored value; "" when
+   *  read-only and not yet revealed (a stored CVV is never shown masked-as-dots
+   *  the way the PAN is — it is simply absent until the audited reveal) */
+  cvv: string;
   idNumber: string;
   billingNotes: string;
   /** read-only source label; empty when `editable` (the source <select> shows instead) */
@@ -257,6 +271,7 @@ export function resolveCardView(input: {
       holder: draft.holder,
       number: draft.number,
       exp: draft.exp,
+      cvv: draft.cvv ?? "",
       idNumber: draft.idNum,
       billingNotes: draft.billingNotes,
       sourceLabel: "",
@@ -280,6 +295,7 @@ export function resolveCardView(input: {
       holder: "",
       number: "",
       exp: "",
+      cvv: "",
       idNumber: "",
       billingNotes: "",
       sourceLabel: `${CARD_SOURCE_LABEL.channel} · ${name}`,
@@ -311,6 +327,7 @@ export function resolveCardView(input: {
       exp: revealed
         ? expDisplay(revealed.expMonth, revealed.expYear)
         : expDisplay(stored.expMonth, stored.expYear),
+      cvv: revealed?.cvv ?? "",
       idNumber: id ?? "",
       billingNotes: stored.billingNotes ?? "",
       sourceLabel,
@@ -343,6 +360,7 @@ export function resolveCardView(input: {
     holder: g.holderName ?? "",
     number,
     exp,
+    cvv: "", // a channel guarantee never carries a CVV
     idNumber: "", // no channel supplies a cardholder ID — the field stays empty
     billingNotes: "",
     sourceLabel: `${CARD_SOURCE_LABEL.channel} · ${name}`,
@@ -366,6 +384,7 @@ export type CardDraftInput = {
   holder: string;
   number: string;
   exp: string;
+  cvv: string;
   idNum: string;
   billingNotes: string;
 };

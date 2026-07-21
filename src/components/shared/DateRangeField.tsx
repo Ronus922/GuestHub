@@ -44,6 +44,7 @@ export function DateRangeField({
   max,
   disabled = false,
   invalid = false,
+  hint,
   onApply,
 }: {
   from: string;
@@ -57,6 +58,8 @@ export function DateRangeField({
   disabled?: boolean;
   /** red the trigger when a required range is missing (form validation) */
   invalid?: boolean;
+  /** טקסט העזרה בפוטר כשנבחר טווח מלא — ברירת מחדל לפי mode (טופס/פאנל) */
+  hint?: string;
   onApply: (from: DateOnly, to: DateOnly) => void;
 }) {
   const days = mode === "days";
@@ -210,9 +213,10 @@ export function DateRangeField({
                 ? days
                   ? "בחרו תאריך סיום"
                   : "בחרו תאריך יציאה"
-                : days
-                  ? "הטווח עודכן — ההחלה מתבצעת בכפתור העדכון של הפאנל"
-                  : "התאריכים עודכנו בטופס — לשמירה לחצו שמור שינויים"}
+                : (hint ??
+                  (days
+                    ? "הטווח עודכן — ההחלה מתבצעת בכפתור העדכון של הפאנל"
+                    : "התאריכים עודכנו בטופס — לשמירה לחצו שמור שינויים"))}
             </span>
           </div>
         </div>
