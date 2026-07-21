@@ -1,0 +1,489 @@
+/* ============================================================
+   /calendar — mobile "ציר זמן" board (reference GuesthubCalandrMobile).
+   Rendered below md; the desktop board (calendar.css) is hidden there. The app
+   shell owns the hamburger + nav drawer, so this file has NONE of that — only
+   the calendar's own controls, the timeline card, and the reservation sheet.
+   Values are EXACT to the owner-supplied reference; where the reference uses a
+   value outside the design-system closed set it is marked `ds-allow:` (the
+   reference overrides the gate, by owner instruction). Tokens are used only
+   where they are byte-identical to the reference hex.
+   ============================================================ */
+
+@layer components {
+
+/* ---------- sticky mobile header ---------- */
+.cb-m-head {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 2px 12px rgba(16, 24, 40, 0.05); /* ds-allow: reference header shadow */
+}
+.cb-m-row1 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 16px 10px;
+}
+.cb-m-title {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+}
+.cb-m-seg {
+  display: flex;
+  background: #e9ecf3; /* ds-allow: reference segment track */
+  border-radius: var(--r-md);
+  padding: 2px;
+}
+.cb-m-seg button {
+  height: 40px; /* ds-allow: reference segment control */
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #5b6478; /* ds-allow: reference muted-2 */
+  font-family: inherit;
+  font-size: 13px; /* ds-allow: reference */
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cb-m-seg button.on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12); /* ds-allow: reference segment lift */
+}
+
+/* jump nav — 5 equal buttons; "היום" tinted, minuses right of it (RTL) */
+.cb-m-nav {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 12px;
+}
+.cb-m-nav button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 44px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: #5b6478; /* ds-allow: reference muted-2 */
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cb-m-nav button.td {
+  border-color: var(--brand-line);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.cb-m-daterow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 16px 12px;
+}
+/* jump-to-date button, mobile — same native-picker mechanism as desktop (§6) */
+.cb-datejump-m {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+.cb-m-range {
+  font-size: 13px; /* ds-allow: reference */
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- timeline card ---------- */
+.cb-m-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-card); /* reference 0 6px 20px rgba(16,24,40,.03) */
+  margin: 12px 16px;
+  overflow: hidden;
+}
+.cb-m-hdr {
+  display: flex;
+  height: 50px;
+  background: #fbfcfe; /* ds-allow: reference header rail */
+  border-bottom: 1px solid var(--line);
+}
+.cb-m-hdr-room {
+  flex: none;
+  width: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--faint);
+  border-inline-end: 1px solid var(--line);
+}
+.cb-m-hdr-day {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-inline-end: 1px solid var(--grid-line);
+}
+.cb-m-hdr-day.we {
+  background: #fcf9ef; /* ds-allow: reference weekend cream */
+}
+.cb-m-hdr-day.td {
+  background: var(--brand-soft);
+}
+.cb-m-dw {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.cb-m-hdr-day.we .cb-m-dw {
+  color: #b4670a; /* ds-allow: reference weekend amber */
+}
+.cb-m-hdr-day.td .cb-m-dw {
+  color: var(--brand);
+}
+.cb-m-dn {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.cb-m-hdr-day.td .cb-m-dn {
+  color: var(--brand);
+}
+
+.cb-m-floor {
+  padding: 5px 12px;
+  font-size: 12.5px; /* ds-allow: reference floor label */
+  font-weight: 700;
+  color: var(--faint);
+  background: #fbfcfe; /* ds-allow: reference header rail */
+  border-bottom: 1px solid #f1f3f7; /* ds-allow: reference row line */
+}
+.cb-m-row {
+  display: flex;
+  height: 50px;
+  border-bottom: 1px solid #f1f3f7; /* ds-allow: reference row line */
+}
+.cb-m-rlabel {
+  flex: none;
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0 10px;
+  border-inline-end: 1px solid var(--line);
+  min-width: 0;
+}
+.cb-m-rnum {
+  font-size: 14px;
+  font-weight: 800;
+}
+.cb-m-rtype {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.cb-m-strip {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+.cb-m-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  border-inline-end: 1px solid var(--grid-line);
+}
+.cb-m-cell.we {
+  background: #fcf9ef; /* ds-allow: reference weekend cream */
+}
+.cb-m-cell.td {
+  background: #f6f8fe; /* ds-allow: reference today body */
+}
+
+/* ---------- bars ---------- */
+.cb-m-bar {
+  position: absolute;
+  top: 8px;
+  height: 34px;
+  border-radius: 9px; /* ds-allow: reference bar radius */
+  border: 1.5px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  font-family: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  min-width: 0;
+  z-index: 2;
+}
+.cb-m-bar.cutR {
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+.cb-m-bar.cutL {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+.cb-m-bar-nm {
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.cb-m-block {
+  position: absolute;
+  top: 8px;
+  height: 34px;
+  border-radius: 9px; /* ds-allow: reference block radius */
+  border: 1.5px dashed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+/* ---------- legend + hint ---------- */
+.cb-m-legend {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 18px 8px;
+  flex-wrap: wrap;
+}
+.cb-m-legend-h {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--faint);
+}
+.cb-m-hint {
+  padding: 0 18px 26px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+/* ---------- reservation quick-view bottom-sheet ---------- */
+.cb-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.45);
+  z-index: 55;
+  border: none;
+  cursor: pointer;
+  animation: cb-fd-in 0.18s ease;
+}
+.cb-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--surface);
+  border-radius: 20px 20px 0 0; /* ds-allow: reference sheet radius */
+  z-index: 56;
+  direction: rtl;
+  overflow: hidden;
+  animation: cb-sh-up 0.24s cubic-bezier(0.2, 0.8, 0.3, 1);
+  box-shadow: 0 -18px 50px rgba(16, 24, 40, 0.3); /* ds-allow: reference sheet shadow */
+}
+.cb-sheet-hd {
+  background: var(--brand);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cb-sheet-av {
+  width: 42px;
+  height: 42px; /* ds-allow: reference avatar */
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.cb-sheet-nm {
+  font-size: 21px;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.15;
+}
+.cb-sheet-vip {
+  color: var(--vip);
+}
+.cb-sheet-sub {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 600;
+  margin-top: 2px;
+}
+.cb-sheet-x {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.cb-sheet-x:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+.cb-sheet-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.cb-sheet-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 8px;
+  font-size: 13px; /* ds-allow: reference */
+  font-weight: 700;
+}
+.cb-sheet-badge .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.cb-sheet-ch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.cb-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #2c3446; /* ds-allow: reference body text */
+}
+.cb-sheet-ri {
+  color: #8a91a3; /* ds-allow: reference row icon */
+  flex: none;
+}
+.cb-sheet-row b {
+  font-variant-numeric: tabular-nums;
+}
+.cb-sheet-ft {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px 18px;
+  border-top: 1px solid #eef0f5; /* ds-allow: reference footer line */
+}
+.cb-sheet-cancel {
+  height: 44px;
+  padding: 0 16px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  flex: none;
+}
+.cb-sheet-edit {
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: #2c3446; /* ds-allow: reference body text */
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.cb-sheet-main {
+  flex: 1;
+  height: 44px;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--brand);
+  color: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  box-shadow: var(--brand-shadow); /* reference 0 4px 12px rgba(37,64,200,.2) */
+}
+.cb-sheet-main:hover {
+  background: var(--brand-hover);
+}
+
+@keyframes cb-sh-up {
+  from {
+    transform: translateY(56px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes cb-fd-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+}

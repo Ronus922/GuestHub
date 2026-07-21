@@ -1,18 +1,17 @@
-import { CHANNEL_CONFIG, type VisibleChannel } from "@/lib/colors";
+import { CHANNEL_CONFIG, type BadgeChannel } from "@/lib/colors";
+import { Icon } from "@/components/shared/Icon";
 
 // The ONE reservation-channel badge — calendar pill (lg, 21px, white ring),
-// popover row (md, 18px), legend (sm, 16px). Glyph, colors and display name
-// all come from CHANNEL_CONFIG (src/lib/colors.ts). It accepts ONLY a visible
-// channel (booking/airbnb/expedia/site) — an internal reservation has no
-// channel, so its parent renders nothing (no wrapper, no reserved width).
-// `flex: none` in .ch-badge guarantees the circle never shrinks or distorts
-// on a narrow pill.
+// popover row (md, 18px), legend (sm, 16px). Glyph/icon, colors and display name
+// all come from CHANNEL_CONFIG (src/lib/colors.ts). booking/airbnb/expedia wear a
+// letter; site (globe) and manual (pencil) wear a Material Symbol. `flex: none`
+// in .ch-badge guarantees the circle never shrinks or distorts on a narrow pill.
 export function ChannelBadge({
   channel,
   size = "md",
   ring = false,
 }: {
-  channel: VisibleChannel;
+  channel: BadgeChannel;
   /** sm 16px (legend) · md 18px (popover) · lg 21px (calendar pill) */
   size?: "sm" | "md" | "lg";
   /** white separation ring — calendar pills only */
@@ -28,7 +27,7 @@ export function ChannelBadge({
       title={label}
       aria-label={label}
     >
-      {c.glyph}
+      {c.icon ? <Icon name={c.icon} size={13.5} /> : c.glyph}
     </span>
   );
 }

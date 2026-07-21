@@ -33,7 +33,7 @@ import {
   stayViolationMessage,
   type NightsRuleRow,
 } from "@/lib/rates/rules";
-import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
+import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
   NEUTRAL_STATUS,
@@ -965,8 +965,8 @@ export function CalendarGrid({
 
   const dragStay = dragUi ? data.stays.find((s) => s.rr_id === dragUi.rrId) : null;
   const dragPalette = dragStay ? stayPalette(dragStay) : null;
-  // ghost badge follows the same rule as the pill: internal reservations wear none
-  const dragChannel = dragStay ? normalizeVisibleChannel(dragStay.source_key) : null;
+  // ghost badge follows the same rule as the pill: channel, or the manual pencil
+  const dragChannel = dragStay ? resolveChannelBadge(dragStay.source_key) : null;
   // dim only the source card of a MOVE, and only re-render its own row
   const dimRoomId = dragUi?.mode === "move" ? (dragStay?.room_id ?? null) : null;
   // highlighted card = the one whose hover tooltip is open (row-scoped)
@@ -1537,8 +1537,8 @@ const StayBar = memo(function StayBar({
   const geo = barGeometry(from, days, stay.check_in, stay.check_out);
   const nights = nightsBetween(stay.check_in, stay.check_out);
   const draggable = canDragCard(canEdit, pending);
-  // null for internal reservations → no badge, no wrapper, no reserved width
-  const channel = normalizeVisibleChannel(stay.source_key);
+  // every reservation carries a badge: its external channel, or the manual pencil
+  const channel = resolveChannelBadge(stay.source_key);
 
   return (
     <div
@@ -1572,7 +1572,7 @@ const StayBar = memo(function StayBar({
       }}
     >
       {/* channel first (RTL: right-hand leading edge), then VIP, then name */}
-      {channel && <ChannelBadge channel={channel} size="lg" ring />}
+      <ChannelBadge channel={channel} size="lg" ring />
       {stay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={13.5} className="shrink-0 opacity-70" />}

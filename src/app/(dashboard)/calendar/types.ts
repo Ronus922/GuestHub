@@ -1,8 +1,10 @@
 import type { DateOnly } from "@/lib/dates";
 import type { PaymentState, RateRow } from "@/lib/inventory-rules";
 
-export type CalendarView = "week" | "3w" | "month";
-export const VIEW_DAYS: Record<CalendarView, number> = { week: 7, "3w": 21, month: 30 };
+// The desktop board shows a fixed 3-week window (reference toolbar has no view
+// switch — navigation is the granular jumpbox). Mobile renders a 3/5/7-day slice
+// of the SAME fetched window (local state), so no wider fetch is needed.
+export const CALENDAR_DAYS = 21;
 
 export type CalendarRoom = {
   id: string;

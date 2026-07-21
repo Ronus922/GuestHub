@@ -127,3 +127,8 @@ export const HEBREW_MONTHS = [
 export function hebrewMonthYear(d: DateOnly): string {
   return `${HEBREW_MONTHS[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;
 }
+
+// "3 ביולי" — day number + Hebrew month name (mobile range label).
+export function formatDayHebMonth(d: DateOnly): string {
+  return `${Number(d.slice(8, 10))} ב${HEBREW_MONTHS[Number(d.slice(5, 7)) - 1]}`;
+}
