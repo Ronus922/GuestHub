@@ -12,6 +12,7 @@ const ROLE_META: Record<string, RoleMeta> = {
   receptionist: { tone: "warning", icon: "concierge" },
   staff: { tone: "neutral", icon: "user" },
   cleaner: { tone: "success", icon: "brush" },
+  maintenance: { tone: "warning", icon: "maintenance" },
 };
 
 const FALLBACK: RoleMeta = { tone: "neutral", icon: "user" };
