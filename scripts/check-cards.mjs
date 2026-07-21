@@ -62,13 +62,18 @@ assert.equal(rules.expiryInPast(6, 2026, NOW), true, "last month is expired");
 assert.equal(rules.expiryInPast(7, 2026, NOW), false, "current month still valid");
 assert.equal(rules.expiryInPast(1, 2027, NOW), false);
 
-// ---- CVV helpers are GONE from the pure rules (D52 §2) ----
-assert.equal(rules.cvvValid, undefined, "cvvValid removed — CVV is never validated for storage");
-assert.equal(rules.formatCvv, undefined, "formatCvv removed — no CVV input");
-assert.equal(rules.maskedCvv, undefined, "maskedCvv removed — no CVV is ever displayed");
+// ---- CVV helpers restored for the MANUAL-ENTRY card (D87) ----
+assert.equal(typeof rules.cvvValid, "function", "cvvValid restored — the stored CVV is validated");
+assert.equal(rules.cvvValid("123"), true, "3-digit CVV valid");
+assert.equal(rules.cvvValid("1234"), true, "4-digit CVV (Amex) valid");
+assert.equal(rules.cvvValid("12"), false, "2 digits too short");
+assert.equal(rules.cvvValid("12a"), false, "non-numeric rejected");
+assert.equal(rules.formatCvv("1a2b3"), "123", "formatCvv keeps digits, caps at 4");
+assert.equal(rules.maskedCvv, undefined, "no maskedCvv — the CVV is shown in full, never masked (D87)");
 assert.ok(!rules.MANUAL_CARD_SOURCES.includes("channel"), "manual entry can never set source=channel");
 
-// ---- channel card extraction: PAN only, CVV never carried (D52 §2) ----
+// ---- channel card extraction: PAN only, CVV STILL never carried from a channel
+//      (D87 restored CVV only on the MANUAL path — the OTA ingest is untouched) ----
 const vc = payloads.extractChannelCard({
   credit_card: {
     cardholder_name: "TEST GUEST",
@@ -123,9 +128,15 @@ assert.throws(
 );
 assert.throws(() => vault.decryptPan("v9." + parts.slice(1).join(".")), /version/, "unknown version rejected");
 
-// ---- vault: the CVV crypto wrappers are GONE (D52 §2) ----
-assert.equal(vault.encryptCvv, undefined, "encryptCvv removed — a CVV is never encrypted at rest");
-assert.equal(vault.decryptCvv, undefined, "decryptCvv removed — there is no CVV to decrypt");
+// ---- vault: CVV crypto wrappers restored (D87) — same AES-256-GCM as the PAN ----
+assert.equal(typeof vault.encryptCvv, "function", "encryptCvv restored — the CVV is encrypted at rest");
+assert.equal(typeof vault.decryptCvv, "function", "decryptCvv restored — the reveal decrypts it");
+{
+  const ct = vault.encryptCvv("123");
+  assert.ok(/^v1\./.test(ct), "CVV ciphertext uses the versioned vault format");
+  assert.notEqual(ct, "123", "the CVV is not stored in plaintext");
+  assert.equal(vault.decryptCvv(ct), "123", "encrypt→decrypt round-trips the CVV");
+}
 delete process.env.CARD_VAULT_KEY;
 
 // ---- VAT setting rules ----
@@ -166,12 +177,14 @@ assert.ok(/card_reveal/.test(cardActions) && /writeAudit/.test(cardActions), "re
 assert.ok(/card_reveal_denied/.test(cardActions), "rejected reveals are also audited (success or rejected)");
 assert.ok(/auditRequestContext/.test(cardActions), "reveal/charge/edit capture IP + session for the audit");
 assert.ok(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data");
-// CVV is NEVER persisted (D52 §2): no cvv_encrypted column touched, no crypto,
-// no reveal, and the save action does not accept a cvv field.
-assert.ok(!/cvv_encrypted/.test(cardActions), "card actions never touch a cvv_encrypted column");
-assert.ok(!/encryptCvv|decryptCvv/.test(cardActions), "card actions never encrypt or decrypt a CVV");
-// comment-stripped source must contain NO 'cvv' token at all (no param, no field)
-assert.ok(!/cvv/i.test(cardActions), "no CVV token survives anywhere in the card actions (D52 §2)");
+// D87 — CVV is persisted ENCRYPTED on the manual-entry card (owner decision).
+// It rides the same guarded save/reveal, encrypted at rest, never logged.
+assert.ok(/cvv_encrypted/.test(cardActions), "save/reveal touch the cvv_encrypted column");
+assert.ok(/encryptCvv\(/.test(cardActions), "the CVV is encrypted before persistence");
+assert.ok(/decryptCvv\(/.test(cardActions), "the CVV is decrypted only inside the audited reveal");
+assert.ok(/cvvValid\(/.test(cardActions), "the stored CVV is validated (3–4 digits)");
+// still NEVER logged in plaintext through a console call
+assert.ok(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data (incl. CVV)");
 
 const resActions = src("src/app/(dashboard)/reservations/actions.ts");
 assert.ok(!/pan_encrypted/.test(resActions),
@@ -185,15 +198,20 @@ assert.ok(/last4/.test(resActions), "the normal payload carries masked metadata 
 const cardFields = src("src/components/reservations/CardFields.tsx");
 assert.ok(!/saveReservationCardAction/.test(cardFields),
   "the card form never calls save directly (panels do)");
-assert.ok(!/formatCvv|maskedCvv|\.cvv\b/.test(cardFields), "the entry form no longer collects or renders a CVV");
+// D87 — the manual form now collects a CVV and renders it through the view model
+assert.ok(/formatCvv\(/.test(cardFields), "the entry form collects a CVV (formatCvv)");
+assert.ok(/view\.cvv/.test(cardFields), "the CVV is rendered from the canonical view model");
 // D86 — masking now lives in the pure view model (asserted at runtime below);
 // the component must render the resolved view and never a raw PAN of its own
 assert.ok(/resolveCardView\(/.test(cardFields),
   "the one card section renders the canonical view model");
-assert.ok(/revealReservationCardAction/.test(cardFields), "full details require the explicit reveal action");
+assert.ok(/revealReservationCardAction/.test(cardFields), "full details come from the guarded reveal action");
+// a stored card is MASKED by default; the PAN + CVV appear only on the explicit
+// "הצגת פרטי אשראי" click (no auto-reveal) — the hide affordance returns to mask
 assert.ok(/הצגת פרטי אשראי/.test(cardFields) && /הסתרת פרטי אשראי/.test(cardFields),
-  "explicit show/hide of the full card details");
-assert.ok(/REVEAL_TIMEOUT_MS/.test(cardFields), "revealed details auto-mask after inactivity");
+  "explicit show/hide of the full card details (masked by default)");
+assert.ok(!/canReveal && storedId && !revealed/.test(cardFields),
+  "no auto-reveal — the stored card stays masked until the operator clicks show");
 assert.ok(/clipboard\.writeText/.test(cardFields), "revealed values are copyable");
 
 const booking = src("src/components/reservations/BookingPanel.tsx");
@@ -201,7 +219,7 @@ const editPanel = src("src/components/reservations/EditReservationPanel.tsx");
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
   assert.ok(!/17\s*%|VAT_RATE|0\.17/.test(s), `${name}: no hardcoded VAT percentage`);
   assert.ok(/formatVatRate\(vatRate\)/.test(s), `${name}: VAT line reads the tenant setting`);
-  assert.ok(!/cvv/i.test(s.replace(/\bCVV\b/g, "")), `${name}: the save payload no longer sends a CVV`);
+  assert.ok(/cvv: cc\.cvv/.test(s), `${name}: the save payload forwards the entered CVV (D87)`);
 }
 assert.ok(/saveReservationCardAction/.test(booking) && /setCc\(EMPTY_CARD\)/.test(booking),
   "booking saves the card via the guarded action and clears client state");
@@ -248,16 +266,21 @@ assert.ok(!/total_price|paid_amount|balance/.test(settingsActions),
 const gatewaySrc = src("src/lib/payments/gateway.ts");
 assert.ok(/getPaymentGateway\(\): PaymentGateway \| null/.test(gatewaySrc),
   "gateway seam exposes getPaymentGateway(): PaymentGateway | null");
-assert.ok(/return null;/.test(gatewaySrc), "no PSP wired yet — getPaymentGateway returns null");
+assert.ok(/if \(!provider\) return null;/.test(gatewaySrc),
+  "no PSP_PROVIDER configured — getPaymentGateway returns null (fail closed)");
 assert.ok(/NO_GATEWAY_MESSAGE/.test(gatewaySrc), "a no-provider message is defined for the UI/action");
 
-// charge routes through the seam and fails closed — never fabricates a success
+// charge routes through the seam; no gateway → fails closed; with a gateway,
+// success is returned ONLY on real provider evidence, landed in the ledger
 assert.ok(/getPaymentGateway\(\)/.test(cardActions), "charge consults the gateway seam");
 const chargeFn = cardActions.match(/chargeReservationCardAction[\s\S]*?export async function recordExternalPaymentAction/);
-assert.ok(chargeFn && /return fail\(NO_GATEWAY_MESSAGE\)/.test(chargeFn[0]),
+assert.ok(chargeFn && /if \(!gateway\) return fail\(NO_GATEWAY_MESSAGE\)/.test(chargeFn[0]),
   "charge fails closed with the no-provider message");
-assert.ok(chargeFn && !/success:\s*true/.test(chargeFn[0]),
-  "charge never returns success while no gateway exists");
+assert.ok(chargeFn && /if \(!result\.success\)/.test(chargeFn[0]) &&
+  chargeFn[0].indexOf("success: true") > chargeFn[0].indexOf("if (!result.success)"),
+  "charge returns success only after the provider approved (real evidence, D46)");
+assert.ok(chargeFn && /recomputePaymentAggregates\(/.test(chargeFn[0]) && /idempotency_key/.test(chargeFn[0]),
+  "a captured charge lands in the ledger idempotently and paid/balance reconcile from it");
 
 // external-payment recorder: guarded, confirmation-gated, audited as EXTERNAL
 assert.ok(/export async function recordExternalPaymentAction/.test(cardActions),
@@ -406,7 +429,11 @@ assert.ok(/onChange\(\(p\) => \(\{ \.\.\.p,/.test(cardFields),
 assert.ok(/number: formatCardNumber\(e\.target\.value\)/.test(cardFields),
   "PAN stays a string via formatCardNumber — never Number()/parseInt()");
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
-  assert.ok(/onChange={setCc}/.test(s), `${name}: card draft uses the state setter directly (functional-update capable)`);
+  // either the setter directly, or a functional-update wrapper (BookingPanel
+  // wraps it to auto-fill the holder from the guest name) — both preserve the
+  // functional-update contract, never a captured snapshot
+  assert.ok(/onChange={setCc}/.test(s) || /setCc\(\(prev\) => \{/.test(s),
+    `${name}: card draft uses a functional update (setter or wrapper)`);
 }
 
 // ---- ONE canonical card view model (D86) ----
@@ -414,8 +441,8 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
 // resolve into the SAME field set. Assert the precedence, the masking and the
 // "never fabricate a missing value" rule at runtime, not by regex.
 {
-  const EMPTY_DRAFT = { holder: "", number: "", exp: "", idNum: "", billingNotes: "" };
-  const DRAFT = { holder: "משה כהן", number: "4111 1111 1111 1111", exp: "05/30", idNum: "123456789", billingNotes: "חיוב בצ׳ק-אין" };
+  const EMPTY_DRAFT = { holder: "", number: "", exp: "", cvv: "", idNum: "", billingNotes: "" };
+  const DRAFT = { holder: "משה כהן", number: "4111 1111 1111 1111", exp: "05/30", cvv: "321", idNum: "123456789", billingNotes: "חיוב בצ׳ק-אין" };
   const STORED = {
     brand: "visa", last4: "4242", expMonth: 8, expYear: 2031, holderName: "רונן מ",
     source: "back_office", sourceChannel: null, isVirtual: false, availableUntil: null,
@@ -437,10 +464,11 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   // an authorized reveal swaps the plaintext into the SAME fields
   const revealed = rules.resolveCardView({
     stored: STORED, draft: EMPTY_DRAFT,
-    revealed: { pan: "4242424242424242", holderName: "רונן מ", holderIdNumber: "123456789", expMonth: 8, expYear: 2031 },
+    revealed: { pan: "4242424242424242", holderName: "רונן מ", holderIdNumber: "123456789", expMonth: 8, expYear: 2031, cvv: "737" },
   });
   assert.equal(revealed.number, "4242 4242 4242 4242", "reveal shows the full PAN in the number field");
   assert.equal(revealed.idNumber, "123456789", "reveal fills the ID field");
+  assert.equal(revealed.cvv, "737", "reveal fills the CVV field (D87)");
   assert.equal(revealed.editable, false, "a revealed card is still not an editable form");
 
   // channel guarantee → the canonical fields, with the REAL source (never back-office)
@@ -521,7 +549,7 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.equal(manual.origin, "manual");
   assert.equal(manual.editable, true, "manual entry is the ONLY editable mode");
   assert.equal(manual.number, DRAFT.number, "the manual draft owns its own value");
-  assert.equal(manual.sourceLabel, "", "the editable mode shows the source <select>, not a label");
+  assert.equal(manual.sourceLabel, "", "the editable mode carries no source label (the source field was removed from the UI; value defaults to back_office)");
   // entering manual mode with a CLEAN draft: the editable inputs start BLANK —
   // the masked OTA/stored values are never copied into the manual form
   const manualClean = rules.resolveCardView({ stored: STORED, channel: CHANNEL, draft: EMPTY_DRAFT, manualEntry: true });
@@ -534,9 +562,14 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.equal(empty.editable, true, "the empty state is the normal entry form");
   assert.equal(empty.number, "", "nothing is invented out of nothing");
 
-  // the view model never carries a CVV, in any mode (D52 §2)
+  // D87 — the view model carries a cvv field in every mode: the manual draft's
+  // value when editable, the revealed value on a stored card, and "" for a
+  // read-only card with nothing revealed (a channel guarantee never has one).
+  assert.equal(manual.cvv, "321", "the manual draft owns its CVV value");
+  assert.equal(ch.cvv, "", "a channel guarantee never carries a CVV");
+  assert.equal(both.cvv, "", "a stored card shows no CVV until the audited reveal");
   for (const v of [both, revealed, ch, partial, manual, empty, unavailable, manualFromUnavailable]) {
-    assert.ok(!Object.keys(v).some((k) => /cvv/i.test(k)), "no CVV anywhere in the card view model");
+    assert.equal(typeof v.cvv, "string", "every view mode exposes a string cvv field");
   }
 }
 

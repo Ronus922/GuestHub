@@ -101,11 +101,18 @@ try {
     });
     assert.equal(rev.duplicate, false, "revision persisted");
 
-    // the CVV columns no longer exist anywhere (D52 §2)
+    // D87 restored a CVV column on the MANUAL card only. The CHANNEL path stays
+    // CVV-free: the revision table has no CVV column, and the only cvv column in
+    // the schema is reservation_cards.cvv_encrypted (the manual-entry card).
     const cvvCols = await tx`
       SELECT table_name, column_name FROM information_schema.columns
-      WHERE table_schema='guesthub' AND column_name ILIKE '%cvv%'`;
-    assert.equal(cvvCols.length, 0, "no CVV column exists in any guesthub table");
+      WHERE table_schema='guesthub' AND column_name ILIKE '%cvv%'
+      ORDER BY table_name, column_name`;
+    assert.deepEqual(
+      cvvCols.map((c) => `${c.table_name}.${c.column_name}`),
+      ["reservation_cards.cvv_encrypted"],
+      "the ONLY cvv column is the manual card's; the channel/revision path has none",
+    );
 
     const [stored] = await tx`
       SELECT card_pan_encrypted, card_meta, payload::text AS payload_text
@@ -119,7 +126,7 @@ try {
     // ---- import: staged PAN (no CVV) is attached to the local reservation ----
     await revisions.markRevisionImported(tx, tenantId, rev.id, resA);
     const [card] = await tx`
-      SELECT pan_encrypted, last4, brand, source, source_channel, is_virtual,
+      SELECT pan_encrypted, cvv_encrypted, last4, brand, source, source_channel, is_virtual,
              provider_reservation_ref, available_until::text AS available_until
       FROM guesthub.reservation_cards WHERE reservation_id = ${resA}`;
     assert.ok(card, "channel card attached to the reservation");
@@ -129,7 +136,9 @@ try {
     assert.equal(card.is_virtual, true, "virtual card flagged");
     assert.equal(card.last4, "1111", "last four stored");
     assert.equal(vault.decryptPan(card.pan_encrypted), TEST_PAN, "attached PAN round-trips");
-    assert.ok(!("cvv_encrypted" in card), "the attached card row has no cvv column");
+    // the channel ingest NEVER populates the CVV column (D87 restored it for the
+    // manual card only) — an OTA-attached card is always cvv_encrypted IS NULL
+    assert.equal(card.cvv_encrypted, null, "the channel-attached card carries no CVV");
 
     // ---- direct ingest path (raw card + reservation in one shot) ----
     const extracted = payloads.extractChannelCard(rawPayload);

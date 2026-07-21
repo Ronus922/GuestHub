@@ -193,6 +193,7 @@ async function main() {
     { key: "receptionist", name: "פקיד קבלה", description: "הזמנות, אורחים, תשלומים" },
     { key: "staff", name: "איש צוות", description: "תפעול בסיסי" },
     { key: "cleaner", name: "עובד ניקיון", description: "משימות ניקיון בלבד" },
+    { key: "maintenance", name: "עובד תחזוקה", description: "משימות תחזוקה בלבד" },
   ];
   const roles = await sql`
     INSERT INTO guesthub.roles ${sql(
@@ -275,6 +276,7 @@ async function main() {
     ],
     staff: ["dashboard.view", "calendar.view", "reservations.view", "guests.view", "rooms.view", "housekeeping.view"],
     cleaner: ["housekeeping.my_tasks"],
+    maintenance: ["housekeeping.my_tasks"],
   };
   const rpRows = [];
   for (const [rk, keys] of Object.entries(grants)) {
@@ -289,6 +291,7 @@ async function main() {
     { username: "reception", full_name: "פקידת קבלה", email: "reception@ginot.co.il", role: "receptionist", phone: "050-1000002" },
     { username: "staff", full_name: "איש צוות", email: "staff@ginot.co.il", role: "staff", phone: "050-1000003" },
     { username: "cleaner", full_name: "עובד ניקיון", email: "cleaner@ginot.co.il", role: "cleaner", phone: "050-1000004" },
+    { username: "maintenance", full_name: "עובד תחזוקה", email: "maintenance@ginot.co.il", role: "maintenance", phone: "050-1000005" },
   ];
   const userRows = [];
   for (const u of userDefs) {
