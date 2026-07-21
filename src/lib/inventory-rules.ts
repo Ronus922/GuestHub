@@ -55,6 +55,24 @@ export function paymentState(totalPrice: number, paidAmount: number): PaymentSta
   return "paid";
 }
 
+// D89 — החלטת בעלים: סטטוס העבודה "הזמנה אושרה" (workflow key 'approved') מעיד
+// על תשלום מלא — ורק הוא. כל עוד ההזמנה לא הועברה ל"הזמנה אושרה" היא לא שולמה
+// (ישלם בהגעה / יתרה בהגעה / ממתין לאישור וכו' — מציגים את מצב ה-ledger האמיתי).
+// ה-ledger עצמו (payments / paid_amount / balance) נשאר אמת חשבונאית ואינו משתנה.
+export const PAID_WORKFLOW_KEY = "approved";
+
+export function displayPaymentState(
+  workflowKey: string | null,
+  totalPrice: number,
+  paidAmount: number,
+): PaymentState {
+  const ledger = paymentState(totalPrice, paidAmount);
+  // זיכוי לאורח (שולם ביתר) לעולם לא מוסתר — כסף שחייבים להחזיר (D52 §7)
+  if (ledger === "overpaid") return "overpaid";
+  if (workflowKey === PAID_WORKFLOW_KEY) return "paid";
+  return ledger;
+}
+
 // THE canonical balance (D52 §6). total − paid, NOT floored: a positive balance
 // is due, a negative balance is a customer credit (overpayment). ONE definition
 // shared by every surface (calendar tooltip, reservation panel, payment section)

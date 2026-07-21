@@ -277,6 +277,9 @@
   /* ---------- filters card: 7 equal tracks like the reference ---------- */
   .rv-fcard {
     flex: none;
+    /* חלונית בורר התאריכים (rv-dp) נפתחת אל מחוץ לגבולות הכרטיס — בלי ביטול
+       ה-overflow:hidden של .card היא נחתכת ונעלמת מתחת לטבלה */
+    overflow: visible;
   }
   .rv-fgrid {
     display: grid;
@@ -289,6 +292,34 @@
   }
   .rv-fgrid input[type="date"].field-input {
     text-align: end;
+  }
+  /* בורר טווח התאריכים בפילטרים: הטריגר תופס את שתי עמודות התאריכים; הפאנל
+     נפתח כחלונית צפה מעוגנת לשדה (כמו בפאנלים הצרים) ולא נפרס על רוחב הגריד.
+     רוחב ≥720px משאיר את שני החודשים זה לצד זה (ה-container query של dp-months) */
+  .rv-dp {
+    grid-column: span 2;
+    position: relative;
+    min-width: 0;
+  }
+  .rv-dp .dp-cell {
+    grid-column: auto;
+  }
+  .rv-dp .dp-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    inset-inline-end: 0;
+    width: min(740px, calc(100vw - 48px));
+    z-index: 40;
+    box-shadow: var(--shadow-float);
+  }
+  @media (max-width: 640px) {
+    .rv-dp {
+      grid-column: span 1;
+    }
+    .rv-dp .dp-panel {
+      inset-inline-end: auto;
+      inset-inline-start: 0;
+    }
   }
 
   /* ---------- the ONE unified tab bar ----------

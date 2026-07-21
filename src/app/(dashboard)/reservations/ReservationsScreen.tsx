@@ -7,6 +7,7 @@ import { statusTintPalette } from "@/lib/colors";
 import { paymentTriplet, STATUS_COLORS } from "@/lib/status-colors";
 import { getVisibleReservationNumber } from "@/lib/reservations/visible-number";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
+import { DateRangeField } from "@/components/shared/DateRangeField";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type { ListFilters, ListRow, ListTab, ReservationsListData } from "./data";
 
@@ -286,24 +287,21 @@ export function ReservationsScreen({
                 <option value="created">תאריך הזמנה</option>
               </select>
             </label>
-            <label className="field">
-              <span className="field-label">מתאריך</span>
-              <input
-                type="date"
-                className="field-input ltr-num"
-                value={filters.from ?? ""}
-                onChange={(e) => apply({ from: e.target.value || null })}
+            {/* בורר טווח אחד (DatePicker reference) במקום שני שדות date נפרדים.
+                mode="days": טווח סינון כולל את שני הקצוות ויום בודד חוקי.
+                write-through: הרשימה מסתננת ברגע שנבחר טווח מלא.
+                rv-dp: הפאנל נפתח כחלונית צפה מעוגנת לשדה — לא על רוחב הגריד */}
+            <div className="rv-dp">
+              <DateRangeField
+                from={filters.from ?? ""}
+                to={filters.to ?? ""}
+                mode="days"
+                label="טווח תאריכים"
+                required={false}
+                hint="הרשימה מסוננת מיידית לפי הטווח שנבחר"
+                onApply={(from, to) => apply({ from, to })}
               />
-            </label>
-            <label className="field">
-              <span className="field-label">עד תאריך</span>
-              <input
-                type="date"
-                className="field-input ltr-num"
-                value={filters.to ?? ""}
-                onChange={(e) => apply({ to: e.target.value || null })}
-              />
-            </label>
+            </div>
             <label className="field">
               <span className="field-label">מקור</span>
               <select
