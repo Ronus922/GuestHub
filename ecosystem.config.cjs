@@ -28,6 +28,9 @@ module.exports = {
       // room for the in-flight job to finish before SIGKILL (see channel-worker.cjs)
       kill_timeout: 15000,
       max_memory_restart: "300M",
+      // the cumulative pm2 log is useless for diagnosis without per-line
+      // timestamps (the MAX_PARAMETERS_EXCEEDED finding could not be dated)
+      time: true,
       env: {
         NODE_ENV: "production",
         CHANNEL_WORKER_INTERVAL_MS: "20000",

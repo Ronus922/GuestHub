@@ -7,7 +7,7 @@ import { writeAudit } from "@/lib/audit";
 import { addDays, eachDay, dayOfWeek, todayInTz, ratesWritableWindow, type DateOnly } from "@/lib/dates";
 import { markAriDirty } from "@/lib/channel/outbox";
 import { ARI_HORIZON_DAYS } from "@/lib/channel/ranges";
-import { writeRateCells, type RateCell, type RateCellPatch } from "@/lib/rates/service";
+import { chunkForBind, writeRateCells, type RateCell, type RateCellPatch } from "@/lib/rates/service";
 import { applyPriceMode } from "@/lib/rates/rules";
 import {
   upsertRateCellSchema,
@@ -32,7 +32,10 @@ const fail = (error: string): ActionResult<never> => ({ success: false, error })
 
 function errorMessage(e: unknown): string {
   if (e instanceof AuthorizationError || e instanceof DomainError) return e.message;
-  console.error("[rates]", e);
+  // The cumulative pm2 log carries no per-line timestamps — stamp here, or a
+  // production error can't be placed in time (that's what stalled the
+  // MAX_PARAMETERS_EXCEEDED diagnosis).
+  console.error(`[rates] ${new Date().toISOString()}`, e);
   return "אירעה שגיאה בלתי צפויה";
 }
 
@@ -198,10 +201,12 @@ export async function bulkUpdateRatesAction(
         old_price: c.oldPrice,
         new_price: c.newPrice,
       }));
-      if (items.length > 0) {
+      // 7 columns/row — sliced under the bind-parameter cap, same tx (see
+      // chunkForBind in @/lib/rates/service).
+      for (const part of chunkForBind(items, 7)) {
         await tx`
           INSERT INTO guesthub.bulk_rate_update_items ${tx(
-            items,
+            part,
             "tenant_id", "log_id", "room_id", "room_type_id", "date", "old_price", "new_price",
           )}`;
       }
