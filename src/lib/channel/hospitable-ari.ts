@@ -24,7 +24,7 @@ import {
   hospitableRequest, hospitableFail, mapErrorStatus,
   type HospitableApiFailure,
 } from "./hospitable-http";
-import { asObj, asStr } from "./channex-http";
+import { asObj, asStr } from "./channel-http";
 import {
   validateHospitableCalendarBatch,
   type HospitableCalendarDate,

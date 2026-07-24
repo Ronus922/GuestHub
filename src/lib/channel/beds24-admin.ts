@@ -9,7 +9,7 @@ import { enqueueChannelJob } from "./queue";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { beds24Request, beds24AuthRequest, beds24Fail, mapErrorStatus } from "./beds24-http";
 import type { Beds24ApiErrorCategory, Beds24ApiFailure } from "./beds24-http";
-import { asObj, asStr, asInt } from "./channex-http";
+import { asObj, asStr, asInt } from "./channel-http";
 import {
   listBeds24Properties,
   getBeds24Property,

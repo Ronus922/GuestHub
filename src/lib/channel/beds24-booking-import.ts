@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { Sql } from "postgres";
 import { beds24BaseUrl } from "./config";
-import { asObj } from "./channex-http";
+import { asObj } from "./channel-http";
 import {
   beds24Fail,
   beds24Request,

@@ -9,7 +9,7 @@ import {
   FEED_PAGE_LIMIT,
   type FeedRevision,
 } from "./channex-bookings";
-import type { ChannexReqOpts } from "./channex-http";
+import type { ChannelReqOpts } from "./channel-http";
 import {
   markRevisionAcknowledged,
   markRevisionFailed,
@@ -96,7 +96,7 @@ class QuarantineError extends Error {}
 const MAX_FEED_ROUNDS = 20;
 const REACK_BATCH = 50;
 
-export function inboundCreds(conn: InboundConnection): ChannexReqOpts {
+export function inboundCreds(conn: InboundConnection): ChannelReqOpts {
   return {
     apiKey: decryptSecret(conn.api_key_ciphertext),
     baseUrl: channexBaseUrl(conn.environment),
@@ -983,7 +983,7 @@ function rawRevisionIdentity(attributes: unknown): {
 async function processFeedRevision(
   db: Sql,
   conn: InboundConnection,
-  creds: ChannexReqOpts,
+  creds: ChannelReqOpts,
   rev: FeedRevision,
   summary: InboundPullSummary,
 ): Promise<void> {
@@ -1066,7 +1066,7 @@ async function processFeedRevision(
 async function reacknowledgeImported(
   db: Sql,
   conn: InboundConnection,
-  creds: ChannexReqOpts,
+  creds: ChannelReqOpts,
   summary: InboundPullSummary,
 ): Promise<void> {
   const rows = await db<{ id: string; provider_revision_id: string }[]>`

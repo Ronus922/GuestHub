@@ -5,7 +5,7 @@
 // impossible unless an operator has explicitly activated it AND the guard's own
 // preconditions hold. This module is the SINGLE decision point for "which
 // environment is this deployment operating in" — every Channex setup operation
-// resolves its environment through effectiveChannexEnvironment(), so flipping to
+// resolves its environment through effectiveChannelEnvironment(), so flipping to
 // production is one guarded switch, not a literal edit across 30 call sites.
 //
 // Default (unset flag) → "staging". There is no code path that reaches the
@@ -13,7 +13,7 @@
 // explicit on-value. `check:production-activation-guard` proves this invariant.
 // ============================================================
 
-import type { ChannexEnvironment } from "./config";
+import type { ChannelEnvironment } from "./config";
 
 // The activation flag. Deliberately a hard opt-in string, not a loose truthy
 // check: only these exact values enable production.
@@ -29,7 +29,7 @@ export function isProductionActivationEnabled(): boolean {
 // send path routes off each connection row's own `environment` column and does
 // not call this — but a production connection can never reach `state='active'`
 // without an operator having activated production first (see the setup ops).
-export function effectiveChannexEnvironment(): ChannexEnvironment {
+export function effectiveChannelEnvironment(): ChannelEnvironment {
   return isProductionActivationEnabled() ? "production" : "staging";
 }
 
@@ -38,7 +38,7 @@ export function effectiveChannexEnvironment(): ChannexEnvironment {
 export type ProductionActivationStatus = {
   flagPresent: boolean;
   activationEnabled: boolean;
-  effectiveEnvironment: ChannexEnvironment;
+  effectiveEnvironment: ChannelEnvironment;
   // true only when production is both flagged on AND the encryption key exists;
   // an activated flag without CHANNEL_SECRETS_KEY cannot decrypt any credential,
   // so no production call could actually authenticate.
@@ -50,7 +50,7 @@ export function channexActivationStatus(): ProductionActivationStatus {
   return {
     flagPresent: typeof process.env.CHANNEX_PRODUCTION_ACTIVATION === "string",
     activationEnabled,
-    effectiveEnvironment: effectiveChannexEnvironment(),
+    effectiveEnvironment: effectiveChannelEnvironment(),
     productionOperable: activationEnabled && !!process.env.CHANNEL_SECRETS_KEY,
   };
 }

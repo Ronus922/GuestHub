@@ -5,8 +5,8 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob } from "./queue";
-import { channexBaseUrl, type ChannexEnvironment } from "./config";
-import { effectiveChannexEnvironment, assertProductionActivationAuthorized } from "./production-guard";
+import { channexBaseUrl, type ChannelEnvironment } from "./config";
+import { effectiveChannelEnvironment, assertProductionActivationAuthorized } from "./production-guard";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { runChannexConnectionTest, type ChannexErrorCategory } from "./connection-test";
 import {
@@ -21,7 +21,7 @@ import {
   getChannexProperty,
   createChannexProperty as apiCreateChannexProperty,
   updateChannexProperty as apiUpdateChannexProperty,
-  type ChannexApiFailure,
+  type ChannelApiFailure,
   type ChannexPropertyDetail,
   type ChannexPropertySummary,
 } from "./channex-properties";
@@ -560,11 +560,11 @@ export async function getAriSyncStatusAction(connectionId: string): Promise<Resu
 
 // §26: the effective environment is resolved through the production-activation
 // guard, never hardcoded. Staging until CHANNEX_PRODUCTION_ACTIVATION is set.
-const CHANNEX_ENV: ChannexEnvironment = effectiveChannexEnvironment();
+const CHANNEX_ENV: ChannelEnvironment = effectiveChannelEnvironment();
 
 // Masked, secret-free view of the connection for the UI.
 export type ChannexConnectionView = {
-  environment: ChannexEnvironment;
+  environment: ChannelEnvironment;
   baseUrl: string;
   secretsKeyConfigured: boolean;
   configured: boolean; // an api-key is stored
@@ -748,7 +748,7 @@ export async function testChannexConnectionAction(): Promise<
 // rate-plan/channel/webhook/ARI/booking is created here.
 // ============================================================
 
-const apiFail = (f: ChannexApiFailure): { success: false; error: string } => ({
+const apiFail = (f: ChannelApiFailure): { success: false; error: string } => ({
   success: false,
   error: f.message,
 });

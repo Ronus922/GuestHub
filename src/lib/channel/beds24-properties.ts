@@ -27,7 +27,7 @@ import {
   type Beds24ApiFailure,
   type Beds24ReqOpts,
 } from "./beds24-http";
-import { asObj, asStr, asInt } from "./channex-http";
+import { asObj, asStr, asInt } from "./channel-http";
 
 export { mapErrorStatus, type Beds24ApiFailure } from "./beds24-http";
 

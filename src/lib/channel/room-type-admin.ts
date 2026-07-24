@@ -5,10 +5,10 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob, logChannelError } from "./queue";
-import { channexBaseUrl, type ChannexEnvironment } from "./config";
-import { effectiveChannexEnvironment } from "./production-guard";
+import { channexBaseUrl, type ChannelEnvironment } from "./config";
+import { effectiveChannelEnvironment } from "./production-guard";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
-import { isAmbiguous, type ChannexApiFailure, type ChannexApiErrorCategory } from "./channex-http";
+import { isAmbiguous, type ChannelApiFailure, type ChannelApiErrorCategory } from "./channel-http";
 import {
   listChannexRoomTypes,
   getChannexRoomType,
@@ -47,7 +47,7 @@ import {
 //  • The api-key is decrypted per call, never returned, logged or audited.
 // ============================================================
 
-const CHANNEX_ENV: ChannexEnvironment = effectiveChannexEnvironment();
+const CHANNEX_ENV: ChannelEnvironment = effectiveChannelEnvironment();
 const PROVIDER = "channex" as const;
 
 // One run is bounded so a long sync can never exceed the reverse-proxy timeout.
@@ -75,7 +75,7 @@ function failFrom(e: unknown): { success: false; error: string } {
   return { success: false, error: "אירעה שגיאה בלתי צפויה" };
 }
 
-const apiFail = (f: ChannexApiFailure): { success: false; error: string } => ({
+const apiFail = (f: ChannelApiFailure): { success: false; error: string } => ({
   success: false,
   error: f.message,
 });
@@ -159,7 +159,7 @@ export type RoomSyncContext = {
   apiKeyConfigured: boolean;
   propertyId: string | null;
   propertyTitle: string | null;
-  environment: ChannexEnvironment;
+  environment: ChannelEnvironment;
   plan: SyncPlan;
   /** true while a sync run holds the durable parent job */
   running: boolean;
@@ -427,7 +427,7 @@ export async function refreshChannexRoomTypesAction(): Promise<Result<RefreshRes
 // nothing.
 
 export type SyncPreview = {
-  environment: ChannexEnvironment;
+  environment: ChannelEnvironment;
   propertyId: string;
   propertyTitle: string | null;
   activeRooms: number;
@@ -534,7 +534,7 @@ export type SyncRunResult = {
   partial: boolean;
 };
 
-type ItemFail = { category: ChannexApiErrorCategory; message: string };
+type ItemFail = { category: ChannelApiErrorCategory; message: string };
 
 export async function startChannexRoomTypeSyncAction(): Promise<Result<SyncRunResult>> {
   let parentJobId: string | null = null; // hoisted so the catch can settle it

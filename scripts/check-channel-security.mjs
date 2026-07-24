@@ -61,7 +61,7 @@ for (const f of channelFiles) {
 if (!leak) pass("no api-key / ciphertext / token reaches a log or an audit payload");
 
 // ---- the api-key travels ONLY in the request header, never a URL/query ----
-const http = read("src/lib/channel/channex-http.ts");
+const http = read("src/lib/channel/channel-http.ts");
 if (!/"user-api-key":\s*opts\.apiKey/.test(http)) flag("api-key is not sent via the user-api-key header");
 else pass("api-key travels only in the user-api-key header");
 if (/\?[^"'`\n]*apiKey|`\$\{[^}]*apiKey/.test(http)) flag("api-key may appear in a URL/query string");

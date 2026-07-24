@@ -5,10 +5,10 @@ import { getActor, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { canManageChannels } from "@/lib/auth/guards";
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { enqueueChannelJob, logChannelError } from "./queue";
-import { channexBaseUrl, type ChannexEnvironment } from "./config";
-import { effectiveChannexEnvironment } from "./production-guard";
+import { channexBaseUrl, type ChannelEnvironment } from "./config";
+import { effectiveChannelEnvironment } from "./production-guard";
 import { decryptSecret, channelSecretsConfigured } from "./crypto";
-import { isAmbiguous, type ChannexApiFailure, type ChannexApiErrorCategory } from "./channex-http";
+import { isAmbiguous, type ChannelApiFailure, type ChannelApiErrorCategory } from "./channel-http";
 import {
   listChannexRatePlans,
   createChannexRatePlan,
@@ -58,7 +58,7 @@ import {
 //  • The api-key is decrypted per call, never returned, logged or audited.
 // ============================================================
 
-const CHANNEX_ENV: ChannexEnvironment = effectiveChannexEnvironment();
+const CHANNEX_ENV: ChannelEnvironment = effectiveChannelEnvironment();
 const PROVIDER = "channex" as const;
 
 const RUN_BUDGET_MS = 25_000;
@@ -87,7 +87,7 @@ function failFrom(e: unknown): { success: false; error: string } {
   return { success: false, error: "אירעה שגיאה בלתי צפויה" };
 }
 
-const apiFail = (f: ChannexApiFailure): { success: false; error: string } => ({
+const apiFail = (f: ChannelApiFailure): { success: false; error: string } => ({
   success: false,
   error: f.message,
 });
@@ -203,7 +203,7 @@ async function isRunActive(connectionId: string, propertyId: string | null): Pro
 export type RatePlanSyncContext = {
   connected: boolean;
   configured: boolean; // secrets key + api key + mapped property all present
-  environment: ChannexEnvironment;
+  environment: ChannelEnvironment;
   /** eligible local plan names ("ללא דמי ביטול") — empty when none */
   planNames: string[];
   mappedRooms: number;
@@ -307,7 +307,7 @@ export type RatePlanRunResult = {
   partial: boolean;
 };
 
-type ItemFail = { category: ChannexApiErrorCategory; message: string };
+type ItemFail = { category: ChannelApiErrorCategory; message: string };
 
 export async function startChannexRatePlanSyncAction(): Promise<Result<RatePlanRunResult>> {
   let parentJobId: string | null = null; // hoisted so the catch can settle it

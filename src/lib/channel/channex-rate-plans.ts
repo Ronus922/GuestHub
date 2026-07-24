@@ -1,7 +1,7 @@
 // ============================================================
 // Channex RATE PLANS client (D65) — server-side network calls for the
 // (physical room × local rate plan) → Channex Rate Plan synchronization.
-// Requests go through the shared, leak-proof core in ./channex-http (single
+// Requests go through the shared, leak-proof core in ./channel-http (single
 // attempt, bounded timeout, fixed safe messages, api-key never echoed).
 //
 // SCOPE: this client touches /rate_plans ONLY, and only with GET, POST and PUT
@@ -20,17 +20,17 @@
 // ============================================================
 
 import {
-  channexRequest,
+  channelRequest,
   fail,
   mapErrorStatus,
   asObj,
   asStr,
   asInt,
-  type ChannexApiFailure,
-  type ChannexReqOpts,
-} from "./channex-http";
+  type ChannelApiFailure,
+  type ChannelReqOpts,
+} from "./channel-http";
 
-type ReqOpts = ChannexReqOpts;
+type ReqOpts = ChannelReqOpts;
 
 // Safe, whitelisted external rate-plan snapshot. NO raw upstream body is kept.
 export type ChannexRatePlanOption = {
@@ -121,7 +121,7 @@ export function extractTotal(body: unknown): number | null {
 // full page that adds nothing new means the server ignores the page param.
 export async function listChannexRatePlans(
   opts: ReqOpts & { propertyId: string },
-): Promise<{ ok: true; ratePlans: ChannexRatePlan[]; truncated: boolean } | ChannexApiFailure> {
+): Promise<{ ok: true; ratePlans: ChannexRatePlan[]; truncated: boolean } | ChannelApiFailure> {
   const seen = new Map<string, ChannexRatePlan>();
   let total: number | null = null;
 
@@ -129,7 +129,7 @@ export async function listChannexRatePlans(
     const path =
       `/rate_plans?filter[property_id]=${encodeURIComponent(opts.propertyId)}` +
       `&pagination[page]=${page}&pagination[limit]=${PAGE_LIMIT}`;
-    const r = await channexRequest({ ...opts, method: "GET", path });
+    const r = await channelRequest({ ...opts, method: "GET", path });
     if ("ok" in r) return r;
     if (r.status !== 200) return fail(mapErrorStatus(r.status), r.status);
 
@@ -159,8 +159,8 @@ export async function listChannexRatePlans(
 // snapshot stays the whitelisted ChannexRatePlan.
 export async function getChannexRatePlan(
   opts: ReqOpts & { id: string },
-): Promise<{ ok: true; ratePlan: ChannexRatePlan; attributes: Record<string, unknown> } | ChannexApiFailure> {
-  const r = await channexRequest({
+): Promise<{ ok: true; ratePlan: ChannexRatePlan; attributes: Record<string, unknown> } | ChannelApiFailure> {
+  const r = await channelRequest({
     ...opts,
     method: "GET",
     path: `/rate_plans/${encodeURIComponent(opts.id)}`,
@@ -178,8 +178,8 @@ export async function getChannexRatePlan(
 // the external UUID is immutable and never regenerated here.
 export async function updateChannexRatePlan(
   opts: ReqOpts & { id: string; payload: { rate_plan: Record<string, unknown> } },
-): Promise<{ ok: true; ratePlan: ChannexRatePlan } | ChannexApiFailure> {
-  const r = await channexRequest({
+): Promise<{ ok: true; ratePlan: ChannexRatePlan } | ChannelApiFailure> {
+  const r = await channelRequest({
     ...opts,
     method: "PUT",
     path: `/rate_plans/${encodeURIComponent(opts.id)}`,
@@ -196,8 +196,8 @@ export async function updateChannexRatePlan(
 
 export async function createChannexRatePlan(
   opts: ReqOpts & { payload: { rate_plan: Record<string, unknown> } },
-): Promise<{ ok: true; ratePlan: ChannexRatePlan } | ChannexApiFailure> {
-  const r = await channexRequest({ ...opts, method: "POST", path: "/rate_plans", body: opts.payload });
+): Promise<{ ok: true; ratePlan: ChannexRatePlan } | ChannelApiFailure> {
+  const r = await channelRequest({ ...opts, method: "POST", path: "/rate_plans", body: opts.payload });
   if ("ok" in r) return r;
   if (r.status !== 200 && r.status !== 201) return fail(mapErrorStatus(r.status), r.status);
   const ratePlan = extractRatePlanDetail(r.body);

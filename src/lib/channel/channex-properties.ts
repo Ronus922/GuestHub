@@ -2,7 +2,7 @@
 // Channex PROPERTIES client (D60) — server-side network calls for the
 // property-mapping milestone: list accessible properties, read one, create a
 // new one, update a profile. Requests go through the shared, leak-proof core in
-// ./channex-http (single attempt, bounded timeout, fixed safe messages).
+// ./channel-http (single attempt, bounded timeout, fixed safe messages).
 //
 // SCOPE: this client touches /properties ONLY. It never calls room_types,
 // rate_plans, webhooks, bookings, availability or restrictions —
@@ -13,23 +13,23 @@
 // ============================================================
 
 import {
-  channexRequest,
+  channelRequest,
   fail,
   mapErrorStatus,
   asObj,
   asStr,
-  type ChannexApiFailure,
-  type ChannexReqOpts,
-} from "./channex-http";
+  type ChannelApiFailure,
+  type ChannelReqOpts,
+} from "./channel-http";
 
 export {
   mapErrorStatus,
   isAmbiguous,
-  type ChannexApiErrorCategory,
-  type ChannexApiFailure,
-} from "./channex-http";
+  type ChannelApiErrorCategory,
+  type ChannelApiFailure,
+} from "./channel-http";
 
-type ReqOpts = ChannexReqOpts;
+type ReqOpts = ChannelReqOpts;
 
 // Safe, whitelisted external property snapshot. NO raw upstream body is kept.
 export type ChannexPropertySummary = {
@@ -112,8 +112,8 @@ export function extractPropertyDetail(body: unknown): ChannexPropertyDetail | nu
 // ---- operations ----
 export async function listChannexProperties(
   opts: ReqOpts,
-): Promise<{ ok: true; properties: ChannexPropertySummary[] } | ChannexApiFailure> {
-  const r = await channexRequest({ ...opts, method: "GET", path: "/properties/options" });
+): Promise<{ ok: true; properties: ChannexPropertySummary[] } | ChannelApiFailure> {
+  const r = await channelRequest({ ...opts, method: "GET", path: "/properties/options" });
   if ("ok" in r) return r;
   if (r.status !== 200) return fail(mapErrorStatus(r.status), r.status);
   return { ok: true, properties: extractPropertyOptions(r.body) };
@@ -121,8 +121,8 @@ export async function listChannexProperties(
 
 export async function getChannexProperty(
   opts: ReqOpts & { id: string },
-): Promise<{ ok: true; property: ChannexPropertyDetail } | ChannexApiFailure> {
-  const r = await channexRequest({ ...opts, method: "GET", path: `/properties/${encodeURIComponent(opts.id)}` });
+): Promise<{ ok: true; property: ChannexPropertyDetail } | ChannelApiFailure> {
+  const r = await channelRequest({ ...opts, method: "GET", path: `/properties/${encodeURIComponent(opts.id)}` });
   if ("ok" in r) return r;
   if (r.status !== 200) return fail(mapErrorStatus(r.status), r.status);
   const property = extractPropertyDetail(r.body);
@@ -132,8 +132,8 @@ export async function getChannexProperty(
 
 export async function createChannexProperty(
   opts: ReqOpts & { payload: Record<string, unknown> },
-): Promise<{ ok: true; property: ChannexPropertyDetail } | ChannexApiFailure> {
-  const r = await channexRequest({ ...opts, method: "POST", path: "/properties", body: opts.payload });
+): Promise<{ ok: true; property: ChannexPropertyDetail } | ChannelApiFailure> {
+  const r = await channelRequest({ ...opts, method: "POST", path: "/properties", body: opts.payload });
   if ("ok" in r) return r;
   if (r.status !== 200 && r.status !== 201) return fail(mapErrorStatus(r.status), r.status);
   const property = extractPropertyDetail(r.body);
@@ -143,8 +143,8 @@ export async function createChannexProperty(
 
 export async function updateChannexProperty(
   opts: ReqOpts & { id: string; payload: Record<string, unknown> },
-): Promise<{ ok: true; property: ChannexPropertyDetail } | ChannexApiFailure> {
-  const r = await channexRequest({
+): Promise<{ ok: true; property: ChannexPropertyDetail } | ChannelApiFailure> {
+  const r = await channelRequest({
     ...opts,
     method: "PUT",
     path: `/properties/${encodeURIComponent(opts.id)}`,

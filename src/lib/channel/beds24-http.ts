@@ -21,12 +21,12 @@ import {
   parseRetryAfterMs,
   DEFAULT_TIMEOUT_MS,
   mapErrorStatus,
-  type ChannexApiErrorCategory,
-} from "./channex-http";
+  type ChannelApiErrorCategory,
+} from "./channel-http";
 
 // Same category union — the taxonomy is provider-neutral (D77 keeps one
 // vocabulary so circuit-breaker / evidence / admin code reads one shape).
-export type Beds24ApiErrorCategory = ChannexApiErrorCategory;
+export type Beds24ApiErrorCategory = ChannelApiErrorCategory;
 
 export type Beds24ApiFailure = {
   ok: false;

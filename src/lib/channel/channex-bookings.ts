@@ -1,7 +1,7 @@
 // ============================================================
 // Channex BOOKING REVISIONS client (D76) — server-side network calls for the
 // inbound booking import. Requests go through the shared, leak-proof core in
-// ./channex-http (single attempt, bounded timeout, fixed safe messages,
+// ./channel-http (single attempt, bounded timeout, fixed safe messages,
 // api-key never echoed).
 //
 // SCOPE: this client touches the booking-revision feed, single revisions,
@@ -24,16 +24,16 @@
 // ============================================================
 
 import {
-  channexRequest,
+  channelRequest,
   fail,
   mapErrorStatus,
   asObj,
   asStr,
-  type ChannexApiFailure,
-  type ChannexReqOpts,
-} from "./channex-http";
+  type ChannelApiFailure,
+  type ChannelReqOpts,
+} from "./channel-http";
 
-type ReqOpts = ChannexReqOpts;
+type ReqOpts = ChannelReqOpts;
 
 export const FEED_PAGE_LIMIT = 100;
 
@@ -67,11 +67,11 @@ export async function fetchBookingRevisionsFeed(
   opts: ReqOpts,
   propertyId: string,
   page: number,
-): Promise<FeedPage | ChannexApiFailure> {
+): Promise<FeedPage | ChannelApiFailure> {
   const path =
     `/booking_revisions/feed?filter[property_id]=${encodeURIComponent(propertyId)}` +
     `&order[inserted_at]=asc&pagination[page]=${page}&pagination[limit]=${FEED_PAGE_LIMIT}`;
-  const res = await channexRequest({ ...opts, method: "GET", path });
+  const res = await channelRequest({ ...opts, method: "GET", path });
   if ("ok" in res) return res;
   if (res.status !== 200) return fail(mapErrorStatus(res.status), res.status);
   const revisions = parseEnvelopeList(res.body);
@@ -86,8 +86,8 @@ export async function fetchBookingRevisionsFeed(
 export async function fetchBookingRevision(
   opts: ReqOpts,
   revisionId: string,
-): Promise<{ ok: true; revision: FeedRevision } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true; revision: FeedRevision } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "GET",
     path: `/booking_revisions/${encodeURIComponent(revisionId)}`,
@@ -106,8 +106,8 @@ export async function fetchBookingRevision(
 export async function fetchBooking(
   opts: ReqOpts,
   bookingId: string,
-): Promise<{ ok: true; attributes: unknown } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true; attributes: unknown } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "GET",
     path: `/bookings/${encodeURIComponent(bookingId)}`,
@@ -125,8 +125,8 @@ export async function fetchBooking(
 export async function acknowledgeBookingRevision(
   opts: ReqOpts,
   revisionId: string,
-): Promise<{ ok: true } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "POST",
     path: `/booking_revisions/${encodeURIComponent(revisionId)}/ack`,
@@ -144,8 +144,8 @@ export async function acknowledgeBookingRevision(
 export async function reportInvalidCard(
   opts: ReqOpts,
   bookingId: string,
-): Promise<{ ok: true } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "POST",
     path: `/bookings/${encodeURIComponent(bookingId)}/invalid_card`,
@@ -158,8 +158,8 @@ export async function reportInvalidCard(
 export async function cancelDueInvalidCard(
   opts: ReqOpts,
   bookingId: string,
-): Promise<{ ok: true } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "POST",
     path: `/bookings/${encodeURIComponent(bookingId)}/cancel_due_invalid_card`,
@@ -173,8 +173,8 @@ export async function reportNoShow(
   opts: ReqOpts,
   bookingId: string,
   waivedFees: boolean,
-): Promise<{ ok: true } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "POST",
     path: `/bookings/${encodeURIComponent(bookingId)}/no_show`,
@@ -191,8 +191,8 @@ export type InstalledApplication = { id: string; code: string | null };
 
 export async function listInstalledApplications(
   opts: ReqOpts,
-): Promise<{ ok: true; applications: InstalledApplication[] } | ChannexApiFailure> {
-  const res = await channexRequest({ ...opts, method: "GET", path: "/applications/installed" });
+): Promise<{ ok: true; applications: InstalledApplication[] } | ChannelApiFailure> {
+  const res = await channelRequest({ ...opts, method: "GET", path: "/applications/installed" });
   if ("ok" in res) return res;
   if (res.status !== 200) return fail(mapErrorStatus(res.status), res.status);
   const rows = asObj(res.body)?.data;
@@ -216,8 +216,8 @@ export async function installApplication(
   opts: ReqOpts,
   applicationCode: string,
   propertyId: string,
-): Promise<{ ok: true } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "POST",
     path: "/applications/install",
@@ -236,8 +236,8 @@ export async function installApplication(
 export async function createStripePaymentMethod(
   opts: ReqOpts,
   bookingId: string,
-): Promise<{ ok: true; reference: string } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true; reference: string } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "POST",
     path: `/bookings/${encodeURIComponent(bookingId)}/stripe_payment_method`,
@@ -257,8 +257,8 @@ export type ChannexWebhookRow = { id: string; callbackUrl: string | null; isActi
 export async function listChannexWebhooks(
   opts: ReqOpts,
   propertyId: string,
-): Promise<{ ok: true; webhooks: ChannexWebhookRow[] } | ChannexApiFailure> {
-  const res = await channexRequest({
+): Promise<{ ok: true; webhooks: ChannexWebhookRow[] } | ChannelApiFailure> {
+  const res = await channelRequest({
     ...opts,
     method: "GET",
     path: `/webhooks?filter[property_id]=${encodeURIComponent(propertyId)}&pagination[limit]=100`,
@@ -288,14 +288,14 @@ export async function listChannexWebhooks(
 // no booking payload (and no card data) ever rides the webhook body.
 export type EnsureWebhookResult =
   | { ok: true; webhookId: string; created: boolean }
-  | ChannexApiFailure;
+  | ChannelApiFailure;
 
 export async function ensureChannexWebhook(
   opts: ReqOpts,
   propertyId: string,
   callbackUrl: string,
 ): Promise<EnsureWebhookResult> {
-  const list = await channexRequest({
+  const list = await channelRequest({
     ...opts,
     method: "GET",
     path: `/webhooks?filter[property_id]=${encodeURIComponent(propertyId)}&pagination[limit]=100`,
@@ -313,7 +313,7 @@ export async function ensureChannexWebhook(
       }
     }
   }
-  const created = await channexRequest({
+  const created = await channelRequest({
     ...opts,
     method: "POST",
     path: "/webhooks",

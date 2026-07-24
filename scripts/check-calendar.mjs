@@ -170,7 +170,7 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
   ];
   const HTTP = /\bfetch\(|XMLHttpRequest|axios|http\.request|https\.request/;
   // importing any of these transitively drags in the Channex HTTP client
-  const HTTP_MODULES = /channex-http|channex-ari|channex-properties|channex-room-types|channex-rate-plans|ari-sync|channel\/worker/;
+  const HTTP_MODULES = channel-http|channex-ari|channex-properties|channex-room-types|channex-rate-plans|ari-sync|channel\/worker/;
   for (const f of SAVE_PATHS) {
     const src = readFileSync(f, "utf8");
     assert.ok(!HTTP.test(src), `${f} contains no network code`);

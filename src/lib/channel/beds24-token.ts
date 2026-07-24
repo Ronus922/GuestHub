@@ -3,7 +3,7 @@ import { beds24BaseUrl } from "./config";
 import { encryptSecret, decryptSecret, channelSecretsConfigured } from "./crypto";
 import { beds24AuthRequest, beds24Fail, mapErrorStatus } from "./beds24-http";
 import type { Beds24ApiErrorCategory } from "./beds24-http";
-import { asObj, asStr, asInt } from "./channex-http";
+import { asObj, asStr, asInt } from "./channel-http";
 
 // ============================================================
 // Beds24 access-token resolver (D78 → D79) — the WORKER-GRAPH-SAFE sibling of

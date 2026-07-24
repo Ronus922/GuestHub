@@ -15,7 +15,7 @@ import {
   reportInvalidCard,
   reportNoShow,
 } from "./channex-bookings";
-import type { ChannexReqOpts } from "./channex-http";
+import type { ChannelReqOpts } from "./channel-http";
 import {
   cancelDueInvalidCardEligibility,
   invalidCardEligibility,
@@ -93,7 +93,7 @@ async function reportContext(
 }
 
 async function bookingCreds(connectionId: string): Promise<{
-  creds: ChannexReqOpts;
+  creds: ChannelReqOpts;
   tenantId: string;
 } | null> {
   const [conn] = await sql<

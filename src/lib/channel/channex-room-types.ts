@@ -1,7 +1,7 @@
 // ============================================================
 // Channex ROOM TYPES client (D64) — server-side network calls for the
 // physical-room → Room Type synchronization milestone. Requests go through the
-// shared, leak-proof core in ./channex-http (single attempt, bounded timeout,
+// shared, leak-proof core in ./channel-http (single attempt, bounded timeout,
 // fixed safe messages, api-key never echoed).
 //
 // SCOPE: this client touches /room_types ONLY, and only with GET and POST.
@@ -20,17 +20,17 @@
 // ============================================================
 
 import {
-  channexRequest,
+  channelRequest,
   fail,
   mapErrorStatus,
   asObj,
   asStr,
   asInt,
-  type ChannexApiFailure,
-  type ChannexReqOpts,
-} from "./channex-http";
+  type ChannelApiFailure,
+  type ChannelReqOpts,
+} from "./channel-http";
 
-type ReqOpts = ChannexReqOpts;
+type ReqOpts = ChannelReqOpts;
 
 // Safe, whitelisted external room-type snapshot. NO raw upstream body is kept.
 export type ChannexRoomType = {
@@ -102,7 +102,7 @@ export function extractTotal(body: unknown): number | null {
 // `truncated: true` is returned and the caller must not treat the list as complete.
 export async function listChannexRoomTypes(
   opts: ReqOpts & { propertyId: string },
-): Promise<{ ok: true; roomTypes: ChannexRoomType[]; truncated: boolean } | ChannexApiFailure> {
+): Promise<{ ok: true; roomTypes: ChannexRoomType[]; truncated: boolean } | ChannelApiFailure> {
   const seen = new Map<string, ChannexRoomType>();
   let total: number | null = null;
 
@@ -110,7 +110,7 @@ export async function listChannexRoomTypes(
     const path =
       `/room_types?filter[property_id]=${encodeURIComponent(opts.propertyId)}` +
       `&pagination[page]=${page}&pagination[limit]=${PAGE_LIMIT}`;
-    const r = await channexRequest({ ...opts, method: "GET", path });
+    const r = await channelRequest({ ...opts, method: "GET", path });
     if ("ok" in r) return r;
     if (r.status !== 200) return fail(mapErrorStatus(r.status), r.status);
 
@@ -142,8 +142,8 @@ export async function listChannexRoomTypes(
 
 export async function getChannexRoomType(
   opts: ReqOpts & { id: string },
-): Promise<{ ok: true; roomType: ChannexRoomType } | ChannexApiFailure> {
-  const r = await channexRequest({
+): Promise<{ ok: true; roomType: ChannexRoomType } | ChannelApiFailure> {
+  const r = await channelRequest({
     ...opts,
     method: "GET",
     path: `/room_types/${encodeURIComponent(opts.id)}`,
@@ -157,8 +157,8 @@ export async function getChannexRoomType(
 
 export async function createChannexRoomType(
   opts: ReqOpts & { payload: { room_type: Record<string, unknown> } },
-): Promise<{ ok: true; roomType: ChannexRoomType } | ChannexApiFailure> {
-  const r = await channexRequest({ ...opts, method: "POST", path: "/room_types", body: opts.payload });
+): Promise<{ ok: true; roomType: ChannexRoomType } | ChannelApiFailure> {
+  const r = await channelRequest({ ...opts, method: "POST", path: "/room_types", body: opts.payload });
   if ("ok" in r) return r;
   if (r.status !== 200 && r.status !== 201) return fail(mapErrorStatus(r.status), r.status);
   const roomType = extractRoomTypeDetail(r.body);

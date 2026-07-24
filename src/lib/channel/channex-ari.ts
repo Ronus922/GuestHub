@@ -1,6 +1,6 @@
 // ============================================================
 // Channex ARI client (D68) — the ONLY module that sends availability, rates or
-// restrictions. Goes through the shared, leak-proof core in ./channex-http
+// restrictions. Goes through the shared, leak-proof core in ./channel-http
 // (single attempt, bounded timeout, fixed safe messages, api-key never echoed).
 //
 // SCOPE: POST /availability and POST /restrictions ONLY. It never calls
@@ -19,9 +19,9 @@
 // ============================================================
 
 import {
-  channexRequest, fail, mapErrorStatus, asObj, asStr,
-  type ChannexApiFailure, type ChannexReqOpts,
-} from "./channex-http";
+  channelRequest, fail, mapErrorStatus, asObj, asStr,
+  type ChannelApiFailure, type ChannelReqOpts,
+} from "./channel-http";
 import { validateAriBatch } from "./ari-payloads";
 
 export type AriKind = "availability" | "restrictions";
@@ -40,7 +40,7 @@ export type SafeAriWarning = {
 export type AriPushResult =
   | { ok: true; partial: false; taskIds: string[] }
   | { ok: true; partial: true; taskIds: string[]; warnings: SafeAriWarning[] }
-  | ChannexApiFailure;
+  | ChannelApiFailure;
 
 const PATHS: Record<AriKind, string> = {
   availability: "/availability",
@@ -83,13 +83,13 @@ function extractWarnings(body: unknown, kind: AriKind): SafeAriWarning[] {
 }
 
 export async function pushAri(
-  opts: ChannexReqOpts & { kind: AriKind; batch: { values: unknown[] } },
+  opts: ChannelReqOpts & { kind: AriKind; batch: { values: unknown[] } },
 ): Promise<AriPushResult> {
   // structural gate: a malformed payload never reaches the network
   const invalid = validateAriBatch(opts.batch);
   if (invalid) return { ok: false, category: "validation", message: "הנתונים נדחו (422) — יש להשלים או לתקן שדות חובה" };
 
-  const r = await channexRequest({
+  const r = await channelRequest({
     ...opts,
     method: "POST",
     path: PATHS[opts.kind],

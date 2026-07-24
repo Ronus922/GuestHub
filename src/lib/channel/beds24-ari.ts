@@ -31,7 +31,7 @@ import {
   beds24Request, beds24Fail, mapErrorStatus,
   type Beds24ApiFailure,
 } from "./beds24-http";
-import { asObj, asStr, asInt } from "./channex-http";
+import { asObj, asStr, asInt } from "./channel-http";
 import {
   validateBeds24CalendarRequest,
   type Beds24CalendarRequest,

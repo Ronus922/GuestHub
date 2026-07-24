@@ -1,7 +1,7 @@
 import "server-only";
 import type { Sql } from "postgres";
 import { sql } from "@/lib/db";
-import type { ChannexEnvironment } from "./config";
+import type { ChannelEnvironment } from "./config";
 
 // ============================================================
 // Channex certification evidence ledger (Stage 4 §13, defects H9/H10).
@@ -18,7 +18,7 @@ export type EvidenceOutcome = "success" | "partial" | "failed";
 export type AriEvidence = {
   tenantId: string;
   connectionId: string | null;
-  environment: ChannexEnvironment;
+  environment: ChannelEnvironment;
   scenarioKey: string;
   kind?: string | null;
   uiWorkflow?: string | null;

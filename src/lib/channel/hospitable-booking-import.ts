@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { Sql } from "postgres";
 import { decryptSecret } from "./crypto";
 import { hospitableBaseUrl } from "./config";
-import { asObj, asStr } from "./channex-http";
+import { asObj, asStr } from "./channel-http";
 import {
   hospitableFail,
   hospitableRequest,

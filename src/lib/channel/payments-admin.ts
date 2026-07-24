@@ -11,7 +11,7 @@ import {
   installApplication,
   listInstalledApplications,
 } from "./channex-bookings";
-import type { ChannexReqOpts } from "./channex-http";
+import type { ChannelReqOpts } from "./channel-http";
 
 // ============================================================
 // Channex Stripe Tokenization administration (D77 §E).
@@ -59,7 +59,7 @@ async function loadConnection(tenantId: string): Promise<ConnRow | null> {
   return row ?? null;
 }
 
-function credsOf(conn: ConnRow): ChannexReqOpts {
+function credsOf(conn: ConnRow): ChannelReqOpts {
   return {
     apiKey: decryptSecret(conn.api_key_ciphertext!),
     baseUrl: channexBaseUrl(conn.environment),

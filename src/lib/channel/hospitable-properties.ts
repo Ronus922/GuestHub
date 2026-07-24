@@ -18,7 +18,7 @@ import {
   type HospitableApiFailure,
   type HospitableReqOpts,
 } from "./hospitable-http";
-import { asObj, asStr, asInt } from "./channex-http";
+import { asObj, asStr, asInt } from "./channel-http";
 
 export { mapErrorStatus, type HospitableApiFailure } from "./hospitable-http";
 
