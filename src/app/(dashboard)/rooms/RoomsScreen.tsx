@@ -32,7 +32,7 @@ export type Can = { create: boolean; edit: boolean; del: boolean };
 export type StatusMeta = { label: string; icon: IconName; triplet: StatusTriplet };
 
 // GUIDELINES §1/§3.1: an operational status wears an APPROVED triplet — never a
-// hand-typed hex. Five of the six map onto the §3.1 families; "תפוס" wears the
+// hand-typed hex. Six of the seven map onto the §3.1 families; "תפוס" wears the
 // brand family (§1 tokens) through the .chip-brand variant, because §3.1 has no
 // blue triplet. The dot of the triplet paints the card's status strip.
 const BRAND_TRIPLET: StatusTriplet = {
@@ -50,6 +50,12 @@ export const STATUS_META: Record<RoomDerivedStatus, StatusMeta> = {
   cleaning: { label: "בניקיון", icon: "brush", triplet: STATUS_COLORS.transfer },
   blocked: { label: "חסום", icon: "room-blocks", triplet: STATUS_COLORS.unpaid },
   maintenance: { label: "תחזוקה", icon: "maintenance", triplet: STATUS_COLORS.failed },
+  // "סגור" = commercially closed to sale for the board's date (stop_sell), not a
+  // physical block. It wears the approved neutral §3.1 family STATUS_COLORS.cancelled
+  // ("בוטל", .chip-cancelled) — the two reddish families are already spoken for by
+  // חסום (unpaid) and תחזוקה (failed), and closed-to-sale is a withdrawn-from-offer
+  // state, not a fault. No new token is introduced.
+  closed: { label: "סגור", icon: "lock", triplet: STATUS_COLORS.cancelled },
 };
 
 export const AREA_STATUS_META: Record<OperationalArea["status"], StatusMeta> = {

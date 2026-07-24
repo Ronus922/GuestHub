@@ -31,8 +31,23 @@ export type RoomImage = {
   sort_order: number;
 };
 
-// derived, single chip per card (priority: blocked > maintenance > occupied > cleaning > dirty > free)
-export type RoomDerivedStatus = "blocked" | "maintenance" | "occupied" | "cleaning" | "dirty" | "free";
+// derived, single chip per card
+// (priority: blocked > maintenance > occupied > closed > cleaning > dirty > free)
+//
+// "closed" is the COMMERCIAL closure written by עדכון קבוצתי / the rate grid —
+// guesthub.pricing_plan_rates.stop_sell on the room's base plan for the SAME day
+// the board is being read for. It is strictly below "occupied": a sold night is
+// still a sold night even when the day is closed to further sale, and it is
+// strictly above the housekeeping states, which say nothing about sellability.
+// It is never written to rooms.status (§0.5 keeps that administrative-only).
+export type RoomDerivedStatus =
+  | "blocked"
+  | "maintenance"
+  | "occupied"
+  | "closed"
+  | "cleaning"
+  | "dirty"
+  | "free";
 
 export type BoardRoom = {
   id: string;
@@ -135,7 +150,7 @@ function missingOf(r: Omit<BoardRoom, "derived_status" | "current_guest" | "curr
 }
 
 export async function listBoardRooms(tenantId: string, today: string): Promise<BoardRoom[]> {
-  const [rooms, stays, hk, closures, translations, images, amenities] = await Promise.all([
+  const [rooms, stays, hk, closures, stopSell, translations, images, amenities] = await Promise.all([
     sql<Omit<BoardRoom, "derived_status" | "current_guest" | "current_until" | "next_arrival" | "next_guest" | "incomplete" | "missing" | "langs_complete" | "amenity_ids" | "main_image_url" | "image_count">[]>`
       SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
              r.show_on_website, r.show_on_calendar, r.sort_order, r.size_sqm::float8 AS size_sqm,
@@ -174,6 +189,28 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
     sql<{ room_id: string }[]>`
       SELECT DISTINCT room_id FROM guesthub.room_closures
       WHERE tenant_id = ${tenantId} AND start_date <= ${today} AND end_date > ${today}`,
+    // COMMERCIAL closure for THIS board day: the room's Sellable Unit base plan
+    // carries stop_sell on ${today} in the canonical commercial store
+    // (guesthub.pricing_plan_rates — the single writable target of the rate grid
+    // and of עדכון קבוצתי, see lib/rates/service). Read-only: the board never
+    // writes commercial state, and stop_sell is never mirrored onto rooms.status.
+    // The date is the caller's board date, NOT a hardcoded now() — the same
+    // ${today} every other derivation in this function is computed against.
+    sql<{ room_id: string }[]>`
+      SELECT DISTINCT sur.room_id
+      FROM guesthub.sellable_unit_rooms sur
+      JOIN guesthub.pricing_plans pp
+        ON pp.sellable_unit_id = sur.sellable_unit_id
+       AND pp.tenant_id = ${tenantId}
+       AND pp.is_base AND pp.is_active
+      WHERE sur.tenant_id = ${tenantId}
+        AND EXISTS (
+          SELECT 1 FROM guesthub.pricing_plan_rates ppr
+          WHERE ppr.tenant_id = ${tenantId}
+            AND ppr.pricing_plan_id = pp.id
+            AND ppr.date = ${today}
+            AND ppr.stop_sell
+        )`,
     sql<TrRow[]>`
       SELECT room_id, lang, name, description, summary, slug, seo_title,
              meta_description, og_title, og_description, noindex
@@ -187,7 +224,10 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
       SELECT room_id, amenity_id FROM guesthub.room_amenities WHERE tenant_id = ${tenantId}`,
   ]);
 
-  const closed = new Set(closures.map((c) => c.room_id));
+  // physical block (room_closures) vs commercial closure (stop_sell) — two
+  // different sets, two different chips; never conflated.
+  const blocked = new Set(closures.map((c) => c.room_id));
+  const stopSold = new Set(stopSell.map((s) => s.room_id));
   const hkByRoom = new Map(hk.map((h) => [h.room_id, h.status]));
   const staysByRoom = new Map<string, StayRow[]>();
   for (const s of stays) {
@@ -219,10 +259,12 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
     const current = roomStays.find((s) => s.check_in <= today && s.check_out > today) ?? null;
     const next = roomStays.find((s) => s.check_in >= today && s !== current) ?? null;
 
+    // blocked > maintenance > occupied > closed > cleaning > dirty > free
     let derived: RoomDerivedStatus = "free";
-    if (r.status === "out_of_order" || closed.has(r.id)) derived = "blocked";
+    if (r.status === "out_of_order" || blocked.has(r.id)) derived = "blocked";
     else if (r.status === "inactive" || !r.is_active) derived = "maintenance";
     else if (current) derived = "occupied";
+    else if (stopSold.has(r.id)) derived = "closed";
     else if (hkByRoom.get(r.id) === "in_progress") derived = "cleaning";
     else if (hkByRoom.get(r.id) === "pending") derived = "dirty";
 
