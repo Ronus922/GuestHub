@@ -70,6 +70,7 @@
     "check:datepicker": "node scripts/check-datepicker.mjs",
     "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs",
     "check:reservation-concurrency": "node scripts/check-reservation-concurrency.mjs",
+    "check:reservation-source-system": "node scripts/check-reservation-source-system.mjs",
     "check:inventory-integrity": "node scripts/check-inventory-integrity.mjs",
     "check:payment-ledger-integrity": "node scripts/check-payment-ledger-integrity.mjs",
     "check:payment-refund-void": "node scripts/check-payment-refund-void.mjs",
