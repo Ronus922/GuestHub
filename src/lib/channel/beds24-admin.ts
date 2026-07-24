@@ -494,8 +494,10 @@ async function probeStoredBeds24Credential(tenantId: string): Promise<ProbeResul
     await recordProbeVerdict(tenantId, r);
     return r;
   }
-  // remaining 5-min-window credits — a bare header number, never a body echo
-  const creditsRemaining = props.creditsRemaining ?? details.creditsRemaining ?? null;
+  // remaining 5-min-window credits — a bare header number, never a body echo.
+  // /authentication/details returns NO credit headers (measured 2026-07-24), so
+  // the /properties reading is normally the only one there is.
+  const creditsRemaining = props.credits.remaining ?? details.credits.remaining ?? null;
   const verdict: ProbeResult = { ok: true, propertyCount: properties.length, creditsRemaining };
   await recordProbeVerdict(tenantId, verdict);
   return verdict;

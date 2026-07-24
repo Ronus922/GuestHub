@@ -5,6 +5,9 @@ import { canManageChannels } from "@/lib/auth/guards";
 import { getChannelStatusAction } from "@/lib/channel/admin";
 import { getExternalChangesAction } from "@/lib/channel/external-changes-admin";
 import { getBeds24ConnectionAction } from "@/lib/channel/beds24-admin";
+import {
+  BEDS24_CREDIT_CEILING, BEDS24_LOW_CREDIT_THRESHOLD,
+} from "@/lib/channel/beds24-credits";
 import { Icon } from "@/components/shared/Icon";
 import { Beds24Section } from "./Beds24Section";
 import { ExternalChangesSection } from "./ExternalChangesSection";
@@ -53,10 +56,26 @@ type SyncErrorRow = {
   created_at: string | Date;
 };
 
+// P0-4 — the Beds24 credit window as the worker last measured it (parked on the
+// job row that read it). Every field may be absent: a response without the
+// meter headers is normal, and a brand-new install has never measured one.
+type CreditsRow = {
+  credits: {
+    remaining: number | null;
+    resets_in_sec: number | null;
+    cost: number | null;
+    paused: string | null;
+    measured_at: string | null;
+  } | null;
+  job_type: string;
+  finished_at: string | Date | null;
+};
+
 type ChannelStatus = {
   connections: ConnectionRow[];
   counts: CountsRow;
   errors: SyncErrorRow[];
+  credits: CreditsRow | null;
 };
 
 const dtFormatter = new Intl.DateTimeFormat("he-IL", {
@@ -244,6 +263,10 @@ function StatusView({ data }: { data: ChannelStatus }) {
         </div>
       </section>
 
+      {/* P0-4 — Beds24 credit window (100 credits / rolling 5 min per account).
+          Read-only observability: the worker paces itself off the SAME numbers. */}
+      <CreditWindowSection credits={data.credits} />
+
       {/* Recent unresolved sync errors */}
       <section className="flex flex-col gap-3">
         <h2 className="h3">שגיאות סנכרון אחרונות</h2>
@@ -288,6 +311,71 @@ function StatusView({ data }: { data: ChannelStatus }) {
         )}
       </section>
     </div>
+  );
+}
+
+// The credit meter Beds24 returns on every metered response. `remaining` is
+// fractional (97.6, not 97) — never rounded to an int here.
+function CreditWindowSection({ credits }: { credits: CreditsRow | null }) {
+  const c = credits?.credits ?? null;
+  const remaining = c?.remaining ?? null;
+  const low = remaining !== null && remaining < BEDS24_LOW_CREDIT_THRESHOLD;
+  const paused = c?.paused ?? null;
+  const pct =
+    remaining === null ? null : Math.max(0, Math.min(100, (remaining / BEDS24_CREDIT_CEILING) * 100));
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="h3">מכסת קרדיטים · Beds24</h2>
+      <div className="card">
+        <div className="card-bd flex flex-col gap-3">
+          {c === null ? (
+            <p className="t-secondary">
+              טרם נמדדה מכסה. המדידה נרשמת אוטומטית בסבב הייבוא הבא (כל 5 דקות).
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className={`h2 ${low ? "text-status-danger" : "text-ink"}`}>
+                  <bdi className="ltr-num">
+                    {remaining === null ? "—" : remaining} / {BEDS24_CREDIT_CEILING}
+                  </bdi>
+                </p>
+                <span className={`chip ${low || paused ? "chip-approval" : "chip-paid"}`}>
+                  <span className="dot" />
+                  {paused === "rate_limited"
+                    ? "נחסם (429) — ממתין לאיפוס"
+                    : paused === "low_credits"
+                      ? "האטה — המכסה קרובה למיצוי"
+                      : "זורם"}
+                </span>
+              </div>
+              {/* the window as a bar; the danger zone is the derived threshold */}
+              <div
+                className="h-2 w-full overflow-hidden rounded-full bg-hover"
+                role="img"
+                aria-label={`נותרו ${remaining ?? 0} מתוך ${BEDS24_CREDIT_CEILING} קרדיטים בחלון של 5 דקות`}
+              >
+                <div
+                  className={`h-full rounded-full ${low ? "bg-status-danger" : "bg-status-success"}`}
+                  style={{ width: `${pct ?? 0}%` }}
+                />
+              </div>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                <InfoRow
+                  label="איפוס החלון בעוד"
+                  value={c.resets_in_sec === null ? "—" : `${c.resets_in_sec} שניות`}
+                  code
+                />
+                <InfoRow label="עלות הקריאה האחרונה" value={c.cost === null ? "—" : String(c.cost)} code />
+                <InfoRow label="סף האטה" value={`${BEDS24_LOW_CREDIT_THRESHOLD} קרדיטים`} code />
+                <InfoRow label="נמדד לאחרונה" value={fmtDateTime(c.measured_at)} code />
+              </dl>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

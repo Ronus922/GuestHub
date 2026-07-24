@@ -20,16 +20,18 @@
 // warning concerns and the NAMES of the fields Beds24 objected to. No token,
 // no headers, no raw upstream body, no rejected values.
 //
-// CREDITS: Beds24 bills per request by credits. The remaining 5-minute-window
-// counter (X-FiveMinCreditLimit-Remaining — a bare header number surfaced by
-// beds24-http) rides along on every result so the sync layer can put it in
-// the evidence context. It is observability, never control flow.
+// CREDITS: Beds24 bills per request by credits. The whole 5-minute credit
+// meter (remaining + resets-in + this call's cost — bare header numbers
+// surfaced by beds24-http, names measured live: ./beds24-credits) rides along
+// on every result. The sync layer puts it in the evidence context AND feeds it
+// to the credit gate, which is what stops a burst before the window empties.
 // ============================================================
 
 import {
   beds24Request, beds24Fail, mapErrorStatus,
   type Beds24ApiFailure,
 } from "./beds24-http";
+import { EMPTY_BEDS24_CREDITS, type Beds24CreditSnapshot } from "./beds24-credits";
 import { asObj, asStr, asInt } from "./channel-http";
 import {
   validateBeds24CalendarRequest,
@@ -46,9 +48,9 @@ export type SafeBeds24Warning = {
 // No task system exists at Beds24, so a clean success carries
 // no ids — the evidence trail records request counts + bytes + credits instead.
 export type Beds24CalendarPushResult =
-  | { ok: true; partial: false; creditsRemaining: number | null }
-  | { ok: true; partial: true; warnings: SafeBeds24Warning[]; creditsRemaining: number | null }
-  | (Beds24ApiFailure & { creditsRemaining?: number });
+  | { ok: true; partial: false; credits: Beds24CreditSnapshot }
+  | { ok: true; partial: true; warnings: SafeBeds24Warning[]; credits: Beds24CreditSnapshot }
+  | (Beds24ApiFailure & { credits: Beds24CreditSnapshot });
 
 export type Beds24PushDeps = {
   fetchImpl?: typeof fetch;
@@ -109,7 +111,7 @@ export async function pushBeds24Calendar(
 ): Promise<Beds24CalendarPushResult> {
   // structural gate: a malformed payload never reaches the network
   const invalid = validateBeds24CalendarRequest(args.entries);
-  if (invalid) return beds24Fail("validation");
+  if (invalid) return { ...beds24Fail("validation"), credits: EMPTY_BEDS24_CREDITS };
 
   const r = await beds24Request({
     token: args.token,
@@ -120,12 +122,13 @@ export async function pushBeds24Calendar(
     ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   });
-  if ("ok" in r) return r; // transport-level failure, already a safe category
-  const creditsRemaining = r.creditsRemaining ?? null;
+  // a transport-level failure never reached Beds24 — no meter to report
+  if ("ok" in r) return { ...r, credits: EMPTY_BEDS24_CREDITS };
+  const credits = r.credits;
   if (r.status !== 200 && r.status !== 201 && r.status !== 204) {
-    const f: Beds24ApiFailure & { creditsRemaining?: number } =
-      beds24Fail(mapErrorStatus(r.status), r.status);
-    if (creditsRemaining !== null) f.creditsRemaining = creditsRemaining;
+    const f: Beds24ApiFailure & { credits: Beds24CreditSnapshot } = {
+      ...beds24Fail(mapErrorStatus(r.status), r.status), credits,
+    };
     // §16 — carry the 429 cooldown forward so the circuit opens for the right span
     return r.retryAfterMs !== undefined ? { ...f, retryAfterMs: r.retryAfterMs } : f;
   }
@@ -134,13 +137,11 @@ export async function pushBeds24Calendar(
   if (verdict.anyFailure) {
     // success:false on a 200 — Beds24 rejected (some of) the write. Treated as
     // a full failure so the caller keeps every claimed range retryable.
-    const f: Beds24ApiFailure & { creditsRemaining?: number } = beds24Fail("validation", r.status);
-    if (creditsRemaining !== null) f.creditsRemaining = creditsRemaining;
-    return f;
+    return { ...beds24Fail("validation", r.status), credits };
   }
   if (verdict.warnings.length > 0)
-    return { ok: true, partial: true, warnings: verdict.warnings, creditsRemaining };
-  return { ok: true, partial: false, creditsRemaining };
+    return { ok: true, partial: true, warnings: verdict.warnings, credits };
+  return { ok: true, partial: false, credits };
 }
 
 /** Human-safe, fixed-vocabulary summary of a warning set. Never an upstream body. */

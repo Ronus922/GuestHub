@@ -60,7 +60,16 @@ export async function getChannelStatusAction(): Promise<Result<unknown>> {
       FROM guesthub.channel_sync_errors
       WHERE tenant_id = ${actor.tenantId} AND resolved_at IS NULL
       ORDER BY created_at DESC LIMIT 10`;
-    return { success: true, data: { connections, counts, errors } };
+    // P0-4 — the Beds24 credit window as the worker last measured it. The
+    // meter is parked on the job row that read it (worker.ts::recordJobCredits),
+    // so the newest such row IS the freshest reading the system has; the poll
+    // runs every 5 minutes, so this is never more than one cycle stale.
+    const [credits] = await sql`
+      SELECT payload->'credits' AS credits, job_type, finished_at
+      FROM guesthub.channel_sync_jobs
+      WHERE tenant_id = ${actor.tenantId} AND payload ? 'credits'
+      ORDER BY created_at DESC LIMIT 1`;
+    return { success: true, data: { connections, counts, errors, credits: credits ?? null } };
   } catch (e) {
     return failFrom(e);
   }
