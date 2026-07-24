@@ -53,6 +53,10 @@ export async function getCalendarData(
   const rooms = sortRoomsByNumber(roomRows);
 
   // Every visible (non-cancelled) reservation-room intersecting the window.
+  // DRAW boundary, not the inventory boundary: pills run mid-cell to mid-cell,
+  // so a stay whose check_out EQUALS the window start still owns the departure
+  // half-slot of day 1 — hence `check_out >= from` here, while inventory math
+  // everywhere else stays half-open [check_in, check_out) (DECISIONS D-cal-edge).
   const stays = await sql<(Omit<CalendarStay, "payment"> & { total_price: number; paid_amount: number })[]>`
     SELECT rr.id AS rr_id, rr.reservation_id, rr.room_id,
            rr.check_in::text AS check_in, rr.check_out::text AS check_out,
@@ -74,7 +78,7 @@ export async function getCalendarData(
     LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
     WHERE rr.tenant_id = ${tenantId}
       AND rr.room_id IS NOT NULL
-      AND rr.check_in < ${to} AND rr.check_out > ${from}
+      AND rr.check_in < ${to} AND rr.check_out >= ${from}
       AND res.status <> 'cancelled'
     ORDER BY rr.check_in`;
 
@@ -82,7 +86,8 @@ export async function getCalendarData(
     SELECT id, room_id, start_date::text AS start_date, end_date::text AS end_date, reason
     FROM guesthub.room_closures
     WHERE tenant_id = ${tenantId}
-      AND start_date < ${to} AND end_date > ${from}`;
+      -- same DRAW boundary as stays: a closure ending on day 1 keeps its half-slot
+      AND start_date < ${to} AND end_date >= ${from}`;
 
   // Unassigned external-booking holds (§R) — lane renders only when non-empty.
   const holds = await sql<CalendarHold[]>`
@@ -92,7 +97,8 @@ export async function getCalendarData(
     FROM guesthub.channel_inventory_holds h
     LEFT JOIN guesthub.room_types rt ON rt.id = h.room_type_id
     WHERE h.tenant_id = ${tenantId} AND h.status = 'active'
-      AND h.check_in < ${to} AND h.check_out > ${from}`;
+      -- same DRAW boundary as stays: a hold ending on day 1 keeps its half-slot
+      AND h.check_in < ${to} AND h.check_out >= ${from}`;
 
   // Rates for the empty-cell price/min-nights strip, from the canonical
   // commercial model (§0.4): each Sellable Unit's base-plan row is projected
