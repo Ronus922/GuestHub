@@ -1,24 +1,11 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
-import { decryptSecret } from "./crypto";
-import { channexBaseUrl } from "./config";
 import {
-  acknowledgeBookingRevision,
-  fetchBookingRevision,
-  fetchBookingRevisionsFeed,
-  FEED_PAGE_LIMIT,
-  type FeedRevision,
-} from "./channex-bookings";
-import type { ChannelReqOpts } from "./channel-http";
-import {
-  markRevisionAcknowledged,
   markRevisionFailed,
   markRevisionImported,
-  persistBookingRevision,
   quarantineRevision,
 } from "./revisions";
 import {
-  normalizeBookingRevision,
   otaSourceKey,
   type NormalizedRevision,
   type NormalizedRoom,
@@ -30,7 +17,6 @@ import {
   roomLabelsFor,
 } from "./external-changes";
 import { logChannelError } from "./queue";
-import { getChannexRatePlan } from "./channex-rate-plans";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
@@ -41,12 +27,13 @@ import {
 import { nightsBetween, rangesOverlap } from "@/lib/dates";
 
 // ============================================================
-// Canonical inbound booking import (D76) — the ONE path from a Channex booking
-// revision to a GuestHub reservation. Consumed exclusively by the PM2 channel
-// worker's pull_booking_revisions job; nothing here runs in a web request.
+// Canonical inbound booking import core (D76/D78) — the ONE path from a
+// provider booking revision to a GuestHub reservation. Consumed exclusively by
+// the PM2 channel worker's pull_booking_revisions job (today: Beds24, via
+// beds24-booking-import.ts); nothing here runs in a web request.
 //
 // INVARIANTS
-//  • Identity: one reservation per (connection, Channex booking_id) — enforced
+//  • Identity: one reservation per (connection, booking_id) — enforced
 //    by uq_reservations_external_booking (migration 029), not by code.
 //  • A revision is imported exactly once (UNIQUE connection+revision, 005),
 //    inside ONE transaction with its reservation writes; markRevisionImported
@@ -62,14 +49,6 @@ import { nightsBetween, rangesOverlap } from "@/lib/dates";
 //  • paid_amount stays ledger-derived: hotel-collect arrives UNPAID (§8).
 // ============================================================
 
-export type InboundConnection = {
-  id: string;
-  tenant_id: string;
-  environment: "staging" | "production";
-  channex_property_id: string;
-  api_key_ciphertext: string;
-};
-
 // The provider-neutral subset the post-normalize import core needs (D77):
 // identity only — never credentials, never a provider property id. Every
 // InboundConnection is structurally assignable to it.
@@ -78,39 +57,9 @@ export type ImportConnection = {
   tenant_id: string;
 };
 
-export type InboundPullSummary = {
-  pulled: number;
-  imported: number;
-  alreadyImported: number;
-  quarantined: number;
-  failed: number;
-  acked: number;
-  /** sanitized error messages (bounded) — never an upstream body */
-  errors: string[];
-};
-
 // A domain condition that must PARK the revision visibly (unmapped room,
 // wrong property, local conflict) — distinct from a transient failure.
 class QuarantineError extends Error {}
-
-const MAX_FEED_ROUNDS = 20;
-const REACK_BATCH = 50;
-
-export function inboundCreds(conn: InboundConnection): ChannelReqOpts {
-  return {
-    apiKey: decryptSecret(conn.api_key_ciphertext),
-    baseUrl: channexBaseUrl(conn.environment),
-  };
-}
-
-export async function loadInboundConnections(db: Sql): Promise<InboundConnection[]> {
-  return db<InboundConnection[]>`
-    SELECT id, tenant_id, environment, channex_property_id, api_key_ciphertext
-    FROM guesthub.channel_connections
-    WHERE provider = 'channex' AND is_active_provider = true
-      AND state = 'active' AND inbound_sync_enabled = true
-      AND channex_property_id IS NOT NULL AND api_key_ciphertext IS NOT NULL`;
-}
 
 // ---------------------------------------------------------------
 // mapping resolution — external UUID → canonical physical room
@@ -129,10 +78,9 @@ type ResolvedStay = {
 };
 
 // ---------------------------------------------------------------
-// room resolution seam (D77) — the ONE provider-specific step inside the
-// otherwise provider-neutral import core. The DEFAULT resolver is the original
-// Channex channel_room_mappings lookup, verbatim; the Hospitable path injects
-// its own resolver (channel_hospitable_property_mappings) via ImportCoreOptions.
+// room resolution seam (D77/D78) — the ONE provider-specific step inside the
+// otherwise provider-neutral import core. The provider adapter injects its
+// resolver via ImportCoreOptions (Beds24: channel_beds24_room_mappings).
 // An unresolvable room returns { error } and the core quarantines — never a
 // guessed room.
 // ---------------------------------------------------------------
@@ -142,19 +90,6 @@ export type RoomResolver = (
   db: Sql | TransactionSql,
   room: NormalizedRoom,
 ) => Promise<RoomResolution>;
-
-function channexRoomResolver(conn: ImportConnection): RoomResolver {
-  return async (db, room) => {
-    const [mapping] = await db<{ room_id: string }[]>`
-      SELECT room_id FROM guesthub.channel_room_mappings
-      WHERE connection_id = ${conn.id}
-        AND channex_room_type_id = ${room.channexRoomTypeId}
-        AND status = 'mapped'`;
-    return mapping
-      ? { roomId: mapping.room_id }
-      : { error: `חדר ערוץ ללא מיפוי לחדר פיזי (Room Type ${room.channexRoomTypeId.slice(0, 8)}…)` };
-  };
-}
 
 async function resolveStays(
   db: Sql | TransactionSql,
@@ -168,33 +103,10 @@ async function resolveStays(
     if ("error" in resolved) {
       throw new QuarantineError(resolved.error);
     }
-    let localRatePlanId: string | null = null;
-    if (room.channexRatePlanId) {
-      const [ratePlan] = await db<{ local_rate_plan_id: string; room_id: string }[]>`
-        SELECT local_rate_plan_id, room_id FROM guesthub.channel_room_rate_mappings
-        WHERE connection_id = ${conn.id}
-          AND channex_rate_plan_id = ${room.channexRatePlanId}
-          AND status = 'mapped'`;
-      // canonical miss → verified inbound alias (adopted by
-      // reconcileInboundRatePlans after a live UUID-chain check). The alias
-      // carries the SAME room guard: an alias for another room never imports.
-      const [alias] = ratePlan
-        ? [ratePlan]
-        : await db<{ local_rate_plan_id: string | null; room_id: string }[]>`
-            SELECT local_rate_plan_id, room_id
-            FROM guesthub.channel_inbound_rate_plan_aliases
-            WHERE connection_id = ${conn.id}
-              AND channex_rate_plan_id = ${room.channexRatePlanId}`;
-      if (!alias) {
-        throw new QuarantineError(
-          `תוכנית תעריף של הערוץ ללא מיפוי מקומי (Rate Plan ${room.channexRatePlanId.slice(0, 8)}…)`,
-        );
-      }
-      if (alias.room_id !== resolved.roomId) {
-        throw new QuarantineError("מיפוי תוכנית התעריף אינו תואם את חדר ההזמנה");
-      }
-      localRatePlanId = alias.local_rate_plan_id;
-    }
+    // rate-plan association is the provider adapter's business (Beds24: the
+    // designated plan lives on the room mapping; the imported price is the
+    // channel's own, stored as a manual rate — D76/D78).
+    const localRatePlanId: string | null = null;
     stays.push({
       roomId: resolved.roomId,
       localRatePlanId,
@@ -222,110 +134,6 @@ async function resolveStays(
   return stays;
 }
 
-// ---------------------------------------------------------------
-// verified inbound alias adoption (root cause of BDC-6784772338)
-// ---------------------------------------------------------------
-// The OWNER's channel mapping in the Channex UI can point BDC rates at
-// rate-plan objects GuestHub never created (UI-made copies, possibly deleted
-// upstream afterwards). Bookings then arrive with an unknown rate_plan UUID
-// and quarantine. Before importing, adopt such a UUID as an inbound ALIAS —
-// but ONLY on hard evidence, fetched live from Channex with this connection's
-// key:
-//   1. GET /rate_plans/{id} answers 200 (the key owns/sees the plan);
-//   2. the plan's property === the connection's property;
-//   3. the plan's room_type equals the BOOKING room's room_type AND resolves
-//      through channel_room_mappings to exactly one physical room.
-// local plan association is OPTIONAL extra: only when the verified title
-// matches exactly ONE canonical mapping of the SAME room (title is never used
-// to pick the room — only to disambiguate the plan kind inside a UUID-proven
-// room); otherwise it stays NULL and the import still proceeds (the price is
-// the channel's, D76).
-// Canonical channel_room_rate_mappings rows are NEVER touched here — they are
-// outbound/ARI-critical. Failures are swallowed: the revision simply stays
-// quarantined and the next pull retries.
-export async function reconcileInboundRatePlans(
-  db: Sql,
-  conn: InboundConnection,
-  rooms: NormalizedRoom[],
-): Promise<number> {
-  let adopted = 0;
-  const seen = new Set<string>();
-  for (const room of rooms) {
-    const rpId = room.channexRatePlanId;
-    if (!rpId || seen.has(rpId)) continue;
-    seen.add(rpId);
-    try {
-      const [known] = await db<{ one: number }[]>`
-        SELECT 1 AS one FROM guesthub.channel_room_rate_mappings
-        WHERE connection_id = ${conn.id} AND channex_rate_plan_id = ${rpId}
-          AND status = 'mapped'
-        UNION ALL
-        SELECT 1 FROM guesthub.channel_inbound_rate_plan_aliases
-        WHERE connection_id = ${conn.id} AND channex_rate_plan_id = ${rpId}
-        LIMIT 1`;
-      if (known) continue;
-
-      // live verification — single attempt; transient failure = no adoption
-      const res = await getChannexRatePlan({ ...inboundCreds(conn), id: rpId });
-      if (!res.ok) continue;
-      const { ratePlan } = res;
-      if (ratePlan.propertyId !== conn.channex_property_id) continue; // foreign property — never adopt
-      if (!ratePlan.roomTypeId || ratePlan.roomTypeId !== room.channexRoomTypeId) continue;
-
-      const roomRows = await db<{ room_id: string }[]>`
-        SELECT room_id FROM guesthub.channel_room_mappings
-        WHERE connection_id = ${conn.id}
-          AND channex_room_type_id = ${ratePlan.roomTypeId}
-          AND status = 'mapped'`;
-      if (roomRows.length !== 1) continue; // ambiguous/unmapped room — never adopt
-
-      // optional plan-kind disambiguation INSIDE the proven room
-      const titled = ratePlan.title
-        ? await db<{ local_rate_plan_id: string }[]>`
-            SELECT local_rate_plan_id FROM guesthub.channel_room_rate_mappings
-            WHERE connection_id = ${conn.id} AND room_id = ${roomRows[0].room_id}
-              AND status = 'mapped' AND channex_title = ${ratePlan.title}`
-        : [];
-      const localPlanId = titled.length === 1 ? titled[0].local_rate_plan_id : null;
-
-      const inserted = await db<{ id: string }[]>`
-        INSERT INTO guesthub.channel_inbound_rate_plan_aliases
-          (tenant_id, connection_id, channex_rate_plan_id, room_id, local_rate_plan_id,
-           channex_property_id, channex_room_type_id, channex_title)
-        VALUES (${conn.tenant_id}, ${conn.id}, ${rpId}, ${roomRows[0].room_id}, ${localPlanId},
-                ${ratePlan.propertyId}, ${ratePlan.roomTypeId}, ${ratePlan.title})
-        ON CONFLICT (connection_id, channex_rate_plan_id) DO NOTHING
-        RETURNING id`;
-      if (inserted.length > 0) {
-        adopted += 1;
-        await db`
-          INSERT INTO guesthub.audit_logs
-            (tenant_id, user_id, entity_type, entity_id, action, after_data)
-          VALUES (${conn.tenant_id}, NULL, 'channel_rate_plan_alias', ${inserted[0].id},
-                  'adopt_verified',
-                  ${db.json({
-                    channex_rate_plan_id: rpId,
-                    room_id: roomRows[0].room_id,
-                    local_rate_plan_id: localPlanId,
-                    channex_property_id: ratePlan.propertyId,
-                    channex_room_type_id: ratePlan.roomTypeId,
-                    channex_title: ratePlan.title,
-                  })})`;
-      }
-    } catch {
-      // adoption is best-effort; the revision stays quarantined and retries
-    }
-  }
-  return adopted;
-}
-
-// ---------------------------------------------------------------
-// reservation write helpers (worker context — no session actor)
-// ---------------------------------------------------------------
-
-// Same allocation rule as the manual create path (reservations/actions.ts):
-// tenant row locked for the transaction, unique index as the hard backstop.
-// ponytail: 6 duplicated lines — extract to a shared lib when a third caller appears.
 async function allocateReservationNumber(tx: TransactionSql, tenantId: string): Promise<string> {
   await tx`SELECT id FROM guesthub.tenants WHERE id = ${tenantId} FOR UPDATE`;
   const [row] = await tx<{ next: string }[]>`
@@ -832,55 +640,9 @@ async function applyCancellation(
   return existing.id;
 }
 
-// Import ONE persisted revision row, transactionally. Idempotent: an already
-// imported row returns without touching anything.
-export async function importRevisionRow(
-  db: Sql,
-  conn: InboundConnection,
-  revisionRowId: string,
-): Promise<ImportOutcome> {
-  const [rev] = await db<RevisionRow[]>`
-    SELECT id, tenant_id, provider_booking_id, provider_revision_id,
-           revision_kind, payload, import_status, local_reservation_id
-    FROM guesthub.channel_booking_revisions
-    WHERE id = ${revisionRowId} AND connection_id = ${conn.id}`;
-  if (!rev) return { status: "failed", error: "רשומת רוויזיה לא נמצאה" };
-  if (rev.import_status === "imported")
-    return { status: "already", reservationId: rev.local_reservation_id };
-
-  const norm = normalizeBookingRevision(rev.payload);
-  if (!norm.ok) {
-    await quarantineRevision(db, rev.id, norm.error);
-    return { status: "quarantined", reason: norm.error };
-  }
-  // an unknown property is REJECTED — visibly parked, never imported into this
-  // tenant and never acknowledged
-  if (norm.value.propertyId !== conn.channex_property_id) {
-    const reason = "הרוויזיה שייכת לנכס אחר — נדחתה";
-    await quarantineRevision(db, rev.id, reason);
-    await logChannelError(db, {
-      tenantId: conn.tenant_id,
-      connectionId: conn.id,
-      code: "wrong_property",
-      message: reason,
-      context: { revision_id: rev.provider_revision_id },
-    });
-    return { status: "quarantined", reason };
-  }
-
-  // self-heal BEFORE the import transaction (network stays outside the tx):
-  // adopt any unknown-but-verifiable rate-plan UUID as an inbound alias, so a
-  // channel remapped in the Channex UI stops quarantining valid bookings.
-  if (norm.value.kind !== "cancelled") {
-    await reconcileInboundRatePlans(db, conn, norm.value.rooms);
-  }
-
-  return importNormalizedRevision(db, conn, rev.id, norm.value);
-}
-
 export type ImportCoreOptions = {
-  /** provider-specific room resolution; default = Channex channel_room_mappings */
-  resolveRoom?: RoomResolver;
+  /** provider-specific room resolution — required; the core never guesses */
+  resolveRoom: RoomResolver;
 };
 
 // The post-normalize import core (D77) — the SHARED half of importRevisionRow,
@@ -889,16 +651,15 @@ export type ImportCoreOptions = {
 // failure path. The caller has already: loaded the revision row, checked
 // import_status, normalized the payload, and run its provider-specific
 // property-ownership guard. `norm.revisionId` must equal the row's
-// provider_revision_id and `norm.bookingId` its provider_booking_id (true for
-// Channex by construction — persist stored both from the same payload).
+// provider_revision_id and `norm.bookingId` its provider_booking_id.
 export async function importNormalizedRevision(
   db: Sql,
   conn: ImportConnection,
   revisionRowId: string,
   norm: NormalizedRevision,
-  opts?: ImportCoreOptions,
+  opts: ImportCoreOptions,
 ): Promise<ImportOutcome> {
-  const resolveRoom = opts?.resolveRoom ?? channexRoomResolver(conn);
+  const resolveRoom = opts.resolveRoom;
   try {
     const reservationId = await db.begin(async (tx) => {
       const id =
@@ -943,214 +704,4 @@ export async function importNormalizedRevision(
     });
     return { status: "failed", error: message };
   }
-}
-
-// ---------------------------------------------------------------
-// the pull job — feed → persist → import → ack (in that order, per revision)
-// ---------------------------------------------------------------
-
-function kindOf(attributes: unknown): "new" | "modified" | "cancelled" | null {
-  const status =
-    attributes && typeof attributes === "object"
-      ? (attributes as Record<string, unknown>).status
-      : null;
-  return status === "new" || status === "modified" || status === "cancelled" ? status : null;
-}
-
-// Best-effort identity of a revision whose full normalization FAILED — enough
-// to persist it visibly instead of losing it (the staging feed stops serving a
-// revision after ~30 minutes, so an unpersisted one is gone for good).
-function rawRevisionIdentity(attributes: unknown): {
-  bookingId: string | null;
-  uniqueId?: string;
-  otaReservationCode?: string;
-  otaName?: string;
-} {
-  const a =
-    attributes && typeof attributes === "object" && !Array.isArray(attributes)
-      ? (attributes as Record<string, unknown>)
-      : {};
-  const s = (v: unknown): string | undefined =>
-    typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
-  return {
-    bookingId: s(a.booking_id) ?? null,
-    uniqueId: s(a.unique_id),
-    otaReservationCode: s(a.ota_reservation_code),
-    otaName: s(a.ota_name),
-  };
-}
-
-async function processFeedRevision(
-  db: Sql,
-  conn: InboundConnection,
-  creds: ChannelReqOpts,
-  rev: FeedRevision,
-  summary: InboundPullSummary,
-): Promise<void> {
-  const norm = normalizeBookingRevision(rev.attributes);
-  const raw = norm.ok ? null : rawRevisionIdentity(rev.attributes);
-  if (!norm.ok && !raw?.bookingId) {
-    // no booking identity at all — nothing durable can be keyed to it
-    summary.failed += 1;
-    summary.errors.push(norm.ok ? "" : norm.error);
-    await logChannelError(db, {
-      tenantId: conn.tenant_id,
-      connectionId: conn.id,
-      code: "inbound_normalize_failed",
-      message: norm.ok ? "" : norm.error,
-      context: { revision_id: rev.id },
-    });
-    return;
-  }
-
-  // persist idempotently (payload is redacted + card staged inside) — ALSO for
-  // a normalize-failed revision: importRevisionRow re-runs the same normalize
-  // and parks it as a VISIBLE quarantine instead of a silent log line. It is
-  // never acknowledged, so nothing is lost when the feed expires it.
-  const persisted = await persistBookingRevision(db, {
-    tenantId: conn.tenant_id,
-    connectionId: conn.id,
-    providerBookingId: norm.ok ? norm.value.bookingId : raw!.bookingId!,
-    providerRevisionId: rev.id,
-    uniqueId: (norm.ok ? (norm.value.uniqueId ?? undefined) : raw!.uniqueId) ?? undefined,
-    systemId: norm.ok ? (norm.value.systemId ?? undefined) : undefined,
-    otaReservationCode:
-      (norm.ok ? (norm.value.otaReservationCode ?? undefined) : raw!.otaReservationCode) ??
-      undefined,
-    otaName: (norm.ok ? (norm.value.otaName ?? undefined) : raw!.otaName) ?? undefined,
-    revisionKind: kindOf(rev.attributes) ?? (norm.ok ? norm.value.kind : "new"),
-    rawStatus: norm.ok ? norm.value.kind : (kindOf(rev.attributes) ?? "new"),
-    payload: rev.attributes,
-  });
-  const rowId = persisted.duplicate
-    ? (
-        await db<{ id: string }[]>`
-          SELECT id FROM guesthub.channel_booking_revisions
-          WHERE connection_id = ${conn.id} AND provider_revision_id = ${rev.id}`
-      )[0]?.id
-    : persisted.id;
-  if (!rowId) {
-    summary.failed += 1;
-    summary.errors.push("רשומת הרוויזיה לא נשמרה");
-    return;
-  }
-
-  const outcome = await importRevisionRow(db, conn, rowId);
-  if (outcome.status === "imported") summary.imported += 1;
-  else if (outcome.status === "already") summary.alreadyImported += 1;
-  else if (outcome.status === "quarantined") {
-    summary.quarantined += 1;
-    summary.errors.push(outcome.reason);
-    return; // NOT acknowledged — stays in the upstream feed, visibly parked
-  } else {
-    summary.failed += 1;
-    summary.errors.push(outcome.error);
-    return; // NOT acknowledged — retried by the next pull
-  }
-
-  // acknowledge ONLY now — the import transaction is durably committed.
-  // markRevisionAcknowledged additionally refuses any row not 'imported'.
-  const ack = await acknowledgeBookingRevision(creds, rev.id);
-  if (ack.ok) {
-    const marked = await markRevisionAcknowledged(db, rowId);
-    if (marked) summary.acked += 1;
-  } else {
-    summary.errors.push(`אישור הרוויזיה נכשל: ${ack.message}`);
-  }
-}
-
-// Re-ack sweep: rows durably imported whose earlier acknowledgement failed.
-// A DEFINITE upstream "this revision is not pending" (404/422/409) is treated
-// as already-acknowledged; an ambiguous failure stays unacknowledged for the
-// next pull — never a blind retry loop.
-async function reacknowledgeImported(
-  db: Sql,
-  conn: InboundConnection,
-  creds: ChannelReqOpts,
-  summary: InboundPullSummary,
-): Promise<void> {
-  const rows = await db<{ id: string; provider_revision_id: string }[]>`
-    SELECT id, provider_revision_id FROM guesthub.channel_booking_revisions
-    WHERE connection_id = ${conn.id}
-      AND ack_status = 'unacknowledged' AND import_status = 'imported'
-    ORDER BY created_at
-    LIMIT ${REACK_BATCH}`;
-  for (const row of rows) {
-    const ack = await acknowledgeBookingRevision(creds, row.provider_revision_id);
-    const definiteNotPending =
-      !ack.ok &&
-      (ack.category === "not_found" || ack.category === "validation" || ack.category === "conflict");
-    if (ack.ok || definiteNotPending) {
-      const marked = await markRevisionAcknowledged(db, row.id);
-      if (marked) summary.acked += 1;
-    } else {
-      summary.errors.push(`אישור חוזר נכשל: ${ack.message}`);
-    }
-  }
-}
-
-export async function runInboundPull(
-  db: Sql,
-  conn: InboundConnection,
-  opts?: { revisionId?: string },
-): Promise<InboundPullSummary> {
-  const summary: InboundPullSummary = {
-    pulled: 0,
-    imported: 0,
-    alreadyImported: 0,
-    quarantined: 0,
-    failed: 0,
-    acked: 0,
-    errors: [],
-  };
-  const creds = inboundCreds(conn);
-
-  if (opts?.revisionId) {
-    // controlled recovery (§10): ONE named revision through the SAME pipeline
-    const res = await fetchBookingRevision(creds, opts.revisionId);
-    if (!res.ok) {
-      summary.errors.push(res.message);
-      return summary;
-    }
-    summary.pulled = 1;
-    await processFeedRevision(db, conn, creds, res.revision, summary);
-  } else {
-    // the feed returns ONLY unacknowledged revisions, oldest first; acking as
-    // we go shifts pagination, so always re-read page 1 and stop when a page
-    // brings nothing new (quarantined/failed rows stay in the feed by design)
-    const seen = new Set<string>();
-    for (let round = 0; round < MAX_FEED_ROUNDS; round++) {
-      const page = await fetchBookingRevisionsFeed(creds, conn.channex_property_id, 1);
-      if (!page.ok) {
-        summary.errors.push(page.message);
-        break;
-      }
-      const fresh = page.revisions.filter((r) => !seen.has(r.id));
-      if (fresh.length === 0) break;
-      for (const rev of fresh) {
-        seen.add(rev.id);
-        summary.pulled += 1;
-        await processFeedRevision(db, conn, creds, rev, summary);
-      }
-      if (page.revisions.length < FEED_PAGE_LIMIT) break;
-    }
-  }
-
-  await reacknowledgeImported(db, conn, creds, summary);
-
-  // ops emails for external date changes — strictly AFTER the import
-  // transactions committed, never inside one; terminal per-row statuses make
-  // redelivery a no-op. A mail failure never fails the pull.
-  try {
-    await dispatchExternalChangeEmails(db, conn.tenant_id);
-  } catch (e) {
-    summary.errors.push(e instanceof Error ? e.message : "שליחת התראות המייל נכשלה");
-  }
-
-  if (summary.imported > 0) {
-    await db`
-      UPDATE guesthub.channel_connections SET last_inbound_import_at = now()
-      WHERE id = ${conn.id}`;
-  }
-  return summary;
 }

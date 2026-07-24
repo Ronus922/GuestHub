@@ -11,7 +11,7 @@
 //    feed — the caller (beds24-booking-import.ts) overrides it with the
 //    synthetic "{id}:{modifiedTime}" id of the persisted revision row before
 //    handing the value to importNormalizedRevision.
-//  • ONE NormalizedRoom whose `channexRoomTypeId` slot carries the Beds24
+//  • ONE NormalizedRoom whose `externalRoomId` slot carries the Beds24
 //    ROOM ID — in-memory only, threaded to the injected room resolver
 //    (channel_beds24_room_mappings); it is NEVER persisted to
 //    channel_room_mappings, which stays Channex-owned (D64).
@@ -206,8 +206,8 @@ export function normalizeBeds24Booking(
   const room: NormalizedRoom = {
     // the Beds24 ROOM ID rides the room-type slot IN MEMORY ONLY — consumed by
     // the injected resolver, never written to channel_room_mappings
-    channexRoomTypeId: roomId,
-    channexRatePlanId: null, // Beds24 bookings carry no rate-plan axis (D78)
+    externalRoomId: roomId,
+    // Beds24 bookings carry no rate-plan axis (D78) — pricing is the designated plan on the mapping
     checkinDate: arrival,
     checkoutDate: departure,
     adults,

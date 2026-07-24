@@ -204,16 +204,16 @@ async function insertRevisionRow(
 
 function beds24RoomResolver(conn: Beds24InboundConnection): RoomResolver {
   return async (db, room) => {
-    // the room's channexRoomTypeId slot carries the Beds24 room id
+    // the room's externalRoomId slot carries the Beds24 room id
     // (in-memory convention, beds24-normalize.ts)
     const [mapping] = await db<{ room_id: string }[]>`
       SELECT room_id FROM guesthub.channel_beds24_room_mappings
       WHERE connection_id = ${conn.id}
-        AND beds24_room_id = ${room.channexRoomTypeId}
+        AND beds24_room_id = ${room.externalRoomId}
         AND status = 'mapped'`;
     return mapping
       ? { roomId: mapping.room_id }
-      : { error: `חדר Beds24 ללא מיפוי לחדר מקומי (${room.channexRoomTypeId})` };
+      : { error: `חדר Beds24 ללא מיפוי לחדר מקומי (${room.externalRoomId})` };
   };
 }
 

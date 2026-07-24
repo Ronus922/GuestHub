@@ -22,7 +22,7 @@ import {
 } from "./circuit-breaker";
 import { logChannelError } from "./queue";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
-import type { DrainSummary } from "./ari-sync";
+import type { DrainSummary } from "./ari-projection";
 
 // ============================================================
 // Beds24 ARI synchronisation (D78/D79) — sibling of ari-sync.ts and

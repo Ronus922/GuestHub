@@ -85,16 +85,8 @@ export type FullSyncResult = {
   error: string | null;
 };
 
-export type DrainSummary = {
-  claimed: number;
-  synced: number;
-  retried: number;
-  failed: number;
-  requests: number;
-  sentValues: number;
-  /** §16 — true when the circuit breaker skipped this connection (still cooling) */
-  circuitOpen?: boolean;
-};
+import type { DrainSummary } from "./ari-projection";
+export type { DrainSummary };
 
 // §16 — read/write the persisted breaker state on the connection row.
 function circuitStateOf(conn: AriConnection): CircuitState {
