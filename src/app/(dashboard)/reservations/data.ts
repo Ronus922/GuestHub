@@ -2,7 +2,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import type { Actor } from "@/lib/auth/actor";
 import { todayInTz, type DateOnly } from "@/lib/dates";
-import { paymentState, type PaymentState } from "@/lib/inventory-rules";
+import { displayPaymentState, type PaymentState } from "@/lib/inventory-rules";
 
 // ============================================================
 // /reservations read model (D77 §17/§18) — bounded, tenant-scoped, one
@@ -73,6 +73,7 @@ export type ListRow = {
   guest_name: string;
   guest_phone: string | null;
   source_label: string | null;
+  workflow_key: string | null;
   workflow_label: string | null;
   workflow_color: string | null;
   rooms_label: string | null;
@@ -114,9 +115,12 @@ function tabPredicates(today: DateOnly) {
     // rolling 24-hour window — NOT "since midnight"
     cancelled24: sql`res.status = 'cancelled'
                      AND res.cancelled_at > now() - interval '24 hours'`,
+    // D89: רק סטטוס עבודה "הזמנה אושרה" נחשב משולם — לא מופיע בטאבי החוב
     unpaid: sql`res.paid_amount <= 0 AND res.total_price > 0
-                AND res.status <> 'cancelled'`,
-    partial: sql`res.paid_amount > 0 AND res.paid_amount < res.total_price`,
+                AND res.status <> 'cancelled'
+                AND COALESCE(wf.key, '') <> 'approved'`,
+    partial: sql`res.paid_amount > 0 AND res.paid_amount < res.total_price
+                 AND COALESCE(wf.key, '') <> 'approved'`,
     pending: sql`res.status = 'draft'`,
     missing_docs: sql`wf.key = 'missing_docs'`,
     invalid_card: sql`(res.invalid_card_reported_at IS NOT NULL
@@ -169,13 +173,17 @@ export async function getReservationsList(
     ${f.to ? sql`AND ${dateCol} <= ${f.to}` : sql``}
     ${f.sourceId ? sql`AND res.source_id = ${f.sourceId}` : sql``}
     ${f.workflowId ? sql`AND res.workflow_status_id = ${f.workflowId}` : sql``}
+    ${/* D89: פילטר התשלום מיושר לאותו כלל — רק "הזמנה אושרה" = שולם */ sql``}
     ${
       f.payment === "unpaid"
-        ? sql`AND res.paid_amount <= 0 AND res.total_price > 0`
+        ? sql`AND res.paid_amount <= 0 AND res.total_price > 0
+              AND COALESCE(wf.key, '') <> 'approved'`
         : f.payment === "partial"
-          ? sql`AND res.paid_amount > 0 AND res.paid_amount < res.total_price`
+          ? sql`AND res.paid_amount > 0 AND res.paid_amount < res.total_price
+                AND COALESCE(wf.key, '') <> 'approved'`
           : f.payment === "paid"
-            ? sql`AND res.total_price > 0 AND res.paid_amount >= res.total_price`
+            ? sql`AND (wf.key = 'approved'
+                   OR (res.total_price > 0 AND res.paid_amount >= res.total_price))`
             : sql``
     }
     ${
@@ -200,7 +208,7 @@ export async function getReservationsList(
            COALESCE(g.full_name, 'אורח') AS guest_name,
            g.phone AS guest_phone,
            src.label AS source_label,
-           wf.label AS workflow_label, wf.color AS workflow_color,
+           wf.key AS workflow_key, wf.label AS workflow_label, wf.color AS workflow_color,
            (SELECT string_agg(COALESCE(r.room_number, '—'), ', ' ORDER BY r.room_number)
               FROM guesthub.reservation_rooms rr
               LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
@@ -245,11 +253,16 @@ export async function getReservationsList(
     WHERE res.tenant_id = ${tenantId}`;
 
   return {
-    rows: rows.map((r) => ({
-      ...r,
-      payment: paymentState(r.total_price, r.paid_amount),
-      balance: Math.round((r.total_price - r.paid_amount) * 100) / 100,
-    })),
+    rows: rows.map((r) => {
+      // D89: רק "הזמנה אושרה" (workflow) מוצגת כ"שולם" ויתרה 0; ה-ledger לא משתנה
+      const payment = displayPaymentState(r.workflow_key, r.total_price, r.paid_amount);
+      return {
+        ...r,
+        payment,
+        balance:
+          payment === "paid" ? 0 : Math.round((r.total_price - r.paid_amount) * 100) / 100,
+      };
+    }),
     truncatedBy: Math.max(0, totalMatching - rows.length),
     counts,
     today,

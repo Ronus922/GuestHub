@@ -383,6 +383,7 @@ export function EditReservationPanel({
         pan: normalizePan(cc.number),
         expMonth: exp.month,
         expYear: exp.year,
+        cvv: cc.cvv || undefined,
         source: cc.source,
         billingNotes: cc.billingNotes.trim() || undefined,
       });
@@ -995,7 +996,16 @@ export function EditReservationPanel({
                       canManageCard
                         ? (manual) => {
                             setReplacingCard(manual);
-                            if (!manual) setCc(EMPTY_CARD);
+                            // בהזנה ידנית — שם בעל הכרטיס מתמלא אוטומטית משם
+                            // האורח (ניתן לעריכה); ביציאה — ניקוי הטיוטה
+                            setCc(
+                              manual
+                                ? {
+                                    ...EMPTY_CARD,
+                                    holder: `${guest.firstName} ${guest.lastName}`.trim(),
+                                  }
+                                : EMPTY_CARD,
+                            );
                           }
                         : undefined
                     }

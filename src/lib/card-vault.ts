@@ -40,8 +40,12 @@ export function decryptPan(ciphertext: string): string {
   return Buffer.concat([decipher.update(Buffer.from(data, "base64")), decipher.final()]).toString("utf8");
 }
 
-// NOTE (D52): CVV/CVC is NEVER stored — not even encrypted. The former
-// encryptCvv/decryptCvv wrappers were removed with migration 018. A CVV may be
-// held only transiently in a single authorization request to a PSP (via the
-// gateway seam, src/lib/payments/gateway.ts) and is discarded immediately after
-// — it never touches this vault, the database, logs, audits or snapshots.
+// D87 — CVV storage restored for the MANUAL-ENTRY card (owner decision, see
+// migration 047). encryptPan/decryptPan are format-agnostic string crypto, so
+// the CVV rides the SAME AES-256-GCM construction; these thin aliases exist only
+// so call sites read honestly ("cvv", not "pan").
+// ponytail: PCI-DSS Req. 3.2 forbids retaining a CVV after authorization — this
+// exists only because no PSP authorizes inside GuestHub. Drop it (migration 018
+// is the template) the moment a real gateway is wired.
+export const encryptCvv = encryptPan;
+export const decryptCvv = decryptPan;

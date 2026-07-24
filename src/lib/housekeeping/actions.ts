@@ -30,6 +30,7 @@ export type HousekeepingTaskView = {
   assignedToName: string | null;
   dueDate: string | null;
   checkoutTime: string | null;
+  orderIndex: number;
   createdAt: string;
 };
 
@@ -54,6 +55,7 @@ function mapRow(r: Record<string, unknown>): HousekeepingTaskView {
     assignedToName: (r.assigned_to_name as string) ?? null,
     dueDate: (r.due_date as string) ?? null,
     checkoutTime: r.checkout_time ? new Date(r.checkout_time as string).toISOString() : null,
+    orderIndex: typeof r.order_index === "number" ? r.order_index : Number(r.order_index ?? 0),
     createdAt: new Date(r.created_at as string).toISOString(),
   };
 }
@@ -74,10 +76,87 @@ export async function getMyTasksAction(): Promise<Result<HousekeepingTaskView[]>
       LEFT JOIN guesthub.rooms rm ON rm.id = h.room_id AND rm.tenant_id = h.tenant_id
       LEFT JOIN guesthub.users u  ON u.id = h.assigned_to
       WHERE h.tenant_id = ${actor.tenantId}
-        AND h.status IN ('pending','in_progress')
+        AND h.status IN ('pending','in_progress','completed')
         AND (h.assigned_to = ${actor.userId} OR h.assigned_to IS NULL)
-      ORDER BY (h.assigned_to = ${actor.userId}) DESC, h.priority = 'high' DESC, h.created_at`;
+      ORDER BY (h.assigned_to = ${actor.userId}) DESC, h.order_index, h.priority = 'high' DESC, h.created_at`;
     return { success: true, data: rows.map(mapRow) };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ---- the drag-and-drop dispatch board reader (D88) ----
+// Columns = assignable users; cards = tasks. Mirrors the PMS board's date rule:
+// on TODAY show every active task (any date); on another day show that day's
+// tasks (by checkout/due). Grouped server-side into byUser + the unassigned
+// pool, each bucket already ordered by the persisted order_index. The client
+// polls this every 5s (paused mid-drag). housekeeping.view.
+export type TaskBoardColumn = { id: string; name: string };
+export type TaskBoardRoom = { id: string; roomNumber: string };
+export type TaskBoard = {
+  users: TaskBoardColumn[];
+  rooms: TaskBoardRoom[];
+  byUser: Record<string, HousekeepingTaskView[]>;
+  unassigned: HousekeepingTaskView[];
+};
+
+export async function getTaskBoardAction(
+  scope: "housekeeping" | "maintenance",
+  dateIso: string,
+): Promise<Result<TaskBoard>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "housekeeping.view");
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateIso) ? dateIso : null;
+    if (!date) return { success: false, error: "תאריך אינו תקין" };
+    // each board is locked to its task_type, and its COLUMNS are only the
+    // workers of that type — cleaners for /housekeeping, maintenance workers for
+    // /maintenance. Managers / reception / admins are never board columns.
+    const roleKey = scope === "housekeeping" ? "cleaner" : "maintenance";
+
+    const rows = await sql<Record<string, unknown>[]>`
+      SELECT h.id, h.task_type, h.title, h.due_date::text AS due_date, h.room_id, rm.room_number,
+             h.status, h.priority, h.notes, h.order_index,
+             h.assigned_to, u.full_name AS assigned_to_name,
+             h.checkout_time::text AS checkout_time, h.created_at::text AS created_at
+      FROM guesthub.housekeeping_tasks h
+      LEFT JOIN guesthub.rooms rm ON rm.id = h.room_id AND rm.tenant_id = h.tenant_id
+      LEFT JOIN guesthub.users u  ON u.id = h.assigned_to
+      WHERE h.tenant_id = ${actor.tenantId}
+        AND h.task_type = ${scope}
+        AND h.status IN ('pending','in_progress','completed')
+        AND (
+          (${date}::date = CURRENT_DATE AND h.status IN ('pending','in_progress'))
+          OR COALESCE(h.checkout_time::date, h.due_date, h.created_at::date) = ${date}::date
+        )
+      ORDER BY h.assigned_to NULLS FIRST, h.order_index, h.created_at`;
+
+    const users = await sql<TaskBoardColumn[]>`
+      SELECT u.id, COALESCE(u.full_name, u.username) AS name
+      FROM guesthub.users u
+      JOIN guesthub.roles r ON r.id = u.role_id AND r.tenant_id = u.tenant_id
+      WHERE u.tenant_id = ${actor.tenantId} AND u.is_active = true AND r.key = ${roleKey}
+      ORDER BY name`;
+
+    const rooms = await sql<TaskBoardRoom[]>`
+      SELECT id, room_number AS "roomNumber"
+      FROM guesthub.rooms
+      WHERE tenant_id = ${actor.tenantId} AND is_active = true
+      ORDER BY room_number`;
+
+    // seed every worker column so an empty worker still renders a droppable
+    // column. A task assigned to someone who is NOT a worker of this board (no
+    // matching column) falls back to the unassigned pool so it stays visible
+    // and reassignable — never silently dropped into an invisible bucket.
+    const byUser: Record<string, HousekeepingTaskView[]> = {};
+    for (const u of users) byUser[u.id] = [];
+    const unassigned: HousekeepingTaskView[] = [];
+    for (const raw of rows) {
+      const t = mapRow(raw);
+      if (t.assignedTo && byUser[t.assignedTo]) byUser[t.assignedTo].push(t);
+      else unassigned.push(t);
+    }
+    return { success: true, data: { users, rooms, byUser, unassigned } };
   } catch (e) {
     return fail(e);
   }
@@ -179,22 +258,165 @@ export async function createOperationalTaskAction(input: {
   }
 }
 
-// Manager assigns a task to a cleaner. housekeeping.manage.
+// Manager assigns a task to a cleaner (or back to the unassigned pool).
+// housekeeping.manage. After the move the TARGET bucket's order_index is
+// recomputed by natural sort (dropped card lands in its natural position, like
+// the PMS board) — a follow-up reorder() then persists any manual re-drag.
 export async function assignTaskAction(taskId: string, userId: string | null): Promise<Result> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "housekeeping.manage");
+    const done = await sql.begin(async (tx) => {
+      const [row] = await tx<{ id: string }[]>`
+        UPDATE guesthub.housekeeping_tasks
+        SET assigned_to = ${userId}, updated_at = now()
+        WHERE id = ${taskId} AND tenant_id = ${actor.tenantId}
+          AND status IN ('pending','in_progress')
+        RETURNING id`;
+      if (!row) return false;
+      // renumber the destination bucket (including the unassigned pool) so
+      // order_index is dense and reflects the natural sort as the baseline:
+      // urgent first, then the soonest checkout/due, then age (like PMS)
+      await tx`
+        WITH ranked AS (
+          SELECT id, ROW_NUMBER() OVER (
+            ORDER BY (priority = 'high') DESC,
+                     COALESCE(checkout_time, (due_date::timestamptz)) ASC NULLS LAST,
+                     created_at ASC
+          ) AS rn
+          FROM guesthub.housekeeping_tasks
+          WHERE tenant_id = ${actor.tenantId}
+            AND status IN ('pending','in_progress','completed')
+            AND assigned_to IS NOT DISTINCT FROM ${userId}
+        )
+        UPDATE guesthub.housekeeping_tasks t
+        SET order_index = ranked.rn
+        FROM ranked
+        WHERE t.id = ranked.id AND t.tenant_id = ${actor.tenantId}`;
+      return true;
+    });
+    if (!done) return { success: false, error: "המשימה לא נמצאה או אינה פתוחה" };
+    await writeAudit(actor, {
+      entityType: "housekeeping_task", entityId: taskId, action: "assign",
+      after: { assigned_to: userId },
+    });
+    revalidatePath("/housekeeping");
+    revalidatePath("/maintenance");
+    revalidatePath("/housekeeping/my-tasks");
+    return { success: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// Persist the MANUAL order of one column after an in-column drag. The ordered id
+// list is applied as order_index 1..n; only rows in the named bucket are
+// touched. housekeeping.manage.
+export async function reorderTasksAction(
+  bucketUserId: string | null,
+  orderedIds: string[],
+): Promise<Result> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "housekeeping.manage");
+    if (orderedIds.length === 0) return { success: true };
+    await sql`
+      UPDATE guesthub.housekeeping_tasks t
+      SET order_index = o.ord, updated_at = now()
+      FROM unnest(${orderedIds}::uuid[]) WITH ORDINALITY AS o(id, ord)
+      WHERE t.id = o.id
+        AND t.tenant_id = ${actor.tenantId}
+        AND t.assigned_to IS NOT DISTINCT FROM ${bucketUserId}`;
+    revalidatePath("/housekeeping");
+    revalidatePath("/maintenance");
+    return { success: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// Manager sets a task's status directly from the board (the status pills).
+// pending → in_progress → completed → inspected, and back down. housekeeping.manage.
+const BOARD_STATUSES = ["pending", "in_progress", "completed", "inspected"] as const;
+export async function setTaskStatusAction(taskId: string, status: string): Promise<Result> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "housekeeping.manage");
+    if (!BOARD_STATUSES.includes(status as (typeof BOARD_STATUSES)[number]))
+      return { success: false, error: "סטטוס אינו תקין" };
+    const [row] = await sql<{ id: string }[]>`
+      UPDATE guesthub.housekeeping_tasks
+      SET status = ${status},
+          completed_at = ${status === "completed" ? sql`now()` : sql`completed_at`},
+          updated_at = now()
+      WHERE id = ${taskId} AND tenant_id = ${actor.tenantId}
+      RETURNING id`;
+    if (!row) return { success: false, error: "המשימה לא נמצאה" };
+    await writeAudit(actor, {
+      entityType: "housekeeping_task", entityId: taskId, action: "set_status",
+      after: { status },
+    });
+    revalidatePath("/housekeeping");
+    revalidatePath("/maintenance");
+    revalidatePath("/housekeeping/my-tasks");
+    return { success: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// Manager edits a task's details from the side panel. housekeeping.manage.
+export async function updateTaskAction(
+  taskId: string,
+  input: {
+    title?: string | null;
+    roomId?: string | null;
+    priority?: "normal" | "high";
+    dueDate?: string | null;
+    notes?: string | null;
+  },
+): Promise<Result> {
   try {
     const actor = await getActor();
     requirePermission(actor, "housekeeping.manage");
     const [row] = await sql<{ id: string }[]>`
       UPDATE guesthub.housekeeping_tasks
-      SET assigned_to = ${userId}, updated_at = now()
+      SET title    = ${input.title?.slice(0, 200) ?? null},
+          room_id  = ${input.roomId ?? null},
+          priority = ${input.priority ?? "normal"},
+          due_date = ${input.dueDate ?? null},
+          notes    = ${input.notes?.slice(0, 500) ?? null},
+          updated_at = now()
       WHERE id = ${taskId} AND tenant_id = ${actor.tenantId}
-        AND status IN ('pending','in_progress')
       RETURNING id`;
-    if (!row) return { success: false, error: "המשימה לא נמצאה או אינה פתוחה" };
+    if (!row) return { success: false, error: "המשימה לא נמצאה" };
     await writeAudit(actor, {
-      entityType: "housekeeping_task", entityId: taskId, action: "assign",
-      after: { assigned_to: userId },
+      entityType: "housekeeping_task", entityId: taskId, action: "update",
+      after: { title: input.title ?? null, priority: input.priority ?? "normal" },
     });
+    revalidatePath("/housekeeping");
+    revalidatePath("/maintenance");
+    return { success: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// Manager deletes a task (manual follow-ups + obsolete auto tasks). housekeeping.manage.
+export async function deleteTaskAction(taskId: string): Promise<Result> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "housekeeping.manage");
+    const [row] = await sql<{ id: string }[]>`
+      DELETE FROM guesthub.housekeeping_tasks
+      WHERE id = ${taskId} AND tenant_id = ${actor.tenantId}
+      RETURNING id`;
+    if (!row) return { success: false, error: "המשימה לא נמצאה" };
+    await writeAudit(actor, {
+      entityType: "housekeeping_task", entityId: taskId, action: "delete",
+    });
+    revalidatePath("/housekeeping");
+    revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
     return { success: true };
   } catch (e) {

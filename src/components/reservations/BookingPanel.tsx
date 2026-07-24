@@ -126,6 +126,10 @@ export function BookingPanel({
   // workflow status (D77 §11) — "" = tenant default, applied server-side
   const [workflowStatusId, setWorkflowStatusId] = useState("");
   const paidRef = useRef<HTMLInputElement | null>(null);
+  // ברירות מחדל אוטומטיות: שם בעל הכרטיס נגזר משם האורח, וסכום ששולם נגזר
+  // מהסה"כ — עד שהמשתמש עורך את השדה ידנית, ואז המערכת מפסיקה לדרוס אותו
+  const holderTouched = useRef(false);
+  const paidTouched = useRef(false);
   const [saving, startSaving] = useTransition();
   // dirty-state protection: snapshot of the form right after open
   const snapshotRef = useRef("");
@@ -163,6 +167,8 @@ export function BookingPanel({
     setNotes("");
     setAsDraft(false);
     setCc(EMPTY_CARD);
+    holderTouched.current = false;
+    paidTouched.current = false;
     setWorkflowStatusId("");
     setQuery("");
     setResults([]);
@@ -223,6 +229,19 @@ export function BookingPanel({
   }, 0);
   const total = Math.max(0, roomsTotal - discount);
   const payState = paymentState(total, paid);
+
+  // שם בעל הכרטיס = שם האורח (עד עריכה ידנית)
+  const guestFullName = `${guest.firstName} ${guest.lastName}`.trim();
+  useEffect(() => {
+    if (holderTouched.current) return;
+    setCc((p) => (p.holder === guestFullName ? p : { ...p, holder: guestFullName }));
+  }, [guestFullName]);
+  // סכום ששולם = סה"כ לתשלום (עד עריכה ידנית / בחירת סטטוס תשלום אחר)
+  useEffect(() => {
+    if (paidTouched.current) return;
+    const t = Math.round(total);
+    setPaid((prev) => (prev === t ? prev : t));
+  }, [total]);
 
   const stepValid = useMemo(() => {
     if (step === 0) return guest.firstName.trim() !== "" && guest.lastName.trim() !== "" && guest.phone.trim() !== "";
@@ -333,6 +352,7 @@ export function BookingPanel({
           pan: normalizePan(cc.number),
           expMonth: exp.month,
           expYear: exp.year,
+          cvv: cc.cvv || undefined,
           source: cc.source,
           billingNotes: cc.billingNotes.trim() || undefined,
         });
@@ -749,6 +769,7 @@ export function BookingPanel({
                     on={!asDraft && payState === "unpaid"}
                     onClick={() => {
                       setAsDraft(false);
+                      paidTouched.current = true;
                       setPaid(0);
                     }}
                   />
@@ -758,6 +779,7 @@ export function BookingPanel({
                     on={!asDraft && payState === "partial"}
                     onClick={() => {
                       setAsDraft(false);
+                      paidTouched.current = true;
                       paidRef.current?.focus();
                     }}
                   />
@@ -767,6 +789,7 @@ export function BookingPanel({
                     on={!asDraft && payState === "paid"}
                     onClick={() => {
                       setAsDraft(false);
+                      paidTouched.current = true;
                       setPaid(Math.round(total));
                     }}
                   />
@@ -804,7 +827,10 @@ export function BookingPanel({
                       className="field-input ltr-num"
                       value={paid || ""}
                       placeholder="0"
-                      onChange={(e) => setPaid(Math.max(0, Number(e.target.value) || 0))}
+                      onChange={(e) => {
+                        paidTouched.current = true;
+                        setPaid(Math.max(0, Number(e.target.value) || 0));
+                      }}
                     />
                   </Field>
                   <Field label="הנחה (₪)">
@@ -825,7 +851,13 @@ export function BookingPanel({
                   <CardFields
                     value={cc}
                     showErrors={showErrors}
-                    onChange={setCc}
+                    onChange={(updater) =>
+                      setCc((prev) => {
+                        const next = updater(prev);
+                        if (next.holder !== prev.holder) holderTouched.current = true;
+                        return next;
+                      })
+                    }
                     chargeAmount={Math.max(0, total - paid)}
                     disabled={method !== "credit_card"}
                   />
