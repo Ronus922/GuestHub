@@ -25,6 +25,14 @@
 
 > הבית הקנוני של הסעיף הזה הוא CLAUDE.md (בריפו). העותק ב-AGENTS.md נמחק ע"י רגנרציית `gen-catalog.sh` (התבנית ב-hub `ai2u-vs1` לא כוללת אותו — ראה DECISIONS D90); `check:agents-concurrency` מתריע אם זה קורה שוב.
 
+## Production Runtime — העץ הרץ הוא פרודקשן בלבד (מ-2026-07-24)
+
+`/var/www/guesthub` מסומן `.production-runtime`: חי על `main` בלבד, מתעדכן אך ורק
+דרך `PROD_DEPLOY_OK=1 npm run deploy:prod`. **אסור לפתח בו** — כל עבודה (אדם או
+סוכן) נעשית ב-git worktree נפרד (`git worktree add ~/worktrees/<name> <base>`),
+נבנית ונבדקת שם, ומגיעה לפרודקשן רק דרך PR ל-main + הדפלוי הקנוני. `pnpm build`
+ידני בעץ המסומן נחסם ע"י prebuild-guard (fail-closed, בכוונה).
+
 ## Minimum Padding (חובה!)
 | Element | Minimum |
 |---------|---------|
