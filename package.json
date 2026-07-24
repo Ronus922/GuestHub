@@ -67,6 +67,7 @@
     "postbuild": "tsc -p tsconfig.worker.json",
     "build:worker": "tsc -p tsconfig.worker.json",
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
+    "check:agents-concurrency": "grep -q 'git add -p' AGENTS.md && grep -q 'git add -p' CLAUDE.md || { echo 'Concurrency section missing — a gen-catalog regen wiped it from AGENTS.md; restore from CLAUDE.md and add it to the DevOPS kit template on ai2u-vs1 (DECISIONS D90)'; exit 1; }",
     "check:channex-ari": "node scripts/check-channex-ari.mjs",
     "check:channel-worker": "node scripts/check-channel-worker.mjs",
     "check:inbound-bookings": "node scripts/check-inbound-bookings.mjs",
