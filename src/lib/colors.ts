@@ -100,6 +100,10 @@ export const CHANNEL_CONFIG: Record<
 // operator-entered ones carry the tenant's keys (direct/phone/walk_in).
 // Internal, unknown, or NULL sources return null — the caller renders nothing,
 // never a placeholder and never a guessed brand.
+// 'system' (מהמערכת, seeded by migration 056) is deliberately absent below: it
+// is an INTERNAL source, so it falls through to null → the 'manual' badge, and
+// EditReservationPanel's `externalReservation` stays false, keeping the
+// reservation's fields editable. Adding it to a case would silently lock them.
 export function normalizeVisibleChannel(
   sourceKey: string | null | undefined,
 ): VisibleChannel | null {
