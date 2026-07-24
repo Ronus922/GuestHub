@@ -42,6 +42,10 @@ export async function middleware(request: NextRequest) {
   // NO user session. They authenticate via their opaque path token (+ the Twilio
   // signature), so they must bypass the login redirect to reach their handler.
   const isMessagingWebhook = path.startsWith("/api/messaging/webhook/");
+  // Public booking API (sea-tower): server-to-server over loopback, no user
+  // session. Authenticated inside the route via the x-booking-secret header
+  // (timingSafeEqual against PUBLIC_BOOKING_API_SECRET; env unset = API off).
+  const isPublicBookingApi = path.startsWith("/api/public/");
 
   // Redirect while carrying over any refreshed auth cookies staged on `response`
   // (a fresh NextResponse.redirect would otherwise drop a rotated refresh token).
@@ -54,7 +58,7 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook)
+  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook && !isPublicBookingApi)
     return redirectTo("/login");
   if (user && isLogin) return redirectTo("/");
 

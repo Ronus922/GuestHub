@@ -89,11 +89,13 @@ ok(/\{open\s*&&\s*METRICS\.map/.test(grid),
 // ---- 5. Group Update keeps a usable UI path (never URL-only) ----
 ok(/onGroupUpdate\b/.test(toolbar) && /btn-primary|btn-secondary/.test(toolbar),
   "the toolbar keeps a Group Update button");
-// the per-type entry point used to live in a band header; with the board flat
-// (one ascending room list) the type chip + the toolbar button do the same job,
-// so Group Update presets to the rooms ON THE BOARD.
-ok(/openGroupUpdate\(visibleUnitIds\)/.test(screen),
-  "Group Update presets to the rooms currently on the board (type chip = the old per-type link)");
+// Group Update must open with an EMPTY selection: pre-selecting the board's
+// rooms made every bulk write silently hit ALL rooms, not the ones the user
+// marked. Room picking lives inside the panel (chips, בחר הכל, per-card toggle).
+ok(!/presetUnitIds/.test(screen) && !/presetUnitIds/.test(groupUpdate),
+  "Group Update opens with an EMPTY selection — no preset plumbing survives");
+ok(/useState<Set<string>>\(new Set\(\)\)/.test(groupUpdate) && /setSelected\(new Set\(\)\)/.test(groupUpdate),
+  "the panel's selection starts empty and the open-reset effect re-empties it");
 ok(/can\.bulk/.test(toolbar),
   "the Group Update entry point stays permission-gated on rates.bulk_update");
 

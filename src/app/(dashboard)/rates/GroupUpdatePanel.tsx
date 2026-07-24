@@ -33,7 +33,6 @@ export function GroupUpdatePanel({
   toInclusive,
   minDate,
   maxDate,
-  presetUnitIds,
   onClose,
   onSaved,
 }: {
@@ -45,7 +44,6 @@ export function GroupUpdatePanel({
   // Group Update spans the FULL horizon, not just the grid's visible window.
   minDate: DateOnly;
   maxDate: DateOnly;
-  presetUnitIds: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -69,7 +67,7 @@ export function GroupUpdatePanel({
     [types],
   );
 
-  const [selected, setSelected] = useState<Set<string>>(new Set(presetUnitIds));
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cardType, setCardType] = useState<string>("all");
   const [search, setSearch] = useState("");
 
@@ -97,13 +95,13 @@ export function GroupUpdatePanel({
   // synchronous gap without changing the canonical server update path.
   const submittingRef = useRef(false);
 
-  // Each open may target a different preset (whole grid vs one room-type button).
-  // The panel is always mounted now, so opening must reset ALL editable state to
-  // defaults — otherwise field selections leak from a previous (unapplied) open
-  // and could silently bulk-write stale changes.
+  // Every open starts from a clean, EMPTY selection — a bulk write must always
+  // be an explicit act. The panel is always mounted, so opening must reset ALL
+  // editable state to defaults — otherwise selections leak from a previous
+  // (unapplied) open and could silently bulk-write stale changes.
   useEffect(() => {
     if (!open) return;
-    setSelected(new Set(presetUnitIds));
+    setSelected(new Set());
     setCardType("all");
     setSearch("");
     // clamp the reset window into the writable horizon (inline so the effect deps
@@ -124,7 +122,7 @@ export function GroupUpdatePanel({
     setCta("nochange");
     setCtd("nochange");
     setError(null);
-  }, [open, presetUnitIds, from, toInclusive, minDate, maxDate]);
+  }, [open, from, toInclusive, minDate, maxDate]);
 
   const cards = allCards.filter(
     (c) =>
@@ -404,6 +402,9 @@ export function GroupUpdatePanel({
               <Stat value={effectiveDates.length} label="לילות" />
               <Stat value={selected.size} label="יחידות" />
             </div>
+            {selected.size === 0 && (
+              <p className="field-hint">בחרו חדרים כדי להתחיל — יעודכנו רק החדרים שסומנו</p>
+            )}
             {sample && (
               <p className="gu-example">
                 דוגמה — {sample.typeName}: <bdi className="ltr-num">₪{Math.round(sample.before)}</bdi> <span className="text-faint">←</span> <b className="text-ink"><bdi className="ltr-num">₪{Math.round(sample.after)}</bdi></b>
