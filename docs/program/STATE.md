@@ -6,6 +6,9 @@ Durable program memory. Updated at every stage exit and after significant mid-st
 
 **PROGRAM COMPLETE + DEPLOYED TO PRODUCTION** (2026-07-18).
 
+### Post-program: Beds24 is the sole channel provider (D91, 2026-07-24)
+Channel providers were consolidated to **Beds24 only**. The Channex and Hospitable providers were removed entirely — their provider modules, the dispatch-by-provider seams, and all Channex/Hospitable certification/contract docs are gone; Beds24 (`src/lib/channel/beds24-*.ts`) is now the ONLY channel provider (GuestHub stays ARI source of truth: pushes price/availability/min-stay, imports reservations by polling). The dormant **Stripe** PSP tokenization flow was also removed; **Cardcom/Tranzila are the only PSP providers** (schema CHECK set by migration 051). See `DECISIONS.md` D91 and `docs/CHANNEL_LAYER_INVENTORY.md`. The D77 Hospitable entry and the Stage 1–7 program logs below are retained as history (superseded on the provider question).
+
 ### Post-program: Hospitable provider (D77, 2026-07-19)
 The Channex→Booking.com certification blocker (external Staging/Booking.com test-account provisioning, V2 §2) was routed around: the operator connected the properties via **Hospitable** (channel manager fanning out to Airbnb/Booking/Vrbo). GuestHub gained Hospitable as a second provider — `hospitable-*.ts` modules mirroring `channex-*.ts`, dispatch-by-provider at the worker seams, migration `044_hospitable_provider.sql`, docs at `docs/hospitable/ARCHITECTURE.md`. GuestHub stays ARI source of truth (pushes price/availability/min-stay; imports reservations). Channex staging connection unchanged; Channex certification docs remain historical. Rollout gates: read-scope PAT first, single far-future date write test, operator Full Sync before any drain. Also: `/var/www/guesthub-production` was consolidated into `/var/www/guesthub` (single dir; pm2 runs from here) on 2026-07-19.
 

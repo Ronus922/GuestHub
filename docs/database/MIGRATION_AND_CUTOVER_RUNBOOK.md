@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18 · **Stage:** 2 · **Status:** Prepared — **NOT executed** (V2 §3/§9/§26) · **Review:** Agent N (Stage 2 exit)
 
-The cutover moves GuestHub production off the shared `supabase-db` stack onto a dedicated production PostgreSQL cluster. **Do not run the final cutover as part of this program** — it is an explicit later action after user testing and requires the Stage-4 production activation guard for Channex to remain disabled.
+The cutover moves GuestHub production off the shared `supabase-db` stack onto a dedicated production PostgreSQL cluster. **Do not run the final cutover as part of this program** — it is an explicit later action after user testing and requires the production activation guard for the Beds24 channel to remain disabled.
 
 ## Tooling (V2 §9 thirteen-item list → what implements it)
 
@@ -30,7 +30,7 @@ All of items 3–11 were exercised on staging in Stage 2 (see `reports/STAGE_2_R
 - [ ] Off-host backup copy confirmed (`BACKUP_OFFHOST_CMD` configured — the one remaining prod prerequisite).
 - [ ] Host headroom re-checked (disk/mem/CPU).
 - [ ] Maintenance window agreed; operators notified.
-- [ ] Channex production remains disabled (Stage-4 guard).
+- [ ] Beds24 production remains disabled (activation guard).
 
 ## Cutover steps (execute only in the approved window)
 

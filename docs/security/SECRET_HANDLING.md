@@ -10,12 +10,12 @@ Where every secret lives, how it is encrypted, its blast radius, and how it rota
 | Secret | Purpose | Store | Vault / key | Blast radius | Rotation |
 |---|---|---|---|---|---|
 | `CARD_VAULT_KEY` | encrypt reservation card PANs | env (never DB) | `card-vault.ts`, AES-256-GCM, key=SHA-256(env) | stored PANs (now retention-bounded, H8) | versioned ciphertext (`key_version`); re-encrypt on rotate |
-| `CHANNEL_SECRETS_KEY` | encrypt Channex API keys | env | `channel/crypto.ts`, AES-256-GCM | tenant channel credentials | re-encrypt tenant rows on rotate |
+| `CHANNEL_SECRETS_KEY` | encrypt Beds24 API keys | env | `channel/crypto.ts`, AES-256-GCM | tenant channel credentials | re-encrypt tenant rows on rotate |
 | `MESSAGING_SECRETS_ENCRYPTION_KEY` | encrypt messaging provider secrets | env | `messaging/secrets.ts`, AES-256-GCM | messaging provider tokens | re-encrypt on rotate |
 | Supabase anon key | browser session auth | env | — (public-scope key) | session only | Supabase rotation |
 | Supabase service-role key | GoTrue admin user ops | env, server-only | — | GoTrue admin (staff user ops) | Supabase rotation |
 | `db.bios.co.il` / DB DSNs | DB access | `.env.local` (gitignored) / `.env.staging` | — | per-role (least-privilege app role) | rotate role passwords |
-| Channex webhook token | inbound webhook auth | DB `webhook_token_hash` | SHA-256 (hash only) | one connection's inbound | reissue token |
+| Beds24 webhook token | inbound webhook auth | DB `webhook_token_hash` | SHA-256 (hash only) | one connection's inbound | reissue token |
 | backup encryption key | encrypt nightly dumps | `/home/ubuntu/.guesthub-backup-key` (chmod 600) | AES-256 | backups | rotate + re-encrypt |
 
 ## Standards (enforced)
@@ -40,7 +40,7 @@ Where every secret lives, how it is encrypted, its blast radius, and how it rota
 | Item | Severity | Plan |
 |---|---|---|
 | Off-host backup destination + key custody | Medium | No off-host target exists on the host; local encrypted backup + restore drill are in place; `BACKUP_OFFHOST_CMD` hook warns when unset. User provides destination at/before production cutover (Stage 2 deferral). |
-| GREEN-API webhook token stored in provider config (messaging) | Medium | Messaging module; move to the hashed-token model like Channex when the messaging surface is next touched. Not on the reservation/card critical path. |
+| GREEN-API webhook token stored in provider config (messaging) | Medium | Messaging module; move to the hashed-token model like the Beds24 channel when the messaging surface is next touched. Not on the reservation/card critical path. |
 | Operator-controlled provider base host (messaging SSRF surface) | Low | Constrain to an allowlist when the messaging surface is next touched. |
 | `CARD_VAULT_KEY` automated rotation tooling | Low | `key_version` supports it; the procedure above is manual until a rotation cadence is required. |
 

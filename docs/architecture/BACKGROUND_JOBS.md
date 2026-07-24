@@ -1,6 +1,6 @@
 # GuestHub — Background Jobs & Queues
 
-- **Status:** Complete — Stage 3, 2026-07-18 (queue foundations); Channex wiring continues in **Stage 4**
+- **Status:** Complete — Stage 3, 2026-07-18 (queue foundations); Beds24 channel wiring continues in **Stage 4**
 - **Branch:** `feat/pms-hardening-channex-certification`
 - **Sources:** `docs/audit/WORKFLOW_INVENTORY.md` (§12–§16), `docs/audit/ARCHITECTURE_INVENTORY.md` (§3), `docs/audit/OPERATIONS_OBSERVABILITY_AUDIT.md`, ADR-0004, `src/lib/channel/queue.ts`, `src/lib/channel/worker.ts`
 - **Enforced by:** `check:background-job-recovery`, `check:channel-worker`
@@ -23,7 +23,7 @@ Claim semantics (`src/lib/channel/queue.ts`):
 
 ## 3. The ARI outbox — `channel_dirty_ranges` (ADR-0004)
 
-Every canonical ARI-affecting save writes `channel_dirty_ranges` **in the same transaction** via `markAriDirty` — this transactional marking is the **only** way an ARI change enters the outbox (no save handler calls Channex directly). Ranges are coalesced and drained only for connections that are `active AND outbound_sync_enabled AND NOT full_sync_required`. Batching/coalescing lives in the drain, not the producer, so many dirty rows collapse into one envelope.
+Every canonical ARI-affecting save writes `channel_dirty_ranges` **in the same transaction** via `markAriDirty` — this transactional marking is the **only** way an ARI change enters the outbox (no save handler calls Beds24 directly). Ranges are coalesced and drained only for connections that are `active AND outbound_sync_enabled AND NOT full_sync_required`. Batching/coalescing lives in the drain, not the producer, so many dirty rows collapse into one envelope.
 
 ## 4. The communications outbox
 
@@ -37,7 +37,7 @@ Crash-safety is genuinely sound: durable-then-wake, ack-after-commit, persist-th
 
 ## 6. Remaining gaps (owning stage)
 
-- **Shared failure domain (M16):** communications run in the same worker tick as channel sync (`runCommunicationTick` first each tick), so a Channex incident or a long full-sync delays guest emails and vice versa. **Worker split** is owned by **Stage 3+**.
+- **Shared failure domain (M16):** communications run in the same worker tick as channel sync (`runCommunicationTick` first each tick), so a Beds24 incident or a long full-sync delays guest emails and vice versa. **Worker split** is owned by **Stage 3+**.
 - If PM2 exhausts `max_restarts:10` the worker sits `errored` with jobs queued and no consumer/alert (F3) — **Stage 6** alerting.
 - Dead (`failed`) dirty ranges and dead-letter jobs have no requeue surface (F5) — **Stage 3/6**.
 - Quarantined revisions re-import every poll, writing a fresh error row each cycle (unbounded growth, F2); no retention/pruning on any operational table (F9) — **Stage 3 foundation, tuned Stage 6** (ADR-0004 §7).
@@ -49,13 +49,13 @@ Crash-safety is genuinely sound: durable-then-wake, ack-after-commit, persist-th
 flowchart LR
     SAVE["canonical save"] -->|"same tx"| DR[("channel_dirty_ranges (outbox)")]
     SAVE -->|"enqueue"| Q[("channel_sync_jobs")]
-    WH["Channex webhook"] -->|"enqueue pull"| Q
+    WH["Beds24 poll/webhook"] -->|"enqueue pull"| Q
     EV[("communication_events")] --> Q2["comms tick"]
 
     Q -->|"FOR UPDATE SKIP LOCKED, leases, FIFO/conn"| WRK["PM2 channel-worker"]
     Q2 --> WRK
     WRK -->|"heartbeat UPSERT"| HB[("channel_worker_state")]
-    WRK -->|"coalesce + drain ARI"| CHX["Channex"]
+    WRK -->|"coalesce + drain ARI"| CHX["Beds24"]
     WRK -->|"pull + ack post-commit"| CHX
     WRK -->|"send"| MAIL["email / WhatsApp"]
     Q -->|"permanent err / attempts>=8"| DL[("dead_letter")]

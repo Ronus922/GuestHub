@@ -15,7 +15,7 @@ actionable). All values here are sanitized — no secret, no PAN, no guest PII.
 | Queue health | `/channels` diagnostics: pending / failed / dead-letter jobs, dirty-range backlog | outbound sync backlog + failures |
 | Sync errors | `channel_sync_errors` (unresolved, newest first) | ARI/inbound failures, safe categories only |
 | Circuit state | `channel_connections.circuit_open_until` / `consecutive_failures` | a provider is being backed off (429/failures) |
-| Certification evidence | read-only console (`/channels`) — per-scenario counts + Task IDs | Channex cert readiness |
+| Sync evidence | read-only console (`/channels`) — per-scenario counts + Task IDs | Beds24 ARI submission audit |
 | Inbound quarantine | `channel_booking_revisions.import_status='quarantined'` count | bookings needing operator attention |
 | Backup status | `guesthub-backup.service` last run + artifact timestamp | nightly encrypted backup ran |
 
@@ -26,7 +26,7 @@ actionable). All values here are sanitized — no secret, no PAN, no guest PII.
 | App down | `/login` not 200 for 2 checks | site-health auto-restarts pm2 `guesthub`; if it recurs, check `pm2 logs guesthub` |
 | Worker stalled | `channel_worker_state.last_tick` older than 5 min | restart pm2 `guesthub-channel-worker`; check its log for the last error |
 | Dead-letter jobs | any `channel_sync_jobs.status='dead_letter'` | open `/channels`, read the error category; re-trigger Full Sync after fixing mapping/credential |
-| Circuit open (sustained) | `circuit_open_until` in the future for >30 min | verify the Channex credential + provider status; the drain resumes automatically after cooldown |
+| Circuit open (sustained) | `circuit_open_until` in the future for >30 min | verify the Beds24 credential + provider status; the drain resumes automatically after cooldown |
 | Quarantine backlog | quarantined revisions > 0 for >1h | open `/channels` inbound section; resolve mapping/alias, then re-pull |
 | Backup missing | no backup artifact in 26h | run `guesthub-backup.service` manually; check disk + the encryption key path |
 | DB exposure regression | external probe reaches :5432/:6543 | re-run `scripts/ops/guesthub-db-firewall.sh` (idempotent DOCKER-USER DROP) |

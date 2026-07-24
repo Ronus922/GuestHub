@@ -59,7 +59,7 @@
 | UI | Tailwind v4 (`@theme inline` ב-`app/styles/`, אין tailwind.config) · lucide-react · framer-motion · sonner |
 | Data | PostgreSQL (schema `guesthub`, 46 מיגרציות ב-`db/migrations/`) דרך porsager `postgres` (`lib/db.ts`) · Supabase Auth self-hosted = **אימות בלבד** |
 | טפסים/State | react-hook-form + Zod · nuqs · @tanstack/react-table |
-| Channels | ספק פעיל אחד בכל רגע (beds24 ברירת מחדל; Channex, Hospitable) · PM2 channel worker |
+| Channels | ספק יחיד: Beds24 (פרודקשן, poll-based inbound + ARI outbound) · PM2 channel worker |
 | Runtime | dev + prod תחת pm2, פורט 3007 · prod נפרד: `/var/www/guesthub-production` (`PROD_DEPLOY_OK=1 npm run deploy:prod`) |
 | בדיקות | ‎90+ סקריפטי `check:*` ב-package.json (כולל `check:design`, `check:status-default`) · `pnpm typecheck && pnpm lint && pnpm build` בסוף כל שלב |
 

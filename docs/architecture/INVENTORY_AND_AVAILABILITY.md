@@ -23,7 +23,7 @@ Inventory is three layers kept 1:1 by the 026/028 triggers:
 - **`sellable_units`** (+ `sellable_unit_rooms`, `UNIQUE(room_id)`) — the sold-inventory projection; today one SU per room.
 - **`room_types`** — the grouping projection used for channel room-type mapping.
 
-Two aggregate count projections exist: `room_type_inventory()` (includes `channel_inventory_holds`) and `sellable_unit_inventory()` (deliberately excludes holds; feeds outbound ARI to Channex).
+Two aggregate count projections exist: `room_type_inventory()` (includes `channel_inventory_holds`) and `sellable_unit_inventory()` (deliberately excludes holds; feeds outbound ARI to Beds24).
 
 ## 4. The double-booking guarantee (ADR-0003, migration 037)
 

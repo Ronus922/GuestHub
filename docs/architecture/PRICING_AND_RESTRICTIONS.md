@@ -2,14 +2,14 @@
 
 - **Status:** Complete — Stage 3, 2026-07-18
 - **Branch:** `feat/pms-hardening-channex-certification`
-- **Sources:** `docs/audit/PRICING_AUDIT.md`, ADR-0001, `docs/channex/PMS_CERTIFICATION_REQUIREMENTS.md`
-- **Enforced by:** `check:pricing-engine`, `check:pricing-equality`, `check:channex-ari`, `check:timezone-and-money-invariants`
+- **Sources:** `docs/audit/PRICING_AUDIT.md`, ADR-0001
+- **Enforced by:** `check:pricing-engine`, `check:pricing-equality`, `check:timezone-and-money-invariants`
 
 The pricing engine, the one quote seam, restriction semantics (min-stay Arrival/Through, CTA/CTD, stop-sell), and money/VAT/currency discipline.
 
 ## 1. One engine
 
-There is exactly one server-side pricing engine — **`calculateReservationPrice` / `calculateQuote`** (`src/lib/pricing/engine.ts:124`, `:131`). Every committing or publishing surface reaches it: the booking-panel preview, the save path, the simulator, and the Channex ARI projection all share `resolveChainNightPrice` verbatim. Equality is mutation-verified: **booking preview ≡ save ≡ ARI projection** via `check:pricing-equality` and `check:channex-ari`.
+There is exactly one server-side pricing engine — **`calculateReservationPrice` / `calculateQuote`** (`src/lib/pricing/engine.ts:124`, `:131`). Every committing or publishing surface reaches it: the booking-panel preview, the save path, the simulator, and the Beds24 ARI projection all share `resolveChainNightPrice` verbatim. Equality is mutation-verified: **booking preview ≡ save ≡ ARI projection** via `check:pricing-equality`.
 
 The canonical nightly rate store is **`pricing_plan_rates`** (the store that replaced legacy `rates`). Plans are **dual-scope** (016); weekly/monthly are ordinary derived plans — no special engine branch.
 
@@ -28,7 +28,7 @@ exact (plan, unit, date) rate
 
 ## 3. Restrictions (dual-semantics, canonical)
 
-All restriction checks go through the single validator **`stayRestrictionViolationStructured`** (`src/lib/rates/rules.ts`, called at `engine.ts:332`), and all are published explicitly to Channex:
+All restriction checks go through the single validator **`stayRestrictionViolationStructured`** (`src/lib/rates/rules.ts`, called at `engine.ts:332`), and all are published explicitly to Beds24:
 
 | Restriction | Semantics |
 |---|---|
@@ -37,7 +37,7 @@ All restriction checks go through the single validator **`stayRestrictionViolati
 | CTA / CTD | closed-to-arrival / closed-to-departure on the relevant date |
 | stop-sell | date is not sellable at all |
 
-**Min Stay is DUAL** — both Arrival and Through are first-class and carried into the Stage-4 Channex Min-Stay declaration. Overlay rows merge tighten-only (the stricter restriction wins).
+**Min Stay is DUAL** — both Arrival and Through are first-class and carried into the Beds24 Min-Stay declaration. Overlay rows merge tighten-only (the stricter restriction wins).
 
 ## 4. Money / VAT / currency discipline
 
@@ -49,7 +49,7 @@ All restriction checks go through the single validator **`stayRestrictionViolati
 ## 5. Remaining gaps (owning stage)
 
 - **Base-price fallback duplication (F-2):** the trivial `price ?? base_price` rule is re-implemented in several places (engine TS, ARI TS, `planNightlyPrice`, SQL `effective_sell_state`, calendar tooltip) with no compiler/test tying the SQL copy to the TS copies. Consolidate to one shared projection — **Stage 3/4** (ADR-0001 M10).
-- **Direct-entry restriction enforcement:** min-stay/CTA/CTD are projected to Channex but must also be enforced on direct operator bookings in `createReservationAction` — verify and close (**Stage 3**, ADR-0001 GAP).
+- **Direct-entry restriction enforcement:** min-stay/CTA/CTD are projected to Beds24 but must also be enforced on direct operator bookings in `createReservationAction` — verify and close (**Stage 3**, ADR-0001 GAP).
 - Residual float fast-paths in the manual/committed total should route through one money module — **Stage 3+**.
 
 ## 6. Engine call-graph
@@ -59,12 +59,12 @@ flowchart TD
     PANEL["booking panel preview"] --> ENG["calculateReservationPrice / calculateQuote (engine.ts)"]
     SAVE["createReservation / updateReservation"] --> ENG
     SIM["rate simulator"] --> ENG
-    ARI["Channex ARI projection"] --> RCN["resolveChainNightPrice"]
+    ARI["Beds24 ARI projection"] --> RCN["resolveChainNightPrice"]
     ENG --> RCN
     ENG --> AVAIL["check_room_availability"]
     ENG --> RESTR["stayRestrictionViolationStructured"]
     RCN --> PPR["pricing_plan_rates (canonical nightly)"]
     RESTR --> PPR
-    ENG -->|"equality asserted"| EQ["check:pricing-equality / check:channex-ari"]
+    ENG -->|"equality asserted"| EQ["check:pricing-equality"]
     ARI -.->|"same verbatim path"| EQ
 ```
