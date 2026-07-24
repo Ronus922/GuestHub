@@ -57,3 +57,5 @@
 049_maintenance_role.sql
 050_website_booking_source.sql
 051_psp_readiness.sql
+052_room_type_catalog_order.sql
+053_room_show_on_calendar.sql

@@ -46,6 +46,9 @@ export async function getCalendarData(
     LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
     LEFT JOIN guesthub.areas a ON a.id = r.area_id
     WHERE r.tenant_id = ${tenantId}
+      /* display toggle only (migration 053): a hidden room is still bookable
+         and still counted by the occupancy stats below */
+      AND r.show_on_calendar
     ORDER BY r.room_number, r.id`;
   const rooms = sortRoomsByNumber(roomRows);
 
