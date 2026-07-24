@@ -21,6 +21,10 @@ import {
   type CircuitState,
 } from "./circuit-breaker";
 import { logChannelError } from "./queue";
+import {
+  createBeds24CreditGate, beds24CreditPauseMessage,
+  type Beds24CreditPause, type Beds24CreditSnapshot,
+} from "./beds24-credits";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
 import type { DrainSummary } from "./ari-projection";
 
@@ -49,11 +53,20 @@ import type { DrainSummary } from "./ari-projection";
 // beds24-token.ts (cached, single-flight, re-persisted) so parallel jobs never
 // each burn a token-mint credit.
 //
-// PACING: Beds24 is CREDIT-metered per request (X-FiveMinCreditLimit), not
-// simple requests/min — so this sync paces conservatively (500ms
-// between calls) and caps a run at 120 requests. Range compression in the
-// payload builder is the real credit saver; the remaining-credits header is
-// surfaced into the evidence context on every run.
+// PACING: Beds24 is CREDIT-metered per request (100 credits / rolling 5 min),
+// not simple requests/min — so this sync paces conservatively (500ms between
+// calls) and caps a run at 120 requests. Range compression in the payload
+// builder is the real credit saver.
+//
+// The 120-request cap alone is NOT a credit budget: at the measured 1.2
+// credits/call it is 144 credits, i.e. 144% of the window (see
+// ./beds24-credits for the full arithmetic). So every response is also fed to
+// a credit GATE: when remaining drops below the derived threshold — or Beds24
+// answers 429 — the run stops issuing calls and reports the provider's own
+// `resets-in` as the cooldown. The claimed ranges are re-armed for after the
+// reset WITHOUT consuming an attempt (a credit pause is not a range failure),
+// and the §16 breaker is opened for exactly that span. That is the whole
+// slowdown: no new scheduler, no blind retry.
 // ============================================================
 
 /** The full-sync horizon (ARI_HORIZON_DAYS). */
@@ -93,8 +106,10 @@ export type Beds24SendOutcome = {
   failure: { code: string; message: string; retryAfterMs?: number } | null;
   /** request bodies left unsent because the per-run ceiling was reached */
   deferredBatches: number;
-  /** last-seen X-FiveMinCreditLimit-Remaining — observability, never control */
-  creditsRemaining: number | null;
+  /** last-seen credit meter — evidence + the /channels diagnostics */
+  credits: Beds24CreditSnapshot | null;
+  /** set when the credit window (or a 429) stopped this run early */
+  creditPause: Beds24CreditPause | null;
 };
 
 export type Beds24FullSyncResult = {
@@ -195,12 +210,18 @@ async function sendCalendarRequests(
 ): Promise<Beds24SendOutcome> {
   const outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
-    deferredBatches: 0, creditsRemaining: null,
+    deferredBatches: 0, credits: null, creditPause: null,
   };
+  const gate = createBeds24CreditGate();
   const sendable = requests.slice(0, MAX_REQUESTS_PER_RUN);
   outcome.deferredBatches = requests.length - sendable.length;
 
   for (let i = 0; i < sendable.length; i++) {
+    // the credit window closed on the previous response — issue nothing more
+    if (gate.pause) {
+      outcome.deferredBatches += sendable.length - i;
+      break;
+    }
     // credit-conscious inter-call spacing (a substituted fetch needs no pacing)
     if (i > 0 && !creds.fetchImpl) await sleep(PACE_MS);
     const res: Beds24CalendarPushResult = await pushBeds24Calendar(
@@ -208,9 +229,13 @@ async function sendCalendarRequests(
       { token: creds.token, baseUrl: creds.baseUrl, entries: sendable[i] },
     );
     outcome.requests += 1;
-    if (res.creditsRemaining !== undefined && res.creditsRemaining !== null) {
-      outcome.creditsRemaining = res.creditsRemaining;
-    }
+    const rateLimited = !res.ok && res.category === "rate_limited";
+    gate.observe(res.credits, {
+      ...(rateLimited ? { httpStatus: 429 } : {}),
+      ...(rateLimited && res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}),
+    });
+    outcome.credits = gate.last;
+    outcome.creditPause = gate.pause;
     if (!res.ok) {
       outcome.failure = {
         code: res.category, message: res.message,
@@ -242,7 +267,7 @@ export async function runBeds24FullSync(
 
   const emptyOutcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
-    deferredBatches: 0, creditsRemaining: null,
+    deferredBatches: 0, credits: null, creditPause: null,
   };
 
   // A failed run leaves full_sync_required=true so the operator re-runs after
@@ -280,7 +305,9 @@ export async function runBeds24FullSync(
       context: {
         rooms: extra?.rooms ?? 0,
         blocked: extra?.blocked ?? 0,
-        creditsRemaining: extra?.outcome?.creditsRemaining ?? null,
+        creditsRemaining: extra?.outcome?.credits?.remaining ?? null,
+        creditsResetsInSec: extra?.outcome?.credits?.resetsInSec ?? null,
+        lastRequestCost: extra?.outcome?.credits?.cost ?? null,
       },
     });
     return {
@@ -339,7 +366,9 @@ export async function runBeds24FullSync(
           blocked: projectionBlocked,
           deferred_batches: outcome.deferredBatches,
           sent_ranges: outcome.sentRanges,
-          credits_remaining: outcome.creditsRemaining,
+          credits_remaining: outcome.credits?.remaining ?? null,
+          credits_resets_in_sec: outcome.credits?.resetsInSec ?? null,
+          last_request_cost: outcome.credits?.cost ?? null,
           invalid_room_ids: built.invalidRoomIds,
         } as never)}
       WHERE id = ${jobId}`;
@@ -405,7 +434,10 @@ export async function runBeds24FullSync(
       blocked: projectionBlocked,
       unmappedRooms: built.unmapped.length,
       invalidRoomIds: built.invalidRoomIds.length,
-      creditsRemaining: outcome.creditsRemaining,
+      creditsRemaining: outcome.credits?.remaining ?? null,
+      creditsResetsInSec: outcome.credits?.resetsInSec ?? null,
+      lastRequestCost: outcome.credits?.cost ?? null,
+      creditPause: outcome.creditPause?.reason ?? null,
     },
   });
 
@@ -499,7 +531,7 @@ export async function drainBeds24AriDirtyRanges(
 
   let outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
-    deferredBatches: 0, creditsRemaining: null,
+    deferredBatches: 0, credits: null, creditPause: null,
   };
   if (builderMappings.length > 0) {
     const projection = await projectBeds24Ari(db, {
@@ -549,9 +581,50 @@ export async function drainBeds24AriDirtyRanges(
         claimed: summary.claimed,
         sentValues: summary.sentValues,
         deferredBatches: deferred,
-        creditsRemaining: outcome.creditsRemaining,
+        creditsRemaining: outcome.credits?.remaining ?? null,
+        creditsResetsInSec: outcome.credits?.resetsInSec ?? null,
+        lastRequestCost: outcome.credits?.cost ?? null,
+        creditPause: outcome.creditPause?.reason ?? null,
       },
     });
+
+  // ---- P0-4 credit pause: NOT a range failure ----
+  // The window ran dry (or Beds24 answered 429). The claimed ranges are
+  // perfectly good — they simply could not be afforded right now. So they are
+  // re-armed for after the provider's own reset WITHOUT consuming an attempt
+  // (charging attempts here would dead-letter healthy ranges during a busy
+  // window), and the §16 breaker is opened for exactly that span so the whole
+  // connection stops calling until the credits come back. A pause with real
+  // warnings still falls through to the normal failure path below.
+  const creditPause = outcome.creditPause;
+  if (creditPause && warnings.length === 0) {
+    const waitSec = Math.ceil(creditPause.waitMs / 1000);
+    const message = beds24CreditPauseMessage(creditPause);
+    await db`
+      UPDATE guesthub.channel_dirty_ranges SET
+        next_attempt_at = GREATEST(next_attempt_at, now() + make_interval(secs => ${waitSec})),
+        updated_at = now()
+      WHERE id = ANY(${rows.map((r) => r.id)}::uuid[])`;
+    await logChannelError(db, {
+      tenantId: conn.tenant_id, connectionId: conn.id,
+      code: creditPause.reason === "rate_limited" ? "rate_limited" : "credit_paused",
+      message,
+      context: {
+        remaining: creditPause.remaining,
+        resets_in_sec: creditPause.resetsInSec,
+        wait_ms: creditPause.waitMs,
+      },
+    });
+    // failureKindOf maps BOTH codes to 'rate_limited', so the cooldown is the
+    // provider-stated span rather than the exponential default.
+    await persistCircuit(db, conn.id,
+      onCircuitFailure(circuit, failureKindOf(creditPause.reason === "rate_limited" ? "rate_limited" : "credit_paused"),
+        now(), { retryAfterMs: creditPause.waitMs }));
+    summary.retried = rows.length;
+    summary.creditPausedMs = creditPause.waitMs;
+    await recordIncrementalEvidence("partial", "credit_paused", message);
+    return summary;
+  }
 
   if (failure || warnings.length > 0 || deferred > 0) {
     const err = failure ?? { code: "partial_warnings", message: summarizeBeds24Warnings(warnings) };

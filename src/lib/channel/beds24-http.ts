@@ -14,7 +14,8 @@
 //    category (messages are fixed strings keyed only by category), so a leak is
 //    structurally impossible.
 //  • The upstream body/headers/stack is parsed defensively and never echoed
-//    back. The ONLY header ever surfaced is the numeric credit-limit counter.
+//    back. The ONLY headers ever surfaced are the numeric credit meter
+//    (./beds24-credits) and Retry-After.
 // ============================================================
 
 import {
@@ -23,6 +24,11 @@ import {
   mapErrorStatus,
   type ChannelApiErrorCategory,
 } from "./channel-http";
+import {
+  readBeds24Credits,
+  beds24ResetWaitMs,
+  type Beds24CreditSnapshot,
+} from "./beds24-credits";
 
 // Same category union — the taxonomy is provider-neutral (D77 keeps one
 // vocabulary so circuit-breaker / evidence / admin code reads one shape).
@@ -33,8 +39,11 @@ export type Beds24ApiFailure = {
   category: Beds24ApiErrorCategory;
   message: string;
   httpStatus?: number;
-  /** cooldown the provider asked for (429 Retry-After), in ms, when present */
+  /** cooldown the provider asked for, in ms: 429 Retry-After, else the credit
+   *  window's own resets-in (P0-4 — never absent on a 429) */
   retryAfterMs?: number;
+  /** the credit meter the failing response carried, when it reached Beds24 */
+  credits?: Beds24CreditSnapshot;
 };
 
 const CATEGORY_MESSAGE: Record<Beds24ApiErrorCategory, string> = {
@@ -69,21 +78,19 @@ async function safeJson(res: Response): Promise<unknown> {
 }
 
 // Beds24 credit metering (each call costs credits; minting a token costs
-// extra). The remaining 5-minute-window credit counter is the ONE header value
-// ever surfaced — a bare number read via res.headers, never an echoed body.
-function readCreditsRemaining(headers: Headers): number | null {
-  const raw = headers?.get?.("x-fivemincreditlimit-remaining") ?? null;
-  if (raw === null) return null;
-  const n = Number(raw.trim());
-  return Number.isFinite(n) ? n : null;
+// extra). The credit meter is the ONE header group ever surfaced — bare
+// numbers read via res.headers, never an echoed body. The wire names and the
+// pacing policy live in ./beds24-credits (measured, not guessed).
+function readCreditSnapshot(headers: Headers): Beds24CreditSnapshot {
+  return readBeds24Credits((name) => headers?.get?.(name) ?? null);
 }
 
 export type Beds24Response = {
   status: number;
   body: unknown;
   retryAfterMs?: number;
-  /** X-FiveMinCreditLimit-Remaining, when Beds24 sent it */
-  creditsRemaining?: number;
+  /** the 5-minute credit window as this response reported it */
+  credits: Beds24CreditSnapshot;
 };
 
 export type Beds24ReqOpts = {
@@ -125,12 +132,17 @@ async function beds24Fetch(opts: {
     clearTimeout(timer);
   }
   const body = await safeJson(res);
-  const creditsRemaining = readCreditsRemaining(res.headers) ?? undefined;
+  const credits = readCreditSnapshot(res.headers);
   if (res.status === 429) {
-    const retryAfterMs = parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) ?? undefined;
-    return { status: res.status, body, retryAfterMs, creditsRemaining };
+    // 429 is its OWN path (P0-4): the cooldown is Retry-After when Beds24 sends
+    // one, otherwise the credit window's own resets-in. It is NEVER absent —
+    // an absent cooldown is what turned a 429 into a blind retry.
+    const retryAfterMs =
+      parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) ??
+      beds24ResetWaitMs(credits.resetsInSec);
+    return { status: res.status, body, retryAfterMs, credits };
   }
-  return { status: res.status, body, creditsRemaining };
+  return { status: res.status, body, credits };
 }
 
 // Regular API call — header `token: <accessToken>` (Beds24's scheme; NOT Bearer).

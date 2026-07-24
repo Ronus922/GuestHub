@@ -10,6 +10,7 @@ import {
 import {
   loadBeds24InboundConnections, runBeds24InboundPull, runBeds24BookingReconciliation,
 } from "./beds24-booking-import";
+import type { Beds24CreditSnapshot } from "./beds24-credits";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 import { runCommunicationTick } from "@/lib/communications/worker";
 
@@ -96,6 +97,31 @@ async function heartbeat(workerId: string, drained: boolean, lastError: string |
       last_error = EXCLUDED.last_error`;
 }
 
+// P0-4 — park the Beds24 credit meter on the job row that measured it. The
+// /channels diagnostics reads the newest one: the inbound poll runs every 5
+// minutes and the reconciliation every 20, so the panel is never more than one
+// poll cycle stale. Payload-merge (never an overwrite) — job payloads also
+// carry the caller's own keys.
+async function recordJobCredits(
+  jobId: string,
+  credits: Beds24CreditSnapshot | null,
+  pausedReason: string | null,
+): Promise<void> {
+  if (!credits || (credits.remaining === null && credits.resetsInSec === null)) return;
+  await sql`
+    UPDATE guesthub.channel_sync_jobs
+    SET payload = COALESCE(payload, '{}'::jsonb) || ${sql.json({
+      credits: {
+        remaining: credits.remaining,
+        resets_in_sec: credits.resetsInSec,
+        cost: credits.cost,
+        paused: pausedReason,
+        measured_at: new Date().toISOString(),
+      },
+    } as never)}
+    WHERE id = ${jobId}`;
+}
+
 // A job whose connection is no longer drainable is not an error — it is a
 // baseline that has not been established (or was invalidated by warnings).
 async function isBeds24Drainable(connectionId: string): Promise<boolean> {
@@ -139,6 +165,7 @@ async function runJob(
           ? String((payload as Record<string, unknown>).booking_id ?? "") || undefined
           : undefined;
       const summary = await runBeds24InboundPull(sql, inbound, bookingId ? { bookingId } : undefined);
+      await recordJobCredits(jobId, summary.credits, summary.creditPause?.reason ?? null);
       if (summary.errors.length > 0 && summary.fetched === 0 && summary.imported === 0 && summary.inserted === 0) {
         throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
       }
@@ -162,6 +189,7 @@ async function runJob(
       const [inbound] = (await loadBeds24InboundConnections(sql)).filter((c) => c.id === connectionId);
       if (!inbound) return { sentValues: 0 }; // not inbound-enabled → nothing to reconcile
       const summary = await runBeds24BookingReconciliation(sql, inbound);
+      await recordJobCredits(jobId, summary.credits, summary.creditPause?.reason ?? null);
       if (summary.errors.length > 0 && summary.checked === 0) {
         throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
       }
