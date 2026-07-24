@@ -7,6 +7,7 @@ import {
 import {
   drainBeds24AriDirtyRanges, runBeds24FullSync, loadDrainableBeds24Connections,
 } from "./beds24-ari-sync";
+import { runBeds24AriReadback } from "./beds24-ari-readback";
 import {
   loadBeds24InboundConnections, runBeds24InboundPull, runBeds24BookingReconciliation,
 } from "./beds24-booking-import";
@@ -159,13 +160,28 @@ async function runJob(
       return { sentValues: summary.sentValues };
     }
     if (jobType === "reconcile_inventory") {
+      // TWO reconciliations, ONE job (P0-3). Inbound: a booking cancelled at
+      // source that still occupies here (D93). Outbound: ARI that Beds24 holds
+      // but we never published — the same overbooking class, mirrored. The
+      // read-back is READ-ONLY and never throws, so it can neither fail this
+      // job nor delay the cancellation half; it also costs ≤3 credits against a
+      // 100-per-5-minutes ceiling, which is why it needs no cadence of its own.
+      let released = 0;
+      let reconcileError: string | null = null;
       const [inbound] = (await loadBeds24InboundConnections(sql)).filter((c) => c.id === connectionId);
-      if (!inbound) return { sentValues: 0 }; // not inbound-enabled → nothing to reconcile
-      const summary = await runBeds24BookingReconciliation(sql, inbound);
-      if (summary.errors.length > 0 && summary.checked === 0) {
-        throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+      if (inbound) {
+        const summary = await runBeds24BookingReconciliation(sql, inbound);
+        released = summary.released;
+        if (summary.errors.length > 0 && summary.checked === 0) reconcileError = summary.errors[0];
       }
-      return { sentValues: summary.released };
+      // only a connection with an established outbound baseline has anything to
+      // compare — loadDrainableBeds24Connections IS that predicate.
+      const [drainable] = (await loadDrainableBeds24Connections(sql)).filter((c) => c.id === connectionId);
+      if (drainable) await runBeds24AriReadback(sql, drainable, jobId);
+      if (reconcileError) {
+        throw Object.assign(new Error(reconcileError), { code: "network_error" });
+      }
+      return { sentValues: released };
     }
     throw Object.assign(new Error(`unsupported job type: ${jobType}`), { code: "validation_error" });
   }
@@ -229,15 +245,25 @@ async function ensureInboundPullJobs(): Promise<void> {
   }
 }
 
-// Booking reconciliation cadence (safety net over the status-filter fix): the
-// same durable jobs-table pattern as the inbound poll — no cron, no timer, at
-// most one live reconcile job per connection, a new one only when none ran
-// (or was enqueued) within the window.
+// Reconciliation cadence (safety net over the status-filter fix, and — P0-3 —
+// over outbound ARI drift): the same durable jobs-table pattern as the inbound
+// poll — no cron, no timer, at most one live reconcile job per connection, a
+// new one only when none ran (or was enqueued) within the window.
+//
+// This 20-minute figure is what the ARI read-back's credit budget is DERIVED
+// against: one read-back cycle costs a measured 1 credit (≤3 with the page
+// bound) out of Beds24's 100-per-rolling-5-minutes ceiling, i.e. 0.75% of the
+// ceiling amortised. See beds24-ari-readback.ts and DECISIONS D95.
 export const RECONCILE_MINUTES = 20;
 
 async function ensureReconcileJobs(): Promise<void> {
-  const inbound = await loadBeds24InboundConnections(sql);
-  for (const conn of inbound) {
+  // inbound connections need the booking half; connections with an established
+  // outbound baseline need the ARI read-back half. A connection in both sets
+  // gets ONE job (the map collapses it) — never two.
+  const targets = new Map<string, { id: string; tenant_id: string }>();
+  for (const c of await loadBeds24InboundConnections(sql)) targets.set(c.id, c);
+  for (const c of await loadDrainableBeds24Connections(sql)) targets.set(c.id, c);
+  for (const conn of targets.values()) {
     const [recent] = await sql<{ x: number }[]>`
       SELECT 1 AS x FROM guesthub.channel_sync_jobs
       WHERE connection_id = ${conn.id} AND job_type = 'reconcile_inventory'
