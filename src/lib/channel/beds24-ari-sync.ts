@@ -169,7 +169,10 @@ type Beds24MappingRow = {
   local_rate_plan_id: string | null;
 };
 
-async function loadBeds24Mappings(db: Sql, connectionId: string): Promise<Beds24MappingRow[]> {
+// exported so the read-back (beds24-ari-readback.ts) scopes its comparison
+// through the SAME mapping rule the push uses — a second query would let the
+// two halves disagree about which rooms are even published.
+export async function loadBeds24Mappings(db: Sql, connectionId: string): Promise<Beds24MappingRow[]> {
   return db<Beds24MappingRow[]>`
     SELECT room_id, beds24_property_id, beds24_room_id, local_rate_plan_id
     FROM guesthub.channel_beds24_room_mappings
@@ -178,7 +181,7 @@ async function loadBeds24Mappings(db: Sql, connectionId: string): Promise<Beds24
 
 const pushable = (m: Beds24MappingRow) => m.local_rate_plan_id !== null;
 
-const toBuilderMappings = (rows: Beds24MappingRow[]): Beds24CalendarMapping[] =>
+export const toBuilderMappings = (rows: Beds24MappingRow[]): Beds24CalendarMapping[] =>
   rows.filter(pushable).map((m) => ({
     roomId: m.room_id,
     beds24PropertyId: m.beds24_property_id,
