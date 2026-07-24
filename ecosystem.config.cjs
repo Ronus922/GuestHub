@@ -21,13 +21,16 @@ module.exports = {
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
-      // a crash-looping worker must not hammer Channex or the database
+      // a crash-looping worker must not hammer Beds24 or the database
       min_uptime: "30s",
       max_restarts: 10,
       restart_delay: 5000,
       // room for the in-flight job to finish before SIGKILL (see channel-worker.cjs)
       kill_timeout: 15000,
       max_memory_restart: "300M",
+      // the cumulative pm2 log is useless for diagnosis without per-line
+      // timestamps (the MAX_PARAMETERS_EXCEEDED finding could not be dated)
+      time: true,
       env: {
         NODE_ENV: "production",
         CHANNEL_WORKER_INTERVAL_MS: "20000",

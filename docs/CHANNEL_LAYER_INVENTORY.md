@@ -71,13 +71,18 @@ worker.ts → beds24-ari-sync.ts → beds24-ari-projection.ts → beds24-ari-pay
 ### Not on the channel path (left as-is)
 - `card-ingest.ts` — channel-card ingestion helper; no live importer (pre-existing dead-code candidate, outside the D91 scope; untouched).
 
-## Intentional residue (cannot be removed without a migration)
-The DB columns `channel_room_mappings.channex_property_id` / `channex_room_type_id`
-and `channel_room_rate_mappings.channex_rate_plan_id` (migrations 024/025) keep
-their historical names. `grid-state.ts` still reads `channel_room_mappings` for
-the `/rates` grid's "channel-mapped rooms". Renaming these needs a dedicated
-migration (out of D91's zero-migration scope); one test fixture
-(`scripts/check-rate-grid.mjs`) names the column for the same reason.
+## Intentional residue — RESOLVED by migration 054 (2026-07-24)
+Migration `054_external_column_rename.sql` renamed all 19 legacy `channex_*`
+columns across the 6 channel tables to the `external_*` convention (RENAME
+COLUMN only; the fixture in `scripts/check-rate-grid.mjs` was updated with it).
+`grep -rni channex src/ scripts/` returns 0.
+
+Still carrying the historical name, by explicit choice (names only, no data or
+behavior): index/constraint names (`uq_crtm_channex_id`, `uq_crpm_channex_id`,
+`uq_crm_channex_room_type`, `uq_crrm_channex_rate_plan`, 023's `chk_*`) and the
+`channel_inbound_rate_plan_aliases.source` value/CHECK `'channex_verified'`.
+Renaming those is a possible future 055 — a deliberate decision, not an
+oversight.
 
 ## Coverage note
 The deleted Channex integration guards (`check-channex-*`, worker/rates-sync/

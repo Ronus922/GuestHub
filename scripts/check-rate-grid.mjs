@@ -267,7 +267,7 @@ try {
       // room 0 mapped; room 1 deliberately unmapped
       await tx`
         INSERT INTO guesthub.channel_room_mappings
-          (tenant_id, connection_id, channex_property_id, local_entity_type, room_id, room_number, status, method)
+          (tenant_id, connection_id, external_property_id, local_entity_type, room_id, room_number, status, method)
         VALUES (${t2.id}, ${conn.id}, 'prop-test', 'physical_room', ${roomIds[0]}, 'axisC-1', 'mapped', 'created')`;
       // a live (non-synced) dirty range on room 0 for DAY only ([DAY, NEXT))
       await tx`

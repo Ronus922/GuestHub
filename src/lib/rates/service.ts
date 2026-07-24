@@ -63,6 +63,23 @@ const EMPTY_ROW: FullRow = {
   stop_sell: false,
 };
 
+// postgres.js hard-caps a single statement at 65,534 bind parameters
+// (MAX_PARAMETERS_EXCEEDED) — an 11-column multi-row INSERT hit it at ~5,900
+// rows, well inside a season-wide Group Update. Bulk INSERTs therefore run in
+// slices of ≤ ~30K parameters; every slice shares the caller's transaction, so
+// the batch stays all-or-nothing and the operator sees no behavioral change.
+// PRECONDITION for upsert callers: rows must be unique on the conflict key
+// ((pricing_plan_id, date) here — both current callers guarantee it). A
+// duplicate pair inside one slice still fails fast ("cannot affect row a
+// second time"), but a pair split across slices would silently last-write-win.
+const MAX_BIND_PARAMS_PER_STATEMENT = 30_000;
+export function chunkForBind<T>(rows: T[], paramsPerRow: number): T[][] {
+  const rowsPerChunk = Math.max(1, Math.floor(MAX_BIND_PARAMS_PER_STATEMENT / paramsPerRow));
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += rowsPerChunk) out.push(rows.slice(i, i + rowsPerChunk));
+  return out;
+}
+
 // Merge a patch over an existing/blank row — undefined keys are left untouched.
 function merge(base: FullRow, patch: RateCellPatch): FullRow {
   return {
@@ -148,21 +165,23 @@ export async function writeRateCells(
     });
   }
 
-  await tx`
-    INSERT INTO guesthub.pricing_plan_rates ${tx(
-      rows,
-      "tenant_id", "sellable_unit_id", "pricing_plan_id", "date", "price",
-      "min_stay_through", "min_stay_arrival", "max_stay",
-      "closed_to_arrival", "closed_to_departure", "stop_sell",
-    )}
-    ON CONFLICT (pricing_plan_id, date) DO UPDATE SET
-      price = EXCLUDED.price,
-      min_stay_through = EXCLUDED.min_stay_through,
-      min_stay_arrival = EXCLUDED.min_stay_arrival,
-      max_stay = EXCLUDED.max_stay,
-      closed_to_arrival = EXCLUDED.closed_to_arrival,
-      closed_to_departure = EXCLUDED.closed_to_departure,
-      stop_sell = EXCLUDED.stop_sell`;
+  for (const part of chunkForBind(rows, 11)) {
+    await tx`
+      INSERT INTO guesthub.pricing_plan_rates ${tx(
+        part,
+        "tenant_id", "sellable_unit_id", "pricing_plan_id", "date", "price",
+        "min_stay_through", "min_stay_arrival", "max_stay",
+        "closed_to_arrival", "closed_to_departure", "stop_sell",
+      )}
+      ON CONFLICT (pricing_plan_id, date) DO UPDATE SET
+        price = EXCLUDED.price,
+        min_stay_through = EXCLUDED.min_stay_through,
+        min_stay_arrival = EXCLUDED.min_stay_arrival,
+        max_stay = EXCLUDED.max_stay,
+        closed_to_arrival = EXCLUDED.closed_to_arrival,
+        closed_to_departure = EXCLUDED.closed_to_departure,
+        stop_sell = EXCLUDED.stop_sell`;
+  }
 
   // Mark the outbox: rates + restrictions for every touched ROOM, over the span.
   // These rows are the sellable unit's BASE plan, from which every derived Rate
