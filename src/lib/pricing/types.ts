@@ -2,7 +2,7 @@
 // Central pricing engine — typed contracts (Rate Plans phase).
 // PURE types: no imports beyond the date alias, no DB, no React. The engine
 // (engine.ts) and every consumer — simulator, manual reservations, the future
-// website booking engine and Channex processing — share exactly these shapes.
+// website booking engine and channel processing — share exactly these shapes.
 // ============================================================
 
 import type { DateOnly } from "@/lib/dates";

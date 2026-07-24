@@ -646,7 +646,7 @@ export type ImportCoreOptions = {
 };
 
 // The post-normalize import core (D77) — the SHARED half of importRevisionRow,
-// lifted mechanically so a second provider (Hospitable) can feed its own
+// lifted mechanically so a second provider can feed its own
 // normalized revisions through the identical transaction / quarantine /
 // failure path. The caller has already: loaded the revision row, checked
 // import_status, normalized the payload, and run its provider-specific

@@ -2,7 +2,7 @@
 // PURE canonical commercial rules (no imports, no DB) — the business half of
 // src/lib/rates. The SINGLE pricing + restriction logic for the Rate Grid, the
 // Group Update, the booking engine, quotes, reservation snapshots, and the
-// Channex payload builder. Checkable by scripts/check-effective-state.mjs.
+// channel payload builder. Checkable by scripts/check-effective-state.mjs.
 // Approved decisions §0.3/§0.4.
 // ============================================================
 
@@ -123,7 +123,7 @@ export type NightsRuleRow = Pick<PlanRateRow, "min_stay_arrival" | "min_stay_thr
 // place a MANUAL booking on a closed/stop-sold date, so a manual calendar create
 // is blocked purely on illegal LENGTH. Same evaluation order and the same Hebrew
 // messages (stayViolationMessage) as the full validator, so the calendar block,
-// the server create gate and the Channex ARI rules can never disagree.
+// the server create gate and the channel ARI rules can never disagree.
 export function nightsRuleViolation(
   byDate: Map<string, NightsRuleRow>,
   stay: { checkIn: string; nights: string[] },

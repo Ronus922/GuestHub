@@ -937,7 +937,7 @@ export function EditReservationPanel({
                         {detail.ota.otaReservationCode ?? "—"}
                       </b>
                     </Field>
-                    {/* honest PIN state (D80 §4): Channex supplies no dedicated
+                    {/* honest PIN state (D80 §4): the channel supplies no dedicated
                         Booking.com PIN/secret field — never mined from notes */}
                     <Field label="קוד סודי מהערוץ">
                       <b className="text-sm text-muted">לא התקבל קוד סודי מהערוץ</b>

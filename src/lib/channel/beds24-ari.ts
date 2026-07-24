@@ -1,22 +1,21 @@
 // ============================================================
 // Beds24 ARI client (D78/D79) — the ONLY module that sends calendar state
-// (price + availability + restrictions) to Beds24. Mirror of
-// hospitable-ari.ts / channex-ari.ts: goes through the shared, leak-proof core
-// in ./beds24-http (single attempt, bounded timeout, fixed safe messages,
-// token never echoed).
+// (price + availability + restrictions) to Beds24. Goes through the shared,
+// leak-proof core in ./beds24-http (single attempt, bounded timeout, fixed safe
+// messages, token never echoed).
 //
 // SCOPE: POST /inventory/rooms/calendar ONLY. It never calls properties
 // listing, bookings or authentication, and never DELETE.
 //
 // THE 200-WITH-ERRORS TRAP. Beds24 answers 200 with a per-item envelope:
 // [{ success: bool, ... }] (a top-level { success: bool } is also seen). The
-// Channex lesson (a 200 silently dropping rejected values) is applied hard:
+// hard-won lesson (a 200 silently dropping rejected values) is applied hard:
 //   · ANY success:false found on a 2xx body ⇒ the push FAILED — the caller
 //     keeps the affected ranges retryable. Never a clean success.
 //   · any warnings/errors-shaped array on an otherwise-successful 2xx body ⇒
 //     `partial`, never clean.
 //
-// LEAK POLICY (identical to channex-ari.ts / hospitable-ari.ts). Only
+// LEAK POLICY. Only
 // whitelisted, structural fields ever leave this module: the numeric roomId a
 // warning concerns and the NAMES of the fields Beds24 objected to. No token,
 // no headers, no raw upstream body, no rejected values.
@@ -44,7 +43,7 @@ export type SafeBeds24Warning = {
   fields: string[];
 };
 
-// No task system exists at Beds24 (unlike Channex), so a clean success carries
+// No task system exists at Beds24, so a clean success carries
 // no ids — the evidence trail records request counts + bytes + credits instead.
 export type Beds24CalendarPushResult =
   | { ok: true; partial: false; creditsRemaining: number | null }

@@ -6,7 +6,7 @@
 //   • PROPERTY identity      = the public accommodation (propertyName…).
 // Canonical currency + timezone always come from the tenant and are never
 // overwritten or fabricated. Missing values are reported missing, never guessed.
-// Channex CONSUMES this profile (buildChannexUpdatePayload) — it is not a source
+// The canonical business profile — the single source of truth for property
 // of truth. Exported pure so scripts/check-business-profile.mjs can assert it
 // without a DB, a socket, or a Google key.
 // ============================================================
@@ -18,7 +18,7 @@ export const LOCATION_SOURCES: LocationSource[] = [
   "manual_override",
 ];
 
-// Channex-supported property types (staging). Kept as a closed set so the UI
+// Supported property types. Kept as a closed set so the UI
 // offers a dropdown and the server rejects anything else.
 export const PROPERTY_TYPES = [
   "apartment",
@@ -156,7 +156,7 @@ export function resolveBusinessProfile(
 // ---- account-card identity line ----
 // The one formatter for the dashboard sidebar's second line. Reads the CANONICAL
 // property/business identity only: never tenants.name (an internal label), never
-// the application name, never the Channex external title (which carries a
+// the application name (the display identity used across the app; a
 // " (Staging)" suffix). Property beats business; city is appended with a plain
 // hyphen and only when present, so an absent city never leaves a dangling " - ".
 const IDENTITY_SEPARATOR = " - ";
@@ -209,75 +209,6 @@ export function computeBusinessProfileStatus(p: BusinessProfile): BusinessProfil
   };
 }
 
-// ---- Channex external title (§13) ----
-// External Staging title = "<property_name> (Staging)". The suffix is external-
-// only and is NEVER stored back into the canonical property name.
-const STAGING_SUFFIX = " (Staging)";
-export function channexStagingTitle(propertyName: string): string {
-  return `${propertyName}${STAGING_SUFFIX}`;
-}
-
-// ---- Channex PUT payload (§13/§14) ----
-// Consumes the canonical Business Profile. Only Channex-supported profile fields.
-// Returns null when there is no canonical property name to build a title from
-// (we never fabricate one and never blank the existing external title).
-export function buildChannexUpdatePayload(
-  p: BusinessProfile,
-): { property: Record<string, unknown> } | null {
-  if (!p.propertyName) return null;
-  const attrs: Record<string, unknown> = {
-    title: channexStagingTitle(p.propertyName),
-    currency: p.currency,
-    property_type: p.propertyType,
-  };
-  if (p.timezone) attrs.timezone = p.timezone;
-  if (p.email) attrs.email = p.email;
-  if (p.phone) attrs.phone = p.phone;
-  if (p.website) attrs.website = p.website;
-  if (p.countryCode) attrs.country = p.countryCode; // Channex expects ISO alpha-2
-  if (p.city) attrs.city = p.city;
-  if (p.formattedAddress) attrs.address = p.formattedAddress;
-  if (p.postalCode) attrs.zip_code = p.postalCode;
-  if (p.latitude !== null) attrs.latitude = String(p.latitude);
-  if (p.longitude !== null) attrs.longitude = String(p.longitude);
-  return { property: attrs };
-}
-
-// Honest before/after for the update confirmation modal. Compares the fields we
-// actually retain in the mapping snapshot against the proposed payload; keys the
-// snapshot doesn't carry are reported with from=null so the UI shows "(לא ידוע)".
-export type ChannexFieldChange = { key: string; from: unknown; to: unknown };
-const SNAPSHOT_KEY: Record<string, string> = {
-  title: "title",
-  currency: "currency",
-  property_type: "property_type",
-  timezone: "timezone",
-  country: "country",
-  city: "city",
-  address: "address",
-  zip_code: "zip_code",
-  email: "email",
-  phone: "phone",
-  website: "website",
-  latitude: "latitude",
-  longitude: "longitude",
-};
-export function diffChannexUpdate(
-  snapshot: Record<string, unknown> | null,
-  proposed: Record<string, unknown>,
-): ChannexFieldChange[] {
-  const snap = snapshot ?? {};
-  const out: ChannexFieldChange[] = [];
-  for (const [key, to] of Object.entries(proposed)) {
-    const from = snap[SNAPSHOT_KEY[key] ?? key] ?? null;
-    if (String(from ?? "") !== String(to ?? "")) out.push({ key, from, to });
-  }
-  return out;
-}
-
-// ---- input validation (§10) ----
-// Server-authoritative. Returns a cleaned patch of ONLY the provided keys (blank
-// string clears a field to null; absent key is untouched) or a Hebrew error.
 export type BusinessProfileInput = Partial<
   Record<
     | "businessName"
@@ -289,8 +220,8 @@ export type BusinessProfileInput = Partial<
     | "phone"
     | "website"
     // canonical postal code (§location). Editable because Google Places does not
-    // always return a postal_code, and sometimes returns a partial one. Channex
-    // reads zip_code from THIS field only — there is no Channex-only postal code.
+    // always return a postal_code, and sometimes returns a partial one. This is
+    // the ONE canonical postal code — there is no channel-specific override.
     | "postalCode",
     string | null
   >

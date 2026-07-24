@@ -4,14 +4,14 @@ import { useState, useTransition } from "react";
 import { setupBeds24Action } from "@/lib/channel/beds24-admin";
 
 // ============================================================
-// Beds24 INVITE-CODE form — mirror of HospitableKeyReplacementForm (D77 → D78).
+// Beds24 INVITE-CODE form (D77 → D78).
 // The parent mounts it only after an explicit "הגדרת חיבור" click and unmounts
 // it on cancel/success, so React destroys this state — there is nowhere for a
 // stale or autofilled value to survive.
 //
 // The invite code is SINGLE-USE: the server exchanges it once for a refresh
 // token (stored encrypted) and the code itself is never stored, audited or
-// displayable again. Same defences as the Channex/Hospitable forms:
+// displayable again. Defences:
 //  1. the field does not exist in the DOM until the operator asks for it;
 //  2. `autocomplete="new-password"` — managers offer to GENERATE, not fill;
 //  3. a unique, non-generic name/id no password-manager heuristic matches;

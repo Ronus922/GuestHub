@@ -8,8 +8,7 @@
 // bookings, calendar, inventory or messages, and it NEVER issues a write.
 //
 // Only SAFE, whitelisted fields are ever surfaced; a raw upstream body, headers
-// or a token can never reach a returned value. Mirror of
-// hospitable-properties.ts.
+// or a token can never reach a returned value.
 //
 // Payload-shape assumptions (probed DEFENSIVELY, never trusted):
 //  • GET /properties?includeAllRooms=true → { success, count, pages, data: [...] }

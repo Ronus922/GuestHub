@@ -10,7 +10,7 @@ import { paymentGatewayConfigured } from "./gateway";
 //   property_tokenized       — property collects and a REAL PSP payment-method
 //                              reference exists (chargeable iff a gateway is
 //                              configured and the reservation is live)
-//   property_masked_only     — property collects but only the masked Channex
+//   property_masked_only     — property collects but only the masked channel
 //                              guarantee exists — NOT chargeable, ever
 //   no_card_or_other_method  — cash / transfer / manual / unspecified
 //

@@ -233,7 +233,7 @@ export function LocationPicker({
       {/* Saved canonical location — rendered from the profile alone, so a Maps
           failure or an unconfirmed edit can never blank or replace it. The postal
           code sits with the address fields (after street/number, before
-          city/country) and is the ONE canonical source Channex reads zip_code from. */}
+          city/country) and is the ONE canonical source the channel reads zip_code from. */}
       <div className="grid gap-x-4 gap-y-1.5 rounded-xl border border-line bg-hover/30 p-4 text-sm sm:grid-cols-2">
         <Row label="כתובת מלאה" value={profile.formattedAddress} span />
         <Row label="רחוב" value={profile.street} />

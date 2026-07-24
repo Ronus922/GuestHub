@@ -532,7 +532,7 @@ export function CalendarGrid({
 
   // "אישור" — persist atomically via the server action (it re-validates
   // availability, overlaps, closures, restrictions, re-prices, updates
-  // inventory and queues Channex), then close and stay on the calendar.
+  // inventory and queues the channel), then close and stay on the calendar.
   const runReschedule = useCallback(
     (p: MoveProposal) => {
       startCommit(async () => {

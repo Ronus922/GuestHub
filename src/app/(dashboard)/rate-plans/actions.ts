@@ -45,7 +45,7 @@ function errorResult(e: unknown, tag: string): { success: false; error: string }
 
 // ---------------------------------------------------------------
 // Channel outbox (D68). A Rate Plan change re-prices real (room × plan)
-// combinations that Channex already sells, so every mutation below marks its
+// combinations that the channel already sells, so every mutation below marks its
 // OWN combinations dirty — never the whole property, never a Full Sync.
 //
 // The affected plan set is the plan PLUS its transitive children: a derived
@@ -358,8 +358,8 @@ export async function archiveRatePlanAction(raw: unknown): Promise<ActionResult>
         before, after: { is_archived: archived },
       }, tx);
 
-      // Archiving/deactivating withdraws the plan from sale. Its Channex Rate
-      // Plan still exists and would keep selling the last prices we published,
+      // Archiving/deactivating withdraws the plan from sale. Its channel rate
+      // plan still exists and would keep selling the last prices we published,
       // so the withdrawal must be pushed as stop_sell — the projection emits it.
       await markPlansDirty(tx, actor!.tenantId, [id]);
     });
@@ -488,7 +488,7 @@ export async function savePlanOverridesAction(raw: unknown): Promise<ActionResul
 
       // Exact-date overlay rows carry their own units and dates, so this hook is
       // precise: only the touched rooms, only the touched date span, only this
-      // plan family. (D68 — previously this write reached Channex not at all.)
+      // plan family. (D68 — previously this write reached the channel not at all.)
       if (touched.length > 0) {
         const rooms = await tx<{ room_id: string }[]>`
           SELECT room_id FROM guesthub.sellable_unit_rooms

@@ -35,13 +35,11 @@ const HE_DATE_TIME = new Intl.DateTimeFormat("he-IL", {
 type DrainableConn = { id: string };
 
 // The connections whose pending work the worker will actually drain — the same
-// predicate as loadDrainableConnections (ari-sync.ts), scoped to the tenant.
-// A connection still awaiting its Full Sync is NOT "connected" for /rates: its
-// ranges would sit forever and "מסנכרן…" would be a lie.
-// D79 — provider-neutral: the ACTIVE provider's connection qualifies once its
-// baseline is established, whichever provider it is (Channex's extra
-// channex_property_id requirement is enforced by its own worker loader; the
-// per-provider mapping-existence checks live in each drain loader too).
+// predicate as loadDrainableBeds24Connections (beds24-ari-sync.ts), scoped to
+// the tenant. A connection still awaiting its Full Sync is NOT "connected" for
+// /rates: its ranges would sit forever and "מסנכרן…" would be a lie.
+// The active provider's connection qualifies once its baseline is established;
+// the per-provider mapping-existence checks live in the drain loader.
 async function drainableConnections(db: Sql, tenantId: string): Promise<DrainableConn[]> {
   return db<DrainableConn[]>`
     SELECT id FROM guesthub.channel_connections

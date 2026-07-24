@@ -276,7 +276,7 @@ export async function getRateGridState(
         // cannot be fully represented outbound (the writer sends per room).
         mappingValid: memberRooms.length > 0 && memberRooms.every((r) => mappedRooms.has(r)),
         syncState,
-        // D64: one room → one Channex Room Type (count_of_rooms=1), so what the
+        // D64: one room → one channel room type (count_of_rooms=1), so what the
         // projection sends for this SU's room(s) IS the SU's own availability.
         outboundAvailability: availability,
         outboundRestrictions: {

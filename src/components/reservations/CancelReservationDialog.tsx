@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate } from "@/lib/dates";
@@ -9,13 +9,6 @@ import {
   cancelReservationAction,
   type ReservationDetail,
 } from "@/app/(dashboard)/reservations/actions";
-import {
-  cancelDueInvalidCardAction,
-  getOtaActionsContextAction,
-  reportInvalidCardAction,
-  reportNoShowAction,
-  type OtaActionsContext,
-} from "@/lib/channel/reporting-admin";
 
 // ============================================================
 // ביטול הזמנה — the ONE cancellation dialog (D77 §9), opened from the
@@ -26,10 +19,9 @@ import {
 //  · direct/manual booking  → local cancel with a REQUIRED reason; history,
 //    payments and audit are preserved; inventory releases in the same tx.
 //  · ACTIVE OTA booking     → generic local cancel is impossible (server
-//    guard). The dialog says so honestly and offers ONLY the provider
-//    operations that are genuinely eligible right now (Booking.com Reporting:
-//    invalid card / cancel-due-invalid-card / no-show). A provider "cancel"
-//    never cancels locally — the real cancelled revision does.
+//    guard). The dialog says so honestly: the cancellation must be made at the
+//    OTA and arrives back through the channel as a real cancelled revision.
+//    (Channel-side OTA reporting was removed with the previous provider — D91.)
 // ============================================================
 
 const isBlocking = (s: string) =>
@@ -44,25 +36,14 @@ export function CancelReservationDialog({
   detail: ReservationDetail;
   guestName: string;
   onClose: () => void;
-  /** called after any state-changing success (local cancel / provider report) */
+  /** called after a successful local cancel */
   onDone: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [busy, startBusy] = useTransition();
   const submittedRef = useRef(false); // double-submit protection (§9)
-  const [ota, setOta] = useState<OtaActionsContext | null>(null);
-  const [otaError, setOtaError] = useState<string | null>(null);
-  const [waivedFees, setWaivedFees] = useState(true);
 
   const activeOta = detail.ota !== null && isBlocking(detail.status);
-
-  useEffect(() => {
-    if (!detail.ota) return;
-    getOtaActionsContextAction(detail.id).then((res) => {
-      if (res.success && res.data) setOta(res.data);
-      else setOtaError(res.success ? null : res.error);
-    });
-  }, [detail.id, detail.ota]);
 
   const doLocalCancel = () => {
     if (submittedRef.current) return;
@@ -75,27 +56,6 @@ export function CancelReservationDialog({
       } else {
         submittedRef.current = false;
         toast.error(res.error);
-      }
-    });
-  };
-
-  const runProvider = (
-    fn: () => Promise<{ success: boolean; error?: string }>,
-    successMsg: string,
-  ) => {
-    if (submittedRef.current) return;
-    submittedRef.current = true;
-    startBusy(async () => {
-      const res = await fn();
-      submittedRef.current = false;
-      if (res.success) {
-        toast.success(successMsg);
-        // refresh eligibility (stamps changed) + parent detail
-        const ctx = await getOtaActionsContextAction(detail.id);
-        if (ctx.success && ctx.data) setOta(ctx.data);
-        onDone();
-      } else {
-        toast.error(res.error ?? "הפעולה נכשלה");
       }
     });
   };
@@ -176,88 +136,17 @@ export function CancelReservationDialog({
         )}
 
         {activeOta ? (
-          <>
-            {/* honest generic-cancel message (§9) */}
-            <section className="card bw-card-danger">
-              <p className="card-bd text-sm font-bold leading-relaxed text-ink">
-                לא ניתן לבטל הזמנת {detail.ota?.otaName === "BookingCom" ? "Booking.com" : "ערוץ"}{" "}
-                באופן כללי דרך מנהל הערוצים.
-                <br />
-                יש לבצע את הביטול ב-Booking.com ולהמתין לעדכון האוטומטי — ההזמנה תבוטל, תוסר
-                מהיומן ותישמר בהיסטוריה ברגע שהערוץ ישדר את הביטול.
-              </p>
-            </section>
-
-            {/* provider actions that ARE genuinely available */}
-            {ota?.provider === "booking_com" && (
-              <section className="card">
-                <div className="card-hd">פעולות Booking.com זמינות</div>
-                <div className="card-bd flex flex-col gap-3">
-                  <ProviderAction
-                    title="דיווח על כרטיס לא תקין"
-                    description="Booking.com יבקש מהאורח לעדכן פרטי כרטיס. ההזמנה אינה מבוטלת."
-                    eligible={ota.invalidCard.eligible}
-                    blockedReason={ota.invalidCard.reason}
-                    busy={busy}
-                    onRun={() =>
-                      runProvider(
-                        () => reportInvalidCardAction({ reservationId: detail.id }),
-                        "הדיווח נשלח — Booking.com יבקש כרטיס מעודכן",
-                      )
-                    }
-                  />
-                  <ProviderAction
-                    title="ביטול עקב כרטיס לא תקין"
-                    description="זמין רק לאחר דיווח כרטיס לא תקין וחלון 24 השעות. הביטול המקומי יתבצע רק כשהערוץ יאשר."
-                    eligible={ota.cancelDueInvalidCard.eligible}
-                    blockedReason={ota.cancelDueInvalidCard.reason}
-                    busy={busy}
-                    onRun={() =>
-                      runProvider(
-                        () => cancelDueInvalidCardAction({ reservationId: detail.id }),
-                        "בקשת הביטול נשלחה — ממתין לאישור הערוץ",
-                      )
-                    }
-                  />
-                  <ProviderAction
-                    title="דיווח No-show (האורח לא הגיע)"
-                    description="זמין מחצות של יום הצ׳ק-אין ועד 48 שעות. משחרר את הלילות לאחר אישור הספק."
-                    eligible={ota.noShow.eligible}
-                    blockedReason={ota.noShow.reason}
-                    busy={busy}
-                    extra={
-                      <label className="flex items-center gap-2 text-xs font-semibold text-muted">
-                        <input
-                          type="checkbox"
-                          checked={waivedFees}
-                          onChange={(e) => setWaivedFees(e.target.checked)}
-                        />
-                        ויתור על דמי אי-הגעה (waived fees)
-                      </label>
-                    }
-                    onRun={() =>
-                      runProvider(
-                        () => reportNoShowAction({ reservationId: detail.id, waivedFees }),
-                        "דווח No-show — הלילות שוחררו",
-                      )
-                    }
-                  />
-                </div>
-              </section>
-            )}
-            {detail.ota && ota?.provider === null && (
-              <section className="card">
-                <p className="card-bd text-sm font-semibold text-muted">
-                  לערוץ זה אין פעולות דיווח נתמכות דרך GuestHub.
-                </p>
-              </section>
-            )}
-            {otaError && (
-              <section className="card">
-                <p className="card-bd text-sm font-semibold text-status-danger">{otaError}</p>
-              </section>
-            )}
-          </>
+          /* honest generic-cancel message (§9): an OTA booking is cancelled at
+             the OTA and arrives back as a cancelled revision through Beds24. */
+          <section className="card bw-card-danger">
+            <p className="card-bd text-sm font-bold leading-relaxed text-ink">
+              לא ניתן לבטל הזמנת {detail.ota?.otaName === "BookingCom" ? "Booking.com" : "ערוץ"}{" "}
+              באופן כללי דרך מנהל הערוצים.
+              <br />
+              יש לבצע את הביטול ב-Booking.com ולהמתין לעדכון האוטומטי — ההזמנה תבוטל, תוסר
+              מהיומן ותישמר בהיסטוריה ברגע שהערוץ ישדר את הביטול.
+            </p>
+          </section>
         ) : (
           <section className="card card-bd">
             <p className="mb-3 text-sm font-bold leading-relaxed text-ink">
@@ -304,50 +193,6 @@ function FactRow({ label, value, ltr }: { label: string; value: string; ltr?: bo
     <div className="field">
       <span className="field-label">{label}</span>
       <b className={`text-sm text-ink${ltr ? " ltr-num text-end" : ""}`}>{value}</b>
-    </div>
-  );
-}
-
-function ProviderAction({
-  title,
-  description,
-  eligible,
-  blockedReason,
-  busy,
-  extra,
-  onRun,
-}: {
-  title: string;
-  description: string;
-  eligible: boolean;
-  blockedReason: string | null;
-  busy: boolean;
-  extra?: React.ReactNode;
-  onRun: () => void;
-}) {
-  return (
-    <div className="rounded-xl border border-line p-4">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-extrabold text-ink">{title}</p>
-          <p className="mt-1 text-xs font-semibold leading-relaxed text-muted">{description}</p>
-          {!eligible && blockedReason && (
-            <p className="mt-2 flex items-center gap-1 text-xs font-bold text-status-danger">
-              <Icon name="warning" size={13.5} />
-              {blockedReason}
-            </p>
-          )}
-          {eligible && extra && <div className="mt-2">{extra}</div>}
-        </div>
-        <button
-          type="button"
-          className="btn btn-secondary shrink-0"
-          disabled={!eligible || busy}
-          onClick={onRun}
-        >
-          {busy ? "שולח…" : "ביצוע"}
-        </button>
-      </div>
     </div>
   );
 }

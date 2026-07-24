@@ -27,10 +27,9 @@ import { dispatchExternalChangeEmails } from "./external-changes";
 
 // ============================================================
 // Beds24 inbound booking import (D78/D79) — bookings → GuestHub reservations
-// through the SAME post-normalize core as Channex (importNormalizedRevision),
+// through the shared post-normalize core (importNormalizedRevision),
 // with the two provider-specific halves supplied here: the Beds24 normalizer
-// and a room resolver over channel_beds24_room_mappings. Mirror of
-// hospitable-booking-import.ts (D77).
+// and a room resolver over channel_beds24_room_mappings (D77).
 //
 // Beds24 has NO revisions feed and NO ack endpoint: each fetched booking
 // persists into channel_booking_revisions under a SYNTHETIC revision id
@@ -50,7 +49,7 @@ import { dispatchExternalChangeEmails } from "./external-changes";
 //
 // Convergence: newly-inserted rows import immediately; a bounded sweep then
 // re-imports rows still pending/quarantined/failed (crash between insert and
-// import, or a mapping fixed since) — the Beds24 analogue of the Channex feed
+// import, or a mapping fixed since) — the Beds24 analogue of a channel feed
 // re-serving unacknowledged revisions every pull.
 // ============================================================
 
@@ -87,7 +86,7 @@ const FORWARD_DAYS = ARI_HORIZON_DAYS;
 const SWEEP_LIMIT = 200;
 const MAX_ERRORS = 20;
 
-// Mirror of loadHospitableInboundConnections for the beds24 provider — the
+// Loads the inbound connections for the beds24 provider — the
 // worker's provider dispatch seam (D77/D78) selects by these. 'ready' is a
 // valid inbound state for Beds24 (mapping exists before the first full sync).
 export async function loadBeds24InboundConnections(
@@ -164,8 +163,7 @@ export function beds24RevisionId(
   return `${bookingId}:${digest.slice(0, 16)}`;
 }
 
-// Idempotent insert (mirror of the Hospitable insertRevisionRow) with the same
-// differences from Channex: ack columns pre-set (no ack semantics upstream)
+// Idempotent insert with the Beds24 specifics: ack columns pre-set (no ack semantics upstream)
 // and NO card staging — Beds24 booking payloads are fetched without card data
 // (cards need a dedicated scope + endpoint that this import never requests).
 // The stored payload is still redacted for hygiene.
@@ -222,7 +220,7 @@ function pushError(summary: Beds24InboundPullSummary, message: string): void {
 }
 
 // Import ONE persisted revision row through the shared core. The Beds24
-// room-ownership guard lives HERE (mirror of the Channex wrong-property
+// room-ownership guard lives HERE (the wrong-property
 // rejection in importRevisionRow): a booking whose Beds24 room id has no
 // 'mapped' row in channel_beds24_room_mappings is visibly parked and
 // recorded — never imported into this tenant.
@@ -330,7 +328,7 @@ async function processBooking(
 // Bounded convergence sweep — rows still pending (crash between insert and
 // import), quarantined (mapping may have been fixed) or failed (transient),
 // excluding rows already processed this run. Re-normalizes from the STORED
-// redacted payload, exactly like the Hospitable sweep does; scoped to THIS
+// redacted payload; scoped to THIS
 // connection's rows only.
 async function sweepUnimportedRows(
   db: Sql,
@@ -495,7 +493,7 @@ export async function runBeds24InboundPull(
   await sweepUnimportedRows(db, conn, resolveRoom, mappings, summary, processedRowIds);
 
   // ops emails for external date changes — strictly AFTER the import
-  // transactions committed (same placement as the Channex pull); a mail
+  // transactions committed (after the pull); a mail
   // failure never fails the pull.
   try {
     await dispatchExternalChangeEmails(db, conn.tenant_id);

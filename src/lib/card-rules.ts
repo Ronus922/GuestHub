@@ -188,7 +188,7 @@ export type CardView = {
 };
 
 /** Brand display for BOTH vocabularies: our internal keys (visa/amex, from
- *  detectBrand) and the 2-letter channel codes (VI/AX, from Channex). Unknown
+ *  detectBrand) and the 2-letter channel codes (VI/AX, from the channel). Unknown
  *  codes display verbatim — never as a wrong brand. */
 function brandDisplay(code: string | null): string | null {
   if (!code) return null;

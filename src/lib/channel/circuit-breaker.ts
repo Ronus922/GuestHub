@@ -1,8 +1,8 @@
 // ============================================================
-// Channex outbound circuit breaker (Stage 4 §16, defect M14).
+// Channel outbound circuit breaker (Stage 4 §16, defect M14).
 //
 // PURE state machine — no DB, no HTTP, no clock (the caller passes `now`), so it
-// is unit-testable in isolation (scripts/check-channex-rate-limit-cooldown.mjs).
+// is unit-testable in isolation.
 // The persisted state lives on channel_connections (circuit_open_until,
 // consecutive_failures); the worker reads it before a drain and writes the next
 // state after. This is CONNECTION-level protection (stop hammering a provider
