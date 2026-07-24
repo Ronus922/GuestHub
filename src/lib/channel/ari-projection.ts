@@ -57,4 +57,6 @@ export type DrainSummary = {
   sentValues: number;
   /** §16 — true when the circuit breaker skipped this connection (still cooling) */
   circuitOpen?: boolean;
+  /** P0-4 — set when the Beds24 credit window (or a 429) stopped the drain early */
+  creditPausedMs?: number;
 };
