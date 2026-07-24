@@ -4,13 +4,30 @@ import { sql } from "@/lib/db";
 import type { ChannelEnvironment } from "./config";
 
 // ============================================================
-// Channel certification evidence ledger (Stage 4 §13, defects H9/H10).
+// Channel ARI evidence ledger (Stage 4 §13, defects H9/H10).
 //
-// APPEND-ONLY. recordAriEvidence() is the ONLY writer; it is called from the ARI
-// send path (full sync + incremental drain) and the inbound acknowledgement
-// path, so Task IDs are never discarded again. loadEvidenceLedger() is the
-// read-only reader the certification console renders. Nothing here triggers a
-// scenario — this module carries evidence, not control.
+// APPEND-ONLY. The only statement in this module is an INSERT: nothing here
+// rewrites or removes a landed row, so the ledger stays a faithful record of
+// what was actually pushed to the channel.
+//
+// ONE WRITER, ONE CALLING MODULE (D78/D79). recordAriEvidence() is the only
+// writer, and beds24-ari-sync.ts is its only caller — once per Full Sync
+// (including the failure path) and once per incremental dirty-range drain.
+// There is NO inbound acknowledgement caller: Beds24 exposes no acknowledgement
+// endpoint and its inbound rows insert pre-acknowledged, so the inbound pipeline
+// records its evidence as revision rows + channel_sync_errors, not here.
+//
+// `taskIds` is a Channex-era field. Beds24 returns no task ids, so every row
+// written today carries an empty array and the proof of delivery is instead the
+// request count, request bytes, returned warnings and the remaining-credits
+// header captured in `context`. The column stays so historical rows remain
+// readable (D91 keeps pre-Beds24 records rather than rewriting them).
+//
+// loadEvidenceLedger() is the read-only, tenant-scoped accessor. It has no
+// caller today — the certification console was removed together with Channex
+// (D91) — so the ledger is currently written by the worker and read out of band.
+//
+// Nothing here triggers a scenario: this module carries evidence, not control.
 // ============================================================
 
 export type EvidenceOutcome = "success" | "partial" | "failed";
@@ -86,8 +103,10 @@ export type EvidenceRow = {
   createdAt: string;
 };
 
-// Read-only ledger view for the certification console. Tenant-scoped, newest
-// first, bounded. SELECT only.
+// Read-only ledger view. Tenant-scoped, newest first, bounded, SELECT only.
+// Kept as the sanctioned read path for the ledger even though no screen renders
+// it today (the certification console went away with Channex, D91) — an ad-hoc
+// query would otherwise skip the tenant filter and the row-count bound.
 export async function loadEvidenceLedger(
   tenantId: string,
   opts?: { limit?: number; scenarioKey?: string },
