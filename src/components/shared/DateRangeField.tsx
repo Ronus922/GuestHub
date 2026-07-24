@@ -178,7 +178,7 @@ export function DateRangeField({
             <button
               type="button"
               aria-label="חודש קודם"
-              className="icon-btn"
+              className="icon-btn dp-nav dp-nav-prev"
               onClick={() => setView(shiftMonth(view, -1))}
             >
               <Icon name="chevron-right" size={20} />
@@ -191,7 +191,7 @@ export function DateRangeField({
             <button
               type="button"
               aria-label="חודש הבא"
-              className="icon-btn"
+              className="icon-btn dp-nav dp-nav-next"
               onClick={() => setView(shiftMonth(view, 1))}
             >
               <Icon name="chevron-left" size={20} />
