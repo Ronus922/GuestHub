@@ -25,11 +25,10 @@ function hasHeaderDoc(src) {
 // canonical / load-bearing modules that MUST explain themselves
 const CRITICAL = [
   "src/lib/channel/config.ts",
-  "src/lib/channel/production-guard.ts",
   "src/lib/channel/circuit-breaker.ts",
   "src/lib/channel/evidence.ts",
-  "src/lib/channel/ari-sync.ts",
-  "src/lib/channel/ari-payloads.ts",
+  "src/lib/channel/beds24-ari-sync.ts",
+  "src/lib/channel/beds24-ari-payloads.ts",
   "src/lib/channel/booking-import.ts",
   "src/lib/rates/service.ts",
   "src/lib/payments/ledger.ts",
@@ -67,10 +66,10 @@ if (!fail) pass("agent-guidance + program-state docs present");
 
 // the Stage-7 canonical docs exist
 for (const doc of ["docs/architecture/TARGET_ARCHITECTURE.md", "docs/security/THREAT_MODEL.md",
-  "docs/channex/CERTIFICATION_SCENARIO_MATRIX.md", "docs/audit/PMS_CAPABILITY_MATRIX.md"]) {
+  "docs/audit/PMS_CAPABILITY_MATRIX.md"]) {
   if (!existsSync(join(root, doc))) flag(`canonical doc missing: ${doc}`);
 }
-if (!fail) pass("canonical architecture/security/channex/capability docs present");
+if (!fail) pass("canonical architecture/security/capability docs present");
 
 if (fail) { console.log(`\ncheck:code-documentation — FAIL (${fail})`); process.exit(1); }
 console.log("check:code-documentation — PASS");

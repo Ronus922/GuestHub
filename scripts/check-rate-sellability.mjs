@@ -5,7 +5,7 @@
 //      read models (effective_sell_state / sellable_unit_inventory) feed the
 //      classifier the numbers that yield each reason, incl. the G4 fixture and
 //      the false-reopen (never one-way) write semantics.
-// Never touches live data; no Channex; no network.
+// Never touches live data; no channel network calls.
 // Usage: node --env-file=.env.test scripts/check-rate-sellability.mjs
 import postgres from "postgres";
 import { execSync } from "node:child_process";

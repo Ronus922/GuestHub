@@ -31,8 +31,6 @@ else pass("no .env* file was ever committed (history clean)");
 // Files that legitimately contain secret-shaped PATTERNS (scanners, docs, seeds).
 const ALLOW = new Set([
   "scripts/check-no-secrets.mjs",
-  "scripts/check-channel-worker.mjs",      // uses an explicit fake local key
-  "scripts/check-channex-credential.mjs",
   "scripts/seed.mjs",                       // seeds throwaway local dev passwords
 ]);
 const ALLOW_PREFIX = ["docs/", "db/roles/"]; // docs describe patterns; roles.sql uses :'vars'
@@ -67,12 +65,12 @@ if (!fail) pass(`no secret material in ${scanned} tracked text files`);
 
 // 4) the encryption-key env vars are only ever READ from process.env, never
 //    assigned a literal in source (defense against a hardcoded fallback key).
-for (const key of ["CHANNEL_SECRETS_KEY", "CARD_VAULT_KEY", "CHANNEX_PRODUCTION_ACTIVATION"]) {
+for (const key of ["CHANNEL_SECRETS_KEY", "CARD_VAULT_KEY"]) {
   const hits = tracked.filter((f) => f.startsWith("src/") && f.endsWith(".ts"))
     .filter((f) => new RegExp(`${key}\\s*=\\s*["']`).test(readFileSyncSafe(join(root, f))));
   if (hits.length) flag(`${key} assigned a literal in: ${hits.join(", ")}`);
 }
-if (!fail) pass("encryption/activation env vars are read from process.env, never hardcoded");
+if (!fail) pass("encryption env vars are read from process.env, never hardcoded");
 
 function readFileSyncSafe(p) { try { return readFileSync(p, "utf8"); } catch { return ""; } }
 

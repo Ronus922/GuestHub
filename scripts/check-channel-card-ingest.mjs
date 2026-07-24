@@ -10,7 +10,7 @@
 //
 // D68: this script used to inherit DATABASE_URL from .env.local and therefore ran
 // against PRODUCTION (:5432). Rolled back or not, a check must never open a
-// transaction on the live database — and once a real Channex connection existed
+// transaction on the live database — and once a real channel connection existed
 // there, its fixture INSERT collided with it and the check failed outright. It
 // now targets guesthub-testdb (:5433) and fails closed on a production marker,
 // exactly like its sibling checks.

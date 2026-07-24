@@ -3,7 +3,7 @@
 // against the SAME authoritative SQL read models it consumes:
 //   guesthub.effective_sell_state() and guesthub.sellable_unit_inventory().
 // Every scenario is built inside a ROLLED-BACK transaction — the live data is
-// never modified. No Channex, no network. (Outbox/dirty-range same-tx atomicity
+// never modified. No channel network calls. (Outbox/dirty-range same-tx atomicity
 // is proven separately by check-rates-sync.mjs.)
 //
 // Usage: node --env-file=.env.local scripts/check-rate-grid.mjs
@@ -212,7 +212,7 @@ try {
   // no earlier test executed it. This section runs the REAL compiled
   // getRateGridState with an active connection, a mapped room and a live dirty
   // range — on an ISOLATED scaffold tenant inside the rolled-back tx, so the
-  // live channex connection row is never read, locked or modified.
+  // live channel connection row is never read, locked or modified.
   {
     const tmp = mkdtempSync(join(tmpdir(), "gh-grid-"));
     const out = join(tmp, "out");
@@ -263,7 +263,7 @@ try {
       }
       const [conn] = await tx`
         INSERT INTO guesthub.channel_connections (tenant_id, provider, environment, state)
-        VALUES (${t2.id}, 'channex', 'staging', 'active') RETURNING id`;
+        VALUES (${t2.id}, 'beds24', 'staging', 'active') RETURNING id`;
       // room 0 mapped; room 1 deliberately unmapped
       await tx`
         INSERT INTO guesthub.channel_room_mappings
@@ -288,7 +288,7 @@ try {
       assert.equal(unmappedCells[0].mappingValid, false, "unmapped room → not mappingValid");
       assert.equal(unmappedCells[0].syncState, "clean", "no dirty range on the other room");
       assert.equal(mappedCells[0].outboundAvailability, mappedCells[0].availability,
-        "outbound availability is the SU's own physical availability (D64: one room = one Channex room type)");
+        "outbound availability is the SU's own physical availability (D64: one room = one channel room type)");
     });
     Module._resolveFilename = orig;
     ok("active connection renders axis C from the ROOM model — the 42703 crash path is executed and gone");

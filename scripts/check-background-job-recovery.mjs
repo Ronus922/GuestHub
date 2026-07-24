@@ -36,8 +36,8 @@ let T,C1,C2;
 try {
   [{id:T}]=await sql`insert into guesthub.tenants(name,slug) values('jobs','jobs-'||substr(md5(random()::text),1,8)) returning id`;
   // distinct (provider, environment) to satisfy the per-tenant unique connection key
-  [{id:C1}]=await sql`insert into guesthub.channel_connections(tenant_id, provider, environment) values(${T},'channex','staging') returning id`;
-  [{id:C2}]=await sql`insert into guesthub.channel_connections(tenant_id, provider, environment) values(${T},'channex','production') returning id`;
+  [{id:C1}]=await sql`insert into guesthub.channel_connections(tenant_id, provider, environment) values(${T},'beds24','staging') returning id`;
+  [{id:C2}]=await sql`insert into guesthub.channel_connections(tenant_id, provider, environment) values(${T},'beds24','production') returning id`;
   const mkJob=(conn,status,lockedAgoMin,lockedBy)=>sql`
     insert into guesthub.channel_sync_jobs(tenant_id,connection_id,job_type,status,locked_at,locked_by,next_attempt_at)
     values(${T},${conn},'sync_ari_range',${status},

@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 const out = mkdtempSync(join(tmpdir(), "calendar-"));
 // commonjs so compiled inter-module imports resolve without extensions under plain node
 execSync(
-  `pnpm exec tsc src/lib/dates.ts src/lib/inventory-rules.ts src/lib/rooms/sort.ts src/lib/channel/ranges.ts src/lib/channel/payloads.ts src/lib/channel/ari-payloads.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
+  `pnpm exec tsc src/lib/dates.ts src/lib/inventory-rules.ts src/lib/rooms/sort.ts src/lib/channel/ranges.ts src/lib/channel/payloads.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
   { stdio: "inherit" },
 );
 const require = createRequire(import.meta.url);
@@ -19,7 +19,6 @@ const dates = require(join(out, "dates.js"));
 const rules = require(join(out, "inventory-rules.js"));
 const ranges = require(join(out, "channel/ranges.js"));
 const payloads = require(join(out, "channel/payloads.js"));
-const ari = require(join(out, "channel/ari-payloads.js"));
 
 // ---- hotel-night date semantics (§E) ----
 assert.equal(dates.nightsBetween("2026-07-04", "2026-07-05"), 1, "July 4→5 is exactly one night");
@@ -106,39 +105,9 @@ assert.ok(ranges.backoffMs(30, () => 1) <= 60 * 60 * 1000, "backoff capped at 1h
 assert.equal(ranges.isPermanentError("validation_error"), true);
 assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry");
 
-// ---- payload builders + batching (§U) ----
-{
-  // D68: availability is keyed by PHYSICAL ROOM (one room ⇄ one Channex Room Type)
-  const mapping = new Map([["room-1", "cx-1"]]);
-  const rows = [
-    { roomId: "room-1", date: "2026-07-01", availability: 1 },
-    { roomId: "room-1", date: "2026-07-02", availability: 1 },
-    { roomId: "room-1", date: "2026-07-03", availability: 0 },
-    { roomId: "room-2", date: "2026-07-01", availability: 1 }, // unmapped
-  ];
-  const built = ari.buildAvailabilityValues(rows, "prop-1", mapping);
-  assert.equal(built.batches.length, 1);
-  assert.equal(built.batches[0].values.length, 2, "consecutive equal days compress into one range");
-  assert.deepEqual(built.batches[0].values[0], {
-    property_id: "prop-1", room_type_id: "cx-1",
-    date_from: "2026-07-01", date_to: "2026-07-02", availability: 1,
-  });
-  assert.deepEqual(built.unmapped, ["room-2"], "unmapped rooms surfaced, not dropped silently");
-
-  // splitting over the provider limit — never truncate
-  const many = Array.from({ length: 2500 }, (_, i) => ({
-    roomId: "room-1",
-    date: dates.addDays("2026-01-01", i),
-    availability: i % 2, // alternating → no compression
-  }));
-  const big = ari.buildAvailabilityValues(many, "p", mapping);
-  const totalValues = big.batches.reduce((n, b) => n + b.values.length, 0);
-  assert.ok(big.batches.every((b) => ari.payloadByteSize(b) <= ari.PAYLOAD_BYTE_LIMIT), "each batch within 10MB");
-  assert.equal(totalValues, 2500, "no values lost when splitting");
-
-  assert.ok(ari.validateAriBatch({ values: [] }), "empty payload rejected");
-  assert.equal(ari.validateAriBatch(built.batches[0]), null, "valid payload passes");
-}
+// (The outbound ARI payload builders are provider-specific — the Beds24
+//  calendar-request builders + batching are exercised by the Beds24 ARI
+//  guards, not by this pure calendar/date guard.)
 
 // ---- redaction (§Z) ----
 {
@@ -157,7 +126,7 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
 // The old ChannelManagerProvider factory (disabled/dry-run) enforced this by
 // construction. It is gone; the guarantee is now structural and asserted here:
 // no module a canonical save imports may reach the network, and the outbox
-// itself performs no HTTP call. Only the PM2 worker talks to Channex.
+// itself performs no HTTP call. Only the PM2 worker talks to the channel provider.
 {
   const SAVE_PATHS = [
     "src/lib/channel/outbox.ts",
@@ -169,20 +138,20 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
     "src/app/(dashboard)/rate-plans/actions.ts",
   ];
   const HTTP = /\bfetch\(|XMLHttpRequest|axios|http\.request|https\.request/;
-  // importing any of these transitively drags in the Channex HTTP client
-  const HTTP_MODULES = channel-http|channex-ari|channex-properties|channex-room-types|channex-rate-plans|ari-sync|channel\/worker/;
+  // importing any of these transitively drags in the channel HTTP client
+  const HTTP_MODULES = /channel-http|beds24-http|beds24-ari-sync|beds24-properties|channel\/worker/;
   for (const f of SAVE_PATHS) {
     const src = readFileSync(f, "utf8");
     assert.ok(!HTTP.test(src), `${f} contains no network code`);
     const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
     for (const spec of imports) {
-      assert.ok(!HTTP_MODULES.test(spec), `${f} must not import the Channex HTTP layer (${spec})`);
+      assert.ok(!HTTP_MODULES.test(spec), `${f} must not import the channel HTTP layer (${spec})`);
     }
   }
 }
 
 // the pure modules contain no network code at all — structural guarantee
-for (const f of ["src/lib/channel/ari-payloads.ts", "src/lib/channel/payloads.ts", "src/lib/channel/ranges.ts"]) {
+for (const f of ["src/lib/channel/payloads.ts", "src/lib/channel/ranges.ts"]) {
   const src = readFileSync(f, "utf8");
   assert.ok(!/fetch\(|XMLHttpRequest|axios|http\.request|https\.request/.test(src), `${f} contains no network code`);
   assert.ok(!/^import /m.test(src), `${f} stays import-free (standalone-compilable)`);
