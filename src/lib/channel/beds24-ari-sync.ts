@@ -22,14 +22,14 @@ import {
 } from "./circuit-breaker";
 import { logChannelError } from "./queue";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
-import type { DrainSummary } from "./ari-sync";
+import type { DrainSummary } from "./ari-projection";
 
 // ============================================================
-// Beds24 ARI synchronisation (D78/D79) — sibling of ari-sync.ts and
-// hospitable-ari-sync.ts. Two entry points, ONE projection (projectBeds24Ari):
+// Beds24 ARI synchronisation (D78/D79). Two entry points, ONE projection
+// (projectBeds24Ari):
 //
-//   runBeds24FullSync          — the operator-triggered baseline. The same 500
-//                                property-local dates as Channex/Hospitable,
+//   runBeds24FullSync          — the operator-triggered baseline. 500
+//                                property-local dates,
 //                                pushed as compressed calendar ranges (price +
 //                                availability + restrictions in ONE endpoint).
 //                                Enables incremental sync only on a clean
@@ -50,13 +50,13 @@ import type { DrainSummary } from "./ari-sync";
 // each burn a token-mint credit.
 //
 // PACING: Beds24 is CREDIT-metered per request (X-FiveMinCreditLimit), not
-// simple requests/min — so this sibling paces harder than Hospitable (500ms
+// simple requests/min — so this sync paces conservatively (500ms
 // between calls) and caps a run at 120 requests. Range compression in the
 // payload builder is the real credit saver; the remaining-credits header is
 // surfaced into the evidence context on every run.
 // ============================================================
 
-/** Same horizon as the Channex full sync (ari-sync.ts::FULL_SYNC_DAYS). */
+/** The full-sync horizon (ARI_HORIZON_DAYS). */
 export const BEDS24_FULL_SYNC_DAYS = ARI_HORIZON_DAYS;
 
 const PACE_MS = 500;
@@ -376,7 +376,7 @@ export async function runBeds24FullSync(
       WHERE id = ${conn.id}`;
   }
 
-  // §13 — durable certification evidence, same ledger and shape as Channex.
+  // §13 — durable certification evidence in the shared ledger shape.
   // Beds24 has no task ids; request counts + bytes + credits carry the proof.
   const fullSyncOutcome: EvidenceOutcome = clean ? "success" : failure ? "failed" : "partial";
   await recordAriEvidence(db, {
@@ -477,7 +477,20 @@ export async function drainBeds24AriDirtyRanges(
   // push. The union window is projected for BOTH halves, and a date is sent
   // when ANY claimed range covers it — kind- and plan-insensitive, because an
   // emitted range is always a complete statement about its dates. ----
-  const from = rows.reduce((a, r) => (r.date_from < a ? r.date_from : a), rows[0].date_from);
+  //
+  // PAST-DATE CLAMP: Beds24 rejects calendar writes for dates before today
+  // (per-value "process inventory rooms calendar" warnings — probed live
+  // 2026-07-24), so the past is unsendable by design. The window starts at
+  // today in the property timezone; a range wholly in the past projects zero
+  // dates, sends nothing and completes as synced — there is nothing a channel
+  // can be told about yesterday. Without the clamp such ranges (e.g. an
+  // availability range from a cancelled past stay) retry forever and pin the
+  // /rates chip on "הסנכרון נכשל".
+  const [tenant] = await db<{ timezone: string | null }[]>`
+    SELECT timezone FROM guesthub.tenants WHERE id = ${conn.tenant_id}`;
+  const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
+  const rawFrom = rows.reduce((a, r) => (r.date_from < a ? r.date_from : a), rows[0].date_from);
+  const from = rawFrom < today ? today : rawFrom;
   const to = rows.reduce((a, r) => (r.date_to > a ? r.date_to : a), rows[0].date_to);
   const roomIds = [...new Set(rows.map((r) => r.room_id))];
 
@@ -614,8 +627,7 @@ async function failRanges(
 }
 
 /** Beds24 connections whose baseline is established — the ONLY ones a drain
- *  may touch. Sibling of ari-sync.ts::loadDrainableConnections (which requires
- *  channex_property_id and therefore never returns these rows). The row also
+ *  may touch. The row also
  *  carries the access-token cache columns beds24-token.ts reads. */
 export async function loadDrainableBeds24Connections(db: Sql = sql): Promise<Beds24AriConnection[]> {
   return db<Beds24AriConnection[]>`

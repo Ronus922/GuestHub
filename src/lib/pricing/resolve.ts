@@ -152,7 +152,7 @@ export function resolveNightPrice(input: {
 // Walks the parent chain root-first, feeding each level's resolved price into
 // the next, exactly as the price precedence in the header describes. The ONE
 // implementation: engine.ts (quotes, reservations, the simulator) and the
-// Channex ARI projection both call this — a channel can never resolve a price
+// channel ARI projection both call this — a channel can never resolve a price
 // by a different rule than a booking does.
 //
 // `chain` is requested-plan-first / root-last (as resolveParentChain returns).

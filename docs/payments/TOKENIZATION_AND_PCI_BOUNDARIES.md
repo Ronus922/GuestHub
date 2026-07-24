@@ -1,6 +1,6 @@
 # Tokenization and PCI Boundaries
 
-**Date:** 2026-07-18 · **Stage:** 3 (model + boundaries; certification declarations Stage 4) · **Sources:** `src/lib/card-vault.ts`, `reservations/card-actions.ts`, migrations 008/010/018
+**Date:** 2026-07-18 · **Stage:** 3 (model + boundaries) · **Sources:** `src/lib/card-vault.ts`, `reservations/card-actions.ts`, migrations 008/010/018/051
 
 ## Hard rules (V2 §18) — enforced
 
@@ -25,7 +25,7 @@ The long-term direction is to prefer **provider tokens** over a reversible PAN w
 
 | Field | Meaning |
 |---|---|
-| `provider` | e.g. cardcom / tranzila / stripe (today the schema CHECK is `'stripe'`-only — to widen) |
+| `provider` | cardcom / tranzila (migration 051 set the schema CHECK to `'cardcom'`/`'tranzila'`; **Stripe intentionally excluded** — D91) |
 | `external_customer_ref` | provider customer id (missing today) |
 | `external_method_ref` | provider payment-method / token id |
 | `brand`, `last4`, `exp_*` | masked metadata (present) |
@@ -33,8 +33,8 @@ The long-term direction is to prefer **provider tokens** over a reversible PAN w
 | `consent`/`mandate` | stored-credential consent (missing today) |
 | timestamps | created/updated |
 
-**Tokens are provider-specific:** a Stripe token cannot be used by Cardcom/Tranzila and vice-versa — the model records `provider` so a token is never sent to the wrong processor. Gaps (customer ref, method status, consent, non-stripe providers, token-charge path) are catalogued in `docs/audit/PAYMENTS_AUDIT.md` (H-5) and targeted as the PSP integration lands; the seam (`gateway.ts`) is already provider-neutral.
+**Tokens are provider-specific:** a Cardcom token cannot be used by Tranzila and vice-versa — the model records `provider` so a token is never sent to the wrong processor. Gaps (customer ref, method status, consent, token-charge path) are catalogued in `docs/audit/PAYMENTS_AUDIT.md` (H-5) and targeted as the PSP integration lands; the seam (`gateway.ts`) is already provider-neutral. The previously scaffolded **Stripe** tokenization path was dormant and was removed in **D91**; Cardcom/Tranzila are the only PSP providers.
 
-## Certification declarations (Stage 4)
+## Card-handling posture
 
-For the Channex form: GuestHub can operate **without** requiring raw card data for certification; card handling is masked-metadata + optional reversible vault; no CVV stored. The exact "credit card details required?" and "PCI certified / PCI service?" answers are finalized in `docs/channex/PMS_CERTIFICATION_REQUIREMENTS.md` §5 (items 14d/14e) at Stage 4.
+GuestHub can operate **without** requiring raw card data: card handling is masked-metadata + optional reversible vault; no CVV is ever stored. This holds for both direct back-office bookings and OTA virtual-card workflows carried in via the Beds24 channel.

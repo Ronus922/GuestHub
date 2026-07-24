@@ -16,10 +16,10 @@ export type ChannelJobType =
   | "sync_restrictions" | "sync_ari_range" | "pull_booking_revisions"
   | "import_booking_revision" | "acknowledge_booking_revision"
   | "reconcile_inventory" | "retry_failed_range"
-  // D64 — physical room → Channex Room Type sync: one parent operation plus one
+  // D64 — physical room → channel room type sync: one parent operation plus one
   // deduplicated durable item per physical room (db/migrations/024).
   | "sync_room_types" | "create_room_type"
-  // D65 — (room × local rate plan) → Channex Rate Plan sync (db/migrations/025).
+  // D65 — (room × local rate plan) → channel rate plan sync (db/migrations/025).
   | "sync_rate_plans" | "create_rate_plan";
 
 export async function enqueueChannelJob(

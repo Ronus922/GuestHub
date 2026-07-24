@@ -12,6 +12,19 @@
 9. **CSS Cleanup** - כשמוחקים/מבטלים אלמנט → תמיד שאל: "למחוק גם את ה-CSS שלו?" אל תשאיר CSS יתום!
 10. **ניהול context (קריטי!)** - אחרי כל 2 משימות חייבים להריץ `/compact`. אם המשתמש מסרב - להזהיר: "השיחה תתקע בקרוב ולא יהיה אפשר לשחזר". לפני סגירה - `/end`. **אסור לחכות ל-3+ משימות בלי compact!**
 
+## Concurrency — עבודה במקביל על אותו ריפו
+
+**לפני `git add <file>` — בדוק אם הקובץ כבר `M` משינוי שאינו שלך. אם כן — staging של hunks בלבד (`git add -p`, או patch/`update-index` ל-index), לעולם לא הקובץ כולו.**
+
+למה: יותר מסוכן פועל על אותו working tree. `git add <file>` מקמט את **כל תוכן הקובץ** — כולל שינויים לא-מקומטים של מישהו אחר. כך קומיט "שלי" בלע עבודת CVV/PSP זרה, וה-PR הפסיק להיבנות לבד (ייבוא שהוגדר רק בקובץ לא-מקומט).
+
+- `git status --porcelain -- <file>` לפני כל staging. ` M` = יש שם עבודה זרה.
+- לעולם לא `git add -A` / `git add .` בריפו משותף.
+- אחרי הקומיט: אמת בנייה נקייה ב-worktree מבודד (`git worktree add … <sha>` + install/typecheck/build) — הבנייה המקומית ירוקה גם כשהיא נשענת על קבצים לא-מקומטים ולכן לא מוכיחה כלום.
+- בספק לגבי בעלות על שינוי — דווח, אל תקמט.
+
+> הבית הקנוני של הסעיף הזה הוא CLAUDE.md (בריפו). העותק ב-AGENTS.md נמחק ע"י רגנרציית `gen-catalog.sh` (התבנית ב-hub `ai2u-vs1` לא כוללת אותו — ראה DECISIONS D90); `check:agents-concurrency` מתריע אם זה קורה שוב.
+
 ## Minimum Padding (חובה!)
 | Element | Minimum |
 |---------|---------|
@@ -46,7 +59,7 @@
 | UI | Tailwind v4 (`@theme inline` ב-`app/styles/`, אין tailwind.config) · lucide-react · framer-motion · sonner |
 | Data | PostgreSQL (schema `guesthub`, 46 מיגרציות ב-`db/migrations/`) דרך porsager `postgres` (`lib/db.ts`) · Supabase Auth self-hosted = **אימות בלבד** |
 | טפסים/State | react-hook-form + Zod · nuqs · @tanstack/react-table |
-| Channels | ספק פעיל אחד בכל רגע (beds24 ברירת מחדל; Channex, Hospitable) · PM2 channel worker |
+| Channels | ספק יחיד: Beds24 (פרודקשן, poll-based inbound + ARI outbound) · PM2 channel worker |
 | Runtime | dev + prod תחת pm2, פורט 3007 · prod נפרד: `/var/www/guesthub-production` (`PROD_DEPLOY_OK=1 npm run deploy:prod`) |
 | בדיקות | ‎90+ סקריפטי `check:*` ב-package.json (כולל `check:design`, `check:status-default`) · `pnpm typecheck && pnpm lint && pnpm build` בסוף כל שלב |
 

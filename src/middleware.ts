@@ -42,12 +42,6 @@ export async function middleware(request: NextRequest) {
   // NO user session. They authenticate via their opaque path token (+ the Twilio
   // signature), so they must bypass the login redirect to reach their handler.
   const isMessagingWebhook = path.startsWith("/api/messaging/webhook/");
-  // The Channex booking webhook is the same shape: an unauthenticated
-  // server-to-server POST carrying an opaque capability token (hash-compared,
-  // rate-limited in the route). Without this bypass every Channex delivery was
-  // 307'd to /login and swallowed as a 200 — the D76/D77 "webhook registered
-  // but zero events ever received" root cause.
-  const isChannelWebhook = path.startsWith("/api/channel/webhook/");
 
   // Redirect while carrying over any refreshed auth cookies staged on `response`
   // (a fresh NextResponse.redirect would otherwise drop a rotated refresh token).
@@ -60,7 +54,7 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook && !isChannelWebhook)
+  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook)
     return redirectTo("/login");
   if (user && isLogin) return redirectTo("/");
 

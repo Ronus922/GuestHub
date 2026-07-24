@@ -16,7 +16,6 @@ const pass = (m) => console.log(`✓ ${m}`);
 
 const importSrc = read("src/lib/channel/booking-import.ts");
 const revisions = read("src/lib/channel/revisions.ts");
-const webhook = read("src/app/api/channel/webhook/[token]/route.ts");
 const migrations = read("db/migrations/005_phase3_channel_foundation.sql");
 
 // 1) duplicate revision → import exactly once (DB UNIQUE + ON CONFLICT)
@@ -31,10 +30,6 @@ if (!/persistBookingRevision|quarantineRevision/.test(importSrc))
   flag("no persist-then-quarantine seam");
 else pass("revision is persisted before quarantine (identity kept — D82)");
 
-// 3) unknown rate plan → quarantine first, then alias reconcile (D78)
-if (!/reconcileInboundRatePlans/.test(importSrc)) flag("no inbound rate-plan alias reconciliation");
-else pass("unknown rate plan quarantines then self-heals via alias adoption (D78)");
-
 // 4) ACK strictly after commit — the DB WHERE clause is the backstop
 if (!/markRevisionAcknowledged/.test(importSrc)) flag("no post-commit ack gate");
 else pass("acknowledgement only after the import transaction commits");
@@ -46,18 +41,10 @@ else pass("a non-imported revision can never be acknowledged (DB gate)");
 if (!/PRESERVED_STATUSES/.test(importSrc)) flag("operator-advanced states not preserved on modification");
 else pass("checked_in/checked_out survive a channel modification");
 
-// 6) ack failure → durably imported + unacknowledged, retried next pull
-if (!/ambiguous|isAmbiguous|retr/i.test(read("src/lib/channel/channex-bookings.ts")))
+// 6) ambiguous ack → never blindly retried; the next feed pull re-converges
+if (!/ambiguous|isAmbiguous|retr/i.test(importSrc))
   flag("ack failure handling not evident");
-else pass("a failed ack leaves the booking imported + unacked for the next pull");
-
-// 7) webhook chaos: duplicate delivery deduped; oversize/ malformed rejected safely
-if (!/ON CONFLICT \(connection_id, dedup_key\) DO NOTHING/.test(webhook))
-  flag("webhook does not dedupe redelivered events");
-else pass("redelivered webhook is deduped (connection_id, dedup_key)");
-if (!/MAX_BODY_BYTES/.test(webhook) || !/invalid json/.test(webhook))
-  flag("webhook does not bound/validate the body");
-else pass("webhook rejects oversize/malformed bodies without crashing");
+else pass("an ambiguous ack is never blindly retried — the next pull re-converges");
 
 // 8) worker pull failure → bounded retry, never an infinite loop
 const queue = read("src/lib/channel/queue.ts");
@@ -69,8 +56,8 @@ if (!/UNIQUE|unique/.test(migrations)) flag("no uniqueness guard in the channel 
 else pass("revision uniqueness enforced at the schema level");
 
 // ---- §24 fault-injection list (Stage 6) — each fault has a handling site ----
-const admin = read("src/lib/channel/admin.ts");
-const ariSync = read("src/lib/channel/ari-sync.ts");
+const admin = read("src/lib/channel/beds24-admin.ts");
+const ariSync = read("src/lib/channel/beds24-ari-sync.ts");
 const worker = read("src/lib/channel/worker.ts");
 const queueSrc = queue;
 
@@ -79,9 +66,9 @@ if (!/alreadyRunning|"duplicate" in enqueued|uq_jobs_idempotency/.test(admin) &&
   flag("§24 two-Full-Sync-clicks: no duplicate-run guard");
 else pass("§24 two Full Sync clicks → deduped (idempotency key, already-running reported)");
 
-// credential rotation during a job → the stored key is re-probed before any ARI
-if (!/runChannexConnectionTest\(/.test(ariSync)) flag("§24 credential rotation: no pre-send auth probe");
-else pass("§24 credential rotation mid-job → auth probed before ARI, fails safe");
+// credential rotation during a job → the access token is re-resolved before any ARI
+if (!/getBeds24AccessToken\(/.test(ariSync)) flag("§24 credential rotation: no pre-send auth resolution");
+else pass("§24 credential rotation mid-job → access token resolved before ARI, fails safe");
 
 // expired lease → a stale in-flight job is reclaimed, not stranded
 if (!/stale|reclaim|locked_at\s*<|lease/i.test(queueSrc + worker)) flag("§24 expired lease: no stale-lease reclaim");
@@ -92,10 +79,6 @@ if (!/catch \(e\)[\s\S]{0,200}failChannelJob/.test(worker)) flag("§24 corrupted
 else pass("§24 corrupted payload → job fails in isolation, tick continues");
 if (!/catch \(e\)[\s\S]{0,160}(heartbeat|lastError)/.test(worker)) flag("§24 DB-unavailable: tick does not degrade gracefully");
 else pass("§24 DB unavailable → tick degrades gracefully (heartbeat records the error)");
-
-// webhook + poll → both converge on the same deduped job (no double import)
-if (!/fallback|missed webhook|watchdog/i.test(worker)) flag("§24 webhook+poll: no reconciling fallback poll");
-else pass("§24 webhook + poll → converge on one deduped pull job");
 
 // certification reset during a run → the evidence ledger is append-only (no reset)
 const evidence = read("src/lib/channel/evidence.ts");

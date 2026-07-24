@@ -1,7 +1,7 @@
 // ============================================================
 // PURE Beds24 calendar payload builders (D78/D79) — no DB, no HTTP, no clock.
 // Only type-only imports (erased at compile time), so this module stays
-// checkable standalone, exactly like ari-payloads.ts / hospitable-ari-payloads.ts.
+// checkable standalone.
 //
 // Contract (Beds24 API v2, probed live 2026-07-19):
 //   POST /inventory/rooms/calendar
@@ -10,18 +10,18 @@
 //                       "numAvail": 0|1, "minStay": int, "maxStay": int,
 //                       "price1": 474.54 }] }]
 //
-//   · ONE endpoint carries price + availability + restrictions together —
-//     like Hospitable, unlike Channex's two. Every range we emit is therefore
+//   · ONE endpoint carries price + availability + restrictions together.
+//     Every range we emit is therefore
 //     a FULL statement about its dates, and the sync layer always projects
 //     BOTH halves.
 //   · `price1` is in MAJOR currency units WITH decimals (474.54 — NOT minor
-//     units; the exact opposite of Hospitable's integer cents). Rounded to 2
+//     units, never integer cents). Rounded to 2
 //     decimals, never more.
 //   · RANGE COMPRESSION: consecutive dates with identical values collapse
 //     into one {from,to} entry (to is INCLUSIVE). Beds24 bills per request by
 //     credits, so fewer entries = fewer bytes = cheaper; a 500-day horizon of
 //     stable prices compresses to a handful of ranges.
-//   · Same fail-closed rule as the reviewed Channex/Hospitable builders: a
+//   · Fail-closed rule: a
 //     blocked cell — no sellable price exists — is published numAvail:0 with
 //     NO price1. Never a zero price, never a guessed price. A MISSING
 //     commercial row blocks too.
@@ -83,8 +83,8 @@ export type BuildBeds24CalendarResult = {
 
 // The plan's base-occupancy price for a date: the LOWEST-occupancy entry of the
 // projected per-person ladder. The projection builds exactly one entry for
-// Beds24, but the extraction stays defensive and identical to the Hospitable
-// builder so both siblings read one convention.
+// Beds24, but the extraction stays defensive so the convention holds even if a
+// ladder appears.
 function baseOccupancyRate(row: CommercialRow): number | null {
   if (row.rates === null || row.rates.length === 0) return null;
   let min = row.rates[0];

@@ -22,7 +22,7 @@ import {
 // ============================================================
 // THE central server-side pricing engine (spec §14). One canonical calculation
 // for the simulator, manual reservations, the future website booking engine and
-// Channex processing. Callable from server actions, API routes and tests —
+// channel processing. Callable from server actions, API routes and tests —
 // never from React state. All loads are BATCHED (spec §28): one query per
 // concern for the whole quote, never per-room-per-night.
 //
@@ -118,7 +118,7 @@ function fingerprintOf(payload: unknown): string {
 
 // THE single public pricing entry point (D51). Every price-determining surface
 // — the Rate Plan simulator, manual reservation create/edit/move, quote
-// previews, the future direct booking engine and Channex processing — calls
+// previews, the future direct booking engine and channel processing — calls
 // THIS function. `calculateQuote` below is the same function under its
 // original name (kept for the existing check suites).
 export async function calculateReservationPrice(
@@ -442,7 +442,7 @@ export async function calculateQuote(
         continue;
       }
 
-      // THE canonical chain resolution — shared verbatim with the Channex ARI
+      // THE canonical chain resolution — shared verbatim with the channel ARI
       // projection (src/lib/channel/ari-projection.ts). An empty chain is the
       // base-ARI layer.
       const { resolution, directParentPrice } = resolveChainNightPrice({

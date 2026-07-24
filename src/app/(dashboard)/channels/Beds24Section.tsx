@@ -17,12 +17,12 @@ import type { Beds24PropertySummary } from "@/lib/channel/beds24-properties";
 import { Beds24InviteCodeForm } from "./Beds24InviteCodeForm";
 
 // Beds24 PRODUCTION connection card (D78) — super_admin only (the page gates on
-// canManageChannels; every action re-checks server-side). Mirror of
-// HospitableSection: no credential is ever sent back here; only the masked
-// refresh-token hint, the cached access-token expiry and sanitized status.
+// canManageChannels; every action re-checks server-side). No credential is
+// ever sent back here; only the masked refresh-token hint, the cached
+// access-token expiry and sanitized status.
 //
-// The invite-code input is NOT permanently mounted (same D70 password-manager
-// defence as Channex/Hospitable) — see ./Beds24InviteCodeForm.
+// The invite-code input is NOT permanently mounted (D70 password-manager
+// defence) — see ./Beds24InviteCodeForm.
 //
 // "בדיקת חיבור" takes NO argument: it always uses the STORED credential
 // server-side (GET /authentication/details + GET /properties — read-only,
@@ -87,7 +87,7 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
   const [pending, startTransition] = useTransition();
   const [testing, setTesting] = useState(false);
 
-  // Same mount discipline as the Channex/Hospitable cards: the invite-code
+  // Mount discipline: the invite-code
   // field exists only after an explicit click; `mountId` forces a brand-new
   // instance per open.
   const [configuring, setConfiguring] = useState(false);
@@ -283,7 +283,7 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
       </div>
 
       <div className="card-bd flex flex-col gap-4">
-        {/* Production notice — like Hospitable, this IS the live account */}
+        {/* Production notice — this IS the live account */}
         <div className="flex items-start gap-2.5 rounded-xl border border-status-warning bg-status-warning-050 p-3">
           <Icon name="warning" size={17} className="mt-0.5 shrink-0 text-status-warning" />
           <p className="t-label leading-relaxed text-status-warning">
@@ -657,8 +657,8 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
             אין כתובת לרשום ואין טוקן להעתיק.
           </p>
 
-          {/* THE Full Sync control — same §12 inline-confirm pattern as the
-              Channex/Hospitable cards: trigger is secondary; confirm is primary. */}
+          {/* THE Full Sync control — §12 inline-confirm pattern:
+              trigger is secondary; confirm is primary. */}
           <div className="flex flex-wrap items-center gap-2">
             {!confirmingSync ? (
               <button

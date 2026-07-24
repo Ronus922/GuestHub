@@ -282,7 +282,7 @@ try {
   assert.deepEqual([...new Set(dirty.map((d) => d.kind))].sort(), ["rates", "restrictions"]);
   ok("saving a rate for the visible room 1329 dirties exactly room 1329 (rates + restrictions)");
 
-  // 10. a new room (lifecycle path) appears automatically, unmapped for Channex
+  // 10. a new room (lifecycle path) appears automatically, unmapped for the channel
   const [newRoom] = await sql`
     INSERT INTO guesthub.rooms (tenant_id, room_number, name, room_type_id, status, is_active, max_occupancy, max_adults)
     VALUES (${tenantId}, '555', 'חדר 555', ${types.studio}, 'available', true, 2, 2) RETURNING id`;
@@ -297,9 +297,9 @@ try {
   const u555 = units.find((u) => u.code === "555");
   assert.ok(u555, "new room appears in the grid with no extra catalog entry");
   assert.equal(u555.roomId, newRoom.id);
-  assert.equal(u555.cells[0].mappingValid, false, "new room is honestly UNMAPPED for Channex until mapped");
+  assert.equal(u555.cells[0].mappingValid, false, "new room is honestly UNMAPPED for the channel until mapped");
   assert.equal(units.length, 14);
-  ok("a new room appears automatically in grid + Group Update, unmapped until a Channex mapping exists");
+  ok("a new room appears automatically in grid + Group Update, unmapped until a channel mapping exists");
 
   // 11. inactive / out-of-order room resolves availability to 0 (still visible)
   await sql`UPDATE guesthub.rooms SET status = 'out_of_order', is_active = false WHERE id = ${newRoom.id}`;

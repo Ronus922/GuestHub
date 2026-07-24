@@ -2,8 +2,8 @@
 // PURE channel payload helpers — no imports, no DB, no HTTP.
 //
 // The room-type-keyed ARI builders that used to live here (buildAvailabilityPayloads,
-// buildRatePayloads, essToChannexInputs, validateAriPayload) were deleted by D68:
-// they pooled several sellable units into one Channex "room type" and published the
+// buildRatePayloads, validateAriPayload and the pooled input mapper) were deleted by D68:
+// they pooled several sellable units into one channel "room type" and published the
 // lexicographically-first unit's price for the whole pool. That model predates D64,
 // which fixed the inventory unit as the individual physical room. The replacements
 // live in ./ari-payloads.ts and are keyed by room and by (room × rate plan).

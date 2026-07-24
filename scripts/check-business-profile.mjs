@@ -1,10 +1,8 @@
-// Runnable checks for the canonical Business Profile logic (D61), same pattern as
-// check-channex-properties.mjs: compile the PURE modules with tsc, import them,
-// assert. Covers identity separation (GuestHub is never a default business/
-// property name), no fabrication, validation, the Google place normalizer (new +
-// legacy shapes, no invented coordinates), and the Channex PUT payload derived
-// from the Business Profile (title = "<property_name> (Staging)", canonical
-// property name unchanged, coordinates from the profile only).
+// Runnable checks for the canonical Business Profile logic (D61): compile the
+// PURE modules with tsc, import them, assert. Covers identity separation
+// (GuestHub is never a default business/property name), no fabrication,
+// validation, and the Google place normalizer (new + legacy shapes, no
+// invented coordinates).
 // Usage: node scripts/check-business-profile.mjs
 import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
@@ -94,19 +92,6 @@ assert.ok(picker.includes("saveBusinessProfileAction({ postalCode:"), "postal co
 assert.ok(/streetNumber[\s\S]{0,400}PostalCodeField[\s\S]{0,400}label="עיר"/.test(picker), "postal field sits after street/number and before city/country");
 assert.ok(!/type="number"|inputMode="numeric"/.test(picker.slice(picker.indexOf("function PostalCodeField"))), "postal input is text, not numeric-only");
 
-// Channex consumes zip_code from the canonical profile ONLY
-assert.equal(p.buildChannexUpdatePayload({ ...full, postalCode: null }).property.zip_code, undefined, "absent postal code is never fabricated");
-assert.equal(p.buildChannexUpdatePayload({ ...full, postalCode: "SW1A 1AA" }).property.zip_code, "SW1A 1AA", "Channex zip_code comes from the Business Profile");
-assert.deepEqual(
-  p.diffChannexUpdate({ zip_code: "1111111" }, { zip_code: "3508107" }),
-  [{ key: "zip_code", from: "1111111", to: "3508107" }],
-  "the Channex update preview surfaces a postal-code change before PUT",
-);
-assert.deepEqual(p.diffChannexUpdate({ zip_code: "3508107" }, { zip_code: "3508107" }), [], "an unchanged postal code is not reported as a change");
-const chanSection = readFileSync("src/app/(dashboard)/channels/ChannexPropertySection.tsx", "utf8");
-assert.ok(chanSection.includes("preview.proposedZipCode"), "the PUT confirmation modal shows the proposed postal code");
-assert.ok(!/postal|zip/i.test(chanSection.replace(/preview\.(current|proposed)ZipCode/g, "").replace(/מיקוד (נוכחי|חדש)/g, "")), "no Channex-only postal-code input exists on /channels");
-
 // location validation
 assert.equal(p.validateLocationInput({ source: "google_place", latitude: null, longitude: null }).ok, false, "no coords → error");
 assert.equal(p.validateLocationInput({ source: "google_place", latitude: 91, longitude: 0 }).ok, false, "lat out of range");
@@ -167,30 +152,6 @@ assert.ok(g.googleMapsLink({ placeId: "X", latitude: 1, longitude: 2 }).includes
 assert.equal(g.googleMapsLink({}), null, "no coords/place → no link");
 
 // ============================================================
-// Channex PUT payload — derived from the Business Profile (§13)
-// ============================================================
-assert.equal(p.channexStagingTitle("מגדל הים"), "מגדל הים (Staging)", "external title = name + (Staging)");
-assert.equal(p.buildChannexUpdatePayload(empty), null, "no property name → no payload (never fabricated)");
-
-const put = p.buildChannexUpdatePayload(full).property;
-assert.equal(put.title, "נכס (Staging)", "PUT title from canonical property name");
-assert.equal(full.propertyName, "נכס", "canonical property name unchanged (no suffix stored)");
-assert.equal(put.currency, "ILS", "canonical currency");
-assert.equal(put.country, "IL", "countryCode → country (ISO-2)");
-assert.equal(put.city, "תל אביב");
-assert.equal(put.address, "רוטשילד 1, תל אביב");
-assert.equal(put.zip_code, "6688101");
-assert.equal(put.latitude, "32.08", "latitude serialized as string");
-assert.equal(put.email, "a@b.co");
-assert.ok(!("website" in put), "absent optional field omitted");
-
-// diff for the confirmation modal
-const changes = p.diffChannexUpdate({ title: "ישן (Staging)", city: "תל אביב" }, put);
-const titleChange = changes.find((c) => c.key === "title");
-assert.ok(titleChange && titleChange.to === "נכס (Staging)", "title change surfaced");
-assert.ok(!changes.find((c) => c.key === "city"), "unchanged city not listed");
-
-// ============================================================
 // sidebar account-card identity line (formatPropertyIdentity)
 // ============================================================
 const identity = (stored) => p.formatPropertyIdentity(p.resolveBusinessProfile(tenant, stored));
@@ -207,14 +168,13 @@ assert.equal(identity({ businessName: "בית מלון הים" }), "בית מל�
 assert.equal(identity({ propertyName: "  מגדל הים  ", city: "  חיפה  " }), "מגדל הים - חיפה", "values trimmed");
 assert.equal(identity({ propertyName: "   ", city: "חיפה" }), p.IDENTITY_NOT_SET, "whitespace-only name + city → not-set, never a bare city");
 
-// never the tenant/app/Channex identity
+// never the tenant/app identity
 assert.equal(identity(null), p.IDENTITY_NOT_SET, "empty profile → neutral Hebrew fallback");
 assert.equal(p.IDENTITY_NOT_SET, "פרופיל העסק לא הוגדר");
 assert.notEqual(identity(null), tenant.fallbackName, "tenants.name is NOT the public identity");
 assert.notEqual(identity(null), "GuestHub", "app name is never the property fallback");
 assert.ok(!identity(CANON).includes("GuestHub"), "app name never appended");
-assert.ok(!identity(CANON).includes("(Staging)"), "Channex external title/suffix never displayed");
-assert.notEqual(identity(CANON), p.channexStagingTitle(CANON.propertyName), "identity is not the Channex title");
+assert.ok(!identity(CANON).includes("(Staging)"), "external title/suffix never displayed");
 
 // tenant isolation: the formatter is pure — same tenant object, different stored
 // profiles never bleed. The accessor is tenant-scoped by argument (asserted below).
@@ -262,7 +222,7 @@ assert.equal(fpi(null, null, "חיפה"), p.IDENTITY_NOT_SET, "bare city never r
 assert.equal(fpi("", "   ", "חיפה"), p.IDENTITY_NOT_SET, "blank strings behave as empty");
 assert.ok(!fpi("מגדל הים", null, "חיפה").includes(" · "), "no middle-dot separator");
 assert.ok(!fpi(null, null, null).includes("GuestHub"), "no application-name fallback");
-assert.ok(!fpi("מגדל הים", null, "חיפה").includes("(Staging)"), "no Channex staging suffix");
+assert.ok(!fpi("מגדל הים", null, "חיפה").includes("(Staging)"), "no external staging suffix");
 
 // the settings page header renders THIS formatter — never actor.tenantName
 const settingsPage = readFileSync("src/app/(dashboard)/settings/page.tsx", "utf8");

@@ -1,6 +1,6 @@
 // ============================================================
-// Channex HTTP core — the ONE request path every Channex client uses
-// (channex-properties.ts, channex-room-types.ts). Extracted so the no-leak
+// Channel-provider HTTP core — the ONE request path every channel API client
+// uses (beds24-http.ts, beds24-token.ts et al). Extracted so the no-leak
 // guarantees below exist once, not once per client. Deliberately OUTSIDE the
 // pure provider boundary (src/lib/channel/provider.ts stays fetch-free); these
 // helpers are invoked ONLY from super_admin server actions, which decrypt the
@@ -14,7 +14,7 @@
 //  • The upstream body/headers/stack is parsed defensively and never echoed back.
 // ============================================================
 
-export type ChannexApiErrorCategory =
+export type ChannelApiErrorCategory =
   | "unauthorized" // 401
   | "forbidden" // 403
   | "not_found" // 404
@@ -26,9 +26,9 @@ export type ChannexApiErrorCategory =
   | "network_error"
   | "bad_response";
 
-export type ChannexApiFailure = {
+export type ChannelApiFailure = {
   ok: false;
-  category: ChannexApiErrorCategory;
+  category: ChannelApiErrorCategory;
   message: string;
   httpStatus?: number;
   /** §16 — cooldown the provider asked for (429 Retry-After), in ms, when present */
@@ -48,25 +48,25 @@ export function parseRetryAfterMs(headerValue: string | null, now: number = Date
 
 export const DEFAULT_TIMEOUT_MS = 12_000;
 
-const CATEGORY_MESSAGE: Record<ChannexApiErrorCategory, string> = {
+const CATEGORY_MESSAGE: Record<ChannelApiErrorCategory, string> = {
   unauthorized: "מפתח ה-API נדחה (401) — בדוק שהמפתח נכון ושייך לסביבת Staging",
   forbidden: "הגישה נאסרה (403) — למפתח אין הרשאה לפעולה זו",
   not_found: "הפריט לא נמצא (404) — ייתכן שאינו נגיש למפתח זה",
   conflict: "התקבלה התנגשות (409) — ייתכן שהפריט כבר קיים",
   validation: "הנתונים נדחו (422) — יש להשלים או לתקן שדות חובה",
   rate_limited: "יותר מדי בקשות (429) — נסה שוב מאוחר יותר",
-  server_error: "שגיאת שרת אצל Channex — נסה שוב מאוחר יותר",
+  server_error: "שגיאת שרת אצל ספק הערוצים — נסה שוב מאוחר יותר",
   timeout: "הבקשה חרגה מהזמן המוקצב",
-  network_error: "שגיאת רשת בחיבור ל-Channex",
-  bad_response: "התקבלה תשובה בלתי צפויה מ-Channex",
+  network_error: "שגיאת רשת בחיבור לספק הערוצים",
+  bad_response: "התקבלה תשובה בלתי צפויה מספק הערוצים",
 };
 
-export function fail(category: ChannexApiErrorCategory, httpStatus?: number): ChannexApiFailure {
+export function fail(category: ChannelApiErrorCategory, httpStatus?: number): ChannelApiFailure {
   return { ok: false, category, message: CATEGORY_MESSAGE[category], httpStatus };
 }
 
 // Map a non-2xx status (or an unexpected 2xx) to a safe failure category.
-export function mapErrorStatus(status: number): ChannexApiErrorCategory {
+export function mapErrorStatus(status: number): ChannelApiErrorCategory {
   if (status === 401) return "unauthorized";
   if (status === 403) return "forbidden";
   if (status === 404) return "not_found";
@@ -80,7 +80,7 @@ export function mapErrorStatus(status: number): ChannexApiErrorCategory {
 // An AMBIGUOUS failure leaves the external state unknown: the request may or may
 // not have been applied upstream. Such a write must never be blindly re-issued —
 // the caller must re-read the external collection and reconcile explicitly.
-export function isAmbiguous(category: ChannexApiErrorCategory): boolean {
+export function isAmbiguous(category: ChannelApiErrorCategory): boolean {
   return (
     category === "timeout" ||
     category === "network_error" ||
@@ -108,16 +108,16 @@ async function safeJson(res: Response): Promise<unknown> {
   }
 }
 
-export type ChannexReqOpts = {
+export type ChannelReqOpts = {
   apiKey: string;
-  baseUrl: string; // e.g. https://staging.channex.io/api/v1
+  baseUrl: string; // the provider API base URL
   timeoutMs?: number;
   fetchImpl?: typeof fetch; // injectable for tests; defaults to global fetch
 };
 
-export async function channexRequest(
-  opts: ChannexReqOpts & { method: string; path: string; body?: unknown },
-): Promise<{ status: number; body: unknown; retryAfterMs?: number } | ChannexApiFailure> {
+export async function channelRequest(
+  opts: ChannelReqOpts & { method: string; path: string; body?: unknown },
+): Promise<{ status: number; body: unknown; retryAfterMs?: number } | ChannelApiFailure> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);

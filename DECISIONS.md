@@ -822,3 +822,35 @@ The D52/D87 guardians (`check-cards.mjs`, `check-channel-card-ingest.mjs`) were 
 **החלטת בעלים (2026-07-20, דיוק 2026-07-21).** סטטוס **העבודה** `approved` ("הזמנה אושרה") — ורק הוא — מעיד על תשלום מלא: **טבלת ההזמנות** מציגה הזמנה כזו כ"שולם מלא" עם יתרה 0, בלי קשר ל-ledger. כל עוד ההזמנה לא הועברה ל"הזמנה אושרה" (ישלם בהגעה / יתרה בהגעה / ממתין לאישור וכו') היא מוצגת לפי מצב התשלום האמיתי מה-ledger. הכלל אינו נגזר מסטטוס מחזור החיים (`confirmed`) — ניסיון ראשון שנגזר ממנו תוקן. המימוש: `displayPaymentState()` ב-`src/lib/inventory-rules.ts` (מקור יחיד), בשימוש ב-read model של `/reservations` (שורות, טאבי לא-שולם/חלקי, ופילטר התשלום — כולם מאותו כלל, כך שטאב לעולם לא סותר את השורות שהוא פותח).
 
 **מה לא השתנה:** ה-ledger (`guesthub.payments`, `paid_amount`, `balance`, גבייה, PDF, פאנל ההזמנה) נשאר אמת חשבונאית — שום רשומת תשלום לא מפוברקת. "שולם ביתר" (זיכוי לאורח) לעולם לא מוסתר (D52 §7).
+
+---
+
+## D90 — כלל ה-Concurrency שורד רגנרציית קטלוג: CLAUDE.md הוא הבית הקנוני
+
+**הבעיה.** סעיף "Concurrency — עבודה במקביל על אותו ריפו" (נוסף ידנית ב-`12ed557` אחרי שקומיט בלע עבודת CVV/PSP לא-מקומטת של סוכן אחר) נמחק בשקט מ-AGENTS.md: רגנרציית הקטלוג (`gen-catalog.sh` דרך `/master`) דורסת את הקובץ **כולו** מתבנית — אין סמני BEGIN/END — והתבנית לא כוללת את הסעיף. המחולל והתבניות חיים בקיט `~/DevOPS/` על ה-hub `ai2u-vs1` (rsync ל-~44 שרתים, cron 07:00+19:00) ואינם נגישים מהשרת הזה, כך שכל תיקון מקומי ב-AGENTS.md הוא זמני מיסודו.
+
+**ההחלטה (הגנה בשכבות).**
+1. **CLAUDE.md = הבית הקנוני של הכלל** — מתוחזק ידנית/ב-`/init` בתוך הריפו ואינו נדרס ע"י מחולל הקטלוג. הסעיף הוכנס אחרי כללי הברזל, אחד-לאחד מ-`12ed557`.
+2. **AGENTS.md שוחזר** (מעל הקטלוג המרוגנר, 97 skills / 50 agents) — זה מה ש-Codex/OMX קוראים; מחיקה עתידית צפויה ומכוסה ע"י השומר.
+3. **שומר `check:agents-concurrency`** (package.json) — grep שנכשל ברעש אם הסעיף חסר מ-AGENTS.md או מ-CLAUDE.md, עם הוראת שחזור.
+
+**⚠️ Action item פתוח (hub בלבד):** להוסיף את הסעיף לתבנית ה-AGENTS.md בקיט `~/DevOPS/` על `ai2u-vs1` (`git commit && git push && kit-push`) כדי שכל רגנרציה בכל הצי תכלול אותו. עד אז — כל `/master` מקומי ימחק את העותק ב-AGENTS.md והשומר יתריע.
+
+---
+
+## D91 — ערוץ הפצה יחיד: Beds24. הסרת Channex ו-Stripe במלואם
+
+**החלטת בעלים (2026-07-24).** Beds24 הוא מנהל הערוצים היחיד — חי בפרודקשן, קולט הזמנות מ-Booking.com ב-polling (job `pull_booking_revisions`) ושולח ARI יוצא (`sync_ari_range`/`full_sync`). Channex ו-Hospitable הוסרו לחלוטין: קוד, UI, סקריפטים, ותלויות.
+
+**מה נעשה (בענף `chore/remove-channex-stripe`, worktree מבודד, אפס נגיעה בפרודקשן הרץ):**
+1. **השבתה קודם כול (שלב A):** שני ה-UPDATE-ים הממוקדים העבירו את חיבורי `channex` (staging) ו-`hospitable` (production) ל-`state='paused'`, `outbound_sync_enabled=false`. אומת: 15 דקות ללא ג'וב חדש שלהם, Beds24 ממשיך להצליח.
+2. **`channex-http.ts → channel-http.ts`** — שכבת ה-HTTP הגנרית שכל מודולי Beds24 מייבאים ממנה. שינוי-שם בלבד (קובץ + סימבולים), לפני כל מחיקה, כדי שהנתיב החי לעולם לא יישאר בלי תלות.
+3. **worker Beds24-בלבד:** `booking-import.ts` צומצם לליבת הייבוא המשותפת (RoomResolver חובה); `booking-normalize` נוטרל (`externalRoomId`); `DrainSummary` עבר ל-`ari-projection.ts`; מתאמי Channex+Hospitable נמחקו; ל-worker נותרה דיספאץ' של Beds24 בלבד, וכל ספק אחר עושה dead-letter.
+4. **UI:** `/channels` מציג את קונסולת Beds24 בלבד + כרטיס שינויי-ה-OTA (ניטרלי) + בריאות התור. כל סקשן Channex/Hospitable, בורר-הספק, ו-route הווב-הוק (`/api/channel/webhook`) + ה-bypass ב-middleware נמחקו (Beds24 הוא poll-only).
+5. **Stripe:** `payments-admin.ts` (זרימת "Stripe Tokenization" של Channex, D77 §E) נמחק — היה מת (אפס מייבאים; migration 051 כבר דוחה `provider='stripe'`). **הטווח הסגור (Cardcom/Tranzila, card-vault, cvv_encrypted) לא נגע.**
+6. **דיווח OTA בביטול הזמנה:** `reporting-admin`/`reporting-rules` (כפתורי דיווח כרטיס-לא-תקין/no-show ל-Booking.com דרך Channex API) נמחקו — לא היה להם backend עובד ל-Beds24. `CancelReservationDialog` שומר ביטול מקומי + ההודעה הכנה שביטול OTA מתבצע ב-Booking.com וחוזר כרוויזיה מבוטלת.
+7. **סקריפטים:** 18 גרדיאני `check-channex-*`/אינטגרציית-Channex נמחקו; 17 גרדיאנים גנריים עודכנו ל-Beds24.
+
+**מה נשאר במכוון (לא ניתן להסרה ללא מיגרציה — אסורה בטווח):** שמות עמודות ה-DB ההיסטוריים `channel_room_mappings.channex_property_id`/`channex_room_type_id` ו-`channel_room_rate_mappings.channex_rate_plan_id` (migration 024/025). ה-/rates grid עדיין קורא מ-`channel_room_mappings` דרך `grid-state.ts`. שינוי-שם ידרוש מיגרציה נפרדת. גם דוחות היסטוריים (audit/program/certification) שמתעדים מצב-עבר עם Channex נשמרים כרשומה היסטורית, כמו מיגרציות.
+
+**מה לא השתנה:** סכימת ה-DB (אפס מיגרציות), טבלאות הערוצים, `CHANNEL_SECRETS_KEY`, וכל נתיב ה-Beds24 החי — כל שינוי בו היה שינוי-שם-יבוא בלבד.

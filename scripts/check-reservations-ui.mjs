@@ -106,7 +106,7 @@ assert.ok(!/ALTER TABLE|CREATE TABLE|ADD COLUMN/i.test(data),
 const importer = "src/lib/channel/booking-import.ts";
 if (existsSync(importer)) {
   assert.ok(!read(importer).includes("visible-number"),
-    "Channex ingestion must not know about the presentation rule");
+    "channel ingestion must not know about the presentation rule");
 }
 ok("no schema change; ingestion untouched by the presentation rule");
 

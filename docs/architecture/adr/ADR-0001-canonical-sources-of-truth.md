@@ -3,7 +3,7 @@
 - **Status:** Accepted (Stage 1) — approved by Agent A (lead architect)
 - **Date:** 2026-07-18
 - **Deciders:** Agents A, B, E, F, G, H, D (reviewed)
-- **Context inputs:** `docs/audit/DOMAIN_INVENTORY.md`, `PRICING_AUDIT.md`, `PAYMENTS_AUDIT.md`, `RESERVATIONS_INVENTORY_AUDIT.md`, `CHANNEX_CERTIFICATION_MAPPING.md`
+- **Context inputs:** `docs/audit/DOMAIN_INVENTORY.md`, `PRICING_AUDIT.md`, `PAYMENTS_AUDIT.md`, `RESERVATIONS_INVENTORY_AUDIT.md`
 
 ## Context
 
@@ -17,7 +17,7 @@ Declare the canonical source for every core concept. All later stages implement 
 |---|---|---|
 | Physical room identity | `rooms` table (D74, migration 028) | `sellable_units` and `room_types` are projections; mirror trigger keeps them consistent. `sellable_units_backup_028` deleted (Stage 3). |
 | Sellable inventory / availability | `guesthub.check_room_availability()` + `src/lib/inventory.ts` (one conflict function) | Calendar/rate-grid `price ?? base_price` re-implementations (M10) become one shared projection. `channel_inventory_holds` either wired or dropped (M1). |
-| Price / quote | `calculateReservationPrice` / `calculateQuote` (`src/lib/pricing/engine.ts`) | Channex ARI projection already calls `resolveChainNightPrice` verbatim — keep. Reschedule inline total (M7) converted to engine call. |
+| Price / quote | `calculateReservationPrice` / `calculateQuote` (`src/lib/pricing/engine.ts`) | Beds24 ARI projection already calls `resolveChainNightPrice` verbatim — keep. Reschedule inline total (M7) converted to engine call. |
 | Restrictions (min/max stay, CTA/CTD, stop-sell) | one shared validator `stayRestrictionViolationStructured` + `channel_dirty_ranges` projection | none competing; enforce on direct operator bookings too (GAP). |
 | Reservation state | `reservations` + `reservation_rooms`; status drives inventory via `inventory_blocking_statuses()` | add CHECK constraint (H2); `paid_amount/balance` are derived caches only (never authoritative). |
 | Payment state / balance | `guesthub.payments` ledger; balance derived by `recomputePaymentAggregates` (`src/lib/payments/ledger.ts`) | reschedule inline balance formula (M7) removed. |

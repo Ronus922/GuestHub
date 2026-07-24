@@ -1,13 +1,13 @@
 // ============================================================
 // Beds24 HTTP core — the ONE request path every Beds24 client uses
-// (beds24-properties.ts, beds24-admin.ts). Mirror of hospitable-http.ts (D77 →
-// D78): same safety invariants, same error-category taxonomy, different auth
+// (beds24-properties.ts, beds24-admin.ts) (D77 → D78). Standard safety
+// invariants and error-category taxonomy, with the Beds24 auth
 // scheme — Beds24 API v2 authenticates with a `token` header (NOT Bearer), and
 // the two /authentication endpoints use dedicated headers instead:
 //   • GET /authentication/setup  — header `code: <inviteCode>`  (one-time)
 //   • GET /authentication/token  — header `refreshToken: <refreshToken>`
 //
-// Safety invariants (identical to channex-http.ts / hospitable-http.ts):
+// Safety invariants:
 //  • Single attempt per call, no retries. Bounded by an AbortController timeout.
 //    A write is NEVER blindly retried — an ambiguous result stays ambiguous.
 //  • The token/inviteCode/refreshToken is NEVER placed in a returned message or
@@ -21,12 +21,12 @@ import {
   parseRetryAfterMs,
   DEFAULT_TIMEOUT_MS,
   mapErrorStatus,
-  type ChannexApiErrorCategory,
-} from "./channex-http";
+  type ChannelApiErrorCategory,
+} from "./channel-http";
 
 // Same category union — the taxonomy is provider-neutral (D77 keeps one
 // vocabulary so circuit-breaker / evidence / admin code reads one shape).
-export type Beds24ApiErrorCategory = ChannexApiErrorCategory;
+export type Beds24ApiErrorCategory = ChannelApiErrorCategory;
 
 export type Beds24ApiFailure = {
   ok: false;

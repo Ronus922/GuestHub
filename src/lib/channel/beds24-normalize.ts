@@ -1,6 +1,6 @@
 // ============================================================
 // PURE normalization of a Beds24 booking payload (D78/D79). No imports beyond
-// types, no DB, no HTTP — mirrors hospitable-normalize.ts so the import
+// types, no DB, no HTTP, so the import
 // pipeline and check scripts exercise the exact same parse.
 //
 // Consumes GET /bookings[?includeGuests=true&includeInvoiceItems=true] items
@@ -11,15 +11,15 @@
 //    feed — the caller (beds24-booking-import.ts) overrides it with the
 //    synthetic "{id}:{modifiedTime}" id of the persisted revision row before
 //    handing the value to importNormalizedRevision.
-//  • ONE NormalizedRoom whose `channexRoomTypeId` slot carries the Beds24
+//  • ONE NormalizedRoom whose `externalRoomId` slot carries the Beds24
 //    ROOM ID — in-memory only, threaded to the injected room resolver
 //    (channel_beds24_room_mappings); it is NEVER persisted to
-//    channel_room_mappings, which stays Channex-owned (D64).
+//    channel_room_mappings, which stays reserved for the legacy pooled model (D64).
 //
 // Defensive by doctrine: statuses are verified at runtime — an unknown or
 // non-importable status (request/inquiry/black) and an unmapped room return
-// { ok:false } (the quarantine shape, exactly how a Hospitable normalize
-// failure parks a revision) and NEVER throw. Money: Beds24 speaks MAJOR
+// { ok:false } (the quarantine shape that parks a revision) and NEVER throw.
+// Money: Beds24 speaks MAJOR
 // currency units (474.54-style decimals) — NO /100 division. Integer-or-two-
 // decimal values are accepted verbatim; anything else is null, never guessed.
 // ============================================================
@@ -104,8 +104,8 @@ function guestField(
 }
 
 // Best-effort identity of a booking whose FULL normalization may fail —
-// enough to persist the revision row visibly (mirror of
-// hospitableReservationIdentity) and to key the synthetic revision id.
+// enough to persist the revision row visibly and to key the synthetic
+// revision id.
 export function beds24BookingIdentity(payload: unknown): {
   bookingId: string | null;
   roomId: string | null;
@@ -168,7 +168,7 @@ export function normalizeBeds24Booking(
   else return { ok: false, error: `סטטוס הזמנה לא מוכר ב-Beds24 (${rawStatus ?? "חסר"})` };
 
   // unmapped room → the quarantine shape, with the Beds24 room id surfaced so
-  // the caller can log its ownership guard (the Beds24 analogue of the Channex
+  // the caller can log its ownership guard (the Beds24 analogue of a channel
   // wrong-property rejection)
   if (!mappingsByRoomId.has(roomId)) {
     return {
@@ -206,8 +206,8 @@ export function normalizeBeds24Booking(
   const room: NormalizedRoom = {
     // the Beds24 ROOM ID rides the room-type slot IN MEMORY ONLY — consumed by
     // the injected resolver, never written to channel_room_mappings
-    channexRoomTypeId: roomId,
-    channexRatePlanId: null, // Beds24 bookings carry no rate-plan axis (D78)
+    externalRoomId: roomId,
+    // Beds24 bookings carry no rate-plan axis (D78) — pricing is the designated plan on the mapping
     checkinDate: arrival,
     checkoutDate: departure,
     adults,

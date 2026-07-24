@@ -9,7 +9,7 @@ import { enqueueChannelJob } from "./queue";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { beds24Request, beds24AuthRequest, beds24Fail, mapErrorStatus } from "./beds24-http";
 import type { Beds24ApiErrorCategory, Beds24ApiFailure } from "./beds24-http";
-import { asObj, asStr, asInt } from "./channex-http";
+import { asObj, asStr, asInt } from "./channel-http";
 import {
   listBeds24Properties,
   getBeds24Property,
@@ -19,8 +19,7 @@ import {
 
 // ============================================================
 // Beds24 server actions (D78) — super_admin ONLY, enforced server-side on
-// every action (UI hiding is not security). Mirror of hospitable-admin.ts,
-// with the Beds24 specifics:
+// every action (UI hiding is not security), with the Beds24 specifics:
 //  • Beds24 exposes ONE production API — every row here is provider='beds24',
 //    environment='production'. No staging exists.
 //  • Auth is invite-code based: the operator generates an INVITE CODE in the
@@ -273,7 +272,7 @@ export async function getBeds24ConnectionAction(): Promise<Result<Beds24Connecti
         LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
         WHERE r.tenant_id = ${actor.tenantId}
         ORDER BY r.room_number`,
-      // Same eligibility as the Channex/Hospitable rate-plan flow: TENANT-scoped
+      // Same eligibility as the channel rate-plan flow: TENANT-scoped
       // plans (sellable_unit_id IS NULL), active, not archived, channel-visible.
       sql<Beds24RatePlanOption[]>`
         SELECT id, name FROM guesthub.pricing_plans
@@ -747,8 +746,7 @@ export async function unmapBeds24RoomAction(input: { roomId: string }): Promise<
 const NOT_ACTIVE_PROVIDER_ERROR = "Beds24 אינו הספק הפעיל — בחר אותו בראש המסך תחילה";
 
 // ---- 7) enable inbound booking import ----
-// Mirrors enableHospitableInboundAction with the ONE Beds24 difference:
-// inbound is POLL-ONLY — the PM2 worker pulls bookings periodically (~5 min);
+// Beds24 inbound is POLL-ONLY — the PM2 worker pulls bookings periodically (~5 min);
 // there is NO webhook, so no token is minted, nothing is returned once, and
 // disable→enable is not a rotation path. D79: a dormant backup provider must
 // never be armed — enabling requires is_active_provider.
@@ -760,7 +758,7 @@ export async function enableBeds24InboundAction(): Promise<Result> {
     // D79 — a dormant backup provider must not be armed by mistake
     if (!conn.is_active_provider)
       return { success: false, error: NOT_ACTIVE_PROVIDER_ERROR };
-    // Read-first rollout (same doctrine as Hospitable): inbound (import-only,
+    // Read-first rollout: inbound (import-only,
     // no OTA writes) is allowed from state='ready' — a validated connection —
     // NOT only 'active' ('active' is reached via a successful Full Sync).
     if (conn.state !== "ready" && conn.state !== "active")
@@ -796,8 +794,8 @@ export async function enableBeds24InboundAction(): Promise<Result> {
 // ---- 8) disable inbound booking import ----
 // Poll-only inbound: flipping the flag is the whole story — the worker's
 // loader filters on inbound_sync_enabled, so the next poll cycle skips this
-// connection. There is no webhook hash to clear (deliberate difference from
-// the Hospitable disable). Nothing external is touched.
+// connection. There is no webhook hash to clear (Beds24 inbound is poll-only).
+// Nothing external is touched.
 export async function disableBeds24InboundAction(): Promise<Result> {
   try {
     const actor = await requireChannelAdmin();
@@ -824,7 +822,7 @@ export async function disableBeds24InboundAction(): Promise<Result> {
 }
 
 // ---- 9) THE Beds24 Full Sync trigger ----
-// Mirrors runHospitableFullSyncAction: enqueues a durable `full_sync` job and
+// Enqueues a durable `full_sync` job and
 // returns immediately — the PM2 channel worker (provider-branched) runs
 // runBeds24FullSync (beds24-ari-sync.ts) out of band, and a clean run is what
 // flips the connection to state='active' + outbound_sync_enabled=true (the

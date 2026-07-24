@@ -9,7 +9,7 @@ export type { SellReason, RoomAdminState } from "@/lib/rates/rules";
 export type SyncState = "not_connected" | "clean" | "pending" | "processing" | "failed";
 
 // The CALCULATED outbound restriction payload for a cell's mapped rate plan — the
-// exact commercial values that WOULD be sent to Channex (nothing is sent in this
+// exact commercial values that WOULD be sent to the channel (nothing is sent in this
 // phase). Availability is projected separately (outboundAvailability), at the
 // room-type level, from PHYSICAL inventory only.
 export type OutboundRestrictions = {
@@ -58,7 +58,7 @@ export type RateCellState = {
   // Every applicable reason (primary first), not just the dominant one:
   reasonCodes: SellReason[];
   // Channel projection (D64: the outbound unit is the physical room):
-  mappingValid: boolean; // every member room of the SU has a valid Channex mapping
+  mappingValid: boolean; // every member room of the SU has a valid channel mapping
   syncState: SyncState; // "not_connected" without an active connection
   outboundAvailability: number; // the SU's physical availability that WOULD be sent
   outboundRestrictions: OutboundRestrictions; // rate-plan-level restrictions that WOULD be sent (commercial)

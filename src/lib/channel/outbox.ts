@@ -12,8 +12,8 @@ import type { DateOnly } from "@/lib/dates";
 // together. It NEVER performs an HTTP call and never blocks the operator: the
 // PM2 channel worker picks the ranges up out of band.
 //
-// DIMENSION (D64/D65): one physical room ⇄ one Channex Room Type; one
-// (room × local Rate Plan) ⇄ one Channex Rate Plan. So a dirty range names a
+// DIMENSION (D64/D65): one physical room ⇄ one channel room type; one
+// (room × local Rate Plan) ⇄ one channel rate plan. So a dirty range names a
 // ROOM, and optionally ONE local Rate Plan:
 //   local_rate_plan_id = NULL  → every channel-visible plan of that room. This is
 //     what a Bulk Update means: it writes the unit's BASE plan rows, from which

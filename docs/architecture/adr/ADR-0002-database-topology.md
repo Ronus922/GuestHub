@@ -16,7 +16,7 @@ Today GuestHub production and dev both point at one shared self-hosted Supabase 
 Rationale (V2 §9 topology decision): GuestHub consumes from Supabase almost exclusively **GoTrue (auth)** and plain Postgres via the `postgres` (porsager) driver — it does **not** meaningfully depend on PostgREST, Realtime (it uses pg `NOTIFY`/SSE, D77), or Storage (uploads are local disk). A full Supabase stack per environment (Postgres + GoTrue + PostgREST + Realtime + Storage + Kong + Studio + analytics + vector) is heavy and operationally redundant. Therefore:
 
 - **GuestHub Production DB:** a dedicated PostgreSQL cluster (own container/instance, own port, own data volume) owning schemas `guesthub` (+ `public`), plus a dedicated **GoTrue** bound to that cluster's `auth` schema so login relationships are preserved. Not the shared stack.
-- **GuestHub Certification/Staging DB:** a completely separate dedicated Postgres + its own GoTrue, used for dev, Channex Staging, certification scenarios, Booking CRS, and realistic integration data.
+- **GuestHub Certification/Staging DB:** a completely separate dedicated Postgres + its own GoTrue, used for dev, Beds24 staging/testing, certification scenarios, Booking CRS, and realistic integration data.
 - **Disposable test DB:** already exists as container `guesthub-testdb` (`:5433`); reused for destructive automated tests. Keep.
 
 Auth topology: because GuestHub relies on GoTrue, each environment gets its own GoTrue pointed at that environment's `auth` schema; the migration/cutover tooling (Stage 2) must copy `auth.users` + identities together with `guesthub` data so logins survive. Backups must include the `auth` schema (fixes H4).

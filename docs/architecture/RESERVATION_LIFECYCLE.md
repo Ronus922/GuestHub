@@ -21,7 +21,7 @@ Any other value is rejected at write time. The **blocking subset** — `confirme
 
 There is **one editor** (`updateReservationAction`, which never cancels) plus dedicated actions for create, reschedule, cancel, and OTA import. Every path runs as a single `sql.begin` transaction that atomically commits: the `reservations` row + `reservation_rooms` + `payments` + ledger recompute (`recomputePaymentAggregates`) + `audit_logs` + the `channel_dirty_ranges` outbox + `pg_notify` realtime events. NOTIFY fires on commit only.
 
-**Creation.** Manual creation is operator-driven through the booking panel; OTA creation arrives via the Channex inbound pipeline (webhook → pull → normalize → apply → ACK). Both converge on the same aggregate write and the same availability guard.
+**Creation.** Manual creation is operator-driven through the booking panel; OTA creation arrives via the Beds24 inbound pipeline (poll/webhook → pull → normalize → apply → ACK). Both converge on the same aggregate write and the same availability guard.
 
 **No-show** is a status change through the editor (`actions.ts`), not a dedicated action. An automated end-of-day sweep to flag un-checked-in arrivals is a named gap (below).
 
@@ -77,7 +77,7 @@ stateDiagram-v2
 
 ```mermaid
 sequenceDiagram
-    participant OP as Operator / Channex
+    participant OP as Operator / Beds24
     participant SVC as Server action / worker
     participant DB as Postgres (one tx)
     OP->>SVC: create / OTA revision

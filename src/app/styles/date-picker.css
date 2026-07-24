@@ -114,27 +114,49 @@
     font-weight: 800;
   }
 
-  /* ---------- the two months ---------- */
+  /* ---------- the two months ----------
+     ≥700px container: side by side with a separator. Narrower: the next month
+     STACKS BELOW the current one — both months are always visible; what may
+     never shrink is the 44px day cell (touch target), not the month count.
+     The nav arrows float at the top corners, clear of both layouts. */
   .dp-months {
+    position: relative;
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
+    row-gap: 20px;
   }
   .dp-month {
-    flex: 1;
+    flex: 1 1 100%;
     min-width: 0;
     padding: 0 8px;
   }
-  /* the second month costs 7 more 44px cells — it appears only when the panel
-     is actually wide enough for them (touch target beats reference fidelity). */
-  .dp-m2,
+  .dp-m2 {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
   .dp-sep {
     display: none;
   }
+  .dp-nav {
+    position: absolute;
+    top: -4px;
+    z-index: 1;
+  }
+  .dp-nav-prev {
+    inset-inline-start: 4px;
+  }
+  .dp-nav-next {
+    inset-inline-end: 4px;
+  }
   @container (min-width: 700px) {
+    .dp-month,
     .dp-m2 {
-      display: block;
-      flex: 1;
-      min-width: 0;
+      flex: 1 1 0;
+    }
+    /* the wrapped month keeps its own side padding */
+    .dp-m2 > .dp-month {
+      flex: none;
     }
     .dp-sep {
       display: block;

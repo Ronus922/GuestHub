@@ -28,7 +28,7 @@ const actions = read(ACTIONS);
 const imported = read(IMPORT);
 
 assert.match(actions, STAR, "manual creation must resolve the default from the starred ACTIVE status");
-assert.match(imported, STAR, "OTA/Channex import must resolve the default from the SAME starred ACTIVE status");
+assert.match(imported, STAR, "OTA/channel import must resolve the default from the SAME starred ACTIVE status");
 ok("both creation paths (manual + OTA import) read the starred Settings default");
 
 // ---- 2. the default is never inferred from anything else ----

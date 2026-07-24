@@ -49,7 +49,7 @@ type StagedCardMeta = {
   available_until: string | null;
   key_version: number;
   // D76 §8 — true when the channel supplied only a MASKED guarantee (the normal
-  // Channex endpoint): no PAN exists anywhere, only display metadata below.
+  // channel endpoint): no PAN exists anywhere, only display metadata below.
   masked_only?: boolean;
   masked_display?: string | null;
 };
@@ -58,7 +58,7 @@ type StagedCardMeta = {
 // discarded — D52 §2). Returns the encrypted PAN and the non-sensitive meta, or
 // nulls when there is no usable card.
 //
-// D76 §8: the normal Channex endpoint supplies a MASKED guarantee
+// D76 §8: the normal channel endpoint supplies a MASKED guarantee
 // ("375516*****1144"). That is not a PAN and is never encrypted or placed in
 // any PAN field — instead the allowed metadata (brand, derived last4, expiry,
 // holder, virtual flag, masked display) is staged WITHOUT a ciphertext, so it

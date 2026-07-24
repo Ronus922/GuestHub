@@ -10,11 +10,10 @@ import {
 import type { AriProjection, BlockReason, OccupancyRate } from "./ari-projection";
 
 // ============================================================
-// Beds24 ARI projection (D78/D79) — a SIBLING of projectAri and of
-// projectHospitableAri, not a duplicate. It exists because projectAri scopes
-// its work through the Channex-owned mapping tables
-// (channel_room_mappings.channex_room_type_id,
-// channel_room_rate_mappings.channex_rate_plan_id, snapshot->>'occ_adults'),
+// Beds24 ARI projection (D78/D79) — a SIBLING of projectAri, not a duplicate.
+// It exists because projectAri scopes its work through the legacy pooled
+// mapping tables (the channel_room_mappings / channel_room_rate_mappings
+// room-type and rate-plan columns, snapshot->>'occ_adults'),
 // which are — by design, migrations 044/045 — NEVER written for a
 // provider='beds24' connection. Beds24 maps one physical room to one Beds24
 // room (propertyId+roomId) in guesthub.channel_beds24_room_mappings, with ONE
@@ -32,8 +31,8 @@ import type { AriProjection, BlockReason, OccupancyRate } from "./ari-projection
 //       nightly price ← resolveChainNightPrice() + resolveParentChain()
 //       restrictions  ← mergeRestrictionRows()
 //
-// DO NOT "fix" this module by merging it back into projectAri (or into the
-// Hospitable sibling): the three providers legitimately disagree about what a
+// DO NOT "fix" this module by merging it back into projectAri: the pooled
+// model and the Beds24 model legitimately disagree about what a
 // mapping IS. Output shape is the SAME AriProjection, so payload building /
 // evidence code reads one shape.
 //

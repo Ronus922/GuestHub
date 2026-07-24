@@ -111,7 +111,7 @@ try {
 
   // ---- queue idempotency + duplicate revision rejection (rolled back) ----
   await sql.begin(async (tx) => {
-    // throwaway tenant: the REAL tenant now owns a live (channex, staging)
+    // throwaway tenant: the REAL tenant now owns a live (beds24, staging)
     // connection (D59), and UNIQUE(tenant_id, provider, environment) would
     // reject a second one even inside this rolled-back transaction
     const [tt] = await tx`
@@ -119,7 +119,7 @@ try {
       VALUES ('inventory-check', ${"inv-" + crypto.randomUUID().slice(0, 8)}) RETURNING id`;
     const [conn] = await tx`
       INSERT INTO guesthub.channel_connections (tenant_id, provider, environment)
-      VALUES (${tt.id}, 'channex', 'staging') RETURNING id`;
+      VALUES (${tt.id}, 'beds24', 'staging') RETURNING id`;
 
     const ins = (key) => tx`
       INSERT INTO guesthub.channel_sync_jobs

@@ -14,12 +14,6 @@
 // generated. An unresolvable token — `bg-brand`, or any future typo — fails.
 // A canary asserts the harness rejects the original defective class.
 //
-// Also verified here (Full Sync flow contract, D68/D69/D72):
-//   · confirmation renders BOTH buttons; cancel touches no server action
-//   · the creation response's runId enters state IMMEDIATELY (no wait for the
-//     first status fetch) and the progress area lives inside the ARI section
-//   · the server action returns the persisted run id, never a fabricated one
-//
 // Static + local compile only: no network, no DB, no browser.
 // Usage: node scripts/check-channels-fullsync-ui.mjs
 // ============================================================
@@ -30,8 +24,6 @@ import { createRequire } from "node:module";
 
 const ROOT = "/var/www/guesthub";
 const CHANNELS_DIR = "src/app/(dashboard)/channels";
-const CARD = `${CHANNELS_DIR}/AriSyncSection.tsx`;
-const ADMIN = "src/lib/channel/admin.ts";
 
 const read = (f) => readFileSync(join(ROOT, f), "utf8");
 const code = (f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/[^\n]*/g, "$1");
@@ -104,87 +96,10 @@ function classCandidates(src) {
   ok("canary: the original `bg-brand` is rejected by this harness — it would have failed pre-fix");
 }
 
-// ---- 3. the primary button is the REAL, visibly-painted action ----
-{
-  const card = code(CARD);
-  const primary = card.match(/<button\b[^>]*className="([^"]*)"[^>]*>\s*בצע סנכרון מלא/s)
-    ?? card.match(/<button\b[\s\S]{0,400}?className="([^"]*)"[\s\S]{0,200}?בצע סנכרון מלא/);
-  assert.ok(primary, "the primary confirmation button exists with a literal className");
-  const classes = primary[1].split(/\s+/);
-  // Post-D89 the primary action uses the design-system component class
-  // `btn btn-primary` (a real painted CSS rule), not a raw `bg-*` utility. Accept
-  // either, and prove whichever it uses paints a real background — the D72
-  // invisible-button defect stays guarded regardless of which styling path is used.
-  const bg = classes.find((c) => /^bg-/.test(c));
-  const usesBtnPrimary = classes.includes("btn-primary");
-  assert.ok(bg || usesBtnPrimary, "the primary button declares a painted class (bg-* utility or btn-primary)");
-  if (bg) {
-    assert.ok(resolves(bg), `the primary button's background (${bg}) is a real generated rule`);
-  } else {
-    // .btn-primary is a design-system component class in an @import-ed partial
-    // (not inlined by the tailwind-only compile). Verify it paints a real
-    // background token in its source definition.
-    const ds = read("src/app/styles/design-system.css");
-    assert.ok(/\.btn-primary\s*\{[^}]*background:\s*var\(--/s.test(ds),
-      "btn-primary paints a real background token in design-system.css");
-  }
-  // the design-system primary token is still present + painting
-  assert.ok(resolves("bg-primary") && compiled.match(/\.bg-primary\s*\{[^}]*var\(--color-primary\)/),
-    "bg-primary paints with the design-system --color-primary token");
-  assert.ok(!/hidden|sr-only|invisible|opacity-0(?:\s|")/.test(primary[1]),
-    "the primary button has no hidden/invisible/zero-opacity variant");
-  ok("the primary button paints a real class (btn-primary / bg-primary) and carries no hiding class");
-}
-
-// ---- 4. cancel creates nothing; creation is invoked from exactly one place ----
-{
-  const card = code(CARD);
-  const calls = [...card.matchAll(/requestFullSyncAction\(/g)];
-  assert.equal(calls.length, 1, "the canonical creation action is invoked from exactly one place");
-  assert.ok(/onClick=\{\(\) => setConfirming\(false\)\}/.test(card),
-    "cancel only closes the confirmation — it can reach no server action");
-  assert.ok(/onClick=\{\(\) => setConfirming\(true\)\}/.test(card),
-    "opening the confirmation only flips local state — it creates nothing");
-  ok("cancel and open touch only local state; job creation has a single call site");
-}
-
-// ---- 5. the creation response transitions the UI immediately (§5) ----
-{
-  const card = code(CARD);
-  const fnStart = card.indexOf("function confirmFullSync");
-  assert.ok(fnStart !== -1, "confirmFullSync exists");
-  const fn = card.slice(fnStart, card.indexOf("return (", fnStart));
-  const setViewAt = fn.indexOf("setView(");
-  const reloadAt = fn.lastIndexOf("await reload()");
-  assert.ok(setViewAt !== -1, "the creation response is written into component state");
-  assert.ok(reloadAt !== -1 && setViewAt < reloadAt,
-    "…BEFORE any status fetch — the progress area appears without waiting for polling");
-  assert.ok(/running:\s*true/.test(fn), "the optimistic state marks the run live (renders the 0% panel, starts the poller)");
-  assert.ok(/runId:\s*res\.data\?\.runId/.test(fn), "the PERSISTED runId from the response enters state — the client fabricates none");
-  assert.ok(/progress:\s*null/.test(fn), "a previous run's finished progress can never masquerade as the new run's");
-  ok("a successful creation response immediately shows the persisted run — no wait for the first poll");
-}
-
-// ---- 6. the server action returns the persisted run id ----
-{
-  const admin = code(ADMIN);
-  assert.ok(/runId: active\?\.id \?\? \("id" in enqueued \? enqueued\.id : null\)/.test(admin),
-    "the response's runId is the DB row id (the live run's on a duplicate) — never invented");
-  assert.ok(/idempotencyKey: `full_sync:\$\{conn\.id\}`/.test(admin),
-    "duplicate prevention is keyed server-side per connection (uq_jobs_idempotency enforces it)");
-  ok("requestFullSyncAction returns the persisted run id; duplicates report the live run");
-}
-
-// ---- 7. the progress area lives inside the ARI section, above the controls ----
-{
-  const card = read(CARD);
-  const section = card.indexOf("סנכרון ARI");
-  const runningPanel = card.indexOf("{running && progress && <RunningPanel");
-  const controls = card.indexOf('{running ? "סנכרון מלא כבר מתבצע" : "סנכרון מלא"}');
-  assert.ok(section !== -1 && runningPanel > section && controls > runningPanel,
-    "progress renders inside the סנכרון ARI section, with the Full Sync controls in the same card area");
-  ok("the progress area is inline in the Full Sync section — not on another page, not under unrelated cards");
-}
+// (The Full Sync flow-contract assertions that lived here targeted the removed
+//  AriSyncSection card + its requestFullSyncAction. The Beds24 Full Sync card
+//  (Beds24Section.tsx) is covered by the color-utility resolution check above —
+//  the D72 invisible-button defect stays guarded for every /channels card.)
 
 rmSync(CACHE, { recursive: true, force: true });
 console.log(`\ncheck-channels-fullsync-ui: all ${n} assertions passed`);

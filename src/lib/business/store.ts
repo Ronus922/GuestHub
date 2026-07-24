@@ -7,8 +7,8 @@ import {
 
 // Canonical, tenant-scoped server accessor for the Business Profile. THE single
 // read path for business/property identity — every consumer (settings screen,
-// /channels display, Channex PUT, guest-facing PDFs/messaging) reads through
-// here instead of touching tenants.name or channex_profile JSON directly. The
+// /channels display, channel PUT, guest-facing PDFs/messaging) reads through
+// here instead of touching tenants.name or the raw profile JSON directly. The
 // profile is stored in tenants.settings->'business_profile'; canonical currency/
 // timezone come from the tenant columns and are merged in by resolve*.
 

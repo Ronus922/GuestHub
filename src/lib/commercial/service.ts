@@ -15,7 +15,7 @@ import {
 
 // ============================================================
 // Canonical commercial-settings READ layer (§D). The ONE server-side path the
-// settings screen — and the future Rooms / Rate-Plan / Booking-Engine / Channex
+// settings screen — and the future Rooms / Rate-Plan / Booking-Engine / channel
 // phases — read commercial defaults through, so business logic never scatters
 // into React components. Tenant-scoped by the caller's actor.tenantId. numeric is
 // cast ::float8 so it arrives as a JS number (project convention).

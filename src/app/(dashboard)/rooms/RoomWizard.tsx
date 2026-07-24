@@ -92,6 +92,7 @@ type BaseDraft = {
   status: "available" | "inactive" | "out_of_order";
   is_active: boolean;
   show_on_website: boolean;
+  show_on_calendar: boolean;
   sort_order: number;
   size_sqm: number | null;
   max_occupancy: number;
@@ -148,6 +149,7 @@ export function RoomWizard({
     status: (room?.status as BaseDraft["status"]) ?? "available",
     is_active: room?.is_active ?? true,
     show_on_website: room?.show_on_website ?? false,
+    show_on_calendar: room?.show_on_calendar ?? true,
     sort_order: room?.sort_order ?? 0,
     size_sqm: room?.size_sqm ?? null,
     max_occupancy: room?.max_occupancy ?? 2,
@@ -251,6 +253,7 @@ export function RoomWizard({
     status: base.status,
     is_active: base.is_active,
     show_on_website: base.show_on_website,
+    show_on_calendar: base.show_on_calendar,
     sort_order: base.sort_order,
     size_sqm: base.size_sqm,
     max_occupancy: base.max_occupancy,
@@ -580,7 +583,8 @@ export function RoomWizard({
               <div className="rm-frow3">
                 <SwRow label="חדר פעיל" hint="חדר זמין להזמנות" checked={base.is_active} onChange={(v) => setB("is_active", v)} />
                 <SwRow label="מוצג באתר" hint="חדר נראה לאורחים" checked={base.show_on_website} onChange={(v) => setB("show_on_website", v)} />
-                <QtyStep label="סדר מיון" value={base.sort_order} onChange={(v) => setB("sort_order", v ?? 0)} />
+                {/* display only — an OFF room stays bookable and counted (migration 053) */}
+                <SwRow label="מוצג בלוח תפוסה" hint="החדר מופיע ביומן החדרים" checked={base.show_on_calendar} onChange={(v) => setB("show_on_calendar", v)} />
               </div>
               <F label="הערות פנימיות">
                 <textarea

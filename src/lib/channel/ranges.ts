@@ -10,7 +10,7 @@ export type DateRange = { date_from: string; date_to: string }; // [from, to)
 // room going out of order) marks exactly this window dirty, so the incremental
 // pass can never address a date the baseline never covered. Lives here — a pure,
 // import-free module — so a reservation/calendar save can reference it without
-// pulling the Channex HTTP client into its module graph.
+// pulling the channel HTTP client into its module graph.
 export const ARI_HORIZON_DAYS = 500;
 
 // Coalesce a new dirty range into existing PENDING ranges of the same

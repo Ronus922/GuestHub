@@ -19,7 +19,7 @@ This is the reconciled target the seven-stage program implements. It honors V2 �
 - **Runtime:** Next.js 15 (App Router, RTL Hebrew), one PM2 web process (`guesthub`, :3007) + one PM2 worker (`guesthub-channel-worker`), both in `/var/www/guesthub-production`.
 - **Data:** shared self-hosted Supabase Postgres (`supabase-db`, Supavisor `:5432`), schema `guesthub` (60 tables), GoTrue auth via Kong. **Dev and prod share this DB — Critical C1.**
 - **Async:** durable `channel_sync_jobs` queue (leases, SKIP LOCKED, FIFO/connection), `channel_dirty_ranges` outbox, pg `NOTIFY`+SSE realtime; communications ride an events→deliveries queue **inside the same worker tick** (coupling M16).
-- **Integrations:** Channex (staging), Gmail OAuth, GREEN-API/Twilio, Google Maps, local-disk uploads.
+- **Integrations:** Beds24 (channel provider), Gmail OAuth, GREEN-API/Twilio, Google Maps, local-disk uploads.
 - **Strengths (preserve):** one pricing engine with quote↔ARI equality; authoritative payment ledger; crash-safe queue; ACK-after-commit; escape-first email renderer; fail-closed card vault; triple deploy guards. See `DEFECT_MATRIX.md` "Confirmed strengths".
 
 See `docs/audit/ARCHITECTURE_INVENTORY.md` for the full inventory + Mermaid diagram.
@@ -51,10 +51,10 @@ rooms → identity · `check_room_availability`/inventory.ts → availability ·
 ## 5. Cross-cutting invariants (enforced by Stage-3+ checks)
 
 - No UI/integration surface recomputes a canonical rule that has a shared function (`check:pms-domain-invariants`).
-- Every ARI-affecting write marks dirty ranges in the same transaction (`check:channex-group-update-batching`, `check:reservation-concurrency`).
+- Every ARI-affecting write marks dirty ranges in the same transaction (`check:reservation-concurrency`).
 - Balance is always ledger-derived (`check:payment-ledger-integrity`).
 - Quote == ARI price (`check:pricing-equality`, exists).
-- One environment source; Production cannot self-activate (`check:channex-environment-routing`, `check:production-activation-guard`).
+- One environment source; Production cannot self-activate (channel-connection environment + production activation guard).
 - No secrets in code/history/logs (`check:no-secrets`).
 - Time/money invariants incl. DST (`check:timezone-and-money-invariants`).
 
@@ -62,5 +62,5 @@ rooms → identity · `check_room_availability`/inventory.ts → availability ·
 
 - Exact backup off-host destination and encryption key custody → Stage 2 runbook.
 - RLS vs server-side-only enforcement per access path → Stage 3 ADR addendum (H3).
-- PSP selection (Cardcom/Tranzila/Stripe) → business decision; the seam is provider-neutral (Stage 3), selection deferred (V2 §18).
+- PSP: Cardcom/Tranzila only — decided, **no Stripe** (D91); the seam is provider-neutral (Stage 3, V2 §18).
 - Invoice provider vs built-in → Stage 5 (seam either way).

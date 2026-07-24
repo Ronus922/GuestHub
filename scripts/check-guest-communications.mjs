@@ -275,8 +275,7 @@ assert.match(delivery, /ambiguous_provider_outcome/);
 ok("durable outbox statically guards duplicate, OTA, non-confirmed, test, opt-out, missing-email, and crash branches");
 
 for (const path of [
-  "src/lib/channel/channex-ari.ts",
-  "src/lib/channel/payments-admin.ts",
+  "src/lib/channel/beds24-ari-sync.ts",
   "src/lib/rates/service.ts",
   "src/lib/inventory.ts",
 ]) {
@@ -284,7 +283,7 @@ for (const path of [
 }
 assert.equal(source("src/lib/communications/automation.ts").includes("UPDATE guesthub.payments"), false);
 assert.equal(source("src/lib/communications/automation.ts").includes("channel_sync_jobs"), false);
-ok("communications remain isolated from Channex ARI, rates, inventory, and payment semantics");
+ok("communications remain isolated from channel ARI, rates, inventory, and payment semantics");
 
 const shell = source("src/components/communications/CommunicationsShell.tsx");
 const editor = source("src/components/communications/TemplateEditor.tsx");

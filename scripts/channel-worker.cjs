@@ -8,7 +8,7 @@
 // tsconfig.worker.json). Env comes from .env.local exactly like the web app —
 // DATABASE_URL and CHANNEL_SECRETS_KEY — loaded by node's own --env-file-if-exists.
 //
-// This process sends ARI to Channex ONLY for connections whose operator has
+// This process sends ARI to Beds24 ONLY for connections whose operator has
 // already completed the initial Full Sync (state='active', outbound_sync_enabled,
 // full_sync_required=false). It exposes no port and accepts no input.
 // ============================================================
