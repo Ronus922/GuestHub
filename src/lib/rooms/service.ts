@@ -42,6 +42,7 @@ export type BoardRoom = {
   status: string;
   is_active: boolean;
   show_on_website: boolean;
+  show_on_calendar: boolean;
   sort_order: number;
   size_sqm: number | null;
   max_occupancy: number;
@@ -137,7 +138,7 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
   const [rooms, stays, hk, closures, translations, images, amenities] = await Promise.all([
     sql<Omit<BoardRoom, "derived_status" | "current_guest" | "current_until" | "next_arrival" | "next_guest" | "incomplete" | "missing" | "langs_complete" | "amenity_ids" | "main_image_url" | "image_count">[]>`
       SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
-             r.show_on_website, r.sort_order, r.size_sqm::float8 AS size_sqm,
+             r.show_on_website, r.show_on_calendar, r.sort_order, r.size_sqm::float8 AS size_sqm,
              r.max_occupancy, r.max_adults, r.max_children, r.max_infants,
              r.min_occupancy, r.default_occupancy, r.included_occupancy, r.notes,
              r.extra_guest_pricing_mode,
@@ -281,7 +282,7 @@ export async function listRoomTypes(tenantId: string): Promise<RoomTypeOption[]>
   return sql<RoomTypeOption[]>`
     SELECT id, name FROM guesthub.room_types
     WHERE tenant_id = ${tenantId} AND is_active
-    ORDER BY name`;
+    ORDER BY sort_order, name`;
 }
 
 export async function listAmenities(tenantId: string): Promise<AmenityOption[]> {

@@ -227,7 +227,8 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
             room_number = ${r.room_number}, room_type_id = ${r.room_type_id},
             area_id = ${r.area_id}, floor = ${r.floor},
             status = ${r.status}, is_active = ${r.is_active},
-            show_on_website = ${r.show_on_website}, sort_order = ${r.sort_order},
+            show_on_website = ${r.show_on_website}, show_on_calendar = ${r.show_on_calendar},
+            sort_order = ${r.sort_order},
             size_sqm = ${r.size_sqm},
             max_occupancy = ${r.max_occupancy}, max_adults = ${r.max_adults},
             max_children = ${r.max_children}, max_infants = ${r.max_infants},
@@ -245,7 +246,7 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
         const [row] = await tx<{ id: string }[]>`
           INSERT INTO guesthub.rooms (
             tenant_id, room_number, room_type_id, area_id, floor, status, is_active,
-            show_on_website, sort_order, size_sqm,
+            show_on_website, show_on_calendar, sort_order, size_sqm,
             max_occupancy, max_adults, max_children, max_infants,
             min_occupancy, default_occupancy, included_occupancy, extra_guest_pricing_mode,
             extra_adult_override, extra_child_override, extra_infant_override,
@@ -254,7 +255,7 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
           VALUES (
             ${actor.tenantId}, ${r.room_number}, ${r.room_type_id}, ${r.area_id},
             ${r.floor}, ${r.status}, ${r.is_active},
-            ${r.show_on_website}, ${r.sort_order}, ${r.size_sqm},
+            ${r.show_on_website}, ${r.show_on_calendar}, ${r.sort_order}, ${r.size_sqm},
             ${r.max_occupancy}, ${r.max_adults}, ${r.max_children}, ${r.max_infants},
             ${r.min_occupancy}, ${r.default_occupancy}, ${r.included_occupancy}, ${r.extra_guest_pricing_mode},
             ${oa}, ${oc}, ${oi}, ${of},
@@ -362,13 +363,13 @@ export async function duplicateRoomAction(roomId: string): Promise<ActionResult 
       const [row] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.rooms (
           tenant_id, room_number, room_type_id, area_id, floor, status, is_active,
-          show_on_website, sort_order, size_sqm, max_occupancy, max_adults,
+          show_on_website, show_on_calendar, sort_order, size_sqm, max_occupancy, max_adults,
           max_children, max_infants, min_occupancy, default_occupancy, included_occupancy,
           extra_guest_pricing_mode, extra_adult_override, extra_child_override,
           extra_infant_override, charge_frequency_override,
           single_beds, double_beds, queen_beds, sofa_beds, cribs, name, notes)
         SELECT tenant_id, ${newNumber}, room_type_id, area_id, floor, status, false,
-               false, sort_order, size_sqm, max_occupancy, max_adults,
+               false, show_on_calendar, sort_order, size_sqm, max_occupancy, max_adults,
                max_children, max_infants, min_occupancy, default_occupancy, included_occupancy,
                extra_guest_pricing_mode, extra_adult_override, extra_child_override,
                extra_infant_override, charge_frequency_override,

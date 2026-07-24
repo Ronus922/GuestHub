@@ -41,6 +41,8 @@ export const roomWizardSchema = z.object({
   status: z.enum(["available", "inactive", "out_of_order"]),
   is_active: z.boolean(),
   show_on_website: z.boolean(),
+  // calendar-grid visibility only — never inventory (migration 053)
+  show_on_calendar: z.boolean(),
   sort_order: z.number().int().min(0).max(10000),
   size_sqm: z.number().min(0).max(10000).nullable(),
 
