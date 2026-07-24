@@ -5,19 +5,38 @@ import { encryptPan, CARD_KEY_VERSION, cardVaultConfigured } from "../card-vault
 import { detectBrand, normalizePan, panValid } from "../card-rules";
 
 // ============================================================
-// Inbound booking-revision foundation (§X) + operational channel-card capture
-// (§Z reconciliation, D43/D52). persistBookingRevision is the concrete seam
-// where a full inbound booking payload is handled: it EXTRACTS + ENCRYPTS the
-// PAN from the RAW payload BEFORE the payload is redacted, staging the ciphertext
-// on the revision row. The CVV is NEVER staged or stored (D52 §2) — any CVV in
-// the payload is discarded. The stored `payload` column stays redacted — raw
-// card data never lands in it or in any log. markRevisionImported then MOVES the
-// staged encrypted PAN into reservation_cards once a local reservation exists.
+// Inbound booking-revision lifecycle (§X) + the channel-card staging seam
+// (§Z reconciliation, D43/D52). Everything below owns the durable state of one
+// `channel_booking_revisions` row: quarantine, transient failure, import, and
+// acknowledgement.
 //
-// NOTE: no live poller calls these yet (no revision→reservation importer runs
-// in the app today). Card extraction/encryption is wired at this real seam and
-// covered by scripts/check-channel-card-ingest.mjs; the app-level chain
-// activates when the Phase-4 importer lands.
+// WHAT RUNS IN PRODUCTION (D78/D91). This is a LIVE path, not a foundation.
+// The PM2 channel worker's `pull_booking_revisions` job polls Beds24 — the one
+// supported provider — roughly every 5 minutes, and its import path
+// (beds24-booking-import.ts → booking-import.ts) calls quarantineRevision,
+// markRevisionFailed and markRevisionImported on real bookings. Crucially,
+// markRevisionImported runs INSIDE the transaction that writes the reservation,
+// so `imported` always implies durably saved.
+//
+// WHAT THE BEDS24 PATH DOES NOT USE. persistBookingRevision — and therefore the
+// card staging below — is NOT the Beds24 insert. Beds24 publishes no revision
+// feed, so beds24-booking-import.ts writes its own row under a SYNTHETIC
+// revision id and deliberately fetches bookings WITHOUT card data (cards need a
+// dedicated scope + endpoint that the import never requests). persistBookingRevision
+// therefore remains the provider-neutral seam for a feed that DOES carry a card;
+// today it is exercised by scripts/check-channel-card-ingest.mjs, not by traffic.
+//
+// markRevisionAcknowledged likewise has no runtime caller: Beds24 offers no
+// acknowledgement endpoint, so its rows insert pre-acknowledged. The function and
+// its WHERE gate stay as the structural backstop for a provider that does ack.
+//
+// CARD RULES (enforced whenever the staging seam is used). persistBookingRevision
+// EXTRACTS + ENCRYPTS the PAN from the RAW payload BEFORE the payload is redacted,
+// staging the ciphertext on the revision row. The CVV is NEVER staged or stored
+// (D52 §2) — any CVV in the payload is discarded. The stored `payload` column stays
+// redacted — raw card data never lands in it or in any log. markRevisionImported
+// then MOVES the staged encrypted PAN into reservation_cards once a local
+// reservation exists.
 // ============================================================
 
 export type RevisionInput = {
@@ -131,9 +150,13 @@ export async function persistBookingRevision(
   return rows[0] ? { id: rows[0].id, duplicate: false } : { duplicate: true };
 }
 
-// Unmapped room type / rate plan → quarantined with a visible error, raw
-// identifiers retained; never silently discarded, never a broken local
-// reservation, never falsely acknowledged.
+// A domain condition that must PARK the revision visibly — for Beds24 that is
+// an unmapped room id (no 'mapped' row in channel_beds24_room_mappings), a
+// wrong-property booking, or a local conflict; rate plans are not an inbound
+// axis there (D78). The row keeps its raw identifiers and stored payload, so it
+// is never silently discarded and never becomes a broken local reservation.
+// Quarantine is NOT terminal: the pull's convergence sweep re-imports
+// quarantined rows on every cycle, so fixing the mapping heals them.
 export async function quarantineRevision(
   db: Sql | TransactionSql,
   revisionId: string,
@@ -149,6 +172,8 @@ export async function quarantineRevision(
 // Move a revision's staged encrypted card into reservation_cards for the created
 // local reservation. Copies the ciphertext (no re-encrypt); COALESCEs so an
 // empty incoming value never overwrites an existing encrypted one (§8/§10).
+// Dormant on the Beds24 path — those rows are inserted without a staged card —
+// and reached today only through persistBookingRevision's card seam.
 async function attachStagedCard(
   tx: TransactionSql,
   tenantId: string,
@@ -196,8 +221,11 @@ async function attachStagedCard(
             ${`channel:${meta.source_channel ?? "unknown"}`})`;
 }
 
-// A transient import failure (DB error, crash mid-import): recorded visibly,
-// retried by the next pull — the revision stays unacknowledged upstream.
+// A transient import failure (DB error, crash mid-import): recorded visibly and
+// retried by the next pull — for Beds24 by sweepUnimportedRows, which re-imports
+// every pending/quarantined/failed row of the connection each cycle. On a
+// provider that has acknowledgement semantics the row also stays unacknowledged,
+// so the feed keeps re-serving it.
 export async function markRevisionFailed(
   db: Sql | TransactionSql,
   revisionId: string,
@@ -211,8 +239,11 @@ export async function markRevisionFailed(
 }
 
 // Mark imported — call ONLY inside the transaction that created the local
-// reservation/inventory hold, so "imported" implies durably saved. When a local
-// reservation exists and the revision staged a card, the card is attached to it.
+// reservation/inventory hold, so "imported" implies durably saved. This is the
+// live termination of every successful Beds24 import (booking-import.ts calls it
+// inside its one write transaction). When a local reservation exists AND the
+// revision staged a card, the card is attached to it — a branch no Beds24 row
+// takes, since that import stages none.
 export async function markRevisionImported(
   tx: TransactionSql,
   tenantId: string,
@@ -244,6 +275,11 @@ export async function markRevisionImported(
 // Acknowledgement gate (§X): a revision may be acknowledged only AFTER its
 // local transaction committed with import_status='imported'. The WHERE clause
 // makes early acknowledgement structurally impossible.
+//
+// No caller today (D78/D91): Beds24 has no acknowledgement endpoint, so its
+// import inserts rows already marked acknowledged. This gate is kept — not dead
+// code to delete — because it is the one structural guarantee that a provider
+// WITH an ack API can never be told "received" for a booking we failed to save.
 export async function markRevisionAcknowledged(
   db: Sql | TransactionSql,
   revisionId: string,
