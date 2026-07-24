@@ -35,12 +35,6 @@ export function RateGridScreen({
   // closing and browser Back independent from routing, so the mounted grid keeps
   // filters, disclosures, scroll position and pending cell UI intact.
   const [groupOpen, setGroupOpen] = useState(false);
-  const [preset, setPreset] = useState<string[]>(() => state.types.flatMap((t) => t.unitIds));
-  const openGroupUpdate = (units: string[]) => { setPreset(units); setGroupOpen(true); };
-  const closeGroupUpdate = () => {
-    setGroupOpen(false);
-    setPreset(state.types.flatMap((t) => t.unitIds));
-  };
 
   // Backward compatibility only: old links used panel/group query keys. Strip
   // those keys without opening anything and without a Next navigation. Legitimate
@@ -90,11 +84,10 @@ export function RateGridScreen({
       else visibleUnitIds.forEach((id) => n.add(id));
       return n;
     });
-  // Group Update acts on the rooms ON THE BOARD. With the room-type bands gone
-  // (the board is now ONE ascending room list), the old "עדכון קבוצתי לסוג" link
-  // that lived in a band header has no home — filtering by a type chip and
-  // pressing עדכון קבוצתי is the same act, through one control instead of two.
-  // With no filter this is every room, exactly as before.
+  // Group Update opens with an EMPTY selection — a bulk write is always an
+  // explicit act. Room picking (type chips, "בחר הכל", per-card toggles) lives
+  // inside the panel; the board's type filter no longer pre-selects anything,
+  // so no room can be updated without the user having marked it.
   const toggleCollapse = (unitId: string) =>
     setCollapsed((s) => { const n = new Set(s); if (n.has(unitId)) n.delete(unitId); else n.add(unitId); return n; });
 
@@ -137,7 +130,7 @@ export function RateGridScreen({
         onFilter={setTypeFilter}
         onToggleCollapseAll={toggleCollapseAll}
         onNavigate={navigate}
-        onGroupUpdate={() => openGroupUpdate(visibleUnitIds)}
+        onGroupUpdate={() => setGroupOpen(true)}
       />
 
       {state.unitCount === 0 ? (
@@ -156,7 +149,7 @@ export function RateGridScreen({
         open={groupOpen}
         types={state.types} from={state.from} toInclusive={state.toInclusive}
         minDate={today} maxDate={horizonLatest}
-        presetUnitIds={preset} onClose={closeGroupUpdate}
+        onClose={() => setGroupOpen(false)}
         onSaved={onSaved}
       />
 

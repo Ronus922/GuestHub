@@ -157,17 +157,17 @@ function TaskCard({
   const isDone = task.status === "completed" || task.status === "inspected";
   return (
     <div
-      className={`rounded-[22px] border border-line border-r-4 bg-surface p-5 shadow-sm ${ACCENT[task.status] ?? "border-r-slate-300"} ${
+      className={`rounded-[16px] border border-line border-r-4 bg-surface p-5 shadow-sm ${ACCENT[task.status] ?? "border-r-slate-300"} ${
         isDone ? "opacity-70" : ""
       }`}
     >
       <div className="flex flex-row-reverse items-start justify-between gap-3">
         <div className="flex flex-row-reverse items-center gap-3">
-          <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-primary-050 text-lg font-bold text-primary">
+          <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-primary-050 text-[19px] font-bold text-primary">
             {task.roomNumber ?? <Icon name="cleaning" size={26} />}
           </span>
           <div className="text-right">
-            <p className="text-base font-bold text-ink">{task.title ?? (task.roomNumber ? `חדר ${task.roomNumber}` : "משימה")}</p>
+            <p className="text-[17px] font-bold text-ink">{task.title ?? (task.roomNumber ? `חדר ${task.roomNumber}` : "משימה")}</p>
             <div className="mt-0.5 flex flex-row-reverse items-center gap-2">
               <span className="rounded-lg bg-field px-2 py-0.5 text-xs text-muted">{STATUS_LABEL[task.status] ?? task.status}</span>
               {task.priority === "high" && <span className="text-xs font-bold text-status-danger">דחוף</span>}
@@ -177,10 +177,10 @@ function TaskCard({
         </div>
         {hm && (
           <div className="text-center">
-            <p className="text-3xl font-extrabold tabular-nums text-primary" dir="ltr">
+            <p className="text-[32px] font-extrabold tabular-nums text-primary" dir="ltr">
               {hm}
             </p>
-            <p className="text-[11px] text-faint">שעת יציאה</p>
+            <p className="text-xs text-faint">שעת יציאה</p>
           </div>
         )}
       </div>
@@ -190,7 +190,7 @@ function TaskCard({
           type="button"
           disabled={busy}
           onClick={() => onAdvance(task.id)}
-          className={`mt-4 min-h-[56px] w-full rounded-xl px-4 text-base font-bold text-white disabled:opacity-60 ${
+          className={`mt-4 min-h-[56px] w-full rounded-xl px-4 text-[17px] font-bold text-white disabled:opacity-60 ${
             task.status === "pending" ? "bg-blue-600" : "bg-emerald-600"
           }`}
         >

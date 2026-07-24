@@ -66,7 +66,7 @@ export function ProviderSelectorSection({ initial }: { initial: ProviderChoice[]
                 checked={c.isActive}
                 onChange={() => onPick(c.provider)}
                 disabled={pending}
-                className="h-4 w-4 accent-[var(--primary,#4f46e5)]"
+                className="h-4 w-4 accent-primary"
               />
               <span className="font-bold text-ink">{PROVIDER_META[c.provider].title}</span>
               <span className="t-label text-muted">{PROVIDER_META[c.provider].note}</span>

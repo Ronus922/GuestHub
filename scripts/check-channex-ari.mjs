@@ -821,8 +821,11 @@ const code = (f) => read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/
     // setInterval is allowed ONLY in read-only status pollers (poll a *Status
     // action, never a drain) and the SSE heartbeat — none of which trigger a
     // drain. AriSyncSection + ChannelSyncControl poll status; api/events is the
-    // realtime SSE heartbeat (D77). node-cron is never allowed anywhere.
-    const intervalOk = /AriSyncSection|ChannelSyncControl|app\/api\/events\/route/.test(p);
+    // realtime SSE heartbeat (D77); the task boards (D88) poll the read-only
+    // getTaskBoardAction/getMyTasksAction — tasks have no D77 domain event yet
+    // (MyTasksScreen even lives outside the Shell, so it has no SSE at all),
+    // and neither board touches channel code. node-cron is never allowed anywhere.
+    const intervalOk = /AriSyncSection|ChannelSyncControl|app\/api\/events\/route|TaskDispatchBoard|my-tasks\/MyTasksScreen/.test(p);
     assert.ok(!/node-cron/.test(src) && (!/setInterval\(/.test(src) || intervalOk),
       `${p} schedules no cron/interval drain`);
   }

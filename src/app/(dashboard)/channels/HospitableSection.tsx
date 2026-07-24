@@ -602,7 +602,7 @@ export function HospitableSection({ initial }: { initial: HospitableConnectionVi
                               <img
                                 src={selected.pictureUrl}
                                 alt={selected.name ?? "נכס Hospitable"}
-                                className="h-14 w-20 shrink-0 rounded-md object-cover"
+                                className="h-14 w-20 shrink-0 rounded-[7px] object-cover"
                               />
                             ) : null}
                             <div className="flex min-w-0 flex-col gap-0.5">
