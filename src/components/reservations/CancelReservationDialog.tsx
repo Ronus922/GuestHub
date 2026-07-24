@@ -7,6 +7,7 @@ import { formatFullDate } from "@/lib/dates";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
 import {
   cancelReservationAction,
+  releaseChannelReservationAction,
   type ReservationDetail,
 } from "@/app/(dashboard)/reservations/actions";
 
@@ -44,6 +45,24 @@ export function CancelReservationDialog({
   const submittedRef = useRef(false); // double-submit protection (§9)
 
   const activeOta = detail.ota !== null && isBlocking(detail.status);
+
+  // supervised escape hatch: allowed ONLY when Beds24 confirms the booking is
+  // cancelled at source — the server re-verifies live before enqueueing the
+  // canonical targeted pull. Never a blind local flip.
+  const doChannelRelease = () => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
+    startBusy(async () => {
+      const res = await releaseChannelReservationAction(detail.id);
+      if (res.success) {
+        toast.success("הביטול אושר במקור — ההזמנה משתחררת דרך מסלול הביטול הקנוני");
+        onDone();
+      } else {
+        submittedRef.current = false;
+        toast.error(res.error);
+      }
+    });
+  };
 
   const doLocalCancel = () => {
     if (submittedRef.current) return;
@@ -138,15 +157,40 @@ export function CancelReservationDialog({
         {activeOta ? (
           /* honest generic-cancel message (§9): an OTA booking is cancelled at
              the OTA and arrives back as a cancelled revision through Beds24. */
-          <section className="card bw-card-danger">
-            <p className="card-bd text-sm font-bold leading-relaxed text-ink">
-              לא ניתן לבטל הזמנת {detail.ota?.otaName === "BookingCom" ? "Booking.com" : "ערוץ"}{" "}
-              באופן כללי דרך מנהל הערוצים.
-              <br />
-              יש לבצע את הביטול ב-Booking.com ולהמתין לעדכון האוטומטי — ההזמנה תבוטל, תוסר
-              מהיומן ותישמר בהיסטוריה ברגע שהערוץ ישדר את הביטול.
-            </p>
-          </section>
+          <>
+            <section className="card bw-card-danger">
+              <p className="card-bd text-sm font-bold leading-relaxed text-ink">
+                לא ניתן לבטל הזמנת {detail.ota?.otaName === "BookingCom" ? "Booking.com" : "ערוץ"}{" "}
+                באופן כללי דרך מנהל הערוצים.
+                <br />
+                יש לבצע את הביטול ב-Booking.com ולהמתין לעדכון האוטומטי — ההזמנה תבוטל, תוסר
+                מהיומן ותישמר בהיסטוריה ברגע שהערוץ ישדר את הביטול.
+              </p>
+            </section>
+            {/* supervised escape hatch: if the guest already cancelled at the
+                OTA and the update has not landed yet, the operator can verify
+                against Beds24 and release NOW — the server allows it only when
+                the source really reports cancelled, with a full audit. */}
+            <section className="card card-bd">
+              <p className="mb-3 text-sm font-bold leading-relaxed text-ink">
+                ההזמנה כבר בוטלה ב-Booking.com והחדר עדיין תפוס? בדיקה חיה מול Beds24 —
+                אם המקור מאשר שההזמנה מבוטלת, החדר ישוחרר מיידית דרך מסלול הביטול המלא
+                (היסטוריה, מלאי ועדכון ערוצים). אם ההזמנה עדיין פעילה במקור — לא ישתנה דבר.
+              </p>
+              <div className="flex items-center gap-3">
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={busy}
+                  onClick={doChannelRelease}
+                >
+                  <Icon name="refresh" size={20} />
+                  {busy ? "בודק מול Beds24…" : "בדיקה מול Beds24 ושחרור"}
+                </button>
+              </div>
+            </section>
+          </>
         ) : (
           <section className="card card-bd">
             <p className="mb-3 text-sm font-bold leading-relaxed text-ink">

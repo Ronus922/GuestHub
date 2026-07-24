@@ -30,6 +30,7 @@
     "check:beds24-revisions": "node --env-file=.env.local scripts/check-beds24-revisions.mjs",
     "check:beds24-ari": "node --env-file=.env.local scripts/check-beds24-ari.mjs",
     "check:beds24": "pnpm check:beds24-connection && pnpm check:beds24-jobs && pnpm check:beds24-revisions && pnpm check:beds24-ari",
+    "check:beds24-cancellation-sync": "node scripts/check-beds24-cancellation-sync.mjs",
     "check:effective-state": "node --env-file=.env.local scripts/check-effective-state.mjs",
     "check:inventory": "node --env-file=.env.local scripts/check-inventory.mjs",
     "check:sellability": "node --env-file=.env.local scripts/check-rate-sellability.mjs",

@@ -76,6 +76,18 @@ export type Beds24InboundPullSummary = {
 };
 
 const MAX_PAGES = 50; // hard bound — never an unbounded pagination loop
+// EVERY status is requested EXPLICITLY on the window pulls. Beds24's GET
+// /bookings default silently EXCLUDES cancelled bookings — that hid OTA
+// cancellations from the import entirely (reservation 1021 stayed occupying
+// after its Booking.com cancellation). The list is a superset of the default,
+// so nothing that used to arrive is lost; cancelled now arrives too and flows
+// through the existing applyCancellation path. NOTE: Beds24 rejects a CSV
+// value (`status=a,b` → HTTP 400) — REPEATED params are the only accepted
+// form. The targeted by-id pull needs none of this: an id fetch returns the
+// booking in any status.
+export const BEDS24_STATUS_FILTER = ["confirmed", "new", "request", "cancelled", "black", "inquiry"]
+  .map((s) => `status=${s}`)
+  .join("&");
 // incremental pull key: bookings MODIFIED in the last 7 days (generous
 // overlap over the 5-minute poll loop — absorbs downtime and clock skew)
 const LOOKBACK_DAYS = 7;
@@ -215,7 +227,7 @@ function beds24RoomResolver(conn: Beds24InboundConnection): RoomResolver {
   };
 }
 
-function pushError(summary: Beds24InboundPullSummary, message: string): void {
+function pushError(summary: { errors: string[] }, message: string): void {
   if (summary.errors.length < MAX_ERRORS) summary.errors.push(message);
 }
 
@@ -460,12 +472,13 @@ export async function runBeds24InboundPull(
   }
   if (windowPull) {
     // incremental pull — everything MODIFIED in the lookback window, scoped to
-    // this connection's mapped properties
+    // this connection's mapped properties. The explicit status list is the
+    // cancellation fix: without it Beds24 omits cancelled bookings entirely.
     await pullWindow(
       db,
       conn,
       creds,
-      `${propertyFilter}&modifiedFrom=${encodeURIComponent(isoDateTime(-LOOKBACK_DAYS * 86_400_000))}`,
+      `${propertyFilter}&${BEDS24_STATUS_FILTER}&modifiedFrom=${encodeURIComponent(isoDateTime(-LOOKBACK_DAYS * 86_400_000))}`,
       resolveRoom,
       mappings,
       summary,
@@ -479,7 +492,7 @@ export async function runBeds24InboundPull(
         db,
         conn,
         creds,
-        `${propertyFilter}` +
+        `${propertyFilter}&${BEDS24_STATUS_FILTER}` +
           `&arrivalFrom=${isoDate(-BACKFILL_PAST_DAYS * 86_400_000)}` +
           `&arrivalTo=${isoDate(FORWARD_DAYS * 86_400_000)}`,
         resolveRoom,
@@ -505,6 +518,101 @@ export async function runBeds24InboundPull(
     await db`
       UPDATE guesthub.channel_connections SET last_inbound_import_at = now()
       WHERE id = ${conn.id}`;
+  }
+  return summary;
+}
+
+// ---------------------------------------------------------------
+// booking reconciliation (safety net over the status-filter fix) — every
+// RECONCILE cycle, each locally-OCCUPYING externally-sourced reservation is
+// compared against its source booking's live status. A booking the source
+// says is cancelled while we still block inventory is the overbooking gap;
+// it is released through the SAME targeted pull → applyCancellation path the
+// worker always uses — never a hand-rolled status flip.
+// ---------------------------------------------------------------
+
+// bounded per cycle (one GET per reservation); the bound is REPORTED, never silent
+const RECONCILE_LIMIT = 50;
+
+export type Beds24ReconcileSummary = {
+  checked: number;
+  released: number;
+  /** cancelled at source but the guest is CHECKED IN — alert only, never auto-released */
+  alerts: number;
+  errors: string[];
+};
+
+export async function runBeds24BookingReconciliation(
+  db: Sql,
+  conn: Beds24InboundConnection,
+): Promise<Beds24ReconcileSummary> {
+  const summary: Beds24ReconcileSummary = { checked: 0, released: 0, alerts: 0, errors: [] };
+
+  const rows = await db<
+    { id: string; reservation_number: string; status: string; external_booking_id: string }[]
+  >`
+    SELECT id, reservation_number, status, external_booking_id
+    FROM guesthub.reservations
+    WHERE tenant_id = ${conn.tenant_id}
+      AND channel_connection_id = ${conn.id}
+      AND external_booking_id IS NOT NULL
+      AND status IN ('confirmed', 'checked_in')
+      AND check_out >= CURRENT_DATE
+    ORDER BY check_in
+    LIMIT ${RECONCILE_LIMIT}`;
+  if (rows.length === 0) return summary;
+  if (rows.length === RECONCILE_LIMIT) {
+    pushError(summary, `reconciliation checked only the first ${RECONCILE_LIMIT} reservations`);
+  }
+
+  const access = await getBeds24AccessToken(db, conn);
+  if (!access.ok) {
+    pushError(summary, access.error);
+    return summary;
+  }
+  const creds: Beds24ReqOpts = { token: access.token, baseUrl: beds24BaseUrl() };
+
+  for (const r of rows) {
+    const res = await fetchBookingsPage(creds, `id=${encodeURIComponent(r.external_booking_id)}`, 1);
+    if (!res.ok) {
+      pushError(summary, res.message);
+      continue; // transient — the next cycle re-checks
+    }
+    summary.checked += 1;
+    const source = res.bookings
+      .map((b) => beds24BookingIdentity(b))
+      .find((b) => b.bookingId === r.external_booking_id);
+    // a booking the source no longer returns is NOT treated as cancelled —
+    // absence is not evidence; only an explicit cancelled status releases
+    if (!source || source.rawStatus?.toLowerCase() !== "cancelled") continue;
+
+    if (r.status === "checked_in") {
+      // the guest is physically in the room — releasing would erase a live
+      // stay. Loud alert; the operator decides.
+      summary.alerts += 1;
+      await logChannelError(db, {
+        tenantId: conn.tenant_id,
+        connectionId: conn.id,
+        code: "cancelled_at_source_checked_in",
+        message: `הזמנה ${r.reservation_number} מבוטלת ב-Beds24 אבל האורח צ'ק-אין — נדרשת החלטת מפעיל`,
+        context: { reservation_id: r.id, booking_id: r.external_booking_id },
+      });
+      continue;
+    }
+
+    // the gap: cancelled at source, still occupying here → canonical release
+    await logChannelError(db, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      code: "cancellation_reconciled",
+      message: `השלמת ביטול: הזמנה ${r.reservation_number} מבוטלת ב-Beds24 אך תפסה מלאי — משוחררת דרך מסלול הביטול הקנוני`,
+      context: { reservation_id: r.id, booking_id: r.external_booking_id },
+    });
+    await runBeds24InboundPull(db, conn, { bookingId: r.external_booking_id });
+    const [after] = await db<{ status: string }[]>`
+      SELECT status FROM guesthub.reservations WHERE id = ${r.id}`;
+    if (after?.status === "cancelled") summary.released += 1;
+    else pushError(summary, `שחרור ${r.reservation_number} לא הושלם — עדיין ${after?.status ?? "?"}`);
   }
   return summary;
 }
