@@ -477,7 +477,20 @@ export async function drainBeds24AriDirtyRanges(
   // push. The union window is projected for BOTH halves, and a date is sent
   // when ANY claimed range covers it — kind- and plan-insensitive, because an
   // emitted range is always a complete statement about its dates. ----
-  const from = rows.reduce((a, r) => (r.date_from < a ? r.date_from : a), rows[0].date_from);
+  //
+  // PAST-DATE CLAMP: Beds24 rejects calendar writes for dates before today
+  // (per-value "process inventory rooms calendar" warnings — probed live
+  // 2026-07-24), so the past is unsendable by design. The window starts at
+  // today in the property timezone; a range wholly in the past projects zero
+  // dates, sends nothing and completes as synced — there is nothing a channel
+  // can be told about yesterday. Without the clamp such ranges (e.g. an
+  // availability range from a cancelled past stay) retry forever and pin the
+  // /rates chip on "הסנכרון נכשל".
+  const [tenant] = await db<{ timezone: string | null }[]>`
+    SELECT timezone FROM guesthub.tenants WHERE id = ${conn.tenant_id}`;
+  const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
+  const rawFrom = rows.reduce((a, r) => (r.date_from < a ? r.date_from : a), rows[0].date_from);
+  const from = rawFrom < today ? today : rawFrom;
   const to = rows.reduce((a, r) => (r.date_to > a ? r.date_to : a), rows[0].date_to);
   const roomIds = [...new Set(rows.map((r) => r.room_id))];
 
