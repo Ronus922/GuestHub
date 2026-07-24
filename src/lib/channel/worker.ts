@@ -8,7 +8,7 @@ import {
   drainBeds24AriDirtyRanges, runBeds24FullSync, loadDrainableBeds24Connections,
 } from "./beds24-ari-sync";
 import {
-  loadBeds24InboundConnections, runBeds24InboundPull,
+  loadBeds24InboundConnections, runBeds24InboundPull, runBeds24BookingReconciliation,
 } from "./beds24-booking-import";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 import { runCommunicationTick } from "@/lib/communications/worker";
@@ -158,6 +158,15 @@ async function runJob(
       const summary = await drainBeds24AriDirtyRanges(sql, conn);
       return { sentValues: summary.sentValues };
     }
+    if (jobType === "reconcile_inventory") {
+      const [inbound] = (await loadBeds24InboundConnections(sql)).filter((c) => c.id === connectionId);
+      if (!inbound) return { sentValues: 0 }; // not inbound-enabled → nothing to reconcile
+      const summary = await runBeds24BookingReconciliation(sql, inbound);
+      if (summary.errors.length > 0 && summary.checked === 0) {
+        throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+      }
+      return { sentValues: summary.released };
+    }
     throw Object.assign(new Error(`unsupported job type: ${jobType}`), { code: "validation_error" });
   }
 
@@ -220,6 +229,32 @@ async function ensureInboundPullJobs(): Promise<void> {
   }
 }
 
+// Booking reconciliation cadence (safety net over the status-filter fix): the
+// same durable jobs-table pattern as the inbound poll — no cron, no timer, at
+// most one live reconcile job per connection, a new one only when none ran
+// (or was enqueued) within the window.
+export const RECONCILE_MINUTES = 20;
+
+async function ensureReconcileJobs(): Promise<void> {
+  const inbound = await loadBeds24InboundConnections(sql);
+  for (const conn of inbound) {
+    const [recent] = await sql<{ x: number }[]>`
+      SELECT 1 AS x FROM guesthub.channel_sync_jobs
+      WHERE connection_id = ${conn.id} AND job_type = 'reconcile_inventory'
+        AND (status IN ('queued', 'processing', 'retry_wait')
+             OR created_at > now() - make_interval(mins => ${RECONCILE_MINUTES}))
+      LIMIT 1`;
+    if (recent) continue;
+    await enqueueChannelJob(sql, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      jobType: "reconcile_inventory",
+      priority: 60,
+      idempotencyKey: `booking_reconcile:${conn.id}`,
+    });
+  }
+}
+
 export async function runTick(workerId: string, log: (m: string) => void): Promise<TickSummary> {
   const summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
   // Guest communication shares this existing durable worker process. It runs
@@ -232,6 +267,7 @@ export async function runTick(workerId: string, log: (m: string) => void): Promi
   }
   await ensureDrainJobs();
   await ensureInboundPullJobs();
+  await ensureReconcileJobs();
   const jobs = await claimChannelJobs(workerId, JOBS_PER_TICK);
   summary.claimed = jobs.length;
   if (jobs.length === 0) return summary;
