@@ -12,6 +12,13 @@
 --
 --  Idempotent. Safe to replay: each rename runs only while the old name exists
 --  and the new one does not.
+--
+--  WARNING — do NOT manually re-run the historical channel migrations
+--  (022-027, 032) on a database where 054 has already run: their
+--  ADD COLUMN IF NOT EXISTS blocks would re-create stray channex_* columns
+--  beside the renamed external_* ones (and 023 would rebind its CHECK
+--  constraints to the strays). Replay-from-zero through the manifest ledger
+--  (scripts/db/migrate.mjs) is the only supported replay path.
 --    docker exec -i supabase-db psql -U supabase_admin -d postgres \
 --      < db/migrations/054_external_column_rename.sql
 -- ============================================================
@@ -47,11 +54,20 @@ BEGIN
     IF EXISTS (
          SELECT 1 FROM information_schema.columns
          WHERE table_schema = 'guesthub' AND table_name = r.tbl AND column_name = r.old_col)
-       AND NOT EXISTS (
-         SELECT 1 FROM information_schema.columns
-         WHERE table_schema = 'guesthub' AND table_name = r.tbl AND column_name = r.new_col)
     THEN
-      EXECUTE format('ALTER TABLE guesthub.%I RENAME COLUMN %I TO %I', r.tbl, r.old_col, r.new_col);
+      IF EXISTS (
+           SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'guesthub' AND table_name = r.tbl AND column_name = r.new_col)
+      THEN
+        -- old AND new coexist = catalog drift (e.g. a hand-applied hotfix).
+        -- Renaming would fail and dropping is out of scope — make it LOUD
+        -- instead of silently skipping, so the D91 "0 channex columns"
+        -- invariant can't rot invisibly.
+        RAISE WARNING '054: % has BOTH % and % — stray legacy column left in place, resolve manually',
+          r.tbl, r.old_col, r.new_col;
+      ELSE
+        EXECUTE format('ALTER TABLE guesthub.%I RENAME COLUMN %I TO %I', r.tbl, r.old_col, r.new_col);
+      END IF;
     END IF;
   END LOOP;
 END $$;

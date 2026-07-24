@@ -68,6 +68,10 @@ const EMPTY_ROW: FullRow = {
 // rows, well inside a season-wide Group Update. Bulk INSERTs therefore run in
 // slices of ≤ ~30K parameters; every slice shares the caller's transaction, so
 // the batch stays all-or-nothing and the operator sees no behavioral change.
+// PRECONDITION for upsert callers: rows must be unique on the conflict key
+// ((pricing_plan_id, date) here — both current callers guarantee it). A
+// duplicate pair inside one slice still fails fast ("cannot affect row a
+// second time"), but a pair split across slices would silently last-write-win.
 const MAX_BIND_PARAMS_PER_STATEMENT = 30_000;
 export function chunkForBind<T>(rows: T[], paramsPerRow: number): T[][] {
   const rowsPerChunk = Math.max(1, Math.floor(MAX_BIND_PARAMS_PER_STATEMENT / paramsPerRow));

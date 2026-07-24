@@ -21,7 +21,7 @@ module.exports = {
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
-      // a crash-looping worker must not hammer Channex or the database
+      // a crash-looping worker must not hammer Beds24 or the database
       min_uptime: "30s",
       max_restarts: 10,
       restart_delay: 5000,
