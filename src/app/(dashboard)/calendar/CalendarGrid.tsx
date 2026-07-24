@@ -33,7 +33,7 @@ import {
   stayViolationMessage,
   type NightsRuleRow,
 } from "@/lib/rates/rules";
-import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
+import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
   NEUTRAL_STATUS,
@@ -185,6 +185,7 @@ export function CalendarGrid({
   paymentFilter,
   statusLabel,
   can,
+  flashId,
   onOpenReservation,
   onNewBooking,
   onNewClosure,
@@ -193,6 +194,8 @@ export function CalendarGrid({
   paymentFilter: PaymentState | "all";
   statusLabel: Map<string, string>;
   can: CalendarCan;
+  /** reservation_id of a just-created booking — its bar(s) pulse ~3s */
+  flashId?: string | null;
   onOpenReservation: (id: string) => void;
   onNewBooking: (prefill: NewReservationPrefill) => void;
   onNewClosure: (prefill: ClosurePrefill) => void;
@@ -965,8 +968,8 @@ export function CalendarGrid({
 
   const dragStay = dragUi ? data.stays.find((s) => s.rr_id === dragUi.rrId) : null;
   const dragPalette = dragStay ? stayPalette(dragStay) : null;
-  // ghost badge follows the same rule as the pill: internal reservations wear none
-  const dragChannel = dragStay ? normalizeVisibleChannel(dragStay.source_key) : null;
+  // ghost badge follows the same rule as the pill: channel, or the manual pencil
+  const dragChannel = dragStay ? resolveChannelBadge(dragStay.source_key) : null;
   // dim only the source card of a MOVE, and only re-render its own row
   const dimRoomId = dragUi?.mode === "move" ? (dragStay?.room_id ?? null) : null;
   // highlighted card = the one whose hover tooltip is open (row-scoped)
@@ -1107,6 +1110,7 @@ export function CalendarGrid({
                   cellRate={cellRate}
                   paymentFilter={paymentFilter}
                   pending={pending}
+                  flashRid={flashId ?? null}
                   dragRrId={room.id === dimRoomId && dragUi ? dragUi.rrId : null}
                   selectedRrId={room.id === selRoomId && tip ? tip.stay.rr_id : null}
                   can={can}
@@ -1293,6 +1297,7 @@ const RoomRow = memo(function RoomRow({
   cellRate,
   paymentFilter,
   pending,
+  flashRid,
   dragRrId,
   selectedRrId,
   can,
@@ -1325,6 +1330,7 @@ const RoomRow = memo(function RoomRow({
   cellRate: (room: CalendarRoom, date: DateOnly) => RateRow | undefined;
   paymentFilter: PaymentState | "all";
   pending: Set<string>;
+  flashRid: string | null;
   dragRrId: string | null;
   selectedRrId: string | null;
   can: CalendarCan;
@@ -1470,6 +1476,7 @@ const RoomRow = memo(function RoomRow({
             days={days}
             dimmed={paymentFilter !== "all" && stay.payment !== paymentFilter}
             pending={pending.has(stay.rr_id)}
+            flash={flashRid != null && stay.reservation_id === flashRid}
             dragSource={dragRrId === stay.rr_id}
             selected={selectedRrId === stay.rr_id}
             canEdit={can.edit}
@@ -1500,6 +1507,7 @@ const StayBar = memo(function StayBar({
   days,
   dimmed,
   pending,
+  flash,
   dragSource,
   selected,
   canEdit,
@@ -1520,6 +1528,7 @@ const StayBar = memo(function StayBar({
   days: number;
   dimmed: boolean;
   pending: boolean;
+  flash: boolean;
   dragSource: boolean;
   selected: boolean;
   canEdit: boolean;
@@ -1537,8 +1546,8 @@ const StayBar = memo(function StayBar({
   const geo = barGeometry(from, days, stay.check_in, stay.check_out);
   const nights = nightsBetween(stay.check_in, stay.check_out);
   const draggable = canDragCard(canEdit, pending);
-  // null for internal reservations → no badge, no wrapper, no reserved width
-  const channel = normalizeVisibleChannel(stay.source_key);
+  // every reservation carries a badge: its external channel, or the manual pencil
+  const channel = resolveChannelBadge(stay.source_key);
 
   return (
     <div
@@ -1548,8 +1557,8 @@ const StayBar = memo(function StayBar({
       className={`cb-resbar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""} ${
         stay.status === "draft" ? "draft" : ""
       } ${dimmed ? "dim" : ""} ${dragSource ? "src" : ""} ${selected ? "sel" : ""} ${pending ? "pending" : ""} ${
-        draggable ? "" : canView ? "viewonly" : "lk"
-      }`}
+        flash ? "flash" : ""
+      } ${draggable ? "" : canView ? "viewonly" : "lk"}`}
       style={{
         insetInlineStart: `${geo.start * 100}%`,
         width: `${geo.width * 100}%`,
@@ -1572,7 +1581,7 @@ const StayBar = memo(function StayBar({
       }}
     >
       {/* channel first (RTL: right-hand leading edge), then VIP, then name */}
-      {channel && <ChannelBadge channel={channel} size="lg" ring />}
+      <ChannelBadge channel={channel} size="lg" ring />
       {stay.is_vip && <Icon name="star" size={13.5} className="cb-vip" />}
       <span className="cb-nm">{stay.guest_name}</span>
       {stay.room_count > 1 && <Icon name="link" size={13.5} className="shrink-0 opacity-70" />}

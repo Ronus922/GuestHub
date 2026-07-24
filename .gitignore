@@ -52,3 +52,6 @@ next-env.d.ts
 # design references (screenshots, PDFs, HTML bundles) — the repo is PUBLIC;
 # app screenshots and reference assets must never be committed (D87 rule)
 /ref/
+
+# schema dumps (deploy safety artifacts, never committed)
+backups/

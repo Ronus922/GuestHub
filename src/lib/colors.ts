@@ -67,9 +67,12 @@ export const EMAIL_PALETTE = {
 // glyph, brand colors, display name. Declared HERE because this is a token
 // file — the brand hexes may not appear anywhere else. The badge itself is
 // <ChannelBadge>; nobody re-types a glyph or a color at a call site.
-// ONLY external/site channels are visible: a reservation created by hand
-// inside GuestHub (phone/walk_in/unknown/NULL source) wears NO badge at all.
+// The four EXTERNAL channels shown in the legend. A reservation created by hand
+// inside GuestHub (phone/walk_in/unknown/NULL source) is "manual" — it wears the
+// pencil badge on its pill but is NOT a legend channel.
 export type VisibleChannel = "booking" | "airbnb" | "expedia" | "site";
+/** every reservation resolves to one of these for its pill badge (never null) */
+export type BadgeChannel = VisibleChannel | "manual";
 
 export const CHANNEL_ORDER: readonly VisibleChannel[] = [
   "booking",
@@ -78,14 +81,17 @@ export const CHANNEL_ORDER: readonly VisibleChannel[] = [
   "site",
 ] as const;
 
+// glyph = single letter; icon = Material Symbol (rendered by <Icon>) — a channel
+// uses one or the other. site/manual are pictograms per the calendar reference.
 export const CHANNEL_CONFIG: Record<
-  VisibleChannel,
-  { glyph: string; bg: string; tx: string; name: string }
+  BadgeChannel,
+  { glyph?: string; icon?: "globe" | "edit"; bg: string; tx: string; name: string }
 > = {
   booking: { glyph: "B", bg: "#003580", tx: "#FFFFFF", name: "Booking.com" },
   airbnb: { glyph: "A", bg: "#FF5A5F", tx: "#FFFFFF", name: "Airbnb" },
   expedia: { glyph: "E", bg: "#FFC400", tx: "#1B2233", name: "Expedia" },
-  site: { glyph: "S", bg: "#2540C8", tx: "#FFFFFF", name: "אתר המלון" },
+  site: { icon: "globe", bg: "#2540C8", tx: "#FFFFFF", name: "אתר המלון" },
+  manual: { icon: "edit", bg: "#E6E9F0", tx: "#5B6478", name: "הזמנה ידנית" },
 };
 
 // lookup_items(booking_sources).key → visible channel, or null. The canonical
@@ -112,6 +118,15 @@ export function normalizeVisibleChannel(
     default:
       return null;
   }
+}
+
+// EVERY reservation gets a pill badge: its external channel, or the "manual"
+// pencil for internal/unknown sources. Use this for the badge; keep
+// normalizeVisibleChannel for the "is this an OTA booking?" semantic check.
+export function resolveChannelBadge(
+  sourceKey: string | null | undefined,
+): BadgeChannel {
+  return normalizeVisibleChannel(sourceKey) ?? "manual";
 }
 
 export type TintPalette = { bg: string; bd: string; tx: string };

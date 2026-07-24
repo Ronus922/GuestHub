@@ -49,3 +49,6 @@
 041_operational_tasks.sql
 042_guest_anonymization.sql
 043_retention_purge.sql
+044_hospitable_provider.sql
+045_beds24_provider.sql
+046_active_provider_selector.sql

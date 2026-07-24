@@ -6,11 +6,11 @@
 #
 #   PROD_DEPLOY_OK=1 npm run deploy:prod
 #
-# Runs inside the marked production checkout (/var/www/guesthub-production).
+# Runs inside the marked production checkout (/var/www/guesthub).
 # ============================================================
 set -euo pipefail
 
-PROD_DIR="${PROD_DIR:-/var/www/guesthub-production}"
+PROD_DIR="${PROD_DIR:-/var/www/guesthub}"
 PORT="${PORT:-3007}"
 PM2_APP="${PM2_APP:-guesthub}"
 # the channel worker (D68) — declared in ecosystem.config.cjs, same checkout,

@@ -6,31 +6,28 @@ import { getCalendarData } from "./data";
 import { getTenantVatRate } from "@/lib/settings";
 import { listBookableRatePlans } from "@/lib/rate-plans/service";
 import { CalendarScreen } from "./CalendarScreen";
-import { VIEW_DAYS, type CalendarView } from "./types";
+import { CALENDAR_DAYS } from "./types";
 
 export const dynamic = "force-dynamic";
 
 // /calendar — the production occupancy calendar (§D). URL-driven range:
-// ?from=YYYY-MM-DD&view=week|3w|month, defaulting to a 3-week window
-// starting today (property timezone).
+// ?from=YYYY-MM-DD over a fixed 3-week window starting today (property timezone).
 export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; view?: string }>;
+  searchParams: Promise<{ from?: string }>;
 }) {
   const actor = await getActor();
   if (!actor) redirect("/auth/signout");
   if (!hasPermission(actor, "calendar.view")) redirect("/dashboard");
 
   const params = await searchParams;
-  const view: CalendarView =
-    params.view === "week" || params.view === "month" ? params.view : "3w";
   const [tenant] = await sql<{ timezone: string }[]>`
     SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
   const today = todayInTz(tenant?.timezone || "Asia/Jerusalem");
   const from = params.from && isDateOnly(params.from) ? params.from : today;
 
-  const data = await getCalendarData(actor, from, VIEW_DAYS[view]);
+  const data = await getCalendarData(actor, from, CALENDAR_DAYS);
   // tenant VAT rate (Settings) — display-only in the booking/edit panels
   const vatRate = await getTenantVatRate(actor.tenantId);
   // active tenant-level Rate Plans for the panels' plan selector
@@ -50,7 +47,6 @@ export default async function CalendarPage({
   return (
     <CalendarScreen
       data={data}
-      view={view}
       statusItems={lookups.filter((l) => l.category === "reservation_statuses")}
       paymentMethods={lookups.filter((l) => l.category === "payment_methods")}
       bookingSources={lookups.filter((l) => l.category === "booking_sources")}

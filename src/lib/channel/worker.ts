@@ -9,6 +9,18 @@ import {
   type AriConnection,
 } from "./ari-sync";
 import { loadInboundConnections, runInboundPull } from "./booking-import";
+import {
+  drainHospitableAriDirtyRanges, runHospitableFullSync, loadDrainableHospitableConnections,
+} from "./hospitable-ari-sync";
+import {
+  loadHospitableInboundConnections, runHospitableInboundPull,
+} from "./hospitable-booking-import";
+import {
+  drainBeds24AriDirtyRanges, runBeds24FullSync, loadDrainableBeds24Connections,
+} from "./beds24-ari-sync";
+import {
+  loadBeds24InboundConnections, runBeds24InboundPull,
+} from "./beds24-booking-import";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 import { runCommunicationTick } from "@/lib/communications/worker";
 
@@ -56,9 +68,23 @@ export function resolveIntervalMs(raw: string | undefined): number {
   return Math.max(MIN_INTERVAL_MS, Math.round(n));
 }
 
-async function loadConnection(connectionId: string): Promise<AriConnection | null> {
-  const [row] = await sql<AriConnection[]>`
-    SELECT id, tenant_id, channex_property_id, api_key_ciphertext, environment,
+// D77 — the worker is one of the three provider-dispatch seams: the loaded row
+// carries `provider`, and runJob branches on it. Structurally the row satisfies
+// both AriConnection (Channex) and HospitableAriConnection (channex_property_id
+// is simply NULL on hospitable rows and unread by the hospitable path).
+type WorkerConnection = AriConnection & {
+  provider: "channex" | "hospitable" | "beds24";
+  is_active_provider: boolean;
+  // beds24 24h access-token cache (NULL on other providers)
+  access_token_ciphertext: string | null;
+  access_token_expires_at: Date | string | null;
+};
+
+async function loadConnection(connectionId: string): Promise<WorkerConnection | null> {
+  const [row] = await sql<WorkerConnection[]>`
+    SELECT id, tenant_id, provider, is_active_provider, channex_property_id,
+           api_key_ciphertext, environment,
+           access_token_ciphertext, access_token_expires_at,
            circuit_open_until::text AS circuit_open_until, consecutive_failures
     FROM guesthub.channel_connections WHERE id = ${connectionId}`;
   return row ?? null;
@@ -83,6 +109,16 @@ async function isDrainable(connectionId: string): Promise<boolean> {
   return drainable.some((c) => c.id === connectionId);
 }
 
+async function isHospitableDrainable(connectionId: string): Promise<boolean> {
+  const drainable = await loadDrainableHospitableConnections(sql);
+  return drainable.some((c) => c.id === connectionId);
+}
+
+async function isBeds24Drainable(connectionId: string): Promise<boolean> {
+  const drainable = await loadDrainableBeds24Connections(sql);
+  return drainable.some((c) => c.id === connectionId);
+}
+
 async function runJob(
   jobType: ChannelJobType,
   jobId: string,
@@ -91,6 +127,96 @@ async function runJob(
 ): Promise<{ sentValues: number }> {
   const conn = await loadConnection(connectionId);
   if (!conn) throw Object.assign(new Error("connection not found"), { code: "not_found" });
+
+  // D79 — ONE working provider at a time. A dormant (backup) provider's job
+  // must neither push nor import: full_sync dead-letters loudly (it is
+  // operator-triggered — the operator picked the wrong provider), while
+  // pull/drain no-op quietly (a stale webhook or pre-switch job is expected).
+  if (!conn.is_active_provider) {
+    if (jobType === "full_sync") {
+      throw Object.assign(new Error("הספק אינו הספק הפעיל — בחר אותו במסך הערוצים תחילה"), {
+        code: "validation_error",
+      });
+    }
+    return { sentValues: 0 };
+  }
+
+  // ---- Beds24 dispatch (D78) — same job types, provider-specific runners ----
+  if (conn.provider === "beds24") {
+    if (jobType === "pull_booking_revisions") {
+      const [inbound] = (await loadBeds24InboundConnections(sql)).filter((c) => c.id === connectionId);
+      if (!inbound) {
+        throw Object.assign(new Error("inbound sync is not enabled for this connection"), {
+          code: "validation_error",
+        });
+      }
+      const bookingId =
+        payload && typeof payload === "object" && "booking_id" in payload
+          ? String((payload as Record<string, unknown>).booking_id ?? "") || undefined
+          : undefined;
+      const summary = await runBeds24InboundPull(sql, inbound, bookingId ? { bookingId } : undefined);
+      if (summary.errors.length > 0 && summary.fetched === 0 && summary.imported === 0 && summary.inserted === 0) {
+        throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+      }
+      return { sentValues: summary.imported };
+    }
+    if (jobType === "full_sync") {
+      const result = await runBeds24FullSync(sql, conn, jobId);
+      if (!result.ok) {
+        throw Object.assign(new Error(result.error ?? "full sync incomplete"), {
+          code: "validation_error",
+        });
+      }
+      return { sentValues: result.outcome.sentRanges };
+    }
+    if (jobType === "sync_ari_range") {
+      if (!(await isBeds24Drainable(connectionId))) return { sentValues: 0 };
+      const summary = await drainBeds24AriDirtyRanges(sql, conn);
+      return { sentValues: summary.sentValues };
+    }
+    throw Object.assign(new Error(`unsupported job type: ${jobType}`), { code: "validation_error" });
+  }
+
+  // ---- Hospitable dispatch (D77) — same job types, provider-specific runners ----
+  if (conn.provider === "hospitable") {
+    if (jobType === "pull_booking_revisions") {
+      const [inbound] = (await loadHospitableInboundConnections(sql)).filter((c) => c.id === connectionId);
+      if (!inbound) {
+        throw Object.assign(new Error("inbound sync is not enabled for this connection"), {
+          code: "validation_error",
+        });
+      }
+      const reservationUuid =
+        payload && typeof payload === "object" && "reservation_uuid" in payload
+          ? String((payload as Record<string, unknown>).reservation_uuid ?? "") || undefined
+          : undefined;
+      const summary = await runHospitableInboundPull(sql, inbound, reservationUuid ? { reservationUuid } : undefined);
+      // Transient job failure ONLY when the upstream fetch itself made zero
+      // progress. A standing quarantine (unmapped property) or an email-dispatch
+      // failure re-reports its error on every sweep while fetched > 0 — that is
+      // operator-pending, not transient, and must not dead-letter the poll loop.
+      if (summary.errors.length > 0 && summary.fetched === 0 && summary.imported === 0 && summary.inserted === 0) {
+        throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+      }
+      return { sentValues: summary.imported };
+    }
+    if (jobType === "full_sync") {
+      const result = await runHospitableFullSync(sql, conn, jobId);
+      if (!result.ok) {
+        // operator-triggered — a failed one dead-letters (same doctrine as Channex)
+        throw Object.assign(new Error(result.error ?? "full sync incomplete"), {
+          code: "validation_error",
+        });
+      }
+      return { sentValues: result.outcome.sentDates };
+    }
+    if (jobType === "sync_ari_range") {
+      if (!(await isHospitableDrainable(connectionId))) return { sentValues: 0 };
+      const summary = await drainHospitableAriDirtyRanges(sql, conn);
+      return { sentValues: summary.sentValues };
+    }
+    throw Object.assign(new Error(`unsupported job type: ${jobType}`), { code: "validation_error" });
+  }
 
   if (jobType === "pull_booking_revisions") {
     // inbound import (D76): feed → persist → import → ack, per revision. Only
@@ -149,7 +275,14 @@ async function runJob(
 // holding work that is due. The idempotency key collapses this to at most one
 // job per connection, and next_attempt_at enforces the backoff.
 async function ensureDrainJobs(): Promise<void> {
-  for (const conn of await loadDrainableConnections(sql)) {
+  // both providers' drainable connections converge on the SAME job type and
+  // idempotency key — dispatch happens in runJob by the connection's provider
+  const drainable = [
+    ...(await loadDrainableConnections(sql)),
+    ...(await loadDrainableHospitableConnections(sql)),
+    ...(await loadDrainableBeds24Connections(sql)),
+  ];
+  for (const conn of drainable) {
     const [due] = await sql<{ x: number }[]>`
       SELECT 1 AS x FROM guesthub.channel_dirty_ranges
       WHERE connection_id = ${conn.id} AND status = 'pending' AND next_attempt_at <= now()
@@ -173,10 +306,17 @@ async function ensureDrainJobs(): Promise<void> {
 export const INBOUND_POLL_MINUTES = 5;
 
 async function ensureInboundPullJobs(): Promise<void> {
-  for (const conn of await loadInboundConnections(sql)) {
+  // both providers' inbound-enabled connections; dispatch by provider in runJob
+  const inbound = [
+    ...(await loadInboundConnections(sql)),
+    ...(await loadHospitableInboundConnections(sql)),
+    ...(await loadBeds24InboundConnections(sql)),
+  ];
+  for (const conn of inbound) {
     const [recent] = await sql<{ x: number }[]>`
       SELECT 1 AS x FROM guesthub.channel_sync_jobs
       WHERE connection_id = ${conn.id} AND job_type = 'pull_booking_revisions'
+        AND NOT (payload ? 'reservation_uuid')
         AND (status IN ('queued', 'processing', 'retry_wait')
              OR created_at > now() - make_interval(mins => ${INBOUND_POLL_MINUTES}))
       LIMIT 1`;

@@ -2,7 +2,7 @@
 // PM2 definition for the GuestHub channel worker (D68).
 //
 // Deliberately declares ONLY the worker. The `guesthub` web app is an existing,
-// separately-registered PM2 process (npm start, cwd /var/www/guesthub-production)
+// separately-registered PM2 process (npm start, cwd /var/www/guesthub)
 // and is restarted by name in scripts/deploy-production.sh — re-declaring it here
 // would silently rewrite its registration. Unrelated PM2 apps (pms, mail-system,
 // sys-app) are never referenced.

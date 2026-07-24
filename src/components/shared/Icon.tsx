@@ -19,6 +19,7 @@ export function snapIconSize(px: number): number {
 const ICONS = {
   dashboard: "space_dashboard",
   calendar: "calendar_month",
+  today: "today",
   reservations: "content_paste",
   guests: "group",
   rooms: "bed",

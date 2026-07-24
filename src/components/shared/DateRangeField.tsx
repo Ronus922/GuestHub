@@ -43,6 +43,7 @@ export function DateRangeField({
   min,
   max,
   disabled = false,
+  invalid = false,
   onApply,
 }: {
   from: string;
@@ -54,6 +55,8 @@ export function DateRangeField({
   min?: DateOnly;
   max?: DateOnly;
   disabled?: boolean;
+  /** red the trigger when a required range is missing (form validation) */
+  invalid?: boolean;
   onApply: (from: DateOnly, to: DateOnly) => void;
 }) {
   const days = mode === "days";
@@ -116,7 +119,7 @@ export function DateRangeField({
         </span>
         <button
           type="button"
-          className="field-input dp-trigger"
+          className={`field-input dp-trigger${invalid ? " field-error" : ""}`}
           disabled={disabled}
           aria-expanded={open}
           onClick={toggle}

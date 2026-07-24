@@ -70,22 +70,33 @@ for (const file of files) {
     const line = raw.replace(/\/\*.*?\*\//g, "").replace(/\/\/.*$/, "");
     if (!line.trim()) return;
 
+    // A `ds-allow:` marker (on this line or the one above) is an explicit,
+    // reviewable exception to a VALUE rule (colour / font-size / radius / shadow
+    // / control-height): a reference the product owner supplied overrides the
+    // closed set for that one declaration. Structural rules (physical-direction,
+    // duplicate-primitive, icon-library) are NOT values and ignore this marker —
+    // they still fail. `vadd` records a value violation only when not exempted.
+    const dsAllow = /ds-allow:/.test(raw) || /ds-allow:/.test(lines[i - 1] ?? "");
+    const vadd = (rule, detail) => {
+      if (!dsAllow) add(file, n, rule, detail);
+    };
+
     // ---- §2 typography: CSS font-size ----
     for (const m of line.matchAll(/font-size:\s*([0-9.]+)px/g)) {
       const v = Number(m[1]);
       if (!near(v, FONT_SIZES))
-        add(file, n, "font-size", `${v}px — not in the §2 scale`);
+        vadd("font-size", `${v}px — not in the §2 scale`);
     }
     // ---- §2 typography: Tailwind arbitrary + non-scale utilities ----
     for (const m of line.matchAll(/text-\[([0-9.]+)px\]/g)) {
       const v = Number(m[1]);
       if (!near(v, FONT_SIZES))
-        add(file, n, "font-size", `text-[${v}px] — not in the §2 scale`);
+        vadd("font-size", `text-[${v}px] — not in the §2 scale`);
     }
     for (const m of line.matchAll(
       /\b(?<!\w)(text-base|text-lg|text-xl|text-2xl|text-3xl|text-4xl|text-\[[0-9.]+rem\])(?!\w)/g,
     )) {
-      add(file, n, "font-size", `${m[1]} — resolves outside the §2 scale`);
+      vadd("font-size", `${m[1]} — resolves outside the §2 scale`);
     }
 
     // ---- §1 radii ----
@@ -108,16 +119,16 @@ for (const file of files) {
         )
       )
         continue;
-      add(file, n, "radius", `${m[1].trim()} — not one of {16,12,10,8,7}`);
+      vadd("radius", `${m[1].trim()} — not one of {16,12,10,8,7}`);
     }
     for (const m of line.matchAll(/\brounded-\[([0-9.]+)px\]/g)) {
       if (!near(Number(m[1]), RADII))
-        add(file, n, "radius", `rounded-[${m[1]}px] — not an approved radius`);
+        vadd("radius", `rounded-[${m[1]}px] — not an approved radius`);
     }
     for (const m of line.matchAll(
       /\b(rounded-sm|rounded-md|rounded-3xl|rounded-4xl)(?!\w)/g,
     )) {
-      add(file, n, "radius", `${m[1]} — not an approved radius`);
+      vadd("radius", `${m[1]} — not an approved radius`);
     }
 
     // ---- §1 shadows ----
@@ -129,10 +140,10 @@ for (const file of files) {
         if (/^inset0001\.5pxvar\(--brand\)$/.test(v)) continue; // §3 filter chip
         if (v === "none") continue;
         if (SHADOWS.some((s) => norm(s) === v)) continue;
-        add(file, n, "shadow", `${m[1].trim()} — not one of the two tokens`);
+        vadd("shadow", `${m[1].trim()} — not one of the two tokens`);
       }
       for (const m of line.matchAll(/\bshadow-\[[^\]]+\]/g))
-        add(file, n, "shadow", `${m[0]} — arbitrary shadow`);
+        vadd("shadow", `${m[0]} — arbitrary shadow`);
     }
 
     // ---- §1 colours: raw hex outside the token/theme files ----
@@ -140,7 +151,7 @@ for (const file of files) {
       // a 3-digit "#418" inside prose is a React error code, not a colour, so
       // only CSS keeps the shorthand form; TS/TSX must spell a colour in full.
       const hexRe = isCss ? /#[0-9a-fA-F]{3,8}\b/g : /#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\b/g;
-      const allowed = /ds-allow:/.test(line) || /ds-allow:/.test(lines[i - 1] ?? "");
+      const allowed = dsAllow;
       for (const m of line.matchAll(hexRe)) {
         if (allowed) continue;
         const hex = m[0].toLowerCase();
@@ -157,9 +168,7 @@ for (const file of files) {
       for (const m of line.matchAll(/height:\s*([0-9.]+)px/g)) {
         const v = Number(m[1]);
         if ([38, 40, 42, 46, 48, 52].includes(v))
-          add(
-            file,
-            n,
+          vadd(
             "control-height",
             `${v}px — buttons/fields are 44px (36px only in a popover/row)`,
           );

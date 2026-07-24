@@ -58,6 +58,7 @@ export function StayEditor({
   onRemove,
   excludeReservationId,
   disabled = false,
+  showErrors = false,
 }: {
   index: number;
   value: StayDraft;
@@ -65,6 +66,8 @@ export function StayEditor({
   onRemove?: () => void;
   excludeReservationId?: string;
   disabled?: boolean;
+  /** red the empty room / date-range controls (booking-form validation) */
+  showErrors?: boolean;
 }) {
   const [rooms, setRooms] = useState<RoomOption[]>([]);
   const [quote, setQuote] = useState<{ total: number; restriction: string | null } | null>(null);
@@ -77,6 +80,8 @@ export function StayEditor({
 
   const validRange = value.checkIn && value.checkOut && value.checkOut > value.checkIn;
   const nights = validRange ? nightsBetween(value.checkIn, value.checkOut) : 0;
+  const datesInvalid = showErrors && !validRange;
+  const roomInvalid = showErrors && !value.roomId;
 
   // free rooms for the chosen window
   useEffect(() => {
@@ -150,6 +155,7 @@ export function StayEditor({
           from={value.checkIn}
           to={value.checkOut}
           disabled={disabled}
+          invalid={datesInvalid}
           // Moving the dates KEEPS the room: unassigning it silently left the
           // stay invalid, which locked "שמור שינויים" while the panel still read
           // "יש שינויים שלא נשמרו". Availability is re-checked below (and again
@@ -204,7 +210,8 @@ export function StayEditor({
             חדר <span className="bw-req">*</span>
           </span>
           <select
-            className="field-input"
+            className={`field-input${roomInvalid ? " field-error" : ""}`}
+            aria-invalid={roomInvalid || undefined}
             value={value.roomId}
             onChange={(e) => {
               setChanging(false);

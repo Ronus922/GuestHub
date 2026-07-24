@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Nightly GuestHub backup: schema-scoped pg_dump + room-image uploads.
 # Keeps 14 days. Installed via cron (see D49 closure audit):
-#   15 3 * * * bash /var/www/guesthub-production/scripts/nightly-backup.sh >> /home/ubuntu/logs/guesthub-backup.log 2>&1
+#   15 3 * * * bash /var/www/guesthub/scripts/nightly-backup.sh >> /home/ubuntu/logs/guesthub-backup.log 2>&1
 set -euo pipefail
 
 DEST="${DEST:-/home/ubuntu/guesthub-backups}"
-PROD_DIR="${PROD_DIR:-/var/www/guesthub-production}"
+PROD_DIR="${PROD_DIR:-/var/www/guesthub}"
 STAMP="$(date +%Y%m%dT%H%M%S)"
 KEEP_DAYS=14
 
