@@ -28,6 +28,8 @@ import {
   saveReservationCardAction,
   deleteReservationCardAction,
 } from "@/app/(dashboard)/reservations/card-actions";
+import { getManualDecisionAction } from "@/app/(dashboard)/reservations/manual-decision-actions";
+import type { ManualDecisionView } from "@/lib/reservations/manual-decision";
 import { EDITABLE_STATUSES } from "@/lib/validation/reservation";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
@@ -117,6 +119,10 @@ export function EditReservationPanel({
   // in-panel message composer (email | whatsapp) — a full-panel overlay; the
   // booking stays mounted underneath (no navigation, scroll preserved)
   const [composer, setComposer] = useState<null | "email" | "whatsapp">(null);
+  // D93 — the DERIVED blocked-cancellation state. Loaded next to the detail
+  // because getReservationAction cannot carry it yet (see the header of
+  // manual-decision-actions.ts); null for every reservation that is not blocked.
+  const [manualDecision, setManualDecision] = useState<ManualDecisionView | null>(null);
 
   const open = reservationId !== null;
   const reservationIdRef = useRef(reservationId);
@@ -195,6 +201,13 @@ export function EditReservationPanel({
       guestSnapRef.current = JSON.stringify([loadedGuest, d.source_id ?? ""]);
       staysSnapRef.current = JSON.stringify(loadedStays, dropStayKey);
     });
+    // the blocked-cancellation card rides the SAME reload path as the detail:
+    // a realtime event that flips the reservation (the operator checked the
+    // guest out, the supervised release landed) must clear the card too.
+    getManualDecisionAction(id).then((r) => {
+      if (reservationIdRef.current !== id) return;
+      setManualDecision(r.success ? (r.data ?? null) : null);
+    });
   }, []);
 
   useEffect(() => {
@@ -210,9 +223,11 @@ export function EditReservationPanel({
     setCc(EMPTY_CARD);
     if (!reservationId) {
       setDetail(null);
+      setManualDecision(null);
       return;
     }
     setDetail(null);
+    setManualDecision(null);
     setLoadError(null);
     setCancelOpen(false);
     staleToastRef.current = false;
@@ -603,6 +618,81 @@ export function EditReservationPanel({
       ) : (
         <div className="bw-main">
           <div className="bw-col-main">
+            {/* D93 — BLOCKED cancellation: the channel cancelled, we kept the
+                nights, a human must decide. Derived, never stored:
+                external_cancellation_confirmed_at IS NOT NULL AND
+                status <> 'cancelled'. First card in the column on purpose —
+                nothing else in the panel outranks a room held against a
+                cancellation. */}
+            {manualDecision && (
+              <BookingCard
+                icon="warning"
+                title="בוטלה בערוץ — נדרשת החלטת מפעיל"
+                tone="danger"
+                chip={
+                  <span className="chip chip-unpaid">
+                    <span className="dot" />
+                    החדר עדיין תפוס
+                  </span>
+                }
+              >
+                <div className="flex flex-col gap-4">
+                  <p className="text-sm font-bold leading-relaxed text-ink">
+                    {otaDisplayName(manualDecision.otaName) || "הערוץ"} שידר ביטול, והביטול נקלט
+                    ונשמר במערכת. האורח בצ׳ק-אין, ולכן הלילות לא שוחררו — החדר עדיין תפוס ולא הוחזר
+                    למכירה בשום ערוץ. שחרור אוטומטי היה מוחק שהות חיה מתחת לאורח שנמצא בחדר.
+                  </p>
+                  <div className="bw-grid2">
+                    <Field label="הביטול נקלט מהערוץ">
+                      <b className="text-sm text-ink">{fmtDateTime(manualDecision.confirmedAt)}</b>
+                    </Field>
+                    <Field label="מצב ההזמנה">
+                      <b className="text-sm text-ink">
+                        {HELD_STATUS_LABEL[manualDecision.status] ?? manualDecision.status}
+                      </b>
+                    </Field>
+                    <Field label="לילות שלא שוחררו">
+                      <b className="ltr-num text-sm text-ink">{manualDecision.nightsHeld}</b>
+                    </Field>
+                    <Field label="התראה במסך הערוצים">
+                      <b className="text-sm text-ink">
+                        <bdi className="ltr-num">{manualDecision.alertCode}</bdi>
+                        {manualDecision.openAlerts > 0
+                          ? ` · ${manualDecision.openAlerts} פתוחות`
+                          : " · נסגרה"}
+                      </b>
+                    </Field>
+                  </div>
+                  {manualDecision.roomsHeld.length > 0 && (
+                    <ul className="flex list-none flex-col gap-2">
+                      {manualDecision.roomsHeld.map((r, i) => (
+                        <li
+                          key={`${r.roomLabel}-${r.checkIn}-${i}`}
+                          className="flex flex-wrap items-center gap-3 rounded-[10px] border border-line bg-surface p-3"
+                        >
+                          <span className="flex items-center gap-2 text-sm font-bold text-ink">
+                            <Icon name="rooms" size={17} />
+                            {r.roomLabel}
+                          </span>
+                          <span className="ltr-num text-sm text-muted">
+                            {fmtDate(r.checkIn)} – {fmtDate(r.checkOut)}
+                          </span>
+                          <span className="flex-1" />
+                          <span className="chip chip-neutral">
+                            <bdi className="ltr-num">{r.nights}</bdi> לילות תפוסים
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-sm leading-relaxed text-muted">
+                    מה עושים: מטפלים בשהות קודם — צ׳ק-אאוט לאורח או סידור חלופי — ורק אז מבצעים
+                    ״בדיקה מול Beds24 ושחרור״ מתוך חלון הביטול, שמשחרר את הלילות דרך מסלול הביטול
+                    המלא. כל עוד ההזמנה במצב הזה החדר נשאר תפוס ביומן ובכל הערוצים.
+                  </p>
+                </div>
+              </BookingCard>
+            )}
             {/* cancellation history (D77 §7) — who/when/why, permanent record */}
             {detail.cancellation && (
               <BookingCard icon="circle-slash" title="ההזמנה בוטלה" tone="danger">
@@ -1349,6 +1439,16 @@ function fmtDate(iso: string): string {
 function fmtDateTime(iso: string): string {
   return `${fmtDate(iso)} ${iso.slice(11, 16)}`;
 }
+
+// the lifecycle statuses a blocked cancellation can sit on (D93). checked_in is
+// the only one AUTO_RELEASE_BLOCKED_STATUSES names today; the others are here so
+// a stay the operator moved on before deciding still reads in Hebrew.
+const HELD_STATUS_LABEL: Record<string, string> = {
+  checked_in: "צ׳ק-אין בוצע — האורח בחדר",
+  confirmed: "מאושרת",
+  checked_out: "צ׳ק-אאוט בוצע",
+  no_show: "לא הופיע",
+};
 
 const CANCELLED_BY_LABEL: Record<string, string> = {
   guest: "האורח",
