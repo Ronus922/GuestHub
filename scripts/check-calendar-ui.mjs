@@ -11,11 +11,12 @@ import assert from "node:assert/strict";
 
 const out = mkdtempSync(join(tmpdir(), "calendar-ui-"));
 execSync(
-  `pnpm exec tsc src/lib/dates.ts src/lib/calendar-interactions.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
+  `pnpm exec tsc src/lib/dates.ts src/lib/calendar-interactions.ts src/lib/colors.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
   { stdio: "inherit" },
 );
 const require = createRequire(import.meta.url);
 const ix = require(join(out, "calendar-interactions.js"));
+const colors = require(join(out, "colors.js"));
 
 // ---- movement threshold (§6): below 6px = click, above = drag ----
 assert.equal(ix.DRAG_THRESHOLD_PX, 6);
@@ -360,17 +361,54 @@ assert.equal(rows.length, 4, "the card body declares four rows (dates, nights+ro
 // The channel row CONSOLIDATED the old free-text "מקור" row (it sits between
 // nights and money, per the channel-badge spec) — the normalized channel name +
 // the SAME <ChannelBadge> the pill wears, so the card can never show a second,
-// diverging source. It renders ONLY for a visible external/site channel: an
-// internal reservation (phone/walk_in/unknown/NULL) shows a three-row body
-// with no empty row or gap. The forbidden-row assertions below are unchanged.
+// diverging source.
+//
+// D107 (PR #95, commit 2ab6ae1, ref/screens/GuesthubCalandrFix.png) made the row
+// UNCONDITIONAL and rolled that model out over all five surfaces (grid pill,
+// drag ghost, mobile timeline, mobile detail sheet, this card): every
+// reservation states its origin — an external channel, or the grey "manual"
+// pencil for phone/walk_in/unknown/NULL. The assertion that stood here demanded
+// the literal `{channel && (` of the model D107 replaced, so it had been RED on
+// main while the product was correct. STALE ASSERTION, not a regression.
+//
+// The row is safe unconditionally for exactly ONE reason: resolveChannelBadge is
+// TOTAL — it never returns null, so `CHANNEL_CONFIG[channel]` always exists and
+// the row is never empty. That is the real invariant, so it is asserted here as
+// BEHAVIOUR against the compiled module. The two source-shape assertions after
+// it are CONTRACT assertions: they keep the card wired to the total resolver, so
+// the behaviour proved below is the behaviour the card actually gets.
+for (const key of [null, undefined, "", "booking_com", "booking", "airbnb", "expedia", "direct",
+  "site", "website", "phone", "walk_in", "manual", "unknown", "BOOKING_COM", "  airbnb "]) {
+  const resolved = colors.resolveChannelBadge(key);
+  assert.ok(resolved != null && Object.hasOwn(colors.CHANNEL_CONFIG, resolved),
+    `resolveChannelBadge(${JSON.stringify(key)}) must land on a CHANNEL_CONFIG key — got ${JSON.stringify(resolved)}. ` +
+    `The channel row is unconditional, so a source that resolves to nothing renders "ערוץ: " with no name (or throws).`);
+  assert.ok(typeof colors.CHANNEL_CONFIG[resolved].name === "string" && colors.CHANNEL_CONFIG[resolved].name.length > 0,
+    `the channel row prints CHANNEL_CONFIG[${JSON.stringify(resolved)}].name — it may never be blank`);
+}
+assert.equal(colors.resolveChannelBadge("phone"), "manual",
+  "an internal reservation resolves to the manual pencil — never a guessed brand, never a hidden row");
+assert.equal(colors.resolveChannelBadge("booking_com"), "booking", "an OTA source keeps its own brand");
+// the OTA semantic check (EditReservationPanel) rides on the OTHER function and
+// must keep returning null — one total resolver for the badge, one nullable
+// normalizer for "is this an OTA booking?". Merging them breaks the panel.
+assert.equal(colors.normalizeVisibleChannel("phone"), null,
+  "normalizeVisibleChannel stays nullable for internal sources — that is the OTA test, not the badge");
+assert.equal(colors.normalizeVisibleChannel(null), null);
+assert.deepEqual([...colors.CHANNEL_ORDER], ["booking", "airbnb", "expedia", "site"],
+  "the legend still carries exactly the four external channels — 'manual' is a badge, not a legend entry");
 const rowOrder = [
   ["stay dates", /name="calendar"[\s\S]*?hebDayMonth\(stay\.check_in\)/],
   ["nights + room + status", /name="moon"[\s\S]*?<b>\{nights\}<\/b> לילות · חדר/],
   ["channel", /name="hub"[\s\S]*?CHANNEL_CONFIG\[channel\]\.name[\s\S]*?<ChannelBadge channel=\{channel\} size="md" \/>/],
   ["total + balance", /name="finance"[\s\S]*?total_price\.toLocaleString\(\)/],
 ];
-assert.ok(/\{channel && \(\s*<p className="cb-pl">/.test(body),
-  "the channel row is CONDITIONAL — an internal reservation gets no row, not an empty one");
+assert.match(tooltip, /const channel = resolveChannelBadge\(stay\.source_key\)/,
+  "CONTRACT: the card resolves its channel through the TOTAL resolver — the behaviour asserted above is only binding while it does");
+assert.doesNotMatch(tooltip, /normalizeVisibleChannel/,
+  "CONTRACT: the nullable normalizer must not feed the card badge — needing a conditional row is exactly what that caused");
+assert.doesNotMatch(body, /\{channel && \(/,
+  "CONTRACT: the channel row is UNCONDITIONAL (D107) — an external channel or the manual pencil, never a hidden row");
 assert.ok(!/source_label|מקור:/.test(tooltip), "the old free-text source row is consolidated, not duplicated");
 let cursor = 0;
 for (const [what, re] of rowOrder) {
@@ -411,8 +449,12 @@ assert.ok(/bottom: -8px/.test(css) && /top: -8px/.test(css),
 assert.ok(!/border-inline-start: 3px solid #b9c2d8/.test(css),
   "no cell/segment draws the month boundary as its own border — that is what broke the line");
 const sepRule = rule(".cb-msep");
-assert.ok(/position: absolute/.test(sepRule) && /width: 3px/.test(sepRule),
-  ".cb-msep is ONE positioned line, not a border");
+// The rule is "a positioned line, never a border" — the THICKNESS is a design
+// value the owner reference owns, and D107.1 (1268d29) thinned it from the 3px
+// washed line to a 0.5px hairline. Pinning 3px here re-litigated an approved
+// design decision, so the assertion pins the mechanism and not the number.
+assert.ok(/position: absolute/.test(sepRule) && /\bwidth: [\d.]+px/.test(sepRule) && !/\bborder/.test(sepRule),
+  ".cb-msep is ONE positioned line of a fixed width, not a border");
 assert.ok(/var\(--cb-room-col\)/.test(sepRule) && /var\(--cb-sep\)/.test(sepRule),
   ".cb-msep hangs off the canonical column boundary (room column + fraction of the strip)");
 assert.ok(/\.cb-chead \.cb-msep/.test(css) && /\.cb-cbody \.cb-msep/.test(css),
