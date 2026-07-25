@@ -9,11 +9,24 @@
 //      already held by a LIVE worker is NOT claimed.
 //   4. FOR UPDATE SKIP LOCKED: two concurrent claimers never grab the same job.
 import postgres from "postgres";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 const url=process.env.CHECK_CONCURRENCY_DB_URL||process.env.CHECK_DB_URL;
 if(!url){console.error("need CHECK_CONCURRENCY_DB_URL (disposable DB)");process.exit(2);}
 try{const u=new URL(url);if(["localhost","127.0.0.1","::1"].includes(u.hostname)&&(u.port||"5432")==="5432"){console.error("ABORT :5432");process.exit(2);}}catch{}
 const sql=postgres(url,{prepare:false,max:3});
-const LEASE=10; // minutes, mirror JOB_LEASE_MINUTES
+// The lease was `const LEASE=10; // mirror JOB_LEASE_MINUTES` — a COPY. Change
+// JOB_LEASE_MINUTES in queue.ts and this guard kept testing 10 and stayed green.
+// Read it from the module instead; a missing/renamed export must fail loudly,
+// never fall back to a literal.
+const ROOT=join(dirname(fileURLToPath(import.meta.url)),"..");
+console.log(`# tree under test: ${ROOT}`);
+const QUEUE_TS=join(ROOT,"src/lib/channel/queue.ts");
+const leaseMatch=/export\s+const\s+JOB_LEASE_MINUTES\s*(?::[^=]+)?=\s*(\d+)/.exec(readFileSync(QUEUE_TS,"utf8"));
+if(!leaseMatch){console.error(`JOB_LEASE_MINUTES not found in ${QUEUE_TS} — the guard cannot pin what it cannot read`);process.exit(2);}
+const LEASE=Number(leaseMatch[1]);
+console.log(`# JOB_LEASE_MINUTES read from src/lib/channel/queue.ts = ${LEASE}`);
 let fail=0; const ok=(m)=>console.log(`  ✓ ${m}`); const bad=(m,d)=>{fail++;console.log(`  ✗ ${m}${d?": "+d:""}`);};
 
 // claim predicate copied from queue.ts claimChannelJobs (single-conn, limit 1)
@@ -44,14 +57,32 @@ try {
       ${lockedAgoMin==null?null:sql`now() - make_interval(mins=>${lockedAgoMin})`},
       ${lockedBy??null}, now()) returning id`;
 
-  // 1. crashed worker (processing, lease expired 20m>10m) -> reclaimed
-  const [j1]=await mkJob(C1,'processing',20,'dead-worker');
+  // 1. crashed worker (processing, lease expired 2×LEASE) -> reclaimed
+  const [j1]=await mkJob(C1,'processing',LEASE*2,'dead-worker');
   const r1=await sql.begin((tx)=>claim(tx,'worker-A'));
   (r1.length===1 && r1[0].id===j1.id && r1[0].locked_by==='worker-A')
-    ? ok("crashed job (expired lease) reclaimed by a new worker")
+    ? ok(`crashed job (locked ${LEASE*2}m ago, lease ${LEASE}m) reclaimed by a new worker`)
     : bad("expired-lease reclaim", JSON.stringify(r1));
   // reset j1 to done so it doesn't interfere
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${j1.id}`;
+
+  // 1b/1c. BOTH SIDES OF THE LEASE BOUNDARY. Testing only the far side (20 vs 10)
+  // passes for any lease <= 20, so it never pinned the value. Each job below is
+  // the ONLY row on its connection, so the one-live-per-connection rule (p.id<>c.id)
+  // cannot explain either outcome — the lease is the sole discriminator.
+  const [jIn]=await mkJob(C1,'processing',LEASE-1,'still-alive');
+  const rIn=await sql.begin((tx)=>claim(tx,'worker-A'));
+  (rIn.length===0)
+    ? ok(`inside the lease (locked ${LEASE-1}m ago < ${LEASE}m): NOT reclaimed — a live worker keeps its job`)
+    : bad(`lease boundary: a job locked ${LEASE-1}m ago was stolen from a live worker`, JSON.stringify(rIn));
+  await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${jIn.id}`;
+
+  const [jOut]=await mkJob(C1,'processing',LEASE+1,'dead-worker');
+  const rOut=await sql.begin((tx)=>claim(tx,'worker-A'));
+  (rOut.length===1 && rOut[0].id===jOut.id)
+    ? ok(`past the lease (locked ${LEASE+1}m ago > ${LEASE}m): reclaimed`)
+    : bad(`lease boundary: a job locked ${LEASE+1}m ago was not reclaimed`, JSON.stringify(rOut));
+  await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${jOut.id}`;
 
   // 2. fresh queued job on C1 -> claimed
   const [j2]=await mkJob(C1,'queued',null,null);

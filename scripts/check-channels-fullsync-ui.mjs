@@ -19,10 +19,17 @@
 // ============================================================
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-const ROOT = "/var/www/guesthub";
+// ROOT was hardcoded to "/var/www/guesthub" — the PRODUCTION checkout. Run from
+// any worktree this guard read production's components AND wrote its Tailwind
+// scratch dir into production's node_modules/.cache. Measured: injecting the
+// exact `bg-brand` defect into a worktree component left this guard green.
+// Resolve from the guard's OWN location, and print what that resolved to.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+console.log(`# tree under test: ${ROOT}`);
 const CHANNELS_DIR = "src/app/(dashboard)/channels";
 
 const read = (f) => readFileSync(join(ROOT, f), "utf8");
@@ -33,8 +40,12 @@ const ok = (m) => { n++; console.log(`✓ ${n}. ${m}`); };
 
 // ---- compile the real Tailwind CSS for the /channels route ----
 const require_ = createRequire(join(ROOT, "package.json"));
-const postcss = require_("postcss");
 const tailwindcss = require_("@tailwindcss/postcss");
+// postcss is a TRANSITIVE dep, not a declared one. Production's node_modules is
+// hoisted so a bare require("postcss") happened to resolve there; a pnpm-strict
+// worktree has no top-level postcss. Resolve it through the package that
+// actually depends on it, so the guard works under either layout.
+const postcss = createRequire(require_.resolve("@tailwindcss/postcss"))("postcss");
 
 const CACHE = join(ROOT, "node_modules/.cache/fullsync-ui-check");
 rmSync(CACHE, { recursive: true, force: true });

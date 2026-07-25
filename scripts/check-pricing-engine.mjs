@@ -25,6 +25,7 @@ import { createRequire } from "node:module";
 // regression could not be caught. It is now the tree this script lives in,
 // which is what every other guard does (compare check-pricing-equality.mjs).
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+console.log(`# tree under test: ${ROOT}`);
 const TEST_URL =
   process.env.TEST_DATABASE_URL ||
   "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
