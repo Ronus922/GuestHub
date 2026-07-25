@@ -89,9 +89,12 @@ export function onCircuitFailure(
   return { consecutiveFailures, openUntil: null };
 }
 
-/** Map an API error category to the breaker's failure kind. */
+/** Map an API error category to the breaker's failure kind.
+ *  'credit_paused' (P0-4: the Beds24 5-minute credit window ran dry BEFORE a
+ *  429) is the same kind as a 429 — the cooldown must be the provider-stated
+ *  reset span, not the exponential default. */
 export function failureKindOf(category: string): CircuitFailureKind {
-  if (category === "rate_limited") return "rate_limited";
+  if (category === "rate_limited" || category === "credit_paused") return "rate_limited";
   if (category === "server_error") return "server_error";
   if (category === "timeout") return "timeout";
   if (category === "network_error") return "network_error";

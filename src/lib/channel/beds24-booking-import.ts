@@ -23,6 +23,10 @@ import type { NormalizedRevision } from "./booking-normalize";
 import { quarantineRevision } from "./revisions";
 import { redactPayload } from "./payloads";
 import { logChannelError } from "./queue";
+import {
+  createBeds24CreditGate, beds24CreditPauseMessage,
+  type Beds24CreditGate, type Beds24CreditPause, type Beds24CreditSnapshot,
+} from "./beds24-credits";
 import { ARI_HORIZON_DAYS } from "./ranges";
 import { dispatchExternalChangeEmails } from "./external-changes";
 
@@ -74,6 +78,12 @@ export type Beds24InboundPullSummary = {
   failed: number;
   /** sanitized error messages (bounded) — never an upstream body */
   errors: string[];
+  /** P0-4 — the newest Beds24 credit meter this pull saw (the /channels
+   *  diagnostics reads it off the job row; the poll runs every 5 minutes, so
+   *  it is the freshest credit reading the system has) */
+  credits: Beds24CreditSnapshot | null;
+  /** set when the credit window (or a 429) cut the page walk short */
+  creditPause: Beds24CreditPause | null;
 };
 
 const MAX_PAGES = 50; // hard bound — never an unbounded pagination loop
@@ -130,6 +140,8 @@ type BookingsPage = {
   bookings: unknown[];
   /** pages.nextPageExists when the envelope carries one */
   nextPageExists: boolean;
+  /** the 5-minute credit meter this page reported */
+  credits: Beds24CreditSnapshot;
 };
 
 // GET /bookings with the given pre-encoded filter string. Envelope mirrors
@@ -146,7 +158,14 @@ async function fetchBookingsPage(
     `&includeGuests=true&includeInvoiceItems=true&page=${page}`;
   const res = await beds24Request({ ...opts, method: "GET", path });
   if ("ok" in res) return res;
-  if (res.status !== 200) return beds24Fail(mapErrorStatus(res.status), res.status);
+  if (res.status !== 200) {
+    const f = beds24Fail(mapErrorStatus(res.status), res.status);
+    // P0-4 — a 429 carries its own cooldown forward (Retry-After, else the
+    // credit window's resets-in); the page walker turns it into a real pause.
+    return res.retryAfterMs !== undefined
+      ? { ...f, retryAfterMs: res.retryAfterMs, credits: res.credits }
+      : { ...f, credits: res.credits };
+  }
   const root = asObj(res.body);
   if (root && root.success === false) return beds24Fail("bad_response", res.status);
   const data = root?.data ?? res.body;
@@ -155,6 +174,7 @@ async function fetchBookingsPage(
     ok: true,
     bookings: data,
     nextPageExists: asObj(root?.pages)?.nextPageExists === true,
+    credits: res.credits,
   };
 }
 
@@ -402,11 +422,26 @@ async function pullWindow(
   mappings: ReadonlyMap<string, Beds24RoomMapping>,
   summary: Beds24InboundPullSummary,
   processedRowIds: Set<string>,
+  gate: Beds24CreditGate,
 ): Promise<void> {
   for (let page = 1; page <= MAX_PAGES; page++) {
+    // P0-4 — the credit window closed on an earlier page: walk no further.
+    // MAX_PAGES is 50; at the measured 1.2 credits/call a blind walk is 60
+    // credits, 60% of the whole 5-minute window, in one job.
+    if (gate.pause) {
+      pushError(summary, beds24CreditPauseMessage(gate.pause));
+      break;
+    }
     const res = await fetchBookingsPage(creds, filters, page);
+    const rateLimited = "ok" in res && res.ok === false && res.category === "rate_limited";
+    gate.observe(res.credits, {
+      ...(rateLimited ? { httpStatus: 429 } : {}),
+      ...(rateLimited && res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}),
+    });
+    summary.credits = gate.last;
+    summary.creditPause = gate.pause;
     if (!res.ok) {
-      pushError(summary, res.message);
+      pushError(summary, gate.pause ? beds24CreditPauseMessage(gate.pause) : res.message);
       break;
     }
     for (const booking of res.bookings) {
@@ -433,10 +468,15 @@ export async function runBeds24InboundPull(
     quarantined: 0,
     failed: 0,
     errors: [],
+    credits: null,
+    creditPause: null,
   };
   const { byRoomId: mappings, propertyIds } = await loadRoomMappings(db, conn);
   const resolveRoom = beds24RoomResolver(conn);
   const processedRowIds = new Set<string>();
+  // ONE gate per pull: every page of every window observes the same meter, so
+  // the second window can never restart spending after the first one paused.
+  const gate = createBeds24CreditGate();
 
   if (mappings.size === 0) {
     // without a single mapped room, nothing can import — and a propertyId-less
@@ -468,6 +508,7 @@ export async function runBeds24InboundPull(
       mappings,
       summary,
       processedRowIds,
+      gate,
     );
     if (summary.fetched === before) windowPull = true;
   }
@@ -484,6 +525,7 @@ export async function runBeds24InboundPull(
       mappings,
       summary,
       processedRowIds,
+      gate,
     );
     if (conn.last_inbound_import_at === null) {
       // first run — the connection has never imported: additionally walk the
@@ -500,6 +542,7 @@ export async function runBeds24InboundPull(
         mappings,
         summary,
         processedRowIds,
+        gate,
       );
     }
   }
@@ -541,13 +584,23 @@ export type Beds24ReconcileSummary = {
   /** cancelled at source but the guest is CHECKED IN — alert only, never auto-released */
   alerts: number;
   errors: string[];
+  /** P0-4 — the newest credit meter seen (fresh: this runs every 20 minutes) */
+  credits: Beds24CreditSnapshot | null;
+  /** set when the credit window (or a 429) cut the sweep short */
+  creditPause: Beds24CreditPause | null;
 };
 
 export async function runBeds24BookingReconciliation(
   db: Sql,
   conn: Beds24InboundConnection,
 ): Promise<Beds24ReconcileSummary> {
-  const summary: Beds24ReconcileSummary = { checked: 0, released: 0, alerts: 0, errors: [] };
+  const summary: Beds24ReconcileSummary = {
+    checked: 0, released: 0, alerts: 0, errors: [], credits: null, creditPause: null,
+  };
+  // RECONCILE_LIMIT is 50 → up to 50 by-id calls = 60 credits at the measured
+  // 1.2/call, 60% of one whole window. The gate stops the sweep instead; the
+  // unchecked reservations are simply re-checked on the next 20-minute cycle.
+  const gate = createBeds24CreditGate();
 
   const rows = await db<
     { id: string; reservation_number: string; status: string; external_booking_id: string }[]
@@ -574,9 +627,20 @@ export async function runBeds24BookingReconciliation(
   const creds: Beds24ReqOpts = { token: access.token, baseUrl: beds24BaseUrl() };
 
   for (const r of rows) {
+    if (gate.pause) {
+      pushError(summary, beds24CreditPauseMessage(gate.pause));
+      break; // the rest are re-checked on the next 20-minute cycle
+    }
     const res = await fetchBookingsPage(creds, `id=${encodeURIComponent(r.external_booking_id)}`, 1);
+    const rateLimited = "ok" in res && res.ok === false && res.category === "rate_limited";
+    gate.observe(res.credits, {
+      ...(rateLimited ? { httpStatus: 429 } : {}),
+      ...(rateLimited && res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}),
+    });
+    summary.credits = gate.last;
+    summary.creditPause = gate.pause;
     if (!res.ok) {
-      pushError(summary, res.message);
+      pushError(summary, gate.pause ? beds24CreditPauseMessage(gate.pause) : res.message);
       continue; // transient — the next cycle re-checks
     }
     summary.checked += 1;
