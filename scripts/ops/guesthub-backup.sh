@@ -53,10 +53,14 @@ openssl enc -aes-256-cbc -pbkdf2 -salt -in "$RAW" -out "$ENC" -pass "file:$KEY_F
 rm -f "$RAW"
 
 # 3. uploaded media (best-effort)
+#    --exclude='.env*' is defence in depth: the uploads dir is app-writable, so a
+#    stray dotenv landing there must never ride into a backup. Backups are copied
+#    off-host and kept 14 days — a secret that reaches one is a secret you cannot
+#    recall. The exclude costs nothing when (as today) the dir is clean.
 UP=""
 if [ -d "$UPLOADS_DIR" ]; then
   UP="$DEST/guesthub_uploads_${STAMP}.tar.gz"
-  tar -czf "$UP" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")"
+  tar -czf "$UP" --exclude='.env*' -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")"
 fi
 
 # 4. off-host copy (H4) — REQUIRED in production; warn if not configured

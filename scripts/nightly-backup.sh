@@ -18,7 +18,9 @@ docker exec supabase-db pg_dump -U supabase_admin -d postgres --schema=guesthub 
 # 2. uploaded media — the durable store outside the app tree (lib/rooms/uploads.ts)
 UPLOADS_DIR="${UPLOADS_DIR:-/var/www/guesthub-uploads}"
 if [ -d "$UPLOADS_DIR" ]; then
-  tar -czf "$DEST/guesthub_uploads_${STAMP}.tar.gz" -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")"
+  # --exclude='.env*' — never let a stray dotenv ride into a backup (see
+  # docs/BACKUP_HYGIENE.md). Kept in sync with scripts/ops/guesthub-backup.sh.
+  tar -czf "$DEST/guesthub_uploads_${STAMP}.tar.gz" --exclude='.env*' -C "$(dirname "$UPLOADS_DIR")" "$(basename "$UPLOADS_DIR")"
 fi
 
 # 3. rotate
