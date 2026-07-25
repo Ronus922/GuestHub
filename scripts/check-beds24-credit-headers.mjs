@@ -2,7 +2,7 @@
 // check:beds24-credit-headers — the Beds24 credit meter actually measures.
 //
 // WHY. beds24-http.ts read `x-fivemincreditlimit-remaining`. Beds24 sends
-// `x-five-min-limit-remaining`. The name never matched, so `creditsRemaining`
+// `x-five-min-limit-remaining`. The name never matched, so the credit meter
 // was null in ALL 220 evidence rows and `x-request-cost` was never read at all
 // — the meter did not break, it never worked. A guard that greps for a header
 // NAME would have passed for those 220 rows just as happily, because the wrong
@@ -99,20 +99,20 @@ try {
     "x-request-cost": "1",
   }, 200, push);
   assert.equal(metered.ok, true, "a 200 with a success envelope is a successful push");
-  assert.equal(typeof metered.creditsRemaining, "number",
+  assert.equal(typeof metered.credits.remaining, "number",
     "creditsRemaining must be a NUMBER — the header name the client reads does not match what Beds24 sends");
-  assert.equal(metered.creditsRemaining, 97.8, "the remaining-credit value is parsed exactly");
-  assert.equal(typeof metered.requestCost, "number",
+  assert.equal(metered.credits.remaining, 97.8, "the remaining-credit value is parsed exactly");
+  assert.equal(typeof metered.credits.requestCost, "number",
     "requestCost must be a NUMBER — x-request-cost is not being read");
-  assert.equal(metered.requestCost, 1, "the per-request cost is parsed exactly");
-  ok(`metered response → creditsRemaining=${metered.creditsRemaining}, requestCost=${metered.requestCost}`);
+  assert.equal(metered.credits.requestCost, 1, "the per-request cost is parsed exactly");
+  ok(`metered response → creditsRemaining=${metered.credits.remaining}, requestCost=${metered.credits.requestCost}`);
 
   // ---- leg 2: an UNMETERED endpoint must look unmeasured, never free ----
   const unmetered = await withStub({}, 200, push);
   assert.equal(unmetered.ok, true, "an unmetered response is still a valid push");
-  assert.equal(unmetered.creditsRemaining, null,
+  assert.equal(unmetered.credits.remaining, null,
     "a missing credit header must surface as null — never 0, which reads as 'no credits left'");
-  assert.equal(unmetered.requestCost, null,
+  assert.equal(unmetered.credits.requestCost, null,
     "a missing cost header must surface as null — never 0, which reads as 'this call was free'");
   ok("unmetered response → nulls, not zeros (not-measured stays distinguishable)");
 
@@ -121,8 +121,8 @@ try {
     "X-Five-Min-Limit-Remaining": "42.5",
     "X-Request-Cost": "3",
   }, 200, push);
-  assert.equal(cased.creditsRemaining, 42.5, "header lookup must be case-insensitive");
-  assert.equal(cased.requestCost, 3, "cost lookup must be case-insensitive");
+  assert.equal(cased.credits.remaining, 42.5, "header lookup must be case-insensitive");
+  assert.equal(cased.credits.requestCost, 3, "cost lookup must be case-insensitive");
   ok("upper-cased headers still parse (case-insensitive lookup)");
 
   // ---- leg 4: a REJECTED call still burns credit — the meter must say so ----
@@ -133,8 +133,8 @@ try {
   }, 429, push);
   assert.equal(throttled.ok, false, "429 is a failure");
   assert.equal(throttled.category, "rate_limited", "429 maps to rate_limited");
-  assert.equal(throttled.creditsRemaining, 0.2, "a throttled call still reports remaining credit");
-  assert.equal(throttled.requestCost, 1, "a throttled call still reports what it consumed");
+  assert.equal(throttled.credits.remaining, 0.2, "a throttled call still reports remaining credit");
+  assert.equal(throttled.credits.requestCost, 1, "a throttled call still reports what it consumed");
   ok("429 still reports remaining + cost (a rejected call is not a free call)");
 
   if (SKIP_LIVE) {

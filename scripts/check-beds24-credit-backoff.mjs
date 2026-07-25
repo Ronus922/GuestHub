@@ -43,23 +43,6 @@ let n = 0;
 const ok = (m) => { n++; console.log(`✓ ${n}. ${m}`); };
 const ROOT = process.cwd();
 
-// ---- static: the wire names are the MEASURED ones, in exactly one place ----
-const creditsSrc = readFileSync(join(ROOT, "src/lib/channel/beds24-credits.ts"), "utf8");
-for (const header of [
-  "x-five-min-limit-remaining",
-  "x-five-min-limit-resets-in",
-  "x-request-cost",
-]) {
-  assert.ok(creditsSrc.includes(`"${header}"`), `the measured header ${header} is declared`);
-}
-const httpSrc = readFileSync(join(ROOT, "src/lib/channel/beds24-http.ts"), "utf8");
-assert.ok(
-  !httpSrc.includes("fivemincreditlimit"),
-  "the header name that never existed on the wire is gone from the HTTP core",
-);
-assert.match(httpSrc, /readBeds24Credits/, "the HTTP core reads the meter through the one reader");
-ok("static: the measured Beds24 credit header names, declared once, read once");
-
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit" });
 const OUT = join(ROOT, "dist", "worker");
@@ -76,22 +59,72 @@ const breaker = require2(join(OUT, "lib/channel/circuit-breaker.js"));
 const imp = require2(join(OUT, "lib/channel/beds24-booking-import.js"));
 const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 
-// ---- the meter, read off the EXACT header set captured live ----
-const LIVE = {
+// ============================================================
+// THE HEADER-NAME CONTRACT, PROVEN BY BEHAVIOUR — NOT BY GREP.
+//
+// This replaces three source-text assertions that used to live here:
+//   creditsSrc.includes('"x-five-min-limit-remaining"')      (name is declared)
+//   !httpSrc.includes("fivemincreditlimit")                  (old name is gone)
+//   httpSrc.match(/readBeds24Credits/)                        (one reader)
+// All three stayed GREEN through 223 evidence rows whose creditsRemaining was
+// NULL, because a declared string is not a read value. What follows drives the
+// REAL beds24Request with a substituted fetch and asserts what comes back.
+// ============================================================
+const http = require2(join(OUT, "lib/channel/beds24-http.js"));
+
+const headerProbe = async (headers) => {
+  const res = await http.beds24Request({
+    token: "t", baseUrl: "https://example.invalid/v2", method: "GET", path: "/probe",
+    fetchImpl: async () => new Response(JSON.stringify({ ok: 1 }), { status: 200, headers }),
+  });
+  return res.credits;
+};
+
+// 1. the names Beds24 actually sends (captured live 2026-07-24 / 2026-07-25)
+const live = await headerProbe({
   "x-five-min-limit-remaining": "97.6",
   "x-five-min-limit-resets-in": "155",
   "x-request-cost": "1.2",
-};
-const live = credits.readBeds24Credits((k) => LIVE[k] ?? null);
-assert.deepEqual(live, { remaining: 97.6, resetsInSec: 155, cost: 1.2 },
-  "the live 2026-07-24 header set parses into the meter (fractional, NOT rounded)");
-// /authentication/details returns NO credit headers — absence must never read
-// as "no credits left"
-assert.deepEqual(credits.readBeds24Credits(() => null),
-  { remaining: null, resetsInSec: null, cost: null }, "a meterless response is null, not zero");
-assert.equal(credits.evaluateBeds24Credits(credits.readBeds24Credits(() => null)), null,
-  "a meterless response never triggers a pause");
-ok("meter: the live header set parses exactly; an absent meter is null, never a pause");
+});
+assert.deepEqual(live, { remaining: 97.6, resetsInSec: 155, requestCost: 1.2, measured: true },
+  "the measured header set must reach the caller through the real request path, fractional and unrounded");
+
+// 2. THE NAME THAT NEVER EXISTED. apiV2.yaml documents these spellings and the
+//    code once read them; the server does not send them. A response carrying
+//    ONLY those must come back UNMEASURED. If anyone re-adds the old name as an
+//    accepted alias, this leg goes red — a grep for its absence cannot.
+const ghost = await headerProbe({
+  "X-FiveMinCreditLimit-Remaining": "4900",
+  "X-FiveMinCreditLimit-Resets-In": "155",
+  "X-RequestCost": "1",
+});
+assert.deepEqual(ghost, { remaining: null, resetsInSec: null, requestCost: null, measured: false },
+  "the documented-but-absent header spellings must NOT be honoured — reading them is what produced 223 null rows");
+
+// 3. a meterless endpoint (GET /authentication/details) — null, never zero,
+//    and never a pause. "Not measured" must stay distinguishable from "empty".
+const bare = await headerProbe({});
+assert.deepEqual(bare, { remaining: null, resetsInSec: null, requestCost: null, measured: false },
+  "a meterless response is null, not zero");
+assert.equal(credits.evaluateBeds24Credits(bare), null, "a meterless response never triggers a pause");
+
+// 4. case-insensitivity is a property of the READ, not of the caller. A
+//    substituted fetchImpl may hand back a PLAIN OBJECT with arbitrary casing
+//    and no `.get` at all — the meter must still arrive.
+const cased = await (async () => {
+  const res = await http.beds24Request({
+    token: "t", baseUrl: "https://example.invalid/v2", method: "GET", path: "/probe",
+    fetchImpl: async () => ({
+      status: 200,
+      headers: { "X-Five-Min-Limit-Remaining": "42.5", "X-Request-Cost": "3" },
+      json: async () => ({ ok: 1 }),
+    }),
+  });
+  return res.credits;
+})();
+assert.equal(cased.remaining, 42.5, "remaining lookup must be case-insensitive on a plain-object bag");
+assert.equal(cased.requestCost, 3, "cost lookup must be case-insensitive on a plain-object bag");
+ok("BEHAVIOUR: the measured names arrive through the real request path; the documented-but-absent ones stay unmeasured; casing and bag shape do not matter");
 
 // ---- the threshold is DERIVED from the measurement, not chosen by feel ----
 assert.equal(credits.BEDS24_CREDIT_CEILING, 100, "documented account ceiling");
@@ -235,7 +268,7 @@ try {
   assert.ok(calls > 1, `a healthy walk keeps paging (calls=${calls})`);
   assert.equal(summary.credits.remaining, 97.6,
     "the meter reached the summary — proof the REAL header names are read end to end");
-  assert.equal(summary.credits.cost, 1.2, "the per-request cost reached the summary");
+  assert.equal(summary.credits.requestCost, 1.2, "the per-request cost reached the summary");
   ok(`control: a healthy window pages freely (${calls} calls) and reports the live meter`);
 
   // ---- (a) DB-backed low Remaining: the walk stops after ONE page ----

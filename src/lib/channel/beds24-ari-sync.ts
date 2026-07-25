@@ -23,6 +23,7 @@ import {
 import { logChannelError } from "./queue";
 import {
   createBeds24CreditGate, beds24CreditPauseMessage,
+  BEDS24_CREDIT_CEILING, BEDS24_LOW_CREDIT_THRESHOLD, BEDS24_MEASURED_CALL_COST,
   type Beds24CreditPause, type Beds24CreditSnapshot,
 } from "./beds24-credits";
 import { ARI_HORIZON_DAYS, backoffMs } from "./ranges";
@@ -76,10 +77,33 @@ import type { DrainSummary } from "./ari-projection";
 export const BEDS24_FULL_SYNC_DAYS = ARI_HORIZON_DAYS;
 
 const PACE_MS = 500;
-/** Hard ceiling per run so one connection can never monopolise the worker and
- *  never exhausts the 5-minute credit window (~1 min of paced requests, well
- *  inside the 10-min job lease). */
-const MAX_REQUESTS_PER_RUN = 120;
+/**
+ * Hard ceiling per run, DERIVED from the credit window rather than picked.
+ *
+ * The old value was a flat 120, with a comment claiming it "never exhausts the
+ * 5-minute credit window". At the measured cost that was false in the other
+ * direction: 120 × 1.2 = 144 credits = **144% of the window**. One drain could
+ * spend the whole account's window and starve the inbound poll and the
+ * cancellation reconciliation — the pair that IS the OTA-cancellation safety
+ * net (D93). Credits were never the binding constraint on volume (measured
+ * burn is 1.5–2.2% of a day, peak window 8.4%); the BURST was.
+ *
+ *   ceiling                         C = 100 credits / rolling 5 min
+ *   reserved for the inbound net    R =  12  (BEDS24_LOW_CREDIT_THRESHOLD)
+ *   measured cost per call          k =   1.2  (the HIGHEST sample: GET
+ *                                              /bookings. /inventory/rooms/
+ *                                              calendar measured exactly 1.0 on
+ *                                              2026-07-25 across 21 calls, so
+ *                                              1.2 is the conservative planner)
+ *   MAX = floor((C - R) / k) = floor(88 / 1.2) = 73
+ *
+ * 73 paced calls ≈ 37s at PACE_MS, still far inside the 10-min job lease. The
+ * credit GATE remains the real stop — this is the second belt, so a run cannot
+ * outspend the window even if the meter never arrives.
+ */
+const MAX_REQUESTS_PER_RUN = Math.floor(
+  (BEDS24_CREDIT_CEILING - BEDS24_LOW_CREDIT_THRESHOLD) / BEDS24_MEASURED_CALL_COST,
+);
 /** How many dirty ranges one drain claims (same as ari-sync.ts). */
 const MAX_RANGES_PER_RUN = 500;
 
@@ -613,10 +637,20 @@ export async function drainBeds24AriDirtyRanges(
   // re-armed for after the provider's own reset WITHOUT consuming an attempt
   // (charging attempts here would dead-letter healthy ranges during a busy
   // window), and the §16 breaker is opened for exactly that span so the whole
-  // connection stops calling until the credits come back. A pause with real
-  // warnings still falls through to the normal failure path below.
+  // connection stops calling until the credits come back.
+  //
+  // THE GATE IS `!failure`, NOT JUST `warnings.length === 0`. A run can carry a
+  // REAL failure (500, 422, a payload our own validator rejected) *and* a low
+  // meter at the same time — and when it does, the pause branch used to win and
+  // return early. That early return skips the failure path below, so
+  // `failRanges` never ran: attempts stayed at 0 and last_error_code stayed
+  // null, and a range that can NEVER succeed retried for ever instead of
+  // dead-lettering. It also skipped the unconditional `logChannelError`
+  // introduced in #114 — the operator saw "credits are low" and never learned a
+  // 500 had happened at all. A failure therefore always takes the failure path;
+  // the pause survives as a COOLDOWN applied on top of it (see creditWaitSec).
   const creditPause = outcome.creditPause;
-  if (creditPause && warnings.length === 0) {
+  if (creditPause && !failure && warnings.length === 0) {
     const waitSec = Math.ceil(creditPause.waitMs / 1000);
     const message = beds24CreditPauseMessage(creditPause);
     await db`
@@ -660,7 +694,10 @@ export async function drainBeds24AriDirtyRanges(
       code: err.code, message: err.message,
       ...(warnings.length > 0 ? { context: { warnings } } : {}),
     });
-    const failed = await failRanges(db, conn, rows, err);
+    // a pause that coincided with a real failure still owes its cooldown: the
+    // range is charged an attempt (it may be permanently bad) AND held until the
+    // credit window resets, whichever is later.
+    const failed = await failRanges(db, conn, rows, err, creditPause?.waitMs);
     summary.retried = failed.retried;
     summary.failed = failed.failed;
     // §16 — advance the breaker exactly as ari-sync.ts does: a 429 opens it
@@ -703,6 +740,8 @@ async function failRanges(
   conn: Beds24AriConnection,
   rows: DirtyRow[],
   err: { code: string; message: string },
+  /** extra cooldown owed by a credit pause that coincided with this failure */
+  creditWaitMs?: number,
 ): Promise<{ retried: number; failed: number }> {
   let retried = 0;
   let failed = 0;
@@ -711,11 +750,16 @@ async function failRanges(
     const dead = attempts >= r.max_attempts;
     if (dead) failed += 1;
     else retried += 1;
+    // the LONGER of the two waits wins — the exponential backoff the attempt
+    // count earns, and the credit window's own reset when one is in force.
+    const waitSec = Math.ceil(
+      Math.max(backoffMs(attempts), creditWaitMs ?? 0) / 1000,
+    );
     await db`
       UPDATE guesthub.channel_dirty_ranges SET
         attempts = ${attempts},
         status = ${dead ? "failed" : "pending"},
-        next_attempt_at = now() + make_interval(secs => ${Math.ceil(backoffMs(attempts) / 1000)}),
+        next_attempt_at = now() + make_interval(secs => ${waitSec}),
         last_error_code = ${err.code},
         updated_at = now()
       WHERE id = ${r.id}`;
