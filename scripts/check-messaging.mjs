@@ -10,10 +10,17 @@
 import { readFileSync, mkdtempSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
-const ROOT = "/var/www/guesthub";
+// ROOT was hardcoded to "/var/www/guesthub" — the PRODUCTION checkout. Run from
+// any worktree, this guard compiled and asserted on production's src/ and
+// reported GREEN on code the author never wrote. Measured: gutting aes-256-gcm
+// out of a worktree's secrets.ts left this guard green. Resolve from the
+// guard's OWN location, and print what that resolved to at run time.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+console.log(`# tree under test: ${ROOT}`);
 const src = (p) =>
   readFileSync(join(ROOT, p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 

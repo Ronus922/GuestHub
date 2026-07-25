@@ -13,6 +13,7 @@
     "db:migrate": "docker exec -i supabase-db psql -U supabase_admin -d postgres < db/migrations/000_init_schema.sql",
     "db:seed": "node --env-file=.env.local scripts/seed.mjs",
     "check:e2e-safety": "node scripts/check-e2e-safety.mjs",
+    "check:guard-roots": "node scripts/check-guard-roots.mjs",
     "check:commercial": "node scripts/check-commercial.mjs",
     "check:commercial-db": "node scripts/check-commercial-db.mjs",
     "check:room-pricing": "node scripts/check-room-pricing.mjs",
