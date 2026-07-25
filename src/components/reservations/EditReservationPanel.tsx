@@ -656,11 +656,13 @@ export function EditReservationPanel({
                     </Field>
                     <Field label="התראה במסך הערוצים">
                       <b className="text-sm text-ink">
-                        <bdi className="ltr-num">{manualDecision.alertCode}</bdi>
                         {manualDecision.openAlerts > 0
-                          ? ` · ${manualDecision.openAlerts} פתוחות`
-                          : " · נסגרה"}
+                          ? `פתוחה (${manualDecision.openAlerts})`
+                          : "נסגרה"}
                       </b>
+                      <span className="block text-sm text-muted">
+                        <bdi className="ltr-num break-words">{manualDecision.alertCode}</bdi>
+                      </span>
                     </Field>
                   </div>
                   {manualDecision.roomsHeld.length > 0 && (
