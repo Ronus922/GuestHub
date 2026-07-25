@@ -20,7 +20,11 @@ export type ChannelJobType =
   // deduplicated durable item per physical room (db/migrations/024).
   | "sync_room_types" | "create_room_type"
   // D65 — (room × local rate plan) → channel rate plan sync (db/migrations/025).
-  | "sync_rate_plans" | "create_rate_plan";
+  | "sync_rate_plans" | "create_rate_plan"
+  // B5.2 — hourly pure-DB sweep for rooms that reach no channel (db/migrations/057).
+  // Its own type on purpose: it must be enqueued for connections that
+  // loadBeds24InboundConnections hides, so it cannot ride reconcile_inventory.
+  | "audit_room_mappings";
 
 export async function enqueueChannelJob(
   db: Sql | TransactionSql,

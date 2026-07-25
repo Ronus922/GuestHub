@@ -10,6 +10,7 @@ import {
 import {
   loadBeds24InboundConnections, runBeds24InboundPull, runBeds24BookingReconciliation,
 } from "./beds24-booking-import";
+import { loadChannelAuditConnections, runChannelMappingAudit } from "./mapping-health";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 import { runCommunicationTick } from "@/lib/communications/worker";
 
@@ -158,6 +159,14 @@ async function runJob(
       const summary = await drainBeds24AriDirtyRanges(sql, conn);
       return { sentValues: summary.sentValues };
     }
+    if (jobType === "audit_room_mappings") {
+      // Pure DB, no provider call, no credit spent. It deliberately takes the
+      // raw `conn` row rather than an inbound/drainable loader result: every
+      // one of those loaders filters on a mapped room existing, which is the
+      // very condition being audited.
+      const summary = await runChannelMappingAudit(sql, conn);
+      return { sentValues: summary.raised };
+    }
     if (jobType === "reconcile_inventory") {
       const [inbound] = (await loadBeds24InboundConnections(sql)).filter((c) => c.id === connectionId);
       if (!inbound) return { sentValues: 0 }; // not inbound-enabled → nothing to reconcile
@@ -255,6 +264,38 @@ async function ensureReconcileJobs(): Promise<void> {
   }
 }
 
+// Room-mapping audit cadence (B5.2). Same durable-jobs pattern, one hour apart
+// — the sweep is a couple of indexed selects and its findings change at
+// operator speed, not at booking speed.
+//
+// THE ONE DIFFERENCE THAT MATTERS: its connection list comes from
+// loadChannelAuditConnections, NOT loadBeds24InboundConnections. The inbound
+// loader requires an EXISTS over `status = 'mapped'`, so the connection with
+// nothing left mapped — the one whose pipeline has gone completely dark — is
+// exactly the one it would never enqueue. Hanging this audit off the inbound
+// loader would make it silent in the only case it exists for.
+export const MAPPING_AUDIT_MINUTES = 60;
+
+async function ensureMappingAuditJobs(): Promise<void> {
+  const connections = await loadChannelAuditConnections(sql);
+  for (const conn of connections) {
+    const [recent] = await sql<{ x: number }[]>`
+      SELECT 1 AS x FROM guesthub.channel_sync_jobs
+      WHERE connection_id = ${conn.id} AND job_type = 'audit_room_mappings'
+        AND (status IN ('queued', 'processing', 'retry_wait')
+             OR created_at > now() - make_interval(mins => ${MAPPING_AUDIT_MINUTES}))
+      LIMIT 1`;
+    if (recent) continue;
+    await enqueueChannelJob(sql, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      jobType: "audit_room_mappings",
+      priority: 80,
+      idempotencyKey: `mapping_audit:${conn.id}`,
+    });
+  }
+}
+
 export async function runTick(workerId: string, log: (m: string) => void): Promise<TickSummary> {
   const summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
   // Guest communication shares this existing durable worker process. It runs
@@ -268,6 +309,7 @@ export async function runTick(workerId: string, log: (m: string) => void): Promi
   await ensureDrainJobs();
   await ensureInboundPullJobs();
   await ensureReconcileJobs();
+  await ensureMappingAuditJobs();
   const jobs = await claimChannelJobs(workerId, JOBS_PER_TICK);
   summary.claimed = jobs.length;
   if (jobs.length === 0) return summary;
