@@ -909,7 +909,7 @@ The D52/D87 guardians (`check-cards.mjs`, `check-channel-card-ingest.mjs`) were 
 x-request-cost: 1     x-five-min-limit-remaining: 97.8 → 96.8 → 95.8     x-five-min-limit-resets-in: 288
 ```
 
-`res.headers.get("x-fivemincreditlimit-remaining")` החזיר `null` בכל שלוש — כלומר השם המתועד פשוט אינו על החוט (חיפוש headers הוא case-insensitive, אז זו אינה שאלת אותיות גדולות). המונה זז ב-1.0 בדיוק בכל קריאה, ולכן העלות המדודה אמינה. הצרכן של המסקנה הזו הוא D94 (`beds24-credits.ts`) — הקריאה החוזרת עצמה אינה קוראת headers של קרדיט ואינה משכפלת את המנגנון.
+`res.headers.get("x-fivemincreditlimit-remaining")` החזיר `null` בכל שלוש — כלומר השם המתועד פשוט אינו על החוט (חיפוש headers הוא case-insensitive, אז זו אינה שאלת אותיות גדולות). המונה זז ב-1.0 בדיוק בכל קריאה, ולכן העלות המדודה אמינה. הצרכן של המסקנה הזו הוא D97 (`beds24-credits.ts`) — הקריאה החוזרת עצמה אינה קוראת headers של קרדיט ואינה משכפלת את המנגנון.
 
 **גזירת הקצב (לא בחירה):**
 
