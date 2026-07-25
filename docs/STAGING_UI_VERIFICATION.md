@@ -303,6 +303,10 @@ node --experimental-websocket --env-file=.env.local scripts/staging-screenshot.m
 | `ביטול עקב כרטיס לא תקין` | מושבת | «יש לדווח קודם על כרטיס לא תקין» |
 | `דיווח No-Show` | מושבת | «דיווח אי-הגעה אפשרי רק מיום הצ'ק-אין ואילך» |
 
+הנתונים בפאנל הם נתוני **בדיקה** של staging: שמות סינתטיים וכתובות alias של
+Booking.com (`…@guest.booking.com`). אין בצילום שום סוד, אין מפתח, ואין נתוני
+כרטיס — כרטיס האשראי לא נפתח.
+
 זה בדיוק החוזה של `windowRejection()` ב-`src/lib/channel/booking-com-report-rules.ts`,
 ושתי הסיבות מוצגות גם כטקסט מתחת לכפתורים (tooltip אינו נגיש במגע).
 **שום דיווח לא נשלח** — הצילום מפסיק לפני כל קליק.
