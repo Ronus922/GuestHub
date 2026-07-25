@@ -1,0 +1,62 @@
+diff --git a/scripts/check-booking-com-reports.mjs b/scripts/check-booking-com-reports.mjs
+index 20c0297..779da29 100644
+--- a/scripts/check-booking-com-reports.mjs
++++ b/scripts/check-booking-com-reports.mjs
+@@ -187,17 +187,27 @@ const core = require2(join(OUT, "lib/channel/booking-com-reports-core.js"));
+ const rules = require2(join(OUT, "lib/channel/booking-com-report-rules.js"));
+ const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
+ 
+-// the ledger table must exist on the disposable DB — apply 055 twice, so the
+-// run never depends on whether the local test DB was already current AND the
+-// migration's idempotency is proven in passing
+-for (let i = 0; i < 2; i++) {
+-  execSync(
+-    "docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q" +
+-      " < db/migrations/055_booking_com_channel_reports.sql",
+-    { stdio: "inherit", shell: "/bin/bash" },
+-  );
++// the ledger table must exist on the target DB — apply 055 twice, so the run
++// never depends on whether it was already current AND the migration's
++// idempotency is proven in passing.
++//
++// Applied through TEST_DATABASE_URL, the same connection every other assertion
++// uses. The previous form shelled out to `docker exec -i guesthub-testdb psql
++// -U postgres`, which (a) ignored TEST_DATABASE_URL entirely — so the safety
++// preamble that refuses production markers guarded nothing, and the DDL landed
++// in a container the operator never named — and (b) fails outright wherever
++// `postgres` is not the owner of schema guesthub ("permission denied for
++// schema guesthub").
++const migrationSql = read("db/migrations/055_booking_com_channel_reports.sql");
++{
++  const ddl = postgres(TEST_URL, { max: 1, prepare: false, onnotice: () => {} });
++  try {
++    for (let i = 0; i < 2; i++) await ddl.unsafe(migrationSql);
++  } finally {
++    await ddl.end();
++  }
+ }
+-ok("migration 055 applies (twice, idempotently) to the disposable DB");
++ok("migration 055 applies (twice, idempotently) to the DB named by TEST_DATABASE_URL");
+ 
+ // ============================================================
+ // PART 3 — the faked Beds24. Records every outbound request so the WIRE
+diff --git a/src/lib/channel/worker.ts b/src/lib/channel/worker.ts
+index a950875..326bfc0 100644
+--- a/src/lib/channel/worker.ts
++++ b/src/lib/channel/worker.ts
+@@ -196,13 +196,10 @@ async function runJob(
+       let released = 0;
+       let reconcileError: string | null = null;
+       const [inbound] = (await loadBeds24InboundConnections(sql)).filter((c) => c.id === connectionId);
+-      if (!inbound) return { sentValues: 0 }; // not inbound-enabled → nothing to reconcile
+-      const summary = await runBeds24BookingReconciliation(sql, inbound);
+-      await recordJobCredits(jobId, summary.credits, summary.creditPause?.reason ?? null);
+-      if (summary.errors.length > 0 && summary.checked === 0) {
+-        throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+       if (inbound) {
+         const summary = await runBeds24BookingReconciliation(sql, inbound);
++        // P0-4 — the meter this call measured, parked on the job row.
++        await recordJobCredits(jobId, summary.credits, summary.creditPause?.reason ?? null);
+         released = summary.released;
+         if (summary.errors.length > 0 && summary.checked === 0) reconcileError = summary.errors[0];
+       }
