@@ -19,7 +19,41 @@
 //     publish no price)     price is NOT a false positive
 //   more pages than the  → bounded at BEDS24_READBACK_MAX_REQUESTS, reported
 //     bound
+//   the WORKER's own     → the reconcile cadence enqueues the job, the job RUNS
+//     reconcile job         the read-back, and the evidence row carries that
+//                           job's id (§7 — nothing here is a text match)
+//   Beds24 unreachable   → the operator is told the inventory could not be
+//                           VERIFIED, and the reconcile job still succeeds:
+//                           a blind read-back must never fail the D93
+//                           cancellation half of the same job (§8)
 //   every request        → GET, to /inventory/rooms/calendar, and nothing else
+//
+// ------------------------------------------------------------------
+// CONTRACT vs BEHAVIOUR (phase-2 B2 rebuild, 2026-07-25).
+// Assertions in this file come in two kinds and say which they are:
+//   · BEHAVIOUR — the module (or the worker) is executed and the values it
+//     produces / writes to the DB are read back. These are the guard.
+//   · CONTRACT  — a text-level statement about the source (an import that must
+//     not exist, the single call site, the one path literal). They protect a
+//     design rule that has no runtime signature in this fixture. Every one of
+//     them fails with "CONTRACT breach (source text, not behaviour)" so a red
+//     run is never mistaken for a detected overbooking.
+//
+// B2 RECORD. The version of this check that shipped on PR #106 stayed GREEN
+// under four semantic neuterings (predicate killed, every name/import/call site
+// left in place) — measured, not assumed:
+//   1. worker.ts: `if (readbackWired && drainable) await runBeds24AriReadback(...)`
+//      → the read-back is never called by the job; the grep at §2 still matched.
+//   2. worker.ts: the drainable half of ensureReconcileJobs targets nothing
+//      → an outbound-only connection never gets a reconcile job at all.
+//   3. beds24-ari-readback.ts: the `ari_readback_failed` branch disabled
+//      → a read-back that cannot reach Beds24 says nothing to the operator.
+//   4. beds24-ari-readback.ts: a transport failure THROWS instead of being
+//      recorded → the reconcile job fails, taking the D93 cancellation half
+//      with it.
+// §7 and §8 below exist to make those four red. The pure-diff neuterings
+// (availability comparison, oversell signature) were already red and stay red.
+// ------------------------------------------------------------------
 //
 // The Beds24 mock encodes the contract MEASURED live on 2026-07-24 with the
 // production token: `roomId` as REPEATED params, calendar answers RANGE-
@@ -29,10 +63,15 @@
 // (NOT the X-RequestCost / X-FiveMinCreditLimit-Remaining spellings apiV2.yaml
 // documents — the server does not send those).
 //
+// DB: the disposable test DB only (guesthub-testdb, :5433 — never staging, never
+// production). The check SEEDS IT ITSELF when the schema is absent, so it is
+// runnable standalone and its A/B2 experiments are reproducible; it does not
+// depend on another check having replayed the migration chain first.
+//
 // Usage: node scripts/check-beds24-ari-readback.mjs
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import Module from "node:module";
 import { join } from "node:path";
@@ -53,32 +92,63 @@ process.env.CHANNEL_SECRETS_KEY = "check-beds24-ari-readback-key";
 let n = 0;
 const ok = (m) => { n++; console.log(`✓ ${n}. ${m}`); };
 const ROOT = process.cwd();
+/** every text-level assertion says so, in its own failure message */
+const CONTRACT = (m) => `CONTRACT breach (source text, not behaviour): ${m}`;
 
-// ---- static: the read-back cannot write, structurally ----
+// ---- §0. the subject must exist, and the test DB must have a schema ----
+const MODULE_REL = "src/lib/channel/beds24-ari-readback.ts";
+assert.ok(existsSync(join(ROOT, MODULE_REL)),
+  `MISSING SUBJECT: ${MODULE_REL} is not in this tree — the ARI read-back (the OUTBOUND half of the overbooking hole) does not exist here`);
+
+{
+  // Self-seeding. The migration chain replays only on a virgin schema (054
+  // renamed channex_*→external_*), and it must be applied by the schema OWNER:
+  // `docker exec … psql -U postgres -c "DROP SCHEMA guesthub CASCADE"` fails
+  // with "must be owner of schema guesthub" AND STILL EXITS 0, so a run that
+  // relies on it is silently working on the previous run's schema. Here the
+  // chain is applied over the SAME connection string this check uses.
+  const boot = postgres(TEST_URL, { max: 1, prepare: false, onnotice: () => {} });
+  try {
+    const [{ present }] = await boot`
+      SELECT (to_regclass('guesthub.channel_evidence_ledger') IS NOT NULL) AS present`;
+    if (!present) {
+      const dir = join(ROOT, "db/migrations");
+      const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+      for (const f of files) {
+        await boot.unsafe(readFileSync(join(dir, f), "utf8")).simple();
+      }
+      const [{ c }] = await boot`
+        SELECT count(*)::int AS c FROM pg_tables WHERE schemaname = 'guesthub'`;
+      console.log(`→ test DB was empty: replayed ${files.length} migrations (${c} tables)`);
+    }
+  } finally {
+    await boot.end();
+  }
+}
+
+// ---- §1. CONTRACT: the read-back cannot write, structurally ----
 // comments are stripped first: the module's own header DESCRIBES what it must
 // never do, and a naive grep would read that prose as the code doing it.
 const stripComments = (s) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").filter((l) => !/^\s*(\/\/|\*)/.test(l)).join("\n");
-const src = stripComments(readFileSync(join(ROOT, "src/lib/channel/beds24-ari-readback.ts"), "utf8"));
+const src = stripComments(readFileSync(join(ROOT, MODULE_REL), "utf8"));
 assert.ok(!/from "\.\/beds24-ari"/.test(src),
-  "the read-back does not import the calendar PUSH client — a fix-up path is not reachable");
-assert.ok(!/pushBeds24Calendar/.test(src), "pushBeds24Calendar is never called here");
+  CONTRACT("the read-back must not import the calendar PUSH client — a fix-up path must not be reachable"));
+assert.ok(!/pushBeds24Calendar/.test(src), CONTRACT("pushBeds24Calendar must never be called here"));
 const methods = [...src.matchAll(/method:\s*"([A-Z]+)"/g)].map((m) => m[1]);
-assert.deepEqual([...new Set(methods)], ["GET"], `only GET may appear; found ${methods.join(",")}`);
-assert.equal([...src.matchAll(/beds24Request\(/g)].length, 1, "exactly ONE Beds24 call site");
+assert.deepEqual([...new Set(methods)], ["GET"], CONTRACT(`only GET may appear; found ${methods.join(",")}`));
+assert.equal([...src.matchAll(/beds24Request\(/g)].length, 1, CONTRACT("exactly ONE Beds24 call site"));
 assert.match(src, /const READBACK_PATH = "\/inventory\/rooms\/calendar";/,
-  "the one path is the calendar read endpoint");
-ok("static: read-only by construction — one GET call site, no push import");
+  CONTRACT("the one path is the calendar read endpoint"));
+ok("CONTRACT: read-only by construction — one GET call site, no push import (runtime proof in §9)");
 
-// ---- static: the worker runs it inside the EXISTING reconcile job ----
-const workerSrc = readFileSync(join(ROOT, "src/lib/channel/worker.ts"), "utf8");
-const reconcileBranch = workerSrc.slice(workerSrc.indexOf('jobType === "reconcile_inventory"'));
-assert.match(reconcileBranch.slice(0, 2000), /runBeds24AriReadback\(sql, drainable, jobId\)/,
-  "the read-back runs inside the existing reconcile_inventory job (no parallel job type)");
+// ---- §2. CONTRACT: no second job type was invented ----
+// (that the read-back actually RUNS inside reconcile_inventory is proven by
+// executing the worker in §7 — this is only the "no parallel cadence" rule.)
 assert.ok(!/"ari_readback"[^\n]*ChannelJobType|ari_readback".*\|/.test(
   readFileSync(join(ROOT, "src/lib/channel/queue.ts"), "utf8")),
-  "no new job type was invented");
-ok("static: extends reconcile_inventory — no second job, no second cadence");
+  CONTRACT("no new job type may be invented for the read-back"));
+ok("CONTRACT: no second job type, no second cadence");
 
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit" });
@@ -94,9 +164,10 @@ const require2 = createRequire(import.meta.url);
 const rb = require2(join(OUT, "lib/channel/beds24-ari-readback.js"));
 const ariSync = require2(join(OUT, "lib/channel/beds24-ari-sync.js"));
 const worker = require2(join(OUT, "lib/channel/worker.js"));
+const workerDb = require2(join(OUT, "lib/db.js")); // the pool runTick() uses
 const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 
-// ---- the cadence arithmetic, tied to the REAL cadence constant ----
+// ---- §3. the cadence arithmetic, tied to the REAL cadence constant ----
 assert.equal(rb.BEDS24_READBACK_DAYS, 14, "the window is 14 days forward, not the 500-day horizon");
 assert.equal(rb.BEDS24_READBACK_REQUEST_COST, 1, "measured x-request-cost of one read-back call");
 assert.equal(rb.BEDS24_CREDIT_CEILING, 100, "Beds24 ceiling: 100 credits per rolling 5 minutes");
@@ -109,7 +180,7 @@ assert.ok(rb.BEDS24_READBACK_BURST_CREDITS <= rb.BEDS24_CREDIT_CEILING / 10,
 assert.ok(perWindow / rb.BEDS24_CREDIT_CEILING < 0.01, "amortised cost is under 1% of the ceiling");
 ok(`cadence derivation: ${rb.BEDS24_READBACK_BURST_CREDITS} credits/cycle at ${worker.RECONCILE_MINUTES}min = ${perWindow}/5min window = ${(100 * perWindow / rb.BEDS24_CREDIT_CEILING).toFixed(2)}% of the ceiling`);
 
-// ---- the diff itself, on hand-built cells (no DB, no network) ----
+// ---- §4. the diff itself, on hand-built cells (no DB, no network) ----
 {
   const win = { from: "2026-08-01", toInclusive: "2026-08-03" };
   const expected = rb.expandBeds24Calendar(
@@ -150,6 +221,8 @@ const B24_ROOM = 708100;
 /** what Beds24 HOLDS: roomId → date → { numAvail, price1|null } */
 const provider = new Map([[B24_ROOM, new Map()]]);
 let forceNextPage = false;
+/** when set, every call answers with this HTTP status (§8: the provider is down) */
+let forceStatus = 0;
 const seen = [];
 const violations = [];
 /** measured header names — present so the check proves the module does not
@@ -198,6 +271,10 @@ globalThis.fetch = async (url, init) => {
   if (init?.body !== undefined) violations.push("a request body left the read-back");
   if (violations.length > 0) return new Response(JSON.stringify({ success: false }), { status: 405 });
 
+  if (forceStatus !== 0) {
+    return new Response(JSON.stringify({ success: false, errors: [{ message: "upstream" }] }),
+      { status: forceStatus, headers: MEASURED_HEADERS });
+  }
   const roomIds = u.searchParams.getAll("roomId");
   // the REAL Beds24 does not accept a CSV list value for a repeated filter
   if (roomIds.some((r) => r.includes(","))) {
@@ -234,7 +311,7 @@ const errorsWithCode = async (code) => (await sql`
   SELECT id FROM guesthub.channel_sync_errors
   WHERE tenant_id = ${tenantId} AND error_code = ${code} AND resolved_at IS NULL`).length;
 const latestEvidence = async () => (await sql`
-  SELECT outcome, error_code, context FROM guesthub.channel_evidence_ledger
+  SELECT outcome, error_code, context, job_id FROM guesthub.channel_evidence_ledger
   WHERE tenant_id = ${tenantId} AND scenario_key = 'ari_readback'
   ORDER BY created_at DESC, id DESC LIMIT 1`)[0];
 
@@ -398,7 +475,77 @@ try {
   forceNextPage = false;
   ok(`pagination bounded at ${rb.BEDS24_READBACK_MAX_REQUESTS} requests (${rb.BEDS24_READBACK_BURST_CREDITS} credits worst case), truncation reported`);
 
-  // ---- the standing invariant: nothing but GETs to the calendar ever left ----
+  // ============================================================
+  // §7. THE WIRING, EXECUTED. Everything above calls the module directly, which
+  // proves the comparison but says nothing about whether anything ever CALLS it
+  // in production. Here the real worker tick runs: the reconcile cadence must
+  // enqueue a job for a connection that has NO inbound sync (the read-back is
+  // the only reason such a connection needs one), the tick must run that job,
+  // and the evidence row must carry THAT job's id. A dead call site or a
+  // cadence that skips outbound-only connections fails here, with every name,
+  // import and call-site string still in place.
+  // ============================================================
+  const workerLog = [];
+  const jobsOfConn = async () => sql`
+    SELECT id, status, idempotency_key, created_at FROM guesthub.channel_sync_jobs
+    WHERE connection_id = ${conn.id} AND job_type = 'reconcile_inventory'
+    ORDER BY created_at DESC, id DESC`;
+
+  seedProvider();
+  await sql`UPDATE guesthub.reservations SET status = 'confirmed' WHERE id = ${res.id}`;
+  assert.equal((await jobsOfConn()).length, 0, "no reconcile job exists before the first tick");
+
+  const tick1 = await worker.runTick("check-readback-worker", (m) => workerLog.push(m));
+  assert.deepEqual(violations, [], `READ-ONLY VIOLATED inside the worker: ${violations.join("; ")}`);
+  const jobs1 = await jobsOfConn();
+  assert.equal(jobs1.length, 1,
+    "the reconcile cadence must enqueue exactly one job for an OUTBOUND-ONLY connection — without it the ARI read-back has no cadence at all");
+  assert.equal(jobs1[0].idempotency_key, `booking_reconcile:${conn.id}`,
+    "and it reuses the existing reconcile job key — no parallel job type");
+  assert.equal(jobs1[0].status, "succeeded", `the reconcile job must succeed (worker log: ${workerLog.join(" | ")})`);
+  assert.equal(tick1.failed, 0, `no job may fail in this tick (worker log: ${workerLog.join(" | ")})`);
+  const [evJob1] = await sql`
+    SELECT outcome, error_code, context, job_id FROM guesthub.channel_evidence_ledger
+    WHERE tenant_id = ${tenantId} AND scenario_key = 'ari_readback' AND job_id = ${jobs1[0].id}`;
+  assert.ok(evJob1,
+    "the read-back must RUN inside the reconcile job — no evidence row carries that job's id, so the job did not call it");
+  assert.equal(evJob1.error_code, "ari_readback_oversell",
+    "the job-driven cycle must detect the same oversell the direct call detects");
+  assert.equal(evJob1.context.oversellCells, 1, "and record how many nights Beds24 is still selling");
+  ok("WORKER-DRIVEN: the reconcile cadence enqueued the job, the job ran the read-back (evidence row carries its job_id) and the oversell was detected");
+
+  // ============================================================
+  // §8. A BLIND READ-BACK IS AN ALERT, NEVER A FAILED JOB. If Beds24 cannot be
+  // reached, "no drift found" would be a lie — the operator must be told the
+  // published inventory could not be VERIFIED. And the failure must stay inside
+  // the read-back: the same job carries the D93 cancellation half, which must
+  // not be marked failed (and retried) because a read timed out.
+  // ============================================================
+  await sql`
+    UPDATE guesthub.channel_sync_jobs SET created_at = now() - make_interval(mins => 120)
+    WHERE connection_id = ${conn.id} AND job_type = 'reconcile_inventory'`;
+  forceStatus = 500; // the provider is down for this whole cycle
+  const tick2 = await worker.runTick("check-readback-worker", (m) => workerLog.push(m));
+  forceStatus = 0;
+  assert.deepEqual(violations, [], `READ-ONLY VIOLATED inside the worker: ${violations.join("; ")}`);
+  const jobs2 = await jobsOfConn();
+  assert.equal(jobs2.length, 2, "the cadence enqueued the next cycle's job");
+  const failedCycleJob = jobs2.find((j) => j.id !== jobs1[0].id);
+  assert.ok(failedCycleJob, "the second reconcile job exists");
+  assert.equal(failedCycleJob.status, "succeeded",
+    `an unreachable Beds24 must NOT fail the reconcile job — the D93 cancellation half rides in it (worker log: ${workerLog.join(" | ")})`);
+  assert.equal(tick2.failed, 0, "and the tick reports no failed job");
+  assert.equal(await errorsWithCode("ari_readback_failed"), 1,
+    "a read-back that could not reach Beds24 must ALERT: silence would read as 'no drift'");
+  const [evJob2] = await sql`
+    SELECT outcome, error_code, context, job_id FROM guesthub.channel_evidence_ledger
+    WHERE tenant_id = ${tenantId} AND scenario_key = 'ari_readback' AND job_id = ${failedCycleJob.id}`;
+  assert.ok(evJob2, "the failed cycle is still evidenced against its job");
+  assert.equal(evJob2.outcome, "failed", "and recorded as a FAILED verification, not a clean one");
+  assert.equal(evJob2.error_code, "ari_readback_failed");
+  ok("provider unreachable: the operator is alerted that inventory could not be verified, and the reconcile job still succeeds");
+
+  // ---- §9. the standing invariant: nothing but GETs to the calendar ever left ----
   assert.deepEqual(violations, [], `read-only violated: ${violations.join("; ")}`);
   assert.ok(seen.length > 0, "the read-back really talked to the mock");
   assert.deepEqual([...new Set(seen.map((r) => r.method))], ["GET"], "every request was a GET");
@@ -428,4 +575,5 @@ try {
     }
   }
   await sql.end();
+  await workerDb.sql.end(); // runTick's own pool — otherwise the process hangs
 }
