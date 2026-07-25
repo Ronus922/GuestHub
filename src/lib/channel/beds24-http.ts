@@ -14,7 +14,8 @@
 //    category (messages are fixed strings keyed only by category), so a leak is
 //    structurally impossible.
 //  • The upstream body/headers/stack is parsed defensively and never echoed
-//    back. The ONLY header ever surfaced is the numeric credit-limit counter.
+//    back. The ONLY headers ever surfaced are the three numeric credit-metering
+//    counters (see readBeds24Credits) and Retry-After.
 // ============================================================
 
 import {
@@ -68,22 +69,82 @@ async function safeJson(res: Response): Promise<unknown> {
   }
 }
 
-// Beds24 credit metering (each call costs credits; minting a token costs
-// extra). The remaining 5-minute-window credit counter is the ONE header value
-// ever surfaced — a bare number read via res.headers, never an echoed body.
-function readCreditsRemaining(headers: Headers): number | null {
-  const raw = headers?.get?.("x-fivemincreditlimit-remaining") ?? null;
-  if (raw === null) return null;
-  const n = Number(raw.trim());
+// ---- Beds24 credit metering ------------------------------------------------
+// Each call costs credits (minting a token costs extra). The header NAMES below
+// are the ones Beds24 actually sends — captured verbatim from live responses on
+// 2026-07-25 (GET /inventory/rooms/calendar and GET /properties):
+//
+//   x-five-min-limit-remaining   float  — credits left in the rolling 5-min window
+//   x-five-min-limit-resets-in   int    — seconds until that window resets
+//   x-request-cost               int    — credits THIS request consumed
+//
+// They are the only header values ever surfaced: bare numbers read off
+// res.headers, never an echoed body.
+//
+// Two properties of the wire that this code must respect:
+//  1. NOT every endpoint meters. GET /authentication/details returns none of
+//     these three. "Absent" is therefore a legitimate state and must stay
+//     distinguishable from a measured value — never defaulted to 0, which would
+//     read as "no credits left" / "this call was free".
+//  2. Header names are matched case-insensitively. `Headers.get` is already
+//     case-insensitive per the Fetch spec, but a substituted fetchImpl may hand
+//     back a plain object whose keys carry whatever casing its author typed, so
+//     both sides are normalised rather than either being trusted.
+const CREDITS_REMAINING_HEADER = "x-five-min-limit-remaining";
+const CREDITS_RESET_HEADER = "x-five-min-limit-resets-in";
+const REQUEST_COST_HEADER = "x-request-cost";
+
+type HeaderBag = Headers | Record<string, string | string[] | undefined> | null | undefined;
+
+/** Case-insensitive numeric header read across Headers and plain-object bags. */
+function readHeaderNumber(headers: HeaderBag, name: string): number | null {
+  if (!headers) return null;
+  let raw: string | string[] | undefined | null = null;
+  const getter = (headers as Headers).get;
+  if (typeof getter === "function") {
+    raw = getter.call(headers, name); // spec-guaranteed case-insensitive
+  }
+  if (raw === null || raw === undefined) {
+    // plain-object bag (test doubles): normalise the keys ourselves
+    const wanted = name.toLowerCase();
+    for (const [k, v] of Object.entries(headers as Record<string, string | string[] | undefined>)) {
+      if (k.toLowerCase() === wanted) { raw = v; break; }
+    }
+  }
+  if (raw === null || raw === undefined) return null;
+  const n = Number(String(Array.isArray(raw) ? raw[0] : raw).trim());
   return Number.isFinite(n) ? n : null;
+}
+
+/** The three metering values of one response. `measured` is false when the
+ *  endpoint sent none of them — the honest "not measured" state. */
+export type Beds24CreditReading = {
+  remaining: number | null;
+  resetsInSec: number | null;
+  requestCost: number | null;
+  measured: boolean;
+};
+
+export function readBeds24Credits(headers: HeaderBag): Beds24CreditReading {
+  const remaining = readHeaderNumber(headers, CREDITS_REMAINING_HEADER);
+  const resetsInSec = readHeaderNumber(headers, CREDITS_RESET_HEADER);
+  const requestCost = readHeaderNumber(headers, REQUEST_COST_HEADER);
+  return {
+    remaining, resetsInSec, requestCost,
+    measured: remaining !== null || resetsInSec !== null || requestCost !== null,
+  };
 }
 
 export type Beds24Response = {
   status: number;
   body: unknown;
   retryAfterMs?: number;
-  /** X-FiveMinCreditLimit-Remaining, when Beds24 sent it */
+  /** x-five-min-limit-remaining, when Beds24 sent it */
   creditsRemaining?: number;
+  /** x-request-cost — what THIS call consumed, when Beds24 sent it */
+  requestCost?: number;
+  /** the full reading, including the explicit not-measured flag */
+  credits?: Beds24CreditReading;
 };
 
 export type Beds24ReqOpts = {
@@ -125,12 +186,17 @@ async function beds24Fetch(opts: {
     clearTimeout(timer);
   }
   const body = await safeJson(res);
-  const creditsRemaining = readCreditsRemaining(res.headers) ?? undefined;
+  const credits = readBeds24Credits(res.headers);
+  // `?? undefined` keeps an ABSENT header absent on the wire object, so a
+  // consumer can still tell "not measured" from a real number; `credits.measured`
+  // states it explicitly for consumers that would otherwise coalesce to 0.
+  const creditsRemaining = credits.remaining ?? undefined;
+  const requestCost = credits.requestCost ?? undefined;
   if (res.status === 429) {
     const retryAfterMs = parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) ?? undefined;
-    return { status: res.status, body, retryAfterMs, creditsRemaining };
+    return { status: res.status, body, retryAfterMs, creditsRemaining, requestCost, credits };
   }
-  return { status: res.status, body, creditsRemaining };
+  return { status: res.status, body, creditsRemaining, requestCost, credits };
 }
 
 // Regular API call — header `token: <accessToken>` (Beds24's scheme; NOT Bearer).

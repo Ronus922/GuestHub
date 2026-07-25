@@ -49,11 +49,13 @@ import type { DrainSummary } from "./ari-projection";
 // beds24-token.ts (cached, single-flight, re-persisted) so parallel jobs never
 // each burn a token-mint credit.
 //
-// PACING: Beds24 is CREDIT-metered per request (X-FiveMinCreditLimit), not
-// simple requests/min — so this sync paces conservatively (500ms
+// PACING: Beds24 is CREDIT-metered per request (x-five-min-limit-remaining),
+// not simple requests/min — so this sync paces conservatively (500ms
 // between calls) and caps a run at 120 requests. Range compression in the
-// payload builder is the real credit saver; the remaining-credits header is
-// surfaced into the evidence context on every run.
+// payload builder is the real credit saver; the remaining-credits header AND
+// the per-request cost (x-request-cost, summed over the run) are surfaced into
+// the evidence context on every run. Both are OBSERVABILITY — no pacing or
+// backoff decision reads them.
 // ============================================================
 
 /** The full-sync horizon (ARI_HORIZON_DAYS). */
@@ -93,8 +95,12 @@ export type Beds24SendOutcome = {
   failure: { code: string; message: string; retryAfterMs?: number } | null;
   /** request bodies left unsent because the per-run ceiling was reached */
   deferredBatches: number;
-  /** last-seen X-FiveMinCreditLimit-Remaining — observability, never control */
+  /** last-seen x-five-min-limit-remaining — observability, never control */
   creditsRemaining: number | null;
+  /** summed x-request-cost across this run's calls — what the run actually
+   *  BURNED. null (not 0) when the provider metered nothing, so an unmetered
+   *  run is never mistaken for a free one. Observability, never control. */
+  requestCost: number | null;
 };
 
 export type Beds24FullSyncResult = {
@@ -195,7 +201,7 @@ async function sendCalendarRequests(
 ): Promise<Beds24SendOutcome> {
   const outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
-    deferredBatches: 0, creditsRemaining: null,
+    deferredBatches: 0, creditsRemaining: null, requestCost: null,
   };
   const sendable = requests.slice(0, MAX_REQUESTS_PER_RUN);
   outcome.deferredBatches = requests.length - sendable.length;
@@ -210,6 +216,11 @@ async function sendCalendarRequests(
     outcome.requests += 1;
     if (res.creditsRemaining !== undefined && res.creditsRemaining !== null) {
       outcome.creditsRemaining = res.creditsRemaining;
+    }
+    // sum, don't overwrite: the run's true burn is every call added up. Stays
+    // null while nothing was ever metered.
+    if (res.requestCost !== undefined && res.requestCost !== null) {
+      outcome.requestCost = (outcome.requestCost ?? 0) + res.requestCost;
     }
     if (!res.ok) {
       outcome.failure = {
@@ -242,7 +253,7 @@ export async function runBeds24FullSync(
 
   const emptyOutcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
-    deferredBatches: 0, creditsRemaining: null,
+    deferredBatches: 0, creditsRemaining: null, requestCost: null,
   };
 
   // A failed run leaves full_sync_required=true so the operator re-runs after
@@ -281,6 +292,7 @@ export async function runBeds24FullSync(
         rooms: extra?.rooms ?? 0,
         blocked: extra?.blocked ?? 0,
         creditsRemaining: extra?.outcome?.creditsRemaining ?? null,
+        requestCost: extra?.outcome?.requestCost ?? null,
       },
     });
     return {
@@ -340,6 +352,7 @@ export async function runBeds24FullSync(
           deferred_batches: outcome.deferredBatches,
           sent_ranges: outcome.sentRanges,
           credits_remaining: outcome.creditsRemaining,
+          request_cost: outcome.requestCost,
           invalid_room_ids: built.invalidRoomIds,
         } as never)}
       WHERE id = ${jobId}`;
@@ -406,6 +419,7 @@ export async function runBeds24FullSync(
       unmappedRooms: built.unmapped.length,
       invalidRoomIds: built.invalidRoomIds.length,
       creditsRemaining: outcome.creditsRemaining,
+      requestCost: outcome.requestCost,
     },
   });
 
@@ -499,7 +513,7 @@ export async function drainBeds24AriDirtyRanges(
 
   let outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
-    deferredBatches: 0, creditsRemaining: null,
+    deferredBatches: 0, creditsRemaining: null, requestCost: null,
   };
   if (builderMappings.length > 0) {
     const projection = await projectBeds24Ari(db, {
@@ -550,6 +564,7 @@ export async function drainBeds24AriDirtyRanges(
         sentValues: summary.sentValues,
         deferredBatches: deferred,
         creditsRemaining: outcome.creditsRemaining,
+        requestCost: outcome.requestCost,
       },
     });
 
