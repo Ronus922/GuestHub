@@ -27,12 +27,18 @@ import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import Module from "node:module";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import postgres from "postgres";
 
+// A DEDICATED database on the test server. The shared `postgres` test DB is
+// rebuilt from scratch by other checks (its table count moved 63 → 20 mid-run
+// while this guard was being written), so a guard that borrows it fails for
+// reasons that have nothing to do with the code under test. This one owns its
+// schema and replays the migrations itself when they are missing.
 const TEST_URL =
   process.env.TEST_DATABASE_URL ||
-  "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
+  "postgres://supabase_admin:guesthub_test_local@localhost:5433/guesthub_payload_check";
 for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
   if (TEST_URL.includes(marker)) {
     console.error(`REFUSED: TEST_DATABASE_URL contains production marker "${marker}"`);
@@ -78,7 +84,21 @@ globalThis.fetch = async (url) => {
   });
 };
 
-const sql = postgres(TEST_URL, { prepare: false, max: 1 });
+const sql = postgres(TEST_URL, { prepare: false, max: 1, onnotice: () => {} });
+
+/** Replay db/migrations into this dedicated database when the schema is absent. */
+async function ensureSchema() {
+  const [{ c }] = await sql`
+    SELECT count(*)::int AS c FROM information_schema.tables WHERE table_schema = 'guesthub'`;
+  if (c > 40) return c;
+  const dir = join(ROOT, "db", "migrations");
+  const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+  for (const f of files) await sql.unsafe(readFileSync(join(dir, f), "utf8"));
+  const [{ c: after }] = await sql`
+    SELECT count(*)::int AS c FROM information_schema.tables WHERE table_schema = 'guesthub'`;
+  return after;
+}
+
 const T = "11111111-1111-4111-8111-111111111111";
 const CONN = "22222222-2222-4222-8222-222222222222";
 const ROOM = "33333333-3333-4333-8333-333333333333";
@@ -118,6 +138,9 @@ const state = async () => ({
 });
 
 try {
+  const tables = await ensureSchema();
+  ok(`isolated schema ready on the dedicated check database (${tables} tables)`);
+
   // ---- fixture ----
   await sql`DELETE FROM guesthub.channel_dirty_ranges WHERE tenant_id = ${T}`;
   await sql`DELETE FROM guesthub.channel_sync_errors WHERE tenant_id = ${T}`;
