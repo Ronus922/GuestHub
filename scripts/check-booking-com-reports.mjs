@@ -187,17 +187,27 @@ const core = require2(join(OUT, "lib/channel/booking-com-reports-core.js"));
 const rules = require2(join(OUT, "lib/channel/booking-com-report-rules.js"));
 const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 
-// the ledger table must exist on the disposable DB — apply 055 twice, so the
-// run never depends on whether the local test DB was already current AND the
-// migration's idempotency is proven in passing
-for (let i = 0; i < 2; i++) {
-  execSync(
-    "docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q" +
-      " < db/migrations/055_booking_com_channel_reports.sql",
-    { stdio: "inherit", shell: "/bin/bash" },
-  );
+// the ledger table must exist on the target DB — apply 055 twice, so the run
+// never depends on whether it was already current AND the migration's
+// idempotency is proven in passing.
+//
+// Applied through TEST_DATABASE_URL, the same connection every other assertion
+// uses. The previous form shelled out to `docker exec -i guesthub-testdb psql
+// -U postgres`, which (a) ignored TEST_DATABASE_URL entirely — so the safety
+// preamble that refuses production markers guarded nothing, and the DDL landed
+// in a container the operator never named — and (b) fails outright wherever
+// `postgres` is not the owner of schema guesthub ("permission denied for
+// schema guesthub").
+const migrationSql = read("db/migrations/055_booking_com_channel_reports.sql");
+{
+  const ddl = postgres(TEST_URL, { max: 1, prepare: false, onnotice: () => {} });
+  try {
+    for (let i = 0; i < 2; i++) await ddl.unsafe(migrationSql);
+  } finally {
+    await ddl.end();
+  }
 }
-ok("migration 055 applies (twice, idempotently) to the disposable DB");
+ok("migration 055 applies (twice, idempotently) to the DB named by TEST_DATABASE_URL");
 
 // ============================================================
 // PART 3 — the faked Beds24. Records every outbound request so the WIRE
