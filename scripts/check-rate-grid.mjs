@@ -6,16 +6,22 @@
 // never modified. No channel network calls. (Outbox/dirty-range same-tx atomicity
 // is proven separately by check-rates-sync.mjs.)
 //
-// Usage: node --env-file=.env.local scripts/check-rate-grid.mjs
+// TARGET: STAGING, never production. CHECK_DB_URL || STAGING_DATABASE_URL
+// (.env.staging) via scripts/lib/check-db-target.mjs; DATABASE_URL is ignored
+// on purpose — every scenario below is scaffolded and rolled back inside a
+// transaction, so this guard needs the GuestHub SCHEMA, not live guest data.
+// Usage: node scripts/check-rate-grid.mjs
+//        CHECK_DB_URL=<dsn> node scripts/check-rate-grid.mjs
 import postgres from "postgres";
 import assert from "node:assert/strict";
+import { resolveCheckDbUrl } from "./lib/check-db-target.mjs";
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 
-const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
+const sql = postgres(resolveCheckDbUrl("check-rate-grid"), { prepare: false, max: 1 });
 const DAY = "2027-03-15"; // far-future, collision-free window
 const NEXT = "2027-03-16";
 let n = 0;

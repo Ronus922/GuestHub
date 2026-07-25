@@ -8,7 +8,13 @@
 //     cannot become competing sources of truth (req 8/9/12)
 //   - a physical block and a commercial stop_sell move INDEPENDENTLY (req 13)
 //   - one-room and pooled Sellable Units both project correctly (req 14)
-// Usage: node --env-file=.env.local scripts/check-effective-state.mjs
+//
+// TARGET: STAGING, never production. CHECK_DB_URL || STAGING_DATABASE_URL
+// (.env.staging) via scripts/lib/check-db-target.mjs; DATABASE_URL is ignored
+// on purpose. Every DB scenario here is built and rolled back inside a
+// transaction, so the guard needs the GuestHub SCHEMA, not live guest data.
+// Usage: node scripts/check-effective-state.mjs
+//        CHECK_DB_URL=<dsn> node scripts/check-effective-state.mjs
 import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -16,6 +22,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
 import assert from "node:assert/strict";
+import { resolveCheckDbUrl } from "./lib/check-db-target.mjs";
 
 // ---------- pure module (tsc → commonjs, imported directly) ----------
 const out = mkdtempSync(join(tmpdir(), "ess-"));
@@ -107,7 +114,7 @@ assert.equal(rules.applyPriceMode(null, "add", 50, 300), 350, "null current → 
 console.log("check-effective-state: pure rules passed");
 
 // ---------- DB half ----------
-const sql = postgres(process.env.DATABASE_URL, { prepare: true, max: 1 });
+const sql = postgres(resolveCheckDbUrl("check-effective-state"), { prepare: true, max: 1 });
 const FROM = "2026-08-01";
 const TO = "2026-08-15"; // exclusive
 

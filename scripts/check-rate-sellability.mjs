@@ -6,7 +6,14 @@
 //      classifier the numbers that yield each reason, incl. the G4 fixture and
 //      the false-reopen (never one-way) write semantics.
 // Never touches live data; no channel network calls.
-// Usage: node --env-file=.env.test scripts/check-rate-sellability.mjs
+//
+// TARGET: STAGING, never production. CHECK_DB_URL || STAGING_DATABASE_URL
+// (.env.staging) via scripts/lib/check-db-target.mjs; DATABASE_URL is ignored
+// on purpose. (This header always said ".env.test" — an ISOLATED database —
+// while package.json invoked it with --env-file=.env.local, i.e. production.
+// The header was right; the wiring was wrong.)
+// Usage: node scripts/check-rate-sellability.mjs
+//        CHECK_DB_URL=<dsn> node scripts/check-rate-sellability.mjs
 import postgres from "postgres";
 import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -14,6 +21,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
+import { resolveCheckDbUrl } from "./lib/check-db-target.mjs";
 
 // ---- compile the pure classifier and require it ----
 const out = mkdtempSync(join(tmpdir(), "sellstate-"));
@@ -24,7 +32,7 @@ execSync(
 const require = createRequire(import.meta.url);
 const { classifySellState, collectSellReasons, roomAdminStateOf } = require(join(out, "rules.js"));
 
-const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
+const sql = postgres(resolveCheckDbUrl("check-rate-sellability"), { prepare: false, max: 1 });
 const DAY = "2027-03-15";
 const NEXT = "2027-03-16";
 let n = 0;
