@@ -119,12 +119,38 @@ function calendarDatesOf(body) {
   return out;
 }
 
+/** how many times the drain read the room-level ceilings this whole run */
+let ceilingReads = 0;
+
 const fakeFetch = async (url, init) => {
   const u = new URL(String(url));
   // routing + auth are contract, not decoration
   must(u.host === "api.beds24.com", `unexpected outbound host: ${u.host}`);
+
+  // The ONE other endpoint the drain may touch: the room-level maxStay ceiling
+  // a local NULL is translated into (D99). It is READ-ONLY and CACHED — the
+  // count is asserted after every scenario has run, because a per-drain
+  // re-read would spend a credit on a value that lives in the Beds24 panel and
+  // changes about never. Anything else here is still a hard violation: a token
+  // mint would burn credits on every single drain.
+  if (u.pathname === "/v2/properties") {
+    ceilingReads += 1;
+    must((init.method ?? "GET") === "GET", "the ceiling read may never be a write");
+    const h = Object.fromEntries(
+      Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
+    );
+    must(h.token === ACCESS_TOKEN, "the ceiling read uses the same bare `token` header");
+    return new Response(JSON.stringify({
+      success: true,
+      data: [{ id: Number(PROPERTY), roomTypes: [
+        { id: Number(B24_ROOM_1), maxStay: 365 },
+        { id: Number(B24_ROOM_2), maxStay: 365 },
+      ] }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+
   must(u.pathname === "/v2/inventory/rooms/calendar",
-    `the drain called ${u.pathname} — it may only POST /v2/inventory/rooms/calendar (a token mint here would burn credits every drain)`);
+    `the drain called ${u.pathname} — it may only POST /v2/inventory/rooms/calendar or GET /v2/properties (a token mint here would burn credits every drain)`);
   must((init.method ?? "GET") === "POST", `the calendar write is a POST (got ${init.method})`);
   const headers = Object.fromEntries(
     Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
@@ -588,6 +614,13 @@ try {
   assert.equal(globalFetchCalls, 0,
     `the drain reached the REAL network ${globalFetchCalls} time(s) — a substituted fetch was bypassed`);
   ok("no request escaped the mock — every call in this run went through the substituted fetch");
+
+  // ---- the ceiling read is bounded, not per-drain ----
+  assert.ok(ceilingReads <= 1,
+    `the room-level ceiling was read ${ceilingReads} times across this run. It is a ` +
+    `constant in the Beds24 panel; re-reading it on every drain spends a credit ` +
+    `for nothing and is exactly the per-drain cost this contract exists to forbid.`);
+  ok(`the ceiling read is cached: ${ceilingReads} read(s) across every drain in this run`);
 
   console.log(`\ncheck-beds24-ari-drain: all ${n} assertions passed`);
 } finally {
