@@ -46,9 +46,12 @@ export type SafeBeds24Warning = {
 // No task system exists at Beds24, so a clean success carries
 // no ids — the evidence trail records request counts + bytes + credits instead.
 export type Beds24CalendarPushResult =
-  | { ok: true; partial: false; creditsRemaining: number | null }
-  | { ok: true; partial: true; warnings: SafeBeds24Warning[]; creditsRemaining: number | null }
-  | (Beds24ApiFailure & { creditsRemaining?: number });
+  | { ok: true; partial: false; creditsRemaining: number | null; requestCost: number | null }
+  | {
+      ok: true; partial: true; warnings: SafeBeds24Warning[];
+      creditsRemaining: number | null; requestCost: number | null;
+    }
+  | (Beds24ApiFailure & { creditsRemaining?: number; requestCost?: number });
 
 export type Beds24PushDeps = {
   fetchImpl?: typeof fetch;
@@ -122,10 +125,13 @@ export async function pushBeds24Calendar(
   });
   if ("ok" in r) return r; // transport-level failure, already a safe category
   const creditsRemaining = r.creditsRemaining ?? null;
+  const requestCost = r.requestCost ?? null;
   if (r.status !== 200 && r.status !== 201 && r.status !== 204) {
-    const f: Beds24ApiFailure & { creditsRemaining?: number } =
+    const f: Beds24ApiFailure & { creditsRemaining?: number; requestCost?: number } =
       beds24Fail(mapErrorStatus(r.status), r.status);
     if (creditsRemaining !== null) f.creditsRemaining = creditsRemaining;
+    // a rejected call still BURNS credit — carry the cost so the meter is honest
+    if (requestCost !== null) f.requestCost = requestCost;
     // §16 — carry the 429 cooldown forward so the circuit opens for the right span
     return r.retryAfterMs !== undefined ? { ...f, retryAfterMs: r.retryAfterMs } : f;
   }
@@ -134,13 +140,15 @@ export async function pushBeds24Calendar(
   if (verdict.anyFailure) {
     // success:false on a 200 — Beds24 rejected (some of) the write. Treated as
     // a full failure so the caller keeps every claimed range retryable.
-    const f: Beds24ApiFailure & { creditsRemaining?: number } = beds24Fail("validation", r.status);
+    const f: Beds24ApiFailure & { creditsRemaining?: number; requestCost?: number } =
+      beds24Fail("validation", r.status);
     if (creditsRemaining !== null) f.creditsRemaining = creditsRemaining;
+    if (requestCost !== null) f.requestCost = requestCost;
     return f;
   }
   if (verdict.warnings.length > 0)
-    return { ok: true, partial: true, warnings: verdict.warnings, creditsRemaining };
-  return { ok: true, partial: false, creditsRemaining };
+    return { ok: true, partial: true, warnings: verdict.warnings, creditsRemaining, requestCost };
+  return { ok: true, partial: false, creditsRemaining, requestCost };
 }
 
 /** Human-safe, fixed-vocabulary summary of a warning set. Never an upstream body. */
