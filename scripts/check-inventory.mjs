@@ -6,12 +6,21 @@
 //  - closures/holds affect both consistently (inside a ROLLED-BACK tx)
 //  - tenant isolation, job idempotency, duplicate-revision rejection
 //  - no dirty-range/job backlog exists while no connection is active
-// All writes happen inside transactions that ROLL BACK — the live data is
-// never modified. Usage: node --env-file=.env.local scripts/check-inventory.mjs
+// All writes happen inside transactions that ROLL BACK.
+//
+// TARGET: STAGING, never production. Resolution is CHECK_DB_URL ||
+// STAGING_DATABASE_URL (.env.staging), via scripts/lib/check-db-target.mjs;
+// DATABASE_URL is deliberately ignored. This guard asserts code+schema
+// integrity — the inventory FUNCTIONS and their TS mirror — which any database
+// carrying the GuestHub schema can answer. It has no business reading live
+// guest data.
+// Usage: node scripts/check-inventory.mjs          (uses .env.staging)
+//        CHECK_DB_URL=<dsn> node scripts/check-inventory.mjs
 import postgres from "postgres";
 import assert from "node:assert/strict";
+import { resolveCheckDbUrl } from "./lib/check-db-target.mjs";
 
-const sql = postgres(process.env.DATABASE_URL, { prepare: true, max: 1 });
+const sql = postgres(resolveCheckDbUrl("check-inventory"), { prepare: true, max: 1 });
 const FROM = "2026-08-01";
 const TO = "2026-08-15"; // exclusive
 
@@ -19,12 +28,21 @@ try {
   const [{ id: tenantId }] = await sql`SELECT id FROM guesthub.tenants LIMIT 1`;
 
   // ---- blocking statuses: TS mirror === SQL source ----
+  // BEHAVIOUR assertion — the value is read back out of the database.
   const [{ statuses }] = await sql`SELECT guesthub.inventory_blocking_statuses() AS statuses`;
-  assert.deepEqual(statuses, ["confirmed", "checked_in", "blocked"], "SQL blocking statuses");
+  assert.deepEqual(statuses, ["confirmed", "checked_in", "blocked"],
+    "BEHAVIOUR: guesthub.inventory_blocking_statuses() returned the wrong set");
+  // CONTRACT assertion — this one reads TEXT out of a source file, it does not
+  // execute anything. It can only prove that the TS constant still SAYS the same
+  // thing as the SQL function; it cannot prove any TS code obeys it.
   const rulesSrc = (await import("node:fs")).readFileSync("src/lib/inventory-rules.ts", "utf8");
   const m = rulesSrc.match(/INVENTORY_BLOCKING_STATUSES = \[([^\]]+)\]/);
+  assert.ok(m, "CONTRACT BREACH (not a behaviour breach): INVENTORY_BLOCKING_STATUSES no longer "
+    + "declared as a literal array in src/lib/inventory-rules.ts — the mirror cannot be verified");
   const tsStatuses = m[1].split(",").map((s) => s.trim().replace(/["']/g, "")).filter(Boolean);
-  assert.deepEqual(tsStatuses, statuses, "TS mirror equals guesthub.inventory_blocking_statuses()");
+  assert.deepEqual(tsStatuses, statuses,
+    "CONTRACT BREACH (not a behaviour breach): the TS mirror INVENTORY_BLOCKING_STATUSES has "
+    + "drifted from guesthub.inventory_blocking_statuses()");
 
   // ---- agreement: projection availability === per-room availability-fn count ----
   async function assertAgreement(db, label) {
