@@ -26,6 +26,13 @@ type TriState = "nochange" | "yes" | "no";
 // A flat SU record for the selection grid.
 type SuCard = { id: string; code: string; name: string; typeName: string; basePrice: number; roomTypeId: string; pooled: boolean; rooms: number };
 
+// The stepper's sentinel for "no maximum stay". It is written to the DB as
+// NULL, never as 0: 0 is a ONE-NIGHT ceiling at Beds24 ("capped to 1", measured
+// 2026-07-25) and our payload builder rejects any stay value below 1, dropping
+// the whole request. The default is NO_LIMIT on purpose — a maxStay the
+// operator never asked for is how 4,830 rows came to enforce 31 nights.
+const NO_LIMIT = 0;
+
 export function GroupUpdatePanel({
   open,
   types,
@@ -83,7 +90,7 @@ export function GroupUpdatePanel({
   const [minThroughOn, setMinThroughOn] = useState(false);
   const [minThrough, setMinThrough] = useState(2);
   const [maxStayOn, setMaxStayOn] = useState(false);
-  const [maxStay, setMaxStay] = useState(7);
+  const [maxStay, setMaxStay] = useState(NO_LIMIT);
   const [minArrivalOn, setMinArrivalOn] = useState(false);
   const [minArrival, setMinArrival] = useState(1);
   const [cta, setCta] = useState<TriState>("nochange");
@@ -210,7 +217,8 @@ export function GroupUpdatePanel({
       ...(allWeekdays ? {} : { weekdays: [...weekdays] }),
       ...(priceOn ? { price: { mode: priceMode, amount: priceAmount } } : {}),
       ...(minThroughOn ? { minStayThrough: minThrough } : {}),
-      ...(maxStayOn ? { maxStay } : {}),
+      // NO_LIMIT is written as NULL — 0 would be a one-night ceiling, not "none"
+      ...(maxStayOn ? { maxStay: maxStay === NO_LIMIT ? null : maxStay } : {}),
       ...(minArrivalOn ? { minStayArrival: minArrival } : {}),
       ...(stopSell !== "nochange" ? { stopSell: stopSell === "yes" } : {}),
       ...(cta !== "nochange" ? { closedToArrival: cta === "yes" } : {}),
@@ -375,8 +383,8 @@ export function GroupUpdatePanel({
                 <Stepper value={minThrough} onChange={setMinThrough} disabled={!minThroughOn} />
               </FieldRow>
 
-              <FieldRow icon="calendar" title="מקסימום לילות" desc="אורך שהייה מרבי להזמנה" on={maxStayOn} onToggle={() => setMaxStayOn((v) => !v)} testId="gu-maxstay">
-                <Stepper value={maxStay} onChange={setMaxStay} disabled={!maxStayOn} />
+              <FieldRow icon="calendar" title="מקסימום לילות" desc="אורך שהייה מרבי להזמנה. ״ללא הגבלה״ מסיר את המגבלה גם בערוץ" on={maxStayOn} onToggle={() => setMaxStayOn((v) => !v)} testId="gu-maxstay">
+                <Stepper value={maxStay} onChange={setMaxStay} disabled={!maxStayOn} min={NO_LIMIT} zeroLabel="ללא הגבלה" />
               </FieldRow>
 
               <FieldRow icon="login" title="מ׳ לילות בהגעה" desc="מינימום לילות כשההגעה בתאריך זה" on={minArrivalOn} onToggle={() => setMinArrivalOn((v) => !v)} testId="gu-minarrival">
@@ -514,13 +522,19 @@ function Segmented({ value, onChange, yes, no, testId }: { value: TriState; onCh
   return <div className="inline-flex items-center gap-1 rounded-[12px] bg-field p-1">{opt("nochange", "ללא שינוי")}{opt("yes", yes)}{opt("no", no)}</div>;
 }
 
-function Stepper({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
+function Stepper({ value, onChange, disabled, min = 1, zeroLabel }: {
+  value: number; onChange: (v: number) => void; disabled?: boolean;
+  /** floor for the minus button. 0 only where 0 is a real sentinel. */
+  min?: number;
+  /** what 0 MEANS here — rendered instead of the digit, e.g. "ללא הגבלה" */
+  zeroLabel?: string;
+}) {
   return (
     <div className={`flex items-center gap-1 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
       {/* border-solid is REQUIRED: .icon-btn resets `border: none` (style), so the
           width/colour utilities alone would never paint the outline */}
-      <button type="button" aria-label="פחות" onClick={() => onChange(Math.max(0, value - 1))} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="minus" size={20} /></button>
-      <span className="w-8 text-center text-[14px] font-extrabold tabular-nums">{value}</span>
+      <button type="button" aria-label="פחות" onClick={() => onChange(Math.max(min, value - 1))} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="minus" size={20} /></button>
+      <span className="min-w-8 px-2 text-center text-[14px] font-extrabold tabular-nums">{zeroLabel && value === 0 ? zeroLabel : value}</span>
       <button type="button" aria-label="עוד" onClick={() => onChange(value + 1)} className="icon-btn border-[1.5px] border-solid border-line"><Icon name="plus" size={20} /></button>
     </div>
   );

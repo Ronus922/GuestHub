@@ -17,6 +17,9 @@ import {
 } from "./beds24-ari";
 import { recordAriEvidence, type EvidenceOutcome } from "./evidence";
 import {
+  loadBeds24RoomCeilings, EMPTY_BEDS24_CEILINGS, type Beds24RoomCeilings,
+} from "./beds24-room-ceilings";
+import {
   circuitAllowsRequest, onCircuitFailure, onCircuitSuccess, failureKindOf,
   type CircuitState,
 } from "./circuit-breaker";
@@ -227,12 +230,17 @@ export async function loadBeds24Mappings(db: Sql, connectionId: string): Promise
 
 const pushable = (m: Beds24MappingRow) => m.local_rate_plan_id !== null;
 
-export const toBuilderMappings = (rows: Beds24MappingRow[]): Beds24CalendarMapping[] =>
+export const toBuilderMappings = (
+  rows: Beds24MappingRow[],
+  ceilings: Beds24RoomCeilings = EMPTY_BEDS24_CEILINGS,
+): Beds24CalendarMapping[] =>
   rows.filter(pushable).map((m) => ({
     roomId: m.room_id,
     beds24PropertyId: m.beds24_property_id,
     beds24RoomId: m.beds24_room_id,
     localRatePlanId: m.local_rate_plan_id,
+    // unknown ceiling ⇒ null ⇒ the builder omits maxStay, as it always did
+    maxStayCeiling: ceilings.get(m.beds24_room_id) ?? null,
   }));
 
 // ---- send every request body, paced, bounded (mirror of
@@ -360,13 +368,19 @@ export async function runBeds24FullSync(
   };
 
   const mappings = await loadBeds24Mappings(db, conn.id);
-  const builderMappings = toBuilderMappings(mappings);
-  if (builderMappings.length === 0) {
+  if (toBuilderMappings(mappings).length === 0) {
     return fail("אין חדרי Beds24 ממופים עם תוכנית תעריף מיועדת", "validation");
   }
 
   const creds = await credentialsFor(db, conn, deps);
   if ("error" in creds) return fail(creds.error, creds.code);
+
+  // the room-level ceiling every local NULL maxStay is sent as (cached, and
+  // fail-open: unreadable ⇒ the field is omitted, exactly as before)
+  const ceilings = await loadBeds24RoomCeilings(
+    creds, mappings.map((m) => m.beds24_property_id),
+  );
+  const builderMappings = toBuilderMappings(mappings, ceilings);
 
   // ---- ONE projection over the whole horizon, restricted to mapped rooms ----
   const projection = await projectBeds24Ari(db, {
@@ -569,7 +583,13 @@ export async function drainBeds24AriDirtyRanges(
   const roomIds = [...new Set(rows.map((r) => r.room_id))];
 
   const mappings = await loadBeds24Mappings(db, conn.id);
-  const builderMappings = toBuilderMappings(mappings).filter((m) => roomIds.includes(m.roomId));
+  // same ceiling read as the full sync — cached per property, so a drain that
+  // follows a sync spends nothing, and an unreadable ceiling omits the field
+  const ceilings = await loadBeds24RoomCeilings(
+    creds, mappings.map((m) => m.beds24_property_id),
+  );
+  const builderMappings = toBuilderMappings(mappings, ceilings)
+    .filter((m) => roomIds.includes(m.roomId));
 
   let outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
