@@ -39,6 +39,53 @@ clean `src/`.
 | `check:beds24-revisions` | FAIL (fake red, exit 9) | **FAIL** — byte-identical | n/a — see §5 | **PASS** |
 | `check:beds24-ari` | FAIL (fake red, exit 9) | **FAIL** — **GREEN, 2 PASSED, on an empty database** | n/a — see §5 | **PASS** |
 
+### B2 (after), in full — three families, eleven runs, all RED
+
+**Family 1 — neuter the shipped `src/` predicate the guard now executes.**
+Each was applied alone, compiled cleanly (`tsc -p tsconfig.worker.json`), and
+passed the harness structural-signs check (`OK — no identifier disappeared`).
+
+| guard | neutered | result |
+|---|---|---|
+| connection | `circuitAllowsRequest()` → always true (`circuit-breaker.ts`) | RED — `CONTRACT BREACH — C5-src: the shipped circuitAllowsRequest()/circuitPhase() BLOCK the tripped fixture` |
+| jobs | `enqueueChannelJob()` → no-op (`queue.ts`) | RED — `CONTRACT BREACH — J0: the SHIPPED enqueueChannelJob() produced the rows the histogram reads back` |
+| revisions | `markRevisionAcknowledged()` → no-op (`revisions.ts`) | RED — `CONTRACT BREACH — R-lifecycle: the shipped markRevisionAcknowledged() acknowledged the imported revision` |
+| ari | `markAriDirty()` → no-op (`outbox.ts`) | RED — `CONTRACT BREACH — A0: the SHIPPED markAriDirty() actually wrote a dirty range (read back: 0)` |
+
+A first attempt at family 1 was **discarded rather than counted**: the
+neutering used `if (db && job)`, which tsc rejects with TS2774, so all three
+guards went red on a *compile error* instead of on the defect. A red you did not
+earn is worth no more than a green you did not earn. The neuterings were rewritten
+in `void x;` form, applied one at a time, and re-run.
+
+**Family 2 — neuter the rule (the central predicate surface), both directions.**
+One line in `scripts/lib/beds24-health-rules.mjs`; every export, call site and
+string literal untouched.
+
+| direction | connection | jobs | revisions | ari |
+|---|---|---|---|---|
+| `no()` → `ok:true` (accepts everything) | RED `C1 ACCEPTED a broken fixture` | RED `J1 ACCEPTED…` | RED `R1 ACCEPTED…` | RED `A1 ACCEPTED…` |
+| `yes()` → `ok:false` (rejects everything) | RED `C1 rejected a healthy fixture` | RED `J1 rejected…` | RED `R1 rejected…` | RED `A1 rejected…` |
+
+**Family 3 — put the shipped bug back.** `ruleAriDrainKeepingUp()` restored to
+the exact behaviour that produced `BEDS24 ARI CHECK: 2 PASSED` on an empty
+database (`dirtied === 0 → { ok: true, applicable: true }`):
+
+```
+BEDS24 ARI CHECK FAILED: BEHAVIOUR BREACH — A2 treated an empty dirty-range
+history as applicable; that is the vacuous green this guard was rebuilt to remove
+true !== false                                                        exit=1
+```
+
+That is the one that matters: **the regression that shipped can no longer
+ship.**
+
+One honesty note on family 3: the harness's structural-signs check flagged the
+identifier `APPLICABLE` as having disappeared. It is a word inside a string
+literal in the rule's `detail` message, not a name, import or call site, and
+nothing greps for it — the neutering is semantic. Flagged here rather than
+quietly ignored.
+
 ---
 
 ## 2. Three distinct defects found
