@@ -211,6 +211,10 @@ async function main() {
     ["reservations.edit", "עריכת הזמנה", "reservations"],
     ["reservations.cancel", "ביטול הזמנה", "reservations"],
     ["reservations.delete", "מחיקת הזמנה", "reservations"],
+    // D96 — Booking.com status reports (db/migrations/055). Deliberately NOT in
+    // the receptionist grant below: reporting an invalid card / no-show / cancel
+    // to the OTA is irreversible, so it is granted explicitly in /permissions.
+    ["reservations.channel_report", "דיווח מצב הזמנה ל-Booking.com (כרטיס לא תקין / ביטול / אי-הגעה)", "reservations"],
     ["guests.view", "צפייה באורחים", "guests"],
     ["guests.create", "יצירת אורח", "guests"],
     ["guests.edit", "עריכת אורח", "guests"],
