@@ -1,6 +1,6 @@
 import "server-only";
 import type { TransactionSql } from "postgres";
-import { recomputePaymentAggregates } from "./ledger";
+import { lockReservationForPaymentWrite, recomputePaymentAggregates } from "./ledger";
 
 // ============================================================
 // Canonical payment ledger MUTATIONS (Stage 3, H7/M6). guesthub.payments is the
@@ -19,6 +19,13 @@ import { recomputePaymentAggregates } from "./ledger";
 // record money movements that happened OUTSIDE GuestHub; they never fake a
 // provider charge/refund. All callers pass an existing transaction so the ledger
 // write and the aggregate recompute commit atomically.
+//
+// ATOMIC IS NOT ENOUGH (B5.1, NIGHT_AUDIT §3). Both helpers READ the ledger and
+// then WRITE it, so they must also be SERIALIZED per reservation: two concurrent
+// ₪60 refunds against a ₪100 capture each read "net captured = 100", each pass
+// the over-refund guard, and the ledger commits at −20 (proven on staging).
+// lockReservationForPaymentWrite() takes the reservation row FIRST, before any
+// ledger read, so the read that the decision rests on is never stale.
 // ============================================================
 
 /** Void a captured payment (mistaken entry). Idempotent. Returns false if already voided/absent. */
@@ -27,12 +34,20 @@ export async function voidPayment(
   tenantId: string,
   paymentId: string,
 ): Promise<boolean> {
+  // the reservation this payment belongs to, locked before the flip so a
+  // concurrent refund/capture cannot interleave between the flip and the recompute
+  const [target] = await tx<{ reservation_id: string }[]>`
+    SELECT reservation_id FROM guesthub.payments
+     WHERE id = ${paymentId} AND tenant_id = ${tenantId}`;
+  if (!target) return false; // absent — no-op
+  await lockReservationForPaymentWrite(tx, tenantId, target.reservation_id);
+
   const [row] = await tx<{ reservation_id: string }[]>`
     UPDATE guesthub.payments
        SET status = 'voided'
      WHERE id = ${paymentId} AND tenant_id = ${tenantId} AND status = 'paid'
     RETURNING reservation_id`;
-  if (!row) return false; // absent, or not in a voidable state — no-op
+  if (!row) return false; // not in a voidable state — no-op
   await recomputePaymentAggregates(tx, tenantId, row.reservation_id);
   return true;
 }
@@ -57,6 +72,10 @@ export async function recordRefund(
 ): Promise<{ refunded: number; paid: number; balance: number } | null> {
   const amount = Math.round(Number(args.amount) * 100) / 100;
   if (!(amount > 0)) throw new Error("refund amount must be positive");
+
+  // serialize with every other money-moving write for THIS reservation before
+  // reading the balance the refund decision rests on (B5.1)
+  await lockReservationForPaymentWrite(tx, args.tenantId, args.reservationId);
 
   // net captured so far (paid contra entries already netted)
   const [{ paid: netPaid }] = await tx<{ paid: number }[]>`
