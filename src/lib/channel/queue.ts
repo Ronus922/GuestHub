@@ -5,21 +5,44 @@ import { backoffMs, isPermanentError } from "./ranges";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 
 // ============================================================
-// Database-backed channel job queue (§T). Foundation only in Phase 3:
-// jobs can be enqueued (idempotently) and claimed (FOR UPDATE SKIP LOCKED,
-// FIFO per connection), but NO worker process is scheduled — nothing runs,
-// nothing talks to a provider.
+// Database-backed channel job queue (§T) — the durable work list the channel
+// worker actually runs on. This is LIVE, not a foundation: `guesthub-channel-worker`
+// (the PM2 process introduced by D68) claims from here every tick — 20s, or
+// immediately on the NOTIFY below — and dispatches each claimed job to Beds24,
+// the one supported provider (D78/D91). Reservations, rate saves and the worker's
+// own sweeps all reach the channel exclusively through rows in this table.
+//
+// Jobs enqueue idempotently (partial unique index on the idempotency key),
+// claim with FOR UPDATE SKIP LOCKED and FIFO per connection, retry with
+// exponential backoff, and dead-letter when permanently invalid or out of
+// attempts. A crashed worker's claim expires after JOB_LEASE_MINUTES, so a job
+// is never stuck.
+//
+// The queue stays provider-neutral: it only moves rows between states and knows
+// nothing about ARI, bookings or HTTP. worker.ts#runJob is the single dispatch
+// seam where a job type becomes a provider call.
 // ============================================================
 
+// The full set the DB CHECK constraint accepts (migrations 005/024/025). Only
+// FOUR are enqueued and dispatched today (D91): `pull_booking_revisions`,
+// `full_sync`, `sync_ari_range`, and `reconcile_inventory` — the last wired by
+// D93 to the 20-minute booking-reconciliation cycle, so it is no longer dormant.
+// The others are inherited from the Channex era and are unreachable: nothing
+// enqueues them, and worker.ts#runJob answers an unsupported type with a
+// permanent validation error, so a stray historical row dead-letters loudly
+// instead of retrying forever. Narrowing this union means narrowing the CHECK
+// constraint too — i.e. a migration, not an edit here.
 export type ChannelJobType =
   | "validate_connection" | "full_sync" | "sync_availability" | "sync_rates"
   | "sync_restrictions" | "sync_ari_range" | "pull_booking_revisions"
   | "import_booking_revision" | "acknowledge_booking_revision"
   | "reconcile_inventory" | "retry_failed_range"
-  // D64 — physical room → channel room type sync: one parent operation plus one
-  // deduplicated durable item per physical room (db/migrations/024).
+  // Legacy Channex structure sync (D64, db/migrations/024) — physical room →
+  // channel room type. Never enqueued since D91 removed the provider; retained
+  // only because migration 024's CHECK constraint still lists them.
   | "sync_room_types" | "create_room_type"
-  // D65 — (room × local rate plan) → channel rate plan sync (db/migrations/025).
+  // Legacy Channex (room × local rate plan) → channel rate plan sync
+  // (D65, db/migrations/025). Same: unreachable, constraint-only.
   | "sync_rate_plans" | "create_rate_plan";
 
 export async function enqueueChannelJob(
