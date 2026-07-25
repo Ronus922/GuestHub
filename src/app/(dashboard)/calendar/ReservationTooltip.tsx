@@ -163,10 +163,10 @@ export function ReservationTooltip({
         </span>
       </div>
 
-      {/* the approved body: compact rows — dates, nights+room, channel (only
-          for a visible external/site channel; an internal reservation has no
-          channel row at all), money. The reservation number and the
-          order-status chip are NOT on this card (InvitationCard.png); they
+      {/* the approved body: compact rows — dates, nights+room, channel, money.
+          The channel row is unconditional (D107): an external channel, or the
+          "manual" pencil for an internal reservation. The reservation number and
+          the order-status chip are NOT on this card (InvitationCard.png); they
           live in the editor. */}
       <div className="cb-pop-b">
         <p className="cb-pl">
