@@ -60,3 +60,4 @@
 052_room_type_catalog_order.sql
 053_room_show_on_calendar.sql
 054_external_column_rename.sql
+055_booking_com_channel_reports.sql
