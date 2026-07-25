@@ -60,9 +60,11 @@ assert.match(ariSrc, /path: "\/inventory\/rooms\/calendar"/,
   "the calendar push targets POST /inventory/rooms/calendar");
 assert.match(httpSrc, /headers: \{ token: opts\.token \}/,
   "Beds24 v2 authenticates with a bare `token` header, never Authorization/Bearer");
-assert.match(httpSrc, /"x-fivemincreditlimit-remaining"/,
-  "the credit-window counter is read from the real header name");
-ok("static: one endpoint (/inventory/rooms/calendar), `token` auth, real credit header");
+// The credit-header contract is NOT asserted here. It has one owner —
+// check:beds24-credit-backoff — which asserts the measured wire names AND the
+// absence of the name that never existed. Duplicating it here bought nothing
+// and broke this guard the moment the meter was corrected (P0-4/D97).
+ok("CONTRACT: one endpoint (/inventory/rooms/calendar) and `token` auth");
 
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit" });
@@ -162,11 +164,14 @@ const fakeFetch = async (url, init) => {
   const dates = calendarDatesOf(Array.isArray(body) ? body : []);
   calls.push({ path: u.pathname, body, dates });
 
+  // the MEASURED wire names (D97): a fixture that speaks the old, non-existent
+  // spelling would leave the meter null and prove nothing about the evidence
+  // context. Remaining is healthy, so the credit gate never fires in this guard.
   const creditHeaders = {
     "Content-Type": "application/json",
-    "X-FiveMinCreditLimit": "5000",
-    "X-FiveMinCreditLimit-Remaining": "4900",
-    "X-RequestCost": "1",
+    "x-five-min-limit-remaining": "97.6",
+    "x-five-min-limit-resets-in": "155",
+    "x-request-cost": "1.2",
   };
 
   if (reply.mode === "network") throw new TypeError("fetch failed");
@@ -399,8 +404,8 @@ try {
   assert.equal(ev.scenario_key, "incremental_sync");
   assert.equal(ev.firing_function, "drainBeds24AriDirtyRanges");
   assert.equal(ev.outcome, "success", "the evidence ledger records the clean drain");
-  assert.equal(ev.context.creditsRemaining, 4900,
-    "X-FiveMinCreditLimit-Remaining is carried into the evidence context");
+  assert.equal(ev.context.creditsRemaining, 97.6,
+    "the measured credit meter is carried into the evidence context (fractional, not rounded)");
   ok("clean drain: POST /inventory/rooms/calendar, `token` auth, compressed range, inclusive `to`, price1 in major units, synced + evidence");
 
   // ============================================================
