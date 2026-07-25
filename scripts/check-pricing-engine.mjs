@@ -15,10 +15,16 @@ import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-const ROOT = "/var/www/guesthub";
+// ROOT was hardcoded to "/var/www/guesthub" — the PRODUCTION checkout. Run from
+// any worktree, this guard silently compiled production's src/ and reported on
+// code the author had not written, so a change could not be validated and a
+// regression could not be caught. It is now the tree this script lives in,
+// which is what every other guard does (compare check-pricing-equality.mjs).
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST_URL =
   process.env.TEST_DATABASE_URL ||
   "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
@@ -74,6 +80,7 @@ Module._resolveFilename = function (request, ...rest) {
 };
 
 const { calculateQuote } = req(join(out, "lib/pricing/engine.js"));
+const { resolveMaxQuoteNights } = req(join(out, "lib/pricing/types.js"));
 const resolve = req(join(out, "lib/pricing/resolve.js"));
 const rules = req(join(out, "lib/rates/rules.js"));
 
@@ -598,12 +605,29 @@ try {
         rooms: [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests }], source: "internal",
       });
       assert.equal(q2.errors[0].code, "INVALID_DATE_RANGE");
-      const q3 = await calculateQuote(tx, {
-        tenantId: f.T, checkIn: "2027-01-01", checkOut: "2027-06-01",
+      // The quote window is a CONFIGURABLE ceiling, not a fixed 90. Assert the
+      // behaviour on both sides of whatever the tenant's ceiling actually is,
+      // read from the module — a literal here would pin the old number and go
+      // green against a bound nobody chose.
+      const addD = (d, n) =>
+        new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+      const ceiling = resolveMaxQuoteNights(null);
+      assert.ok(ceiling >= 366,
+        `the default quote window is ${ceiling} nights — a yearly let must be quotable`);
+      const over = await calculateQuote(tx, {
+        tenantId: f.T, checkIn: "2027-01-01", checkOut: addD("2027-01-01", ceiling + 1),
         rooms: [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests }], source: "internal",
       });
-      assert.equal(q3.errors[0].code, "QUOTE_WINDOW_EXCEEDED");
-      ok("engine: currency mismatch, invalid range and quote-window guards are structured errors");
+      assert.equal(over.errors[0]?.code, "QUOTE_WINDOW_EXCEEDED",
+        `${ceiling + 1} nights is past the ceiling and must be refused`);
+      const under = await calculateQuote(tx, {
+        tenantId: f.T, checkIn: "2027-01-01", checkOut: addD("2027-01-01", ceiling),
+        rooms: [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests }], source: "internal",
+      });
+      assert.ok(!(under.errors ?? []).some((e) => e.code === "QUOTE_WINDOW_EXCEEDED"),
+        `${ceiling} nights is exactly the ceiling and must NOT hit the window guard ` +
+        `(got ${JSON.stringify((under.errors ?? []).map((e) => e.code))})`);
+      ok(`engine: currency, range, and a CONFIGURABLE quote window (${ceiling}) — refused at +1, allowed at the ceiling`);
     }
 
     throw new Rollback();

@@ -9,9 +9,34 @@ import type { DateOnly } from "@/lib/dates";
 
 export const PRICING_ENGINE_VERSION = "1.0.0";
 
-// The single configurable quote window (spec §28): a quote may cover at most
-// this many nights. Callers stay within the rates horizon (5y) separately.
-export const MAX_QUOTE_NIGHTS = 90;
+// The quote window (spec §28): a quote may cover at most this many nights.
+//
+// This is a COMPUTATION BOUND, not a policy about how long a guest may stay.
+// It was a hardcoded 90, which quietly made a normal product case impossible:
+// a monthly or yearly let is an ordinary booking here, and a 91-night stay was
+// refused outright with QUOTE_WINDOW_EXCEEDED and no way for an operator to
+// raise it. The default now covers a full year with margin, and a tenant that
+// needs a different bound sets `settings.pricing.max_quote_nights`.
+// Callers stay within the rates horizon (5y) separately.
+export const DEFAULT_MAX_QUOTE_NIGHTS = 400;
+
+/** A tenant setting may not exceed this — it still has to be a bound. */
+export const MAX_QUOTE_NIGHTS_CEILING = 1830; // the 5-year rates horizon
+
+/**
+ * The effective window for one tenant. Anything absent, malformed, non-integer
+ * or out of range falls back to the default: a bad setting must never widen the
+ * bound, and must never narrow it to something that refuses ordinary stays.
+ */
+export function resolveMaxQuoteNights(pricingSettings: unknown): number {
+  const raw =
+    pricingSettings && typeof pricingSettings === "object"
+      ? (pricingSettings as Record<string, unknown>).max_quote_nights
+      : undefined;
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > MAX_QUOTE_NIGHTS_CEILING) return DEFAULT_MAX_QUOTE_NIGHTS;
+  return n;
+}
 
 export type QuoteSource =
   | "pricing_simulator"
