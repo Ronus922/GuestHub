@@ -16,11 +16,19 @@
 //   C. Adjacent stays (checkout == next checkin) on one room → BOTH allowed
 //      (half-open [check_in,check_out)).
 import postgres from "postgres";
+import { disposableDsn, ensureDisposableSchema } from "./lib/check-disposable-db.mjs";
 
-const url = process.env.CHECK_CONCURRENCY_DB_URL;
-if (!url) { console.error("need CHECK_CONCURRENCY_DB_URL (a disposable DB)"); process.exit(2); }
-try { const u = new URL(url); if (["localhost","127.0.0.1","::1"].includes(u.hostname) && (u.port||"5432")==="5432")
-  { console.error("ABORT: refusing :5432 (shared production)"); process.exit(2); } } catch {}
+// This guard used to exit 2 ("need CHECK_CONCURRENCY_DB_URL") and had therefore
+// NEVER run: nothing in the repo ever set that variable. A guard that never runs
+// protects nothing. It now defaults to a database it OWNS on the isolated test
+// server and replays the migration chain into it; CHECK_CONCURRENCY_DB_URL still
+// wins when it is set, and the production fail-closed checks are unchanged.
+const url = disposableDsn({
+  dbName: "guesthub_concurrency_check",
+  envVars: ["CHECK_CONCURRENCY_DB_URL"],
+  label: "check-reservation-concurrency",
+});
+await ensureDisposableSchema({ dsn: url, label: "check-reservation-concurrency" });
 
 const admin = postgres(url, { prepare:false, max:1 });
 const c1 = postgres(url, { prepare:false, max:1 });

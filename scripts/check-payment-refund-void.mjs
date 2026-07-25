@@ -5,9 +5,15 @@
 // single aggregate formula stays correct, and over-refund fails closed.
 // Runs against a DISPOSABLE DB (schema present). Fail-closed against :5432.
 import postgres from "postgres";
-const url = process.env.CHECK_CONCURRENCY_DB_URL || process.env.CHECK_DB_URL;
-if (!url) { console.error("need CHECK_CONCURRENCY_DB_URL (disposable DB)"); process.exit(2); }
-try { const u=new URL(url); if(["localhost","127.0.0.1","::1"].includes(u.hostname)&&(u.port||"5432")==="5432"){console.error("ABORT :5432");process.exit(2);} } catch {}
+import { disposableDsn, ensureDisposableSchema } from "./lib/check-disposable-db.mjs";
+// Exited 2 and had NEVER run — the money guard of the three. It now owns a
+// disposable database on the isolated test server and replays the chain itself.
+const url = disposableDsn({
+  dbName: "guesthub_refundvoid_check",
+  envVars: ["CHECK_CONCURRENCY_DB_URL", "CHECK_DB_URL"],
+  label: "check-payment-refund-void",
+});
+await ensureDisposableSchema({ dsn: url, label: "check-payment-refund-void" });
 const sql = postgres(url, { prepare:false, max:1 });
 let fail=0; const ok=(m)=>console.log(`  ✓ ${m}`); const bad=(m,d)=>{fail++;console.log(`  ✗ ${m}${d?": "+d:""}`);};
 
