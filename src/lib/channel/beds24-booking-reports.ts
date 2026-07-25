@@ -149,7 +149,10 @@ export async function reportBeds24BookingStatus(
   });
   if ("ok" in r) return r; // transport-level failure, already a safe category
 
-  const creditsRemaining = r.creditsRemaining ?? null;
+  // D97 — the credit meter arrives as a SNAPSHOT (remaining / resets-in / cost)
+  // read off the measured wire names; the flat `creditsRemaining` field this
+  // used to read was removed with the header name that never existed.
+  const creditsRemaining = r.credits.remaining;
   const envelope = extractBookingReportEnvelope(r.status, r.body);
 
   if (r.status !== 200 && r.status !== 201 && r.status !== 204) {
