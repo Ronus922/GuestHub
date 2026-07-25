@@ -215,7 +215,7 @@ Priority: ‎1. התאמה לרפרנס → 2. לוח שמיש וקריא → 3.
 
 # 15. אינטגרציות עתידיות
 
-לא בונים עכשיו — רק שומרים מבנה נקי: Channel Manager / Channex, WhatsApp, SMS, Email templates, Booking engine, ייצוא הנה"ח, ספק סליקה, OTA.
+לא בונים עכשיו — רק שומרים מבנה נקי: Channel Manager (Beds24 — מומש מאז, D91), WhatsApp, SMS, Email templates, Booking engine, ייצוא הנה"ח, ספק סליקה, OTA.
 
 # 16. עקרונות UX/UI
 
