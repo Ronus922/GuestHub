@@ -21,16 +21,22 @@ import { createRequire } from "node:module";
 import Module from "node:module";
 import { join } from "node:path";
 import postgres from "postgres";
+import { disposableDsn, ensureDisposableSchema } from "./lib/check-disposable-db.mjs";
 
-const TEST_URL =
-  process.env.TEST_DATABASE_URL ||
-  "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
-for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
-  if (TEST_URL.includes(marker)) {
-    console.error(`REFUSED: TEST_DATABASE_URL contains production marker "${marker}"`);
-    process.exit(1);
-  }
-}
+// This guard OWNS its database. It used to open the SHARED `…:5433/postgres`
+// and query guesthub.tenants straight away, so it only passed when some other
+// guard had already replayed the migration chain there: run first, or after a
+// DROP SCHEMA, it died with `relation "guesthub.tenants" does not exist` before
+// the first assertion. Measured on origin/main @ 8494385 the crash output was
+// BYTE-IDENTICAL with the D93 fix present and with applyCancellation's release
+// branch semantically neutered — an unconditional red carries no more signal
+// than an unconditional green.
+const TEST_URL = disposableDsn({
+  dbName: "guesthub_cancel_sync_check",
+  envVars: ["TEST_DATABASE_URL"],
+  label: "check-beds24-cancellation-sync",
+});
+await ensureDisposableSchema({ dsn: TEST_URL, label: "check-beds24-cancellation-sync" });
 process.env.DATABASE_URL = TEST_URL;
 process.env.CHANNEL_SECRETS_KEY = "check-beds24-cancellation-sync-key";
 

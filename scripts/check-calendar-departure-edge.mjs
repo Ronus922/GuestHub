@@ -16,16 +16,18 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "nod
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import postgres from "postgres";
+import { disposableDsn, ensureDisposableSchema } from "./lib/check-disposable-db.mjs";
 
-const TEST_URL =
-  process.env.TEST_DATABASE_URL ||
-  "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
-for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
-  if (TEST_URL.includes(marker)) {
-    console.error(`REFUSED: TEST_DATABASE_URL contains production marker "${marker}"`);
-    process.exit(1);
-  }
-}
+// This guard OWNS its database. It used to open the SHARED `…:5433/postgres`,
+// so it passed only when some earlier guard had replayed the migration chain
+// there; standalone, or after a DROP SCHEMA, it crashed on
+// `relation "guesthub.tenants" does not exist` before assertion 2.
+const TEST_URL = disposableDsn({
+  dbName: "guesthub_calendar_edge_check",
+  envVars: ["TEST_DATABASE_URL"],
+  label: "check-calendar-departure-edge",
+});
+await ensureDisposableSchema({ dsn: TEST_URL, label: "check-calendar-departure-edge" });
 
 let n = 0;
 const ok = (m) => { n++; console.log(`✓ ${n}. ${m}`); };

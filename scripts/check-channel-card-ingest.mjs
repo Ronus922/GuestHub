@@ -23,16 +23,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import postgres from "postgres";
+import { disposableDsn, ensureDisposableSchema } from "./lib/check-disposable-db.mjs";
 
-const TEST_URL =
-  process.env.TEST_DATABASE_URL ||
-  "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
-for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
-  if (TEST_URL.includes(marker)) {
-    console.error(`REFUSED: TEST_DATABASE_URL contains production marker "${marker}"`);
-    process.exit(1);
-  }
-}
+// This guard OWNS its database AND its tenant. It used to open the SHARED
+// `…:5433/postgres` and then run `SELECT id FROM guesthub.tenants LIMIT 1` —
+// so it needed BOTH a schema someone else had built and a tenant row someone
+// else had left behind. On a clean test server it was red for reasons that have
+// nothing to do with card ingestion. It now replays the chain itself and seeds
+// its own tenant inside the rolled-back transaction.
+const TEST_URL = disposableDsn({
+  dbName: "guesthub_card_ingest_check",
+  envVars: ["TEST_DATABASE_URL"],
+  label: "check-channel-card-ingest",
+});
+await ensureDisposableSchema({ dsn: TEST_URL, label: "check-channel-card-ingest" });
 process.env.DATABASE_URL = TEST_URL;
 
 const out = mkdtempSync(join(tmpdir(), "chan-card-"));
@@ -76,7 +80,12 @@ const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
 
 try {
   await sql.begin(async (tx) => {
-    const [{ id: tenantId }] = await tx`SELECT id FROM guesthub.tenants LIMIT 1`;
+    // seed our OWN tenant — borrowing "whatever tenant happens to be row 1"
+    // made this check depend on another guard's leftovers (see the header note)
+    const [{ id: tenantId }] = await tx`
+      INSERT INTO guesthub.tenants (name, slug)
+      VALUES ('Channel Card Ingest Check', ${"card-ingest-" + Date.now()})
+      RETURNING id`;
     const [{ id: connectionId }] = await tx`
       INSERT INTO guesthub.channel_connections (tenant_id) VALUES (${tenantId}) RETURNING id`;
     const mkReservation = async (num) => {
