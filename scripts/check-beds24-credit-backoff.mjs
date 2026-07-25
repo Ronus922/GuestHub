@@ -43,22 +43,29 @@ let n = 0;
 const ok = (m) => { n++; console.log(`✓ ${n}. ${m}`); };
 const ROOT = process.cwd();
 
-// ---- static: the wire names are the MEASURED ones, in exactly one place ----
+// ---- CONTRACT assertions (structural) -------------------------------------
+// These read SOURCE TEXT, not behaviour. They can only catch a contract breach
+// — a renamed/duplicated wire constant — never a behaviour breach. Every
+// behavioural claim in this file is made below, against the real modules and a
+// real database. A contract assertion is never evidence that the gate works.
+const CONTRACT = (m) => `CONTRACT BREACH (structural, not behaviour): ${m}`;
 const creditsSrc = readFileSync(join(ROOT, "src/lib/channel/beds24-credits.ts"), "utf8");
 for (const header of [
   "x-five-min-limit-remaining",
   "x-five-min-limit-resets-in",
   "x-request-cost",
 ]) {
-  assert.ok(creditsSrc.includes(`"${header}"`), `the measured header ${header} is declared`);
+  assert.ok(creditsSrc.includes(`"${header}"`),
+    CONTRACT(`the measured header ${header} is no longer declared in beds24-credits.ts`));
 }
 const httpSrc = readFileSync(join(ROOT, "src/lib/channel/beds24-http.ts"), "utf8");
 assert.ok(
   !httpSrc.includes("fivemincreditlimit"),
-  "the header name that never existed on the wire is gone from the HTTP core",
+  CONTRACT("the header name that never existed on the wire is back in the HTTP core"),
 );
-assert.match(httpSrc, /readBeds24Credits/, "the HTTP core reads the meter through the one reader");
-ok("static: the measured Beds24 credit header names, declared once, read once");
+assert.match(httpSrc, /readBeds24Credits/,
+  CONTRACT("the HTTP core no longer reads the meter through the one reader"));
+ok("CONTRACT: the measured Beds24 credit header names, declared once, read once");
 
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit" });
@@ -74,6 +81,7 @@ const require2 = createRequire(import.meta.url);
 const credits = require2(join(OUT, "lib/channel/beds24-credits.js"));
 const breaker = require2(join(OUT, "lib/channel/circuit-breaker.js"));
 const imp = require2(join(OUT, "lib/channel/beds24-booking-import.js"));
+const ari = require2(join(OUT, "lib/channel/beds24-ari-sync.js"));
 const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 
 // ---- the meter, read off the EXACT header set captured live ----
@@ -197,6 +205,7 @@ globalThis.fetch = async (url) => {
 const sql = postgres(TEST_URL, { max: 1, prepare: false, onnotice: () => {} });
 const slug = `b24-credits-${Date.now()}`;
 let tenantId;
+let outTenantId;
 
 try {
   const [tenant] = await sql`
@@ -280,14 +289,206 @@ try {
   assert.equal(rec.creditPause.waitMs, 60_000, "and waits the provider's ResetsIn");
   ok("reconciliation: the 50-reservation sweep yields on the same gate (1 call, not 3)");
 
+  // ============================================================
+  // OUTBOUND — the ARI drain, the half this check used to leave uncovered.
+  //
+  // Everything above exercises the INBOUND pull. The outbound gate lives in
+  // drainBeds24AriDirtyRanges, and until this section existed the entire
+  // outbound gate could be deleted with all assertions still green — the check
+  // was leaning on the pure module plus the pull path. Every assertion below
+  // reads the DATABASE after a real drain: what happened to the claimed range,
+  // not what the source says.
+  // ============================================================
+  // A tenant may hold ONE beds24/production connection (unique constraint), so
+  // the outbound half gets its own tenant — the inbound fixtures above stay
+  // untouched and both are cleaned up together.
+  const OUT_TOKEN = "check-credit-outbound-token";
+  const OUT_ROOM = "707310";
+  const [otenant] = await sql`
+    INSERT INTO guesthub.tenants (name, slug, timezone, currency)
+    VALUES ('Beds24 Credit Outbound', ${`${slug}-out`}, 'Asia/Jerusalem', 'ILS') RETURNING id`;
+  outTenantId = otenant.id;
+  const [ort] = await sql`
+    INSERT INTO guesthub.room_types (tenant_id, name, base_price)
+    VALUES (${outTenantId}, 'Outbound Type', 400) RETURNING id`;
+  const [oroom] = await sql`
+    INSERT INTO guesthub.rooms (tenant_id, room_number, room_type_id, status, is_active)
+    VALUES (${outTenantId}, 'B24-OUT', ${ort.id}, 'available', true) RETURNING id`;
+  const [osu] = await sql`
+    INSERT INTO guesthub.sellable_units (tenant_id, code, name, room_type_id)
+    VALUES (${outTenantId}, 'B24-OUT', 'יחידת יוצא', ${ort.id}) RETURNING id`;
+  await sql`
+    INSERT INTO guesthub.sellable_unit_rooms (tenant_id, sellable_unit_id, room_id)
+    VALUES (${outTenantId}, ${osu.id}, ${oroom.id})`;
+  await sql`
+    INSERT INTO guesthub.pricing_plans (tenant_id, sellable_unit_id, code, name, is_base, plan_kind)
+    VALUES (${outTenantId}, ${osu.id}, 'base', 'מחיר בסיס', true, 'base')`;
+  const [oplan] = await sql`
+    INSERT INTO guesthub.pricing_plans
+      (tenant_id, sellable_unit_id, code, name, plan_kind, is_active, is_archived, is_visible_channels)
+    VALUES (${outTenantId}, NULL, 'beds24-out', 'תוכנית ערוץ', 'base', true, false, true) RETURNING id`;
+  await sql`
+    INSERT INTO guesthub.pricing_plan_units (tenant_id, pricing_plan_id, sellable_unit_id, is_active)
+    VALUES (${outTenantId}, ${oplan.id}, ${osu.id}, true)`;
+  for (let d = 0; d <= 30; d++) {
+    await sql`
+      INSERT INTO guesthub.pricing_plan_unit_rates
+        (tenant_id, pricing_plan_id, sellable_unit_id, date, price, min_stay_arrival)
+      VALUES (${outTenantId}, ${oplan.id}, ${osu.id}, ${day(d)}, 512.5, 2)`;
+  }
+  const [oconn] = await sql`
+    INSERT INTO guesthub.channel_connections
+      (tenant_id, provider, environment, state, is_active_provider,
+       inbound_sync_enabled, outbound_sync_enabled, full_sync_required,
+       api_key_ciphertext, access_token_ciphertext, access_token_expires_at)
+    VALUES (${outTenantId}, 'beds24', 'production', 'active', true, false, true, false,
+            ${encryptSecret("check-refresh-token")}, ${encryptSecret(OUT_TOKEN)},
+            now() + interval '12 hours')
+    RETURNING id`;
+  await sql`
+    INSERT INTO guesthub.channel_beds24_room_mappings
+      (tenant_id, connection_id, beds24_property_id, beds24_room_id, room_id, local_rate_plan_id, status)
+    VALUES (${outTenantId}, ${oconn.id}, ${PROPERTY}, ${OUT_ROOM}, ${oroom.id}, ${oplan.id}, 'mapped')`;
+
+  /** how the calendar mock answers: status + the meter it carries */
+  let push = { status: 201, remaining: 97.6, resetsIn: 155 };
+  let pushCalls = 0;
+  const pushFetch = async (url) => {
+    pushCalls += 1;
+    assert.equal(new URL(String(url)).host, "api.beds24.com", "outbound must stay on Beds24");
+    const h = meter(push.remaining, push.resetsIn);
+    if (push.status !== 201) {
+      return new Response(JSON.stringify({ success: false }), { status: push.status, headers: h });
+    }
+    return new Response(
+      JSON.stringify([{ success: true, modified: { field: "price1" }, roomId: Number(OUT_ROOM) }]),
+      { status: 201, headers: h },
+    );
+  };
+  const loadOut = async () => {
+    const cs = await ari.loadDrainableBeds24Connections(sql);
+    const c = cs.find((x) => x.id === oconn.id);
+    assert.ok(c, "the outbound connection is drainable");
+    return c;
+  };
+  const markDirty = async (from, to) => {
+    const [row] = await sql`
+      INSERT INTO guesthub.channel_dirty_ranges
+        (tenant_id, connection_id, room_id, kind, date_from, date_to, status, attempts, next_attempt_at)
+      VALUES (${outTenantId}, ${oconn.id}, ${oroom.id}, 'availability', ${from}, ${to}, 'pending', 0, now())
+      RETURNING id`;
+    return row.id;
+  };
+  const rangeRow = async (id) => (await sql`
+    SELECT status, attempts, last_error_code,
+           (next_attempt_at > now() + interval '60 seconds') AS deferred_past_a_minute
+    FROM guesthub.channel_dirty_ranges WHERE id = ${id}`)[0];
+  const connRow = async () => (await sql`
+    SELECT last_error, consecutive_failures,
+           GREATEST(0, EXTRACT(EPOCH FROM (circuit_open_until - now()))) AS open_for_sec
+    FROM guesthub.channel_connections WHERE id = ${oconn.id}`)[0];
+  const lastEvidence = async () => (await sql`
+    SELECT outcome, error_code, context FROM guesthub.channel_evidence_ledger
+    WHERE connection_id = ${oconn.id} ORDER BY created_at DESC, id DESC LIMIT 1`)[0];
+  /** fixture management, never an assertion: the cooldown has elapsed */
+  const rearm = (id) => sql`
+    UPDATE guesthub.channel_dirty_ranges SET next_attempt_at = now() WHERE id = ${id}`.then(() =>
+    sql`UPDATE guesthub.channel_connections
+        SET circuit_open_until = NULL, consecutive_failures = 0, last_error = NULL
+        WHERE id = ${oconn.id}`);
+  const drain = async () => ari.drainBeds24AriDirtyRanges(sql, await loadOut(), { fetchImpl: pushFetch });
+
+  // ---- outbound control: a healthy window really pushes and really syncs ----
+  push = { status: 201, remaining: 97.6, resetsIn: 155 };
+  pushCalls = 0;
+  let dr = await markDirty(day(10), day(14));
+  let s = await drain();
+  assert.equal(pushCalls, 1, `the drain must actually POST the calendar (got ${pushCalls})`);
+  assert.equal(s.synced, 1, `a healthy window syncs the range (got ${JSON.stringify(s)})`);
+  assert.equal((await rangeRow(dr)).status, "synced", "the claimed range completes");
+  ok("outbound control: a healthy window pushes the calendar and syncs the range");
+
+  // ---- outbound (a): low Remaining on a SUCCESSFUL response ----
+  // The push succeeded, but the meter says the window is nearly spent. The
+  // claimed range must NOT be marked synced-and-forgotten and must NOT be
+  // charged an attempt: it is re-armed for after the provider's own reset, and
+  // the breaker is held for that span. Deleting the outbound gate marks it
+  // 'synced' instead — which is exactly what this assertion catches.
+  push = { status: 201, remaining: 8.4, resetsIn: 137 };
+  await rearm(dr);
+  dr = await markDirty(day(15), day(18));
+  s = await drain();
+  let row = await rangeRow(dr);
+  assert.equal(row.status, "pending",
+    `a credit pause must leave the claimed range PENDING for the next window (got '${row.status}' — the outbound credit gate is not running)`);
+  assert.equal(row.attempts, 0,
+    "a credit pause is not a range failure — it may never consume an attempt");
+  assert.equal(row.deferred_past_a_minute, true,
+    "the range is re-armed for after the provider's own resets-in, not for right now");
+  assert.equal(s.creditPausedMs, 137_000,
+    `the drain must report the provider-stated pause (got ${s.creditPausedMs} — the outbound credit gate is not running)`);
+  let c = await connRow();
+  assert.ok(Math.abs(Number(c.open_for_sec) - 137) <= 3,
+    `the breaker holds the connection for the credit window's resets-in (open for ${c.open_for_sec}s, expected ~137s)`);
+  let ev = await lastEvidence();
+  assert.equal(ev.error_code, "credit_paused", "the evidence ledger names the pause");
+  ok("outbound (a): low Remaining re-arms the claimed range without an attempt and holds the breaker for resets-in");
+
+  // ---- outbound (D98): a REAL failure carrying a low meter is STILL a failure
+  // Every response feeds the gate, the failing ones included. A 500 that merely
+  // arrived while the meter read low must not be laundered into a credit pause:
+  // it has to charge an attempt and record last_error, or a range that can
+  // never succeed retries forever and never reaches max_attempts.
+  await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id = ${dr}`;
+  await rearm(dr);
+  push = { status: 500, remaining: 8.4, resetsIn: 137 };
+  const bad = await markDirty(day(20), day(23));
+  await drain();
+  row = await rangeRow(bad);
+  assert.equal(row.attempts, 1,
+    `a 500 must charge an attempt even when the credit meter is low (got attempts=${row.attempts} — the credit pause swallowed a real provider failure, D98)`);
+  assert.equal(row.last_error_code, "server_error",
+    `the range records the REAL provider error, not the pause (got '${row.last_error_code}')`);
+  c = await connRow();
+  assert.ok(c.last_error !== null,
+    "the connection surfaces the provider failure to the operator, not a credit message");
+  ev = await lastEvidence();
+  assert.equal(ev.outcome, "failed",
+    `the evidence ledger records a FAILED outbound run, not a partial credit pause (got '${ev.outcome}')`);
+  assert.equal(ev.error_code, "server_error", "with the provider's own error code");
+  assert.ok(Math.abs(Number(c.open_for_sec) - 137) <= 3,
+    `and the connection is still held for the credit window (open for ${c.open_for_sec}s) — charged AND paced`);
+  ok("outbound (D98): a 500 arriving on a low meter still charges an attempt and records the real error");
+
+  // ---- outbound (D98): the dead letter still exists ----
+  // The end state the swallowed failure destroyed: a permanently-failing range
+  // must stop retrying. Five drains, max_attempts=5 → status 'failed'.
+  push = { status: 500, remaining: 8.4, resetsIn: 137 };
+  const doomed = await markDirty(day(25), day(28));
+  await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id = ${bad}`;
+  const before = pushCalls;
+  for (let i = 0; i < 8; i++) {
+    await rearm(doomed);
+    await drain();
+  }
+  row = await rangeRow(doomed);
+  assert.equal(row.status, "failed",
+    `a permanently-failing range must dead-letter (got '${row.status}', attempts=${row.attempts}) — an unbounded retry burns the very credits the pause exists to protect`);
+  assert.equal(row.attempts, 5, "it dead-letters at max_attempts, no later");
+  assert.ok(pushCalls - before <= 5,
+    `and the drain stops calling Beds24 once the range is dead (issued ${pushCalls - before} calls over 8 scheduler passes)`);
+  ok("outbound (D98): a permanently-failing range still reaches the dead letter at max_attempts");
+
   console.log(`\ncheck-beds24-credit-backoff: all ${n} assertions passed`);
 } finally {
-  if (tenantId) {
+  for (const tid of [outTenantId, tenantId].filter(Boolean)) {
+    const tenantId = tid;
     for (const t of [
-      "channel_sync_errors", "channel_dirty_ranges", "channel_booking_revisions",
-      "channel_sync_jobs", "channel_beds24_room_mappings", "channel_connections",
-      "audit_logs", "reservation_rooms", "reservations", "guests", "rooms",
-      "room_types", "tenants",
+      "channel_evidence_ledger", "channel_sync_errors", "channel_dirty_ranges",
+      "channel_booking_revisions", "channel_sync_jobs", "channel_beds24_room_mappings",
+      "channel_connections", "audit_logs", "reservation_rooms", "reservations", "guests",
+      "pricing_plan_unit_rates", "pricing_plan_units", "pricing_plans",
+      "sellable_unit_rooms", "sellable_units", "rooms", "room_types", "tenants",
     ]) {
       await sql.unsafe(
         t === "tenants"

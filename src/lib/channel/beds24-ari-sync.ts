@@ -596,8 +596,23 @@ export async function drainBeds24AriDirtyRanges(
   // window), and the §16 breaker is opened for exactly that span so the whole
   // connection stops calling until the credits come back. A pause with real
   // warnings still falls through to the normal failure path below.
+  //
+  // D98 — THE PAUSE MAY NEVER SWALLOW A REAL FAILURE. Every response feeds the
+  // gate, including a FAILING one, so a 500/400/network error that merely
+  // happened to arrive while the meter read low used to take this branch: no
+  // attempt charged, no last_error, only next_attempt_at pushed out. A range
+  // that can never succeed then retried forever and never reached
+  // max_attempts — a regression against the pre-P0-4 behaviour, measured on
+  // staging: 8 consecutive drains of a 400-ing range left attempts=0 while the
+  // old code dead-lettered it after 5. The pause therefore replaces the failure
+  // path only when the credit window is the WHOLE story: either nothing failed
+  // (we stopped voluntarily, before the wall), or the failure IS the 429 the
+  // pause describes.
   const creditPause = outcome.creditPause;
-  if (creditPause && warnings.length === 0) {
+  const creditIsTheWholeStory =
+    failure === null ||
+    (creditPause?.reason === "rate_limited" && failure.code === "rate_limited");
+  if (creditPause && creditIsTheWholeStory && warnings.length === 0) {
     const waitSec = Math.ceil(creditPause.waitMs / 1000);
     const message = beds24CreditPauseMessage(creditPause);
     await db`
@@ -639,8 +654,18 @@ export async function drainBeds24AriDirtyRanges(
     summary.failed = failed.failed;
     // §16 — advance the breaker exactly as ari-sync.ts does: a 429 opens it
     // for the provider's Retry-After; repeated failures open it at threshold.
+    // D98 — when the meter ALSO said the window is dry, the range is still
+    // charged its attempt (above), but the connection is held for the
+    // provider-stated reset span so the retry does not eat the credits the
+    // inbound safety net (poll + D93 reconciliation) needs.
+    const cooldownMs = Math.max(creditPause?.waitMs ?? 0, failure?.retryAfterMs ?? 0);
     await persistCircuit(db, conn.id,
-      onCircuitFailure(circuit, failureKindOf(err.code), now(), { retryAfterMs: failure?.retryAfterMs }));
+      onCircuitFailure(
+        circuit,
+        creditPause ? failureKindOf("credit_paused") : failureKindOf(err.code),
+        now(),
+        cooldownMs > 0 ? { retryAfterMs: cooldownMs } : undefined,
+      ));
     await recordIncrementalEvidence(failure ? "failed" : "partial", err.code, err.message);
     return summary;
   }
