@@ -570,12 +570,19 @@ export async function drainBeds24AriDirtyRanges(
 
   if (failure || warnings.length > 0 || deferred > 0) {
     const err = failure ?? { code: "partial_warnings", message: summarizeBeds24Warnings(warnings) };
-    if (warnings.length > 0) {
-      await logChannelError(db, {
-        tenantId: conn.tenant_id, connectionId: conn.id,
-        code: "partial_warnings", message: summarizeBeds24Warnings(warnings), context: { warnings },
-      });
-    }
+    // EVERY non-clean drain is logged — not only the partial ones. Before this,
+    // `logChannelError` fired only when `warnings.length > 0`, so a HARD failure
+    // (validation, unauthorized, network, 429) left no row in
+    // channel_sync_errors at all: the ranges quietly went back to pending and the
+    // job still reported succeeded. That is the silent-failure shape — an ARI
+    // push that stops publishing with nothing on the operator's error surface.
+    // The full-sync path (runBeds24FullSync) always logged; the drain did not.
+    await logChannelError(db, {
+      tenantId: conn.tenant_id, connectionId: conn.id,
+      dateFrom: from, dateTo: to,
+      code: err.code, message: err.message,
+      ...(warnings.length > 0 ? { context: { warnings } } : {}),
+    });
     const failed = await failRanges(db, conn, rows, err);
     summary.retried = failed.retried;
     summary.failed = failed.failed;

@@ -110,9 +110,16 @@ export async function pushBeds24Calendar(
     entries: Beds24CalendarRequest;
   },
 ): Promise<Beds24CalendarPushResult> {
-  // structural gate: a malformed payload never reaches the network
+  // Structural gate: a malformed payload never reaches the network. The reason
+  // is OUR OWN fixed vocabulary (validateBeds24CalendarRequest), not upstream
+  // text, so naming the offending field leaks nothing — and without it the
+  // operator sees "הנתונים נדחו" with no way to know WHICH field, on a payload
+  // that never left the process and therefore has no provider-side trace either.
   const invalid = validateBeds24CalendarRequest(args.entries);
-  if (invalid) return beds24Fail("validation");
+  if (invalid) {
+    const f = beds24Fail("validation");
+    return { ...f, message: `${f.message} — מטען לא תקין: ${invalid}` };
+  }
 
   const r = await beds24Request({
     token: args.token,
