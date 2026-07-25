@@ -118,22 +118,26 @@ what they actually buy.
 | operational consistency | GuestHub stays the odd one out | same shape as `billing`, one mental model |
 | restart/health semantics | PM2 `max_memory_restart`, `min_uptime`, log rotation already tuned in `ecosystem.config.cjs` | must be re-expressed as `Restart=`, `MemoryMax=`, journald |
 
-**Honest recommendation: Option B (systemd), but not as an emergency.**
+## ✅ DECIDED (Ronen, 2026-07-25): **Option A. Option B is NOT scheduled.**
 
-Reasoning: the *stated goal* of 4.2 is getting secrets out of the deploy tree,
-and **Option A achieves that goal today at a fraction of the risk.** What Option A
-does *not* buy is the confidentiality property — an `ubuntu`-readable `0600` file
-is still fully readable by anything running as `ubuntu`, which is every PM2 app on
-this box. If the threat you care about is "a tarball leaked the secrets", Option A
-closes it. If it is "the app process itself should never be able to read the
-secrets file", only Option B closes it, and only Option B matches `billing`.
+**Option A (PM2 + wrapper) is the chosen path. Option B (systemd) is recorded as a
+TARGET STATE, not as a planned second step** — §6 stays in this document as the
+description of where we would go if the threat model changes, and must not be read
+as "phase two of the cutover". Nothing in §6 is scheduled.
 
-Suggested sequencing: **do Option A now** (low risk, removes the backup exposure
-immediately), and schedule Option B as its own change with its own maintenance
-window, because it also means re-expressing the worker's restart policy. Do not
-do both in one window.
+What that decision accepts, stated plainly so it is not rediscovered as a surprise:
+Option A gets the secrets **out of the deploy tree**, which is the stated goal and
+which closes the tarball exposure. It does **not** buy the confidentiality property.
+`/etc/guesthub/guesthub.env` must be `ubuntu:ubuntu 0600` for PM2 to read it, and
+that file is therefore readable by every process running as `ubuntu` — i.e. by every
+other PM2 app on this box (`sys-app`, `pms`, `mail-system`). Only Option B closes
+that, by injecting the values into a process that cannot read the file (measured in
+§4: `cat: /etc/guesthub/probe.env: Permission denied`). We are knowingly not closing
+it now.
 
-**Not chosen unilaterally — Ronen picks.** §5 is Option A, §6 is Option B.
+**This run performs NO production cutover.** Scope here is the staging proof plus
+this runbook. §5 is written out and verified end-to-end on staging; executing it
+against production is a separate, explicitly authorised action.
 
 ---
 
@@ -359,11 +363,22 @@ throwaway `gh_env_probe` role was created on staging for this and can be dropped
 
 ## 8. Left for Ronen to authorise
 
-1. **Pick Option A or Option B** (§4). Nothing else proceeds until this is chosen.
+1. ~~Pick Option A or Option B~~ — **DECIDED: Option A** (§4). Option B is a target
+   state only and is not scheduled; its `sudoers` NOPASSWD step is therefore moot.
 2. Populate `/etc/guesthub/guesthub.env` from the vault — no agent may read those values.
-3. Run the chosen cutover in a maintenance window.
+   The template is at `/etc/guesthub/guesthub.env.template` (`600 root:root`,
+   12 variables, all blank — verified value-free). Option A then requires
+   `chown ubuntu:ubuntu` on the real file, per §5.
+3. Run the **§5 (Option A)** cutover in a maintenance window. **Not done in this run
+   — this run was staging-proof plus runbook only, by instruction.**
 4. Accept the `deploy-production.sh` change (build must be wrapped, §5.4) — this
    file was **not** modified on this branch, because changing the canonical deploy
-   path is not something to slip in unreviewed.
-5. Option B only: add the `sudoers` NOPASSWD entry for the new units.
+   path is not something to slip in unreviewed. This is not optional cosmetics: the
+   four `NEXT_PUBLIC_*` values are inlined at BUILD time, so an unwrapped build after
+   the cutover produces a green build whose browser bundle has `undefined` for
+   Supabase and Maps.
+5. `sudo install` the patched backup script to `/usr/local/sbin/` — the nightly job
+   runs a **copy**, so merging this branch does not update it.
 6. After soak, move (never delete) the three retired in-tree files.
+7. Decide on secret rotation — treat the values inside the four existing tarballs as
+   exposed at rest.
