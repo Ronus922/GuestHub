@@ -24,6 +24,8 @@ import {
   type ReservationDetail,
 } from "@/app/(dashboard)/reservations/actions";
 import { CancelReservationDialog } from "./CancelReservationDialog";
+import { BookingComReportsCard, BookingComReportDialog } from "./BookingComReports";
+import type { BookingReportAction } from "@/lib/channel/booking-com-report-rules";
 import {
   saveReservationCardAction,
   deleteReservationCardAction,
@@ -99,6 +101,8 @@ export function EditReservationPanel({
   const [cardBusy, startCardBusy] = useTransition();
   const [saving, startSaving] = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
+  // D96 — which Booking.com status report is being confirmed, if any
+  const [reportAction, setReportAction] = useState<BookingReportAction | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   // workflow status (D77 §11) — applied immediately via the dedicated
   // status-only action; deliberately OUTSIDE the dirty fingerprint
@@ -508,6 +512,19 @@ export function EditReservationPanel({
               loadDetail(detail.id, { force: true });
             }}
           />
+        ) : detail && reportAction ? (
+          <BookingComReportDialog
+            detail={detail}
+            guestName={guestDisplay}
+            action={reportAction}
+            onClose={() => setReportAction(null)}
+            onDone={() => {
+              setReportAction(null);
+              // the report stamps live on the reservation — reload so the chip
+              // and the newly-unlocked cancel button reflect the truth
+              loadDetail(detail.id, { force: true });
+            }}
+          />
         ) : null
       }
       headerChips={
@@ -642,6 +659,11 @@ export function EditReservationPanel({
                 </p>
               </BookingCard>
             )}
+            {/* פעולות Booking.com (D96) — the three channel status reports.
+                Renders itself away unless the booking really is a Booking.com
+                booking with a Beds24 id and the operator holds
+                reservations.channel_report. */}
+            <BookingComReportsCard detail={detail} onOpen={setReportAction} />
             {/* guest. "סטטוס שהות" (the manual lifecycle select) is RETIRED —
                 hidden product-wide and never editable; the lifecycle itself
                 still changes only through the validated quick actions

@@ -1,0 +1,8 @@
+{
+  "//": "Compiles the Booking.com report CORE graph (src/lib/channel/booking-com-reports-core.ts and its imports) to CommonJS in dist/check/, so scripts/check-booking-com-reports.mjs can drive the real guards against a disposable database. Inherits every constraint of tsconfig.worker.json — nothing in this graph may import next/*, react or a server action, and tsc fails here if one sneaks in. That is the point: the guards worth testing are the ones that do not need Next.",
+  "extends": "./tsconfig.worker.json",
+  "compilerOptions": {
+    "outDir": "dist/check"
+  },
+  "include": ["src/lib/channel/booking-com-reports-core.ts"]
+}

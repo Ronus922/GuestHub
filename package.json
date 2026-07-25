@@ -35,6 +35,7 @@
     "check:beds24-cancellation-sync": "node scripts/check-beds24-cancellation-sync.mjs",
     "check:beds24-checkin-cancellation-guard": "node scripts/check-beds24-checkin-cancellation-guard.mjs",
     "check:beds24-ari-readback": "node scripts/check-beds24-ari-readback.mjs",
+    "check:booking-com-reports": "node scripts/check-booking-com-reports.mjs",
     "check:effective-state": "node --env-file=.env.local scripts/check-effective-state.mjs",
     "check:inventory": "node --env-file=.env.local scripts/check-inventory.mjs",
     "check:sellability": "node --env-file=.env.local scripts/check-rate-sellability.mjs",
