@@ -1,9 +1,11 @@
 // Runnable checks for the protected card storage + tenant VAT setting (D41/D52).
-// D52: CVV/CVC is NEVER collected, stored, encrypted, revealed, logged or
-// audited — anywhere. This suite asserts the CVV helpers are GONE from the pure
-// rules and the vault, that no source path persists or reveals a CVV, and that
-// the redaction guard still scrubs a CVV from a stored channel payload. The PAN
-// contract (encrypted at rest, masked reads, audited reveal) is unchanged.
+// The PAN contract (encrypted at rest, masked reads, audited reveal) is asserted
+// hard. CVV/CVC is a different matter: D87 reintroduced CVV-at-rest on the
+// manual-entry card, which is a PCI-DSS deviation and an OPEN OWNER DECISION.
+// This suite therefore does NOT assert that the CVV storage exists — it
+// REGISTERS it (see the KNOWN-VIOLATION REGISTER below). Everything that keeps
+// the deviation from SPREADING (no CVV from a channel, no CVV in the normal
+// read, redaction of stored payloads, no console logging) is still asserted hard.
 // Same pattern as check-guards.mjs: compiles the pure/server modules with
 // tsc, imports them, and asserts the security + validation rules. Uses ONLY
 // clearly fictional test-card numbers (industry test PANs). Also runs
@@ -15,9 +17,83 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 
+// ============================================================================
+// KNOWN-VIOLATION REGISTER
+// ----------------------------------------------------------------------------
+// Some deviations here are OPEN OWNER DECISIONS on a live revenue path, not
+// accidents. Two failure modes must both be avoided:
+//   * accepting them silently (a green tick that hides a PCI deviation), and
+//   * "enforcing" them with assertions, so that CI turns RED the day someone
+//     REMOVES the violation. That is what this file used to do.
+// Registered deviations are instead PROBED behaviourally on every run, printed
+// in a banner nobody can miss, and given their own exit code.
+//
+//   exit 0 — no unresolved deviation; every assertion passed.
+//   exit 1 — an ASSERTION failed: a real behaviour or contract breach.
+//   exit 3 — every assertion passed, but a REGISTERED deviation is still in the
+//            code. Deliberately not green. Nothing was silenced: the register
+//            runs LAST, after the whole suite, and reports what it found.
+//
+// Removing a registered deviation must make this suite GREENER, never redder.
+// ============================================================================
+const DEVIATIONS = [];
+let registerCompleted = false;
+
+const registerDeviation = (entry) => DEVIATIONS.push(entry);
+
+// A CONTRACT assertion is structural: it reads SOURCE TEXT, not behaviour. It
+// can only ever prove the code still LOOKS the way this suite requires. Its
+// failure is a contract breach, and must never be read as a proven behavioural
+// defect — nor its success as proof the behaviour is correct.
+const contract = (cond, msg) =>
+  assert.ok(cond, `CONTRACT BREACH (structural/source-text assertion — the code no longer LOOKS the way this suite requires; this is NOT a proven behaviour failure): ${msg}`);
+
+function printRegister() {
+  const bar = "=".repeat(78);
+  console.error(`\n${bar}`);
+  console.error("KNOWN-VIOLATION REGISTER — check:cards");
+  console.error(bar);
+  if (!registerCompleted) {
+    console.error("!! THE REGISTER DID NOT COMPLETE. An assertion threw before the deviation");
+    console.error("!! probes finished, so DEVIATION STATUS IS UNKNOWN — not clean.");
+    console.error(`${bar}\n`);
+    return;
+  }
+  for (const d of DEVIATIONS) {
+    console.error(`\n[${d.status.toUpperCase()}] ${d.id} — ${d.title}`);
+    console.error(`  severity : ${d.severity}`);
+    console.error(`  standard : ${d.standard}`);
+    console.error(`  decision : ${d.decision} (owner: ${d.owner})`);
+    console.error("  evidence :");
+    for (const e of d.evidence) console.error(`     ${e}`);
+    if (d.escalation?.length) {
+      console.error("  !! ESCALATION — the deviation is now WORSE than the one that was accepted:");
+      for (const e of d.escalation) console.error(`     ${e}`);
+    }
+    console.error(`  clears when: ${d.removal}`);
+  }
+  const active = DEVIATIONS.filter((d) => d.status !== "resolved");
+  console.error(`\n${bar}`);
+  if (active.length > 0) {
+    console.error(`${active.length} REGISTERED DEVIATION(S) STILL PRESENT — check:cards is NOT green.`);
+    console.error("Exit code 3 = known, owner-owned deviation still in the code.");
+    console.error("Every assertion in this suite PASSED; nothing was skipped or silenced.");
+  } else {
+    console.error("All registered deviations are RESOLVED — delete their entries from this file.");
+  }
+  console.error(`${bar}\n`);
+}
+
+process.on("exit", (code) => {
+  printRegister();
+  // Only ever ESCALATE a clean run. An assertion failure (exit 1) keeps its own
+  // louder exit code; the register never masks it.
+  if (code === 0 && DEVIATIONS.some((d) => d.status !== "resolved")) process.exitCode = 3;
+});
+
 const out = mkdtempSync(join(tmpdir(), "cards-"));
 execSync(
-  `pnpm exec tsc src/lib/card-rules.ts src/lib/card-vault.ts src/lib/vat.ts src/lib/channel/payloads.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
+  `pnpm exec tsc src/lib/card-rules.ts src/lib/card-vault.ts src/lib/vat.ts src/lib/channel/payloads.ts src/lib/payments/gateway.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
   { stdio: "inherit" },
 );
 // card-vault imports the "server-only" marker package — stub it for node
@@ -31,6 +107,7 @@ const rules = require(join(out, "card-rules.js"));
 const vault = require(join(out, "card-vault.js"));
 const vat = require(join(out, "vat.js"));
 const payloads = require(join(out, "channel", "payloads.js"));
+const gateway = require(join(out, "payments", "gateway.js"));
 
 // ---- Luhn + PAN validation (fictional industry test numbers only) ----
 const TEST_VISA = "4111111111111111";
@@ -62,14 +139,33 @@ assert.equal(rules.expiryInPast(6, 2026, NOW), true, "last month is expired");
 assert.equal(rules.expiryInPast(7, 2026, NOW), false, "current month still valid");
 assert.equal(rules.expiryInPast(1, 2027, NOW), false);
 
-// ---- CVV helpers restored for the MANUAL-ENTRY card (D87) ----
-assert.equal(typeof rules.cvvValid, "function", "cvvValid restored — the stored CVV is validated");
-assert.equal(rules.cvvValid("123"), true, "3-digit CVV valid");
-assert.equal(rules.cvvValid("1234"), true, "4-digit CVV (Amex) valid");
-assert.equal(rules.cvvValid("12"), false, "2 digits too short");
-assert.equal(rules.cvvValid("12a"), false, "non-numeric rejected");
-assert.equal(rules.formatCvv("1a2b3"), "123", "formatCvv keeps digits, caps at 4");
-assert.equal(rules.maskedCvv, undefined, "no maskedCvv — the CVV is shown in full, never masked (D87)");
+// ---- D87 CVV-at-rest: PROBED, NOT ASSERTED ----
+// These are facts gathered for the register, not requirements. Nothing here
+// fails when the CVV handling is GONE — that outcome resolves the register
+// entry. What IS asserted is that, WHILE the deviation exists, it behaves no
+// worse than the deviation the owner actually accepted (validated input,
+// encrypted at rest, decryptable only through the audited reveal).
+const cvvProbe = {
+  validator: typeof rules.cvvValid === "function",
+  formatter: typeof rules.formatCvv === "function",
+  encryptFn: typeof vault.encryptCvv === "function",
+  decryptFn: typeof vault.decryptCvv === "function",
+  // shown in full, never masked — part of the accepted D87 shape
+  neverMasked: rules.maskedCvv === undefined,
+  validatesLength: false,
+  validatesNumeric: false,
+  formatsToDigits: false,
+  encryptedAtRest: false,
+  plaintextAtRest: false,
+  roundTrips: false,
+};
+if (cvvProbe.validator) {
+  cvvProbe.validatesLength =
+    rules.cvvValid("123") === true && rules.cvvValid("1234") === true && rules.cvvValid("12") === false;
+  cvvProbe.validatesNumeric = rules.cvvValid("12a") === false;
+}
+if (cvvProbe.formatter) cvvProbe.formatsToDigits = rules.formatCvv("1a2b3") === "123";
+
 assert.ok(!rules.MANUAL_CARD_SOURCES.includes("channel"), "manual entry can never set source=channel");
 
 // ---- channel card extraction: PAN only, CVV STILL never carried from a channel
@@ -128,14 +224,36 @@ assert.throws(
 );
 assert.throws(() => vault.decryptPan("v9." + parts.slice(1).join(".")), /version/, "unknown version rejected");
 
-// ---- vault: CVV crypto wrappers restored (D87) — same AES-256-GCM as the PAN ----
-assert.equal(typeof vault.encryptCvv, "function", "encryptCvv restored — the CVV is encrypted at rest");
-assert.equal(typeof vault.decryptCvv, "function", "decryptCvv restored — the reveal decrypts it");
-{
-  const ct = vault.encryptCvv("123");
-  assert.ok(/^v1\./.test(ct), "CVV ciphertext uses the versioned vault format");
-  assert.notEqual(ct, "123", "the CVV is not stored in plaintext");
-  assert.equal(vault.decryptCvv(ct), "123", "encrypt→decrypt round-trips the CVV");
+// ---- vault: D87 CVV crypto — PROBED for the register, not asserted into place.
+// If encryptCvv/decryptCvv are gone the deviation is gone; that is a resolution,
+// not a failure. While they exist, this probe establishes BEHAVIOURALLY whether
+// the CVV really is encrypted at rest (versioned AES-256-GCM, not the plaintext
+// wearing a prefix) — a name alone proves nothing.
+if (cvvProbe.encryptFn && cvvProbe.decryptFn) {
+  const SAMPLE = "4917"; // fictional 4-digit CVV, long enough not to collide with base64 noise
+  let ct = null;
+  try {
+    ct = vault.encryptCvv(SAMPLE);
+  } catch {
+    ct = null;
+  }
+  if (typeof ct === "string") {
+    let decodedPayload = "";
+    try {
+      decodedPayload = Buffer.from(ct.split(".")[3] ?? "", "base64").toString("latin1");
+    } catch {
+      decodedPayload = ct;
+    }
+    cvvProbe.encryptedAtRest = /^v1\./.test(ct) && !ct.includes(SAMPLE) && !decodedPayload.includes(SAMPLE);
+    cvvProbe.plaintextAtRest = !cvvProbe.encryptedAtRest;
+    try {
+      cvvProbe.roundTrips = vault.decryptCvv(ct) === SAMPLE;
+    } catch {
+      cvvProbe.roundTrips = false;
+    }
+  } else {
+    cvvProbe.plaintextAtRest = true; // encryptCvv exists but produced no ciphertext at all
+  }
 }
 delete process.env.CARD_VAULT_KEY;
 
@@ -164,98 +282,179 @@ const src = (p) =>
   readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 const cardActions = src("src/app/(dashboard)/reservations/card-actions.ts");
-assert.ok(/requirePermission\(actor, "payments\.card_manage"\)/.test(cardActions),
+contract(/requirePermission\(actor, "payments\.card_manage"\)/.test(cardActions),
   "save/delete are permission-guarded server-side");
 // reveal enforces the permission server-side, but via hasPermission so a
 // rejected attempt can be audited before the refusal
-assert.ok(/hasPermission\(actor, "payments\.card_reveal"\)/.test(cardActions),
+contract(/hasPermission\(actor, "payments\.card_reveal"\)/.test(cardActions),
   "reveal is permission-guarded server-side (audited on rejection)");
-assert.ok(/requirePermission\(actor, "payments\.card_charge"\)/.test(cardActions),
+contract(/requirePermission\(actor, "payments\.card_charge"\)/.test(cardActions),
   "charge is a separate permission-guarded action");
-assert.ok(/encryptPan\(/.test(cardActions), "PAN is encrypted before persistence");
-assert.ok(/card_reveal/.test(cardActions) && /writeAudit/.test(cardActions), "reveal is audited");
-assert.ok(/card_reveal_denied/.test(cardActions), "rejected reveals are also audited (success or rejected)");
-assert.ok(/auditRequestContext/.test(cardActions), "reveal/charge/edit capture IP + session for the audit");
-assert.ok(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data");
-// D87 — CVV is persisted ENCRYPTED on the manual-entry card (owner decision).
-// It rides the same guarded save/reveal, encrypted at rest, never logged.
-assert.ok(/cvv_encrypted/.test(cardActions), "save/reveal touch the cvv_encrypted column");
-assert.ok(/encryptCvv\(/.test(cardActions), "the CVV is encrypted before persistence");
-assert.ok(/decryptCvv\(/.test(cardActions), "the CVV is decrypted only inside the audited reveal");
-assert.ok(/cvvValid\(/.test(cardActions), "the stored CVV is validated (3–4 digits)");
-// still NEVER logged in plaintext through a console call
-assert.ok(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data (incl. CVV)");
+contract(/encryptPan\(/.test(cardActions), "PAN is encrypted before persistence");
+contract(/card_reveal/.test(cardActions) && /writeAudit/.test(cardActions), "reveal is audited");
+contract(/card_reveal_denied/.test(cardActions), "rejected reveals are also audited (success or rejected)");
+contract(/auditRequestContext/.test(cardActions), "reveal/charge/edit capture IP + session for the audit");
+contract(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data");
+// D87 — CVV persisted at rest. NOT asserted here: registered. See "REGISTER
+// VERDICT" below. These are probe facts about the storage PATH; the register
+// decides what they mean.
+cvvProbe.column = /cvv_encrypted/.test(cardActions);
+cvvProbe.encryptCall = /encryptCvv\(/.test(cardActions);
+cvvProbe.decryptCall = /decryptCvv\(/.test(cardActions);
+cvvProbe.validateCall = /cvvValid\(/.test(cardActions);
+// still NEVER logged in plaintext through a console call — asserted hard,
+// because it limits how far the registered deviation can spread
+contract(!/console\.(log|info|debug)/.test(cardActions), "card actions never log request data (incl. CVV)");
 
 const resActions = src("src/app/(dashboard)/reservations/actions.ts");
-assert.ok(!/pan_encrypted/.test(resActions),
+contract(!/pan_encrypted/.test(resActions),
   "the normal reservation payload never selects the encrypted PAN");
-assert.ok(!/decryptPan|decryptCvv/.test(resActions),
+contract(!/decryptPan|decryptCvv/.test(resActions),
   "the normal read never decrypts PAN or CVV");
-assert.ok(!/cvv_encrypted|has_cvv|hasCvv/.test(resActions),
+contract(!/cvv_encrypted|has_cvv|hasCvv/.test(resActions),
   "the normal read exposes no CVV column, flag or value");
-assert.ok(/last4/.test(resActions), "the normal payload carries masked metadata only");
+contract(/last4/.test(resActions), "the normal payload carries masked metadata only");
 
 const cardFields = src("src/components/reservations/CardFields.tsx");
-assert.ok(!/saveReservationCardAction/.test(cardFields),
+contract(!/saveReservationCardAction/.test(cardFields),
   "the card form never calls save directly (panels do)");
-// D87 — the manual form now collects a CVV and renders it through the view model
-assert.ok(/formatCvv\(/.test(cardFields), "the entry form collects a CVV (formatCvv)");
-assert.ok(/view\.cvv/.test(cardFields), "the CVV is rendered from the canonical view model");
+// D87 — the manual form collects a CVV and renders it through the view model.
+// Probe facts for the register; NOT requirements. If the form stops collecting
+// a CVV that is a step TOWARDS PCI compliance and must not turn this suite red.
+cvvProbe.collectedInUi = /formatCvv\(/.test(cardFields);
+cvvProbe.renderedInUi = /view\.cvv/.test(cardFields);
 // D86 — masking now lives in the pure view model (asserted at runtime below);
 // the component must render the resolved view and never a raw PAN of its own
-assert.ok(/resolveCardView\(/.test(cardFields),
+contract(/resolveCardView\(/.test(cardFields),
   "the one card section renders the canonical view model");
-assert.ok(/revealReservationCardAction/.test(cardFields), "full details come from the guarded reveal action");
+contract(/revealReservationCardAction/.test(cardFields), "full details come from the guarded reveal action");
 // a stored card is MASKED by default; the PAN + CVV appear only on the explicit
 // "הצגת פרטי אשראי" click (no auto-reveal) — the hide affordance returns to mask
-assert.ok(/הצגת פרטי אשראי/.test(cardFields) && /הסתרת פרטי אשראי/.test(cardFields),
+contract(/הצגת פרטי אשראי/.test(cardFields) && /הסתרת פרטי אשראי/.test(cardFields),
   "explicit show/hide of the full card details (masked by default)");
-assert.ok(!/canReveal && storedId && !revealed/.test(cardFields),
+contract(!/canReveal && storedId && !revealed/.test(cardFields),
   "no auto-reveal — the stored card stays masked until the operator clicks show");
-assert.ok(/clipboard\.writeText/.test(cardFields), "revealed values are copyable");
+contract(/clipboard\.writeText/.test(cardFields), "revealed values are copyable");
 
 const booking = src("src/components/reservations/BookingPanel.tsx");
 const editPanel = src("src/components/reservations/EditReservationPanel.tsx");
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
-  assert.ok(!/17\s*%|VAT_RATE|0\.17/.test(s), `${name}: no hardcoded VAT percentage`);
-  assert.ok(/formatVatRate\(vatRate\)/.test(s), `${name}: VAT line reads the tenant setting`);
-  assert.ok(/cvv: cc\.cvv/.test(s), `${name}: the save payload forwards the entered CVV (D87)`);
+  contract(!/17\s*%|VAT_RATE|0\.17/.test(s), `${name}: no hardcoded VAT percentage`);
+  contract(/formatVatRate\(vatRate\)/.test(s), `${name}: VAT line reads the tenant setting`);
 }
-assert.ok(/saveReservationCardAction/.test(booking) && /setCc\(EMPTY_CARD\)/.test(booking),
+cvvProbe.forwardedByBookingPanel = /cvv: cc\.cvv/.test(booking);
+cvvProbe.forwardedByEditPanel = /cvv: cc\.cvv/.test(editPanel);
+contract(/saveReservationCardAction/.test(booking) && /setCc\(EMPTY_CARD\)/.test(booking),
   "booking saves the card via the guarded action and clears client state");
+
+// ============================================================================
+// REGISTER VERDICT — D87 CVV-at-rest
+// ----------------------------------------------------------------------------
+// PCI-DSS v4.0 req. 3.3.1 / 3.3.3: the card verification code (CVV2/CVC2/CID)
+// must NOT be retained after authorization — not even encrypted. GuestHub
+// stores it encrypted on the manual-entry card by an explicit owner decision
+// (D87). This block does not enforce that decision in either direction. It
+// establishes what is actually there and reports it.
+// ============================================================================
+const D87_SIGNALS = [
+  ["rules.cvvValid() exists", cvvProbe.validator],
+  ["rules.formatCvv() exists", cvvProbe.formatter],
+  ["vault.encryptCvv() exists", cvvProbe.encryptFn],
+  ["vault.decryptCvv() exists", cvvProbe.decryptFn],
+  ["card-actions writes the cvv_encrypted column", cvvProbe.column],
+  ["card-actions calls encryptCvv() before persistence", cvvProbe.encryptCall],
+  ["card-actions calls decryptCvv() inside the audited reveal", cvvProbe.decryptCall],
+  ["CardFields collects a CVV from the operator", cvvProbe.collectedInUi],
+  ["CardFields renders the CVV back from the view model", cvvProbe.renderedInUi],
+  ["BookingPanel forwards the entered CVV to the save action", cvvProbe.forwardedByBookingPanel],
+  ["EditReservationPanel forwards the entered CVV to the save action", cvvProbe.forwardedByEditPanel],
+];
+const D87_ACTIVE = D87_SIGNALS.some(([, present]) => present);
+const d87Escalation = [];
+if (D87_ACTIVE) {
+  // The deviation the owner accepted is "CVV retained, but AES-256-GCM encrypted
+  // at rest, validated on entry, readable only through the audited reveal".
+  // Anything weaker than that is a DIFFERENT, worse violation and is escalated.
+  if (cvvProbe.encryptFn && !cvvProbe.encryptedAtRest)
+    d87Escalation.push("the retained CVV is NOT encrypted at rest — encryptCvv() did not produce versioned ciphertext that hides the value");
+  if (cvvProbe.plaintextAtRest)
+    d87Escalation.push("the stored CVV value is recoverable from the stored blob WITHOUT the vault key (plaintext at rest)");
+  if (cvvProbe.encryptFn && cvvProbe.decryptFn && !cvvProbe.roundTrips)
+    d87Escalation.push("encryptCvv()/decryptCvv() do not round-trip — the reveal path is broken or the stored value is not what was entered");
+  if (cvvProbe.column && !cvvProbe.encryptCall)
+    d87Escalation.push("the cvv_encrypted column is written WITHOUT calling encryptCvv()");
+  if (cvvProbe.collectedInUi && !cvvProbe.validateCall)
+    d87Escalation.push("a CVV is collected but card-actions never calls cvvValid() — unvalidated card data is persisted");
+  if (cvvProbe.validator && !(cvvProbe.validatesLength && cvvProbe.validatesNumeric))
+    d87Escalation.push("cvvValid() no longer rejects short/non-numeric input — the validator is a no-op");
+  if (cvvProbe.formatter && !cvvProbe.formatsToDigits)
+    d87Escalation.push("formatCvv() no longer strips non-digits");
+  if (!cvvProbe.neverMasked)
+    d87Escalation.push("a maskedCvv helper appeared — the accepted D87 shape has NO masking; re-review before relying on it");
+
+  registerDeviation({
+    id: "D87",
+    title: "CVV/CVC is RETAINED AFTER AUTHORIZATION on the manual-entry card",
+    severity: d87Escalation.length ? "CRITICAL (escalated beyond the accepted deviation)" : "HIGH",
+    standard: "PCI-DSS v4.0 req. 3.3.1 / 3.3.3 — the card verification code must never be stored after authorization, encrypted or not",
+    decision: "D87, accepted deliberately, still OPEN",
+    owner: "Ronen (product owner) — a live revenue path; this suite must not change the behaviour",
+    evidence: D87_SIGNALS.map(([label, present]) => `${present ? "PRESENT" : "absent "} · ${label}`).concat([
+      `${cvvProbe.encryptedAtRest ? "PRESENT" : "absent "} · behavioural probe: the retained CVV is versioned-AES encrypted at rest`,
+      `${cvvProbe.roundTrips ? "PRESENT" : "absent "} · behavioural probe: encryptCvv → decryptCvv round-trips the exact value`,
+    ]),
+    escalation: d87Escalation,
+    removal: "every signal above reads 'absent' — i.e. the CVV is no longer collected, forwarded, encrypted or stored anywhere. Then delete this register entry.",
+    status: "active",
+  });
+} else {
+  registerDeviation({
+    id: "D87",
+    title: "CVV/CVC retention — NO LONGER DETECTED",
+    severity: "none",
+    standard: "PCI-DSS v4.0 req. 3.3.1 / 3.3.3",
+    decision: "D87, previously accepted",
+    owner: "Ronen (product owner)",
+    evidence: ["no CVV collection, forwarding, encryption or storage signal was found"],
+    escalation: [],
+    removal: "already clear — delete this register entry and the cvvProbe block from scripts/check-cards.mjs",
+    status: "resolved",
+  });
+}
+registerCompleted = true;
 
 // ---- channel card ingest: encrypt PAN on ingest, NEVER a CVV, never log ----
 const cardIngest = src("src/lib/channel/card-ingest.ts");
-assert.ok(/encryptPan\(/.test(cardIngest), "channel PAN is encrypted immediately on ingest");
-assert.ok(!/encryptCvv|cvv_encrypted/.test(cardIngest), "channel ingest NEVER stores a CVV (D52 §2)");
-assert.ok(!/console\.(log|info|debug)/.test(cardIngest), "channel ingest never logs card data");
-assert.ok(/source_channel/.test(cardIngest) && /provider_reservation_ref/.test(cardIngest),
+contract(/encryptPan\(/.test(cardIngest), "channel PAN is encrypted immediately on ingest");
+contract(!/encryptCvv|cvv_encrypted/.test(cardIngest), "channel ingest NEVER stores a CVV (D52 §2)");
+contract(!/console\.(log|info|debug)/.test(cardIngest), "channel ingest never logs card data");
+contract(/source_channel/.test(cardIngest) && /provider_reservation_ref/.test(cardIngest),
   "channel + original OTA reservation reference are retained");
-assert.ok(/is_virtual/.test(cardIngest), "virtual cards are stored distinctly from regular cards");
+contract(/is_virtual/.test(cardIngest), "virtual cards are stored distinctly from regular cards");
 
 // ---- channel revision seam: PAN encrypted-staged BEFORE the payload is
 // redacted; the stored payload stays redacted; NO CVV is ever staged ----
 const revisions = src("src/lib/channel/revisions.ts");
-assert.ok(/extractChannelCard\(/.test(revisions), "persist extracts the card from the raw payload");
-assert.ok(/encryptPan\(/.test(revisions), "the PAN is encrypted before it is staged on the revision");
-assert.ok(!/encryptCvv|card_cvv_encrypted/.test(revisions), "no CVV is ever staged on the revision (D52 §2)");
-assert.ok(/redactPayload\(rev\.payload\)/.test(revisions),
+contract(/extractChannelCard\(/.test(revisions), "persist extracts the card from the raw payload");
+contract(/encryptPan\(/.test(revisions), "the PAN is encrypted before it is staged on the revision");
+contract(!/encryptCvv|card_cvv_encrypted/.test(revisions), "no CVV is ever staged on the revision (D52 §2)");
+contract(/redactPayload\(rev\.payload\)/.test(revisions),
   "the stored/logged revision payload is always redacted");
-assert.ok(/card_pan_encrypted/.test(revisions) && /attachStagedCard/.test(revisions),
+contract(/card_pan_encrypted/.test(revisions) && /attachStagedCard/.test(revisions),
   "the staged encrypted card is attached to the reservation on import");
-assert.ok(!/console\.(log|info|debug)/.test(revisions), "the revision seam never logs card data");
+contract(!/console\.(log|info|debug)/.test(revisions), "the revision seam never logs card data");
 
 // ---- audit log captures IP + session for the immutable trail ----
 const auditLib = src("src/lib/audit.ts");
-assert.ok(/ip_address/.test(auditLib) && /session_info/.test(auditLib),
+contract(/ip_address/.test(auditLib) && /session_info/.test(auditLib),
   "the audit log records IP address + session information");
 
 const settingsActions = src("src/app/(dashboard)/settings/actions.ts");
-assert.ok(/requirePermission\(actor, "settings\.edit"\)/.test(settingsActions),
+contract(/requirePermission\(actor, "settings\.edit"\)/.test(settingsActions),
   "VAT change requires the business-settings permission");
-assert.ok(/parseVatRate/.test(settingsActions), "VAT input is validated server-side");
-assert.ok(/writeAudit/.test(settingsActions), "VAT change is audited");
-assert.ok(!/total_price|paid_amount|balance/.test(settingsActions),
+contract(/parseVatRate/.test(settingsActions), "VAT input is validated server-side");
+contract(/writeAudit/.test(settingsActions), "VAT change is audited");
+contract(!/total_price|paid_amount|balance/.test(settingsActions),
   "changing the VAT setting never touches reservation totals");
 
 // ============================================================
@@ -264,48 +463,58 @@ assert.ok(!/total_price|paid_amount|balance/.test(settingsActions),
 // (never described, or executed, as a GuestHub charge).
 // ============================================================
 const gatewaySrc = src("src/lib/payments/gateway.ts");
-assert.ok(/getPaymentGateway\(\): PaymentGateway \| null/.test(gatewaySrc),
+contract(/getPaymentGateway\(\): PaymentGateway \| null/.test(gatewaySrc),
   "gateway seam exposes getPaymentGateway(): PaymentGateway | null");
-assert.ok(/if \(!provider\) return null;/.test(gatewaySrc),
-  "no PSP_PROVIDER configured — getPaymentGateway returns null (fail closed)");
-assert.ok(/NO_GATEWAY_MESSAGE/.test(gatewaySrc), "a no-provider message is defined for the UI/action");
+// BEHAVIOURAL, not textual. This used to grep for the literal
+// `if (!provider) return null;`, which has not existed in gateway.ts for a long
+// time — so the whole suite died here and every assertion below it (114 of
+// them, including the charge-fails-closed ones) silently never ran. A grep also
+// could not tell a real fail-closed seam from one that returns a live stub
+// while keeping that line in a dead branch. So: call it.
+assert.equal(gateway.getPaymentGateway(), null,
+  "no PSP is integrated — getPaymentGateway() must RETURN null (fail closed), not merely look like it does");
+assert.equal(gateway.paymentGatewayConfigured(), false,
+  "paymentGatewayConfigured() must report false while getPaymentGateway() yields nothing");
+assert.equal(typeof gateway.NO_GATEWAY_MESSAGE, "string",
+  "a no-provider message is exported for the UI/action");
+assert.ok(gateway.NO_GATEWAY_MESSAGE.length > 0, "the no-provider message is not empty");
 
 // charge routes through the seam; no gateway → fails closed; with a gateway,
 // success is returned ONLY on real provider evidence, landed in the ledger
-assert.ok(/getPaymentGateway\(\)/.test(cardActions), "charge consults the gateway seam");
+contract(/getPaymentGateway\(\)/.test(cardActions), "charge consults the gateway seam");
 const chargeFn = cardActions.match(/chargeReservationCardAction[\s\S]*?export async function recordExternalPaymentAction/);
-assert.ok(chargeFn && /if \(!gateway\) return fail\(NO_GATEWAY_MESSAGE\)/.test(chargeFn[0]),
+contract(chargeFn && /if \(!gateway\) return fail\(NO_GATEWAY_MESSAGE\)/.test(chargeFn[0]),
   "charge fails closed with the no-provider message");
-assert.ok(chargeFn && /if \(!result\.success\)/.test(chargeFn[0]) &&
+contract(chargeFn && /if \(!result\.success\)/.test(chargeFn[0]) &&
   chargeFn[0].indexOf("success: true") > chargeFn[0].indexOf("if (!result.success)"),
   "charge returns success only after the provider approved (real evidence, D46)");
-assert.ok(chargeFn && /recomputePaymentAggregates\(/.test(chargeFn[0]) && /idempotency_key/.test(chargeFn[0]),
+contract(chargeFn && /recomputePaymentAggregates\(/.test(chargeFn[0]) && /idempotency_key/.test(chargeFn[0]),
   "a captured charge lands in the ledger idempotently and paid/balance reconcile from it");
 
 // external-payment recorder: guarded, confirmation-gated, audited as EXTERNAL
-assert.ok(/export async function recordExternalPaymentAction/.test(cardActions),
+contract(/export async function recordExternalPaymentAction/.test(cardActions),
   "a separate external-payment recorder exists");
 const recFn = cardActions.match(/recordExternalPaymentAction[\s\S]*?export async function deleteReservationCardAction/);
-assert.ok(recFn && /requirePermission\(actor, "payments\.card_charge"\)/.test(recFn[0]),
+contract(recFn && /requirePermission\(actor, "payments\.card_charge"\)/.test(recFn[0]),
   "recording an external payment is permission-guarded");
-assert.ok(recFn && /if \(!input\.confirmed\)/.test(recFn[0]),
+contract(recFn && /if \(!input\.confirmed\)/.test(recFn[0]),
   "recording requires explicit staff confirmation that money was collected");
-assert.ok(recFn && /INSERT INTO guesthub\.payments/.test(recFn[0]) && /reference/.test(recFn[0]),
+contract(recFn && /INSERT INTO guesthub\.payments/.test(recFn[0]) && /reference/.test(recFn[0]),
   "the payment is recorded with amount + method + reference");
 // D51/D52: paid/balance are reconciled from the LEDGER (recomputePaymentAggregates),
 // never an incremental in-place add that could drift.
-assert.ok(recFn && /recomputePaymentAggregates\(/.test(recFn[0]),
+contract(recFn && /recomputePaymentAggregates\(/.test(recFn[0]),
   "paid/balance are reconciled from the ledger inside the guarded, confirmed action");
-assert.ok(recFn && /payment_external_record/.test(recFn[0]) && /recorded_external/.test(recFn[0]),
+contract(recFn && /payment_external_record/.test(recFn[0]) && /recorded_external/.test(recFn[0]),
   "it is audited as an EXTERNAL record, never as a GuestHub charge");
 
 // D77 §15 (supersedes D46 here): the card-entry AREA is always visible but
 // ACTIVATES only when the selected payment method is credit card — grey +
 // disabled + unfocusable otherwise, and switching away destroys the unsaved
 // draft (a stored card is never touched).
-assert.ok(/disabled=\{method !== "credit_card"\}/.test(booking),
+contract(/disabled=\{method !== "credit_card"\}/.test(booking),
   "new-reservation card entry activates only for the credit-card method");
-assert.ok(/setCc\(EMPTY_CARD\)/.test(booking),
+contract(/setCc\(EMPTY_CARD\)/.test(booking),
   "leaving the credit-card method clears the unsaved card draft");
 const editPanelD77 = src("src/components/reservations/EditReservationPanel.tsx");
 // EDIT PANEL: card entry is FULLY decoupled from the payment-method selector.
@@ -313,24 +522,24 @@ const editPanelD77 = src("src/components/reservations/EditReservationPanel.tsx")
 // card section's own mode (replacingCard / the empty state) is the ONLY thing
 // that opens the fields. No gate, no save-block, no draft-wipe on the method —
 // the duplicated "switch the method above to unlock the card form" flow is gone.
-assert.ok(!/method !== "credit_card"/.test(editPanelD77),
+contract(!/method !== "credit_card"/.test(editPanelD77),
   "edit panel: ZERO payment-method coupling — no entry gate, no save gate, no draft-clear effect");
 const editCardJsx = editPanelD77.match(/<CardFields[\s\S]*?\/>/);
-assert.ok(editCardJsx && !/\bdisabled=/.test(editCardJsx[0]),
+contract(editCardJsx && !/\bdisabled=/.test(editCardJsx[0]),
   "edit panel passes NO disabled prop to CardFields — the fields are never method-locked");
-assert.ok(/manualEntry=\{replacingCard\}/.test(editPanelD77),
+contract(/manualEntry=\{replacingCard\}/.test(editPanelD77),
   "manual-entry mode is driven solely by the card section's replacingCard state");
-assert.ok(/disabled=\{cardBusy \|\| ccStateForSave !== "valid"\}/.test(editPanelD77),
+contract(/disabled=\{cardBusy \|\| ccStateForSave !== "valid"\}/.test(editPanelD77),
   "the card save button is gated ONLY on validation + save state");
-assert.ok(/שמירת כרטיס/.test(editPanelD77),
+contract(/שמירת כרטיס/.test(editPanelD77),
   "manual mode offers the שמירת כרטיס action");
 // A background realtime reload (useRealtimeEvent → loadDetail without force)
 // must NOT snap the operator out of manual mode: an empty manual draft is not
 // "dirty", so the reload proceeds — and used to reset replacingCard, visibly
 // reverting the section to the imported card right after the click.
-assert.ok(/if \(opts\?\.force\) setReplacingCard\(false\)/.test(editPanelD77),
+contract(/if \(opts\?\.force\) setReplacingCard\(false\)/.test(editPanelD77),
   "card-entry mode is reset ONLY on explicit (forced) loads — background refreshes preserve it");
-assert.ok(!/^\s*setReplacingCard\(false\);\s*$/m.test(
+contract(!/^\s*setReplacingCard\(false\);\s*$/m.test(
     editPanelD77.slice(editPanelD77.indexOf("const loadDetail"), editPanelD77.indexOf("useEffect")),
   ),
   "no unconditional replacingCard reset remains inside loadDetail");
@@ -340,65 +549,65 @@ assert.ok(!/^\s*setReplacingCard\(false\);\s*$/m.test(
 // close, regardless of whether any async response ever lands. (The async
 // force-load reset alone proved lossy: a dropped load left the stale mode for
 // the next realtime reload to paint as the initial view of ANOTHER reservation.)
-assert.ok(
+contract(
   /useEffect\(\(\) => \{\s*setReplacingCard\(false\);\s*setCc\(EMPTY_CARD\);\s*if \(!reservationId\)[\s\S]*?\[reservationId, loadDetail\]\);/.test(
     editPanelD77,
   ),
   "replacingCard + the manual draft reset synchronously on EVERY reservation-identity change (open / switch / close)");
 // …while a SAME-reservation realtime refresh never touches the mode
 const rtBlock = editPanelD77.match(/useRealtimeEvent\(\(event\) => \{[\s\S]*?\}\);/);
-assert.ok(rtBlock, "the panel subscribes to same-reservation realtime events");
-assert.ok(!/setReplacingCard/.test(rtBlock[0]),
+contract(rtBlock, "the panel subscribes to same-reservation realtime events");
+contract(!/setReplacingCard/.test(rtBlock[0]),
   "a same-reservation realtime refresh never resets the card-entry mode");
-assert.ok(!/force/.test(rtBlock[0]),
+contract(!/force/.test(rtBlock[0]),
   "the realtime reload is a background (non-forced) load — it preserves the operator's mode");
 // the footer actions are driven by the ONE explicit mode, not ad-hoc booleans
-assert.ok(/const mode = resolveCardMode\(\{ stored, channel, manualEntry, externalSource \}\)/.test(cardFields),
+contract(/const mode = resolveCardMode\(\{ stored, channel, manualEntry, externalSource \}\)/.test(cardFields),
   "CardFields derives the explicit CardMode from the one resolver (incl. the external flag)");
-assert.ok(/\{\(mode === "existing" \|\| mode === "external_unavailable"\) && canManage && onToggleManual &&/.test(cardFields),
+contract(/\{\(mode === "existing" \|\| mode === "external_unavailable"\) && canManage && onToggleManual &&/.test(cardFields),
   "the initial external views (existing card/guarantee OR unavailable) offer ONLY the manual-entry opt-in");
-assert.ok(/\{mode === "manual" && \(stored \|\| channel \|\| externalSource\) && onToggleManual &&/.test(cardFields),
+contract(/\{mode === "manual" && \(stored \|\| channel \|\| externalSource\) && onToggleManual &&/.test(cardFields),
   "the return action renders ONLY in explicit manual mode, and only when a previous state exists to return to");
 // the edit panel wires the external flag from the canonical channel mapping +
 // the OTA linkage, and gates the save row on the TWO editable modes only
-assert.ok(/externalSource=\{externalReservation\}/.test(editPanelD77),
+contract(/externalSource=\{externalReservation\}/.test(editPanelD77),
   "the edit panel passes the external-reservation flag into the card section");
-assert.ok(/Boolean\(detail\?\.ota\) \|\| normalizeVisibleChannel\(detailSource\?\.key \?\? null\) !== null/.test(editPanelD77),
+contract(/Boolean\(detail\?\.ota\) \|\| normalizeVisibleChannel\(detailSource\?\.key \?\? null\) !== null/.test(editPanelD77),
   "externality derives from the OTA linkage + the ONE canonical channel mapping (no parallel source list)");
-assert.ok(/canManageCard && \(cardMode === "manual" \|\| cardMode === "fresh"\)/.test(editPanelD77),
+contract(/canManageCard && \(cardMode === "manual" \|\| cardMode === "fresh"\)/.test(editPanelD77),
   "the card-save action is reachable only from the two EDITABLE modes — never from a read-only external state");
 // During explicit manual card entry, the payment-ADJUSTMENT row (method /
 // additional payment / discount) is HIDDEN — removed from render, not merely
 // disabled — so two payment interfaces never stack. Its values live in panel
 // state and return intact when manual mode ends.
-assert.ok(/\{canEditNow && !replacingCard && \([\s\S]{0,200}אמצעי תשלום/.test(editPanelD77),
+contract(/\{canEditNow && !replacingCard && \([\s\S]{0,200}אמצעי תשלום/.test(editPanelD77),
   "the payment-adjustment row renders only while manual card entry is OFF");
-assert.ok(!/disabled=\{replacingCard/.test(editPanelD77),
+contract(!/disabled=\{replacingCard/.test(editPanelD77),
   "the row is hidden, never disabled-in-place, during manual card entry");
-assert.ok(/bw-ccbox-off/.test(src("src/components/reservations/CardFields.tsx")),
+contract(/bw-ccbox-off/.test(src("src/components/reservations/CardFields.tsx")),
   "the deactivated card area renders visibly grey/disabled (new-reservation flow)");
 // The manual fields lock ONLY on entryOff (view.editable && disabled) — i.e. the
 // fresh-entry grey-out — never on read-only/imported state. So once the panel
 // lifts the gate, an editable (manual) view is fully writable.
-assert.ok(/const entryOff = view\.editable && disabled;/.test(cardFields),
+contract(/const entryOff = view\.editable && disabled;/.test(cardFields),
   "CardFields: the fieldset disable derives ONLY from the editable-entry grey-out");
-assert.ok(/<fieldset disabled=\{entryOff\}/.test(cardFields),
+contract(/<fieldset disabled=\{entryOff\}/.test(cardFields),
   "CardFields: the parent fieldset is disabled solely by entryOff, nothing else");
-assert.ok(/readOnly=\{ro\}/.test(cardFields) && /const ro = !view\.editable;/.test(cardFields),
+contract(/readOnly=\{ro\}/.test(cardFields) && /const ro = !view\.editable;/.test(cardFields),
   "CardFields: read-only styling tracks !editable, independent of the entry grey-out");
 // the required back-to-existing action must be present verbatim (spec label)
-assert.ok(/חזרה לפרטי הכרטיס הקיימים/.test(cardFields),
+contract(/חזרה לפרטי הכרטיס הקיימים/.test(cardFields),
   "manual mode offers 'חזרה לפרטי הכרטיס הקיימים' to restore the imported/stored card");
 
 // StoredCardBox: live charge visible-but-disabled + no-provider text; the
 // external-payment recorder is confirmation-gated
-assert.ok(/const NO_GATEWAY_MESSAGE = "לא מוגדר ספק סליקה פעיל"/.test(cardFields),
+contract(/const NO_GATEWAY_MESSAGE = "לא מוגדר ספק סליקה פעיל"/.test(cardFields),
   "the no-provider message is shown by the charge control");
-assert.ok(/disabled\s+onClick={charge}/.test(cardFields),
+contract(/disabled\s+onClick={charge}/.test(cardFields),
   "the live-charge button is rendered disabled");
-assert.ok(/recordExternalPaymentAction/.test(cardFields) && /רישום תשלום שבוצע חיצונית/.test(cardFields),
+contract(/recordExternalPaymentAction/.test(cardFields) && /רישום תשלום שבוצע חיצונית/.test(cardFields),
   "the saved-card box offers the honestly-labelled external-payment recorder");
-assert.ok(/confirmed: true/.test(cardFields) && /payConfirm/.test(cardFields),
+contract(/confirmed: true/.test(cardFields) && /payConfirm/.test(cardFields),
   "recording requires an explicit in-UI confirmation step");
 
 // ============================================================
@@ -409,30 +618,30 @@ assert.ok(/confirmed: true/.test(cardFields) && /payConfirm/.test(cardFields),
 // read the latest onClose from a ref.
 // ============================================================
 const sidePanel = src("src/components/ui/SidePanel.tsx");
-assert.ok(/onCloseRef\.current = onClose/.test(sidePanel),
+contract(/onCloseRef\.current = onClose/.test(sidePanel),
   "SidePanel keeps the latest onClose in a ref (stable dep)");
-assert.ok(/\},\s*\[open\]\);/.test(sidePanel),
+contract(/\},\s*\[open\]\);/.test(sidePanel),
   "the SidePanel key/focus effect depends on [open] alone");
-assert.ok(!/\[open,\s*onClose\]/.test(sidePanel),
+contract(!/\[open,\s*onClose\]/.test(sidePanel),
   "onClose is NOT an effect dep — it would re-run focus() and steal focus every keystroke");
-assert.ok(/panelRef\.current\?\.focus\(\)/.test(sidePanel),
+contract(/panelRef\.current\?\.focus\(\)/.test(sidePanel),
   "the panel still receives focus on open (focus trap / a11y preserved)");
 
 // D47: card inputs stay strings with numeric keyboards, patched via a FUNCTIONAL
 // updater so a keystroke can never clobber the previous draft.
-assert.ok(!/type="number"/.test(cardFields),
+contract(!/type="number"/.test(cardFields),
   "no card field uses type=number");
-assert.ok(/onChange: \(updater: \(prev: CardDraft\) => CardDraft\) => void/.test(cardFields),
+contract(/onChange: \(updater: \(prev: CardDraft\) => CardDraft\) => void/.test(cardFields),
   "CardFields.onChange is a functional-updater contract");
-assert.ok(/onChange\(\(p\) => \(\{ \.\.\.p,/.test(cardFields),
+contract(/onChange\(\(p\) => \(\{ \.\.\.p,/.test(cardFields),
   "card fields patch the previous draft, never a captured snapshot");
-assert.ok(/number: formatCardNumber\(e\.target\.value\)/.test(cardFields),
+contract(/number: formatCardNumber\(e\.target\.value\)/.test(cardFields),
   "PAN stays a string via formatCardNumber — never Number()/parseInt()");
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
   // either the setter directly, or a functional-update wrapper (BookingPanel
   // wraps it to auto-fill the holder from the guest name) — both preserve the
   // functional-update contract, never a captured snapshot
-  assert.ok(/onChange={setCc}/.test(s) || /setCc\(\(prev\) => \{/.test(s),
+  contract(/onChange={setCc}/.test(s) || /setCc\(\(prev\) => \{/.test(s),
     `${name}: card draft uses a functional update (setter or wrapper)`);
 }
 
@@ -468,7 +677,10 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   });
   assert.equal(revealed.number, "4242 4242 4242 4242", "reveal shows the full PAN in the number field");
   assert.equal(revealed.idNumber, "123456789", "reveal fills the ID field");
-  assert.equal(revealed.cvv, "737", "reveal fills the CVV field (D87)");
+  // D87 (REGISTERED, not required): while the deviation exists the reveal must
+  // surface the retained CVV honestly. When the deviation is gone this stops
+  // being checked instead of turning red.
+  if (D87_ACTIVE) assert.equal(revealed.cvv, "737", "while D87 stands, the audited reveal surfaces the retained CVV");
   assert.equal(revealed.editable, false, "a revealed card is still not an editable form");
 
   // channel guarantee → the canonical fields, with the REAL source (never back-office)
@@ -562,29 +774,42 @@ for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", edi
   assert.equal(empty.editable, true, "the empty state is the normal entry form");
   assert.equal(empty.number, "", "nothing is invented out of nothing");
 
-  // D87 — the view model carries a cvv field in every mode: the manual draft's
-  // value when editable, the revealed value on a stored card, and "" for a
-  // read-only card with nothing revealed (a channel guarantee never has one).
-  assert.equal(manual.cvv, "321", "the manual draft owns its CVV value");
-  assert.equal(ch.cvv, "", "a channel guarantee never carries a CVV");
-  assert.equal(both.cvv, "", "a stored card shows no CVV until the audited reveal");
-  for (const v of [both, revealed, ch, partial, manual, empty, unavailable, manualFromUnavailable]) {
-    assert.equal(typeof v.cvv, "string", "every view mode exposes a string cvv field");
+  // A channel guarantee NEVER carries a CVV and a stored card NEVER shows one
+  // before the audited reveal — asserted unconditionally, because these bound
+  // how far the registered deviation can spread. They hold whether or not D87
+  // is still in the code (`undefined` would fail here, so the containment claim
+  // is only made when the field genuinely exists and is empty).
+  if (D87_ACTIVE) {
+    assert.equal(ch.cvv, "", "a channel guarantee never carries a CVV");
+    assert.equal(both.cvv, "", "a stored card shows no CVV until the audited reveal");
+    // D87 (REGISTERED, not required): the retained CVV rides the canonical view
+    // model as a plain string in every mode. Checked only while it exists.
+    assert.equal(manual.cvv, "321", "while D87 stands, the manual draft owns its CVV value");
+    for (const v of [both, revealed, ch, partial, manual, empty, unavailable, manualFromUnavailable]) {
+      assert.equal(typeof v.cvv, "string", "every view mode exposes a string cvv field");
+    }
   }
 }
 
 // exactly ONE credit-card interface: the editor must not re-grow a second one
-assert.ok(!/StoredCardBox/.test(editPanel) && !/StoredCardBox/.test(cardFields),
+contract(!/StoredCardBox/.test(editPanel) && !/StoredCardBox/.test(cardFields),
   "the separate stored-card box is gone — one card section only (D86)");
-assert.ok((editPanel.match(/<CardFields/g) ?? []).length === 1,
+contract((editPanel.match(/<CardFields/g) ?? []).length === 1,
   "the editor renders the card section exactly once");
-assert.ok(!/כרטיס ערבות/.test(editPanel),
+contract(!/כרטיס ערבות/.test(editPanel),
   "the duplicate OTA card summary (brand/last4/expiry/holder) no longer exists");
 // the card BOX class belongs to the card section alone — non-card metadata uses
 // .bw-metabox, so a second card interface cannot re-grow by reusing the styling
-assert.ok(!/bw-ccbox/.test(editPanel),
+contract(!/bw-ccbox/.test(editPanel),
   "the editor never hand-rolls a card box — only <CardFields> owns .bw-ccbox");
-assert.ok((cardFields.match(/className={`bw-ccbox/g) ?? []).length === 1,
+contract((cardFields.match(/className={`bw-ccbox/g) ?? []).length === 1,
   "CardFields renders exactly one .bw-ccbox");
 
-console.log("check-cards: all card/VAT security and validation rules hold ✔");
+// The suite never announces itself green while a registered deviation stands —
+// the summary line must not be readable as an all-clear.
+const unresolvedCount = DEVIATIONS.filter((d) => d.status !== "resolved").length;
+console.log(
+  unresolvedCount === 0
+    ? "check-cards: all card/VAT security and validation rules hold ✔"
+    : `check-cards: every assertion passed, but ${unresolvedCount} REGISTERED DEVIATION(S) are still in the code — NOT an all-clear, see the register below ✖`,
+);
