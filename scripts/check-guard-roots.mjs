@@ -57,17 +57,26 @@ const scripts = readdirSync(join(ROOT, "scripts"))
   .sort();
 assert.ok(scripts.length > 50, `expected the full guard set, found ${scripts.length}`);
 
+// The scan is ONE function, used for the real guard set and for the canary
+// alike. That is deliberate: neutralize it and check 4 fails too, so check 1
+// can never pass vacuously while looking structurally intact.
+const scanForAbsolute = (name, raw) => {
+  const found = [];
+  const body = stripComments(raw);
+  for (const m of body.matchAll(ABSOLUTE)) {
+    const line = body.slice(0, m.index).split("\n").length;
+    found.push(`${name}:${line} → ${m[1]}`);
+  }
+  return found;
+};
+
 // ---- 1. no guard names an absolute checkout path in executable code ----
 const offenders = [];
 const optedOut = [];
 for (const f of scripts) {
   const raw = readFileSync(join(ROOT, "scripts", f), "utf8");
   if (raw.split("\n").some((l) => ALLOW.test(l))) { optedOut.push(f); continue; }
-  const body = stripComments(raw);
-  for (const m of body.matchAll(ABSOLUTE)) {
-    const line = body.slice(0, m.index).split("\n").length;
-    offenders.push(`${f}:${line} → ${m[1]}`);
-  }
+  offenders.push(...scanForAbsolute(f, raw));
 }
 assert.deepEqual(
   offenders, [],
@@ -104,15 +113,21 @@ ok("the three guards that were hardcoded to production now resolve from import.m
 // Assembled at run time so this file does not itself contain the literal it
 // bans — the guard is subject to its own rule, not exempted from it.
 const PROD = ["", "var", "www", "guesthub"].join("/");
-const test = (s) => { ABSOLUTE.lastIndex = 0; return ABSOLUTE.test(stripComments(s)); };
-assert.ok(test(`const ROOT = "${PROD}";\nreadFileSync(join(ROOT, "src/x.ts"));\n`),
-  "the rule must reject the original defect");
-assert.ok(!test(`// we used to write const ROOT = "${PROD}" here\nconst ROOT = cwd();\n`),
+const HOME_WT = ["", "home", "ubuntu", "worktrees", "x"].join("/");
+const scan = (s) => scanForAbsolute("canary", s);
+
+// positive control — the scan path itself must produce a hit, with the right line
+const hit = scan(`const A = 1;\nconst ROOT = "${PROD}";\nreadFileSync(join(ROOT, "src/x.ts"));\n`);
+assert.deepEqual(hit, [`canary:2 → ${PROD}`], "the scan must flag a hardcoded production root, on its real line");
+assert.deepEqual(scan(`const ROOT = "${HOME_WT}";\n`), [`canary:1 → ${HOME_WT}`],
+  "a worktree path pinned by absolute is the same defect and must be flagged");
+// negative controls — the rule must not fire on things that are not the defect
+assert.deepEqual(scan(`// we used to write const ROOT = "${PROD}" here\nconst ROOT = cwd();\n`), [],
   "a comment recording the history must not trip the rule");
-assert.ok(!test(`const CHROME = "/opt/google/chrome/chrome";\n`),
+assert.deepEqual(scan(`/* ${PROD} */\nconst ROOT = cwd();\n`), [],
+  "a block comment recording the history must not trip the rule");
+assert.deepEqual(scan(`const CHROME = "/opt/google/chrome/chrome";\n`), [],
   "an installed binary is not a checkout and must not trip the rule");
-assert.ok(test(`const ROOT = "${["", "home", "ubuntu", "worktrees", "x"].join("/")}";\n`),
-  "a worktree path pinned by absolute is the same defect and must trip the rule");
-ok("canary: rejects a hardcoded checkout root (both /var/www and /home), ignores it in a comment, allows an installed binary");
+ok("canary: the same scan used above flags a hardcoded checkout root (/var/www and /home) on its real line, and stays quiet on comments and installed binaries");
 
 console.log(`\ncheck:guard-roots PASSED (${n} checks)`);
