@@ -350,7 +350,30 @@ docker stop guesthub-staging-auth        # docker start … כדי להרים ב
 
 ---
 
-## 10. מה **לא** נעשה — במכוון
+## 10. המצב החי כרגע (למי שממשיך)
+
+| מה | מצב |
+|-----|------|
+| `guesthub-staging-auth` (GoTrue, `127.0.0.1:9989`) | **רץ**, `--restart unless-stopped` |
+| `staging-auth-proxy.mjs` (`127.0.0.1:9990`) | **רץ** (מנותק, PPID 1). מת ב-reboot — הרם מחדש לפי §2.4 |
+| שרת האפליקציה על `127.0.0.1:3017` | **כובה** בסיום. הרם מחדש לפי §5 |
+| `guesthub-staging-db` | לא הופעל ולא כובה על ידי התהליך הזה |
+
+`/var/www/wt-uiverify/.env.local` (ב-`.gitignore`, `chmod 600`) כבר מכיל את
+**כל** מה שה-harness צריך — כולל `HYDRATION_BASE_URL` / `HYDRATION_EMAIL` /
+`HYDRATION_PASSWORD`. לכן צילום נוסף הוא שורה אחת:
+
+```bash
+cd /var/www/wt-uiverify && PORT=3017 npx next start -p 3017 &
+node --experimental-websocket --env-file=.env.local scripts/staging-screenshot.mjs \
+  --url /<מסך> --out docs/screenshots/<שם>.png --wait-text "<טקסט עברי מהמסך>"
+```
+
+(`--env-file` טוען את `HYDRATION_*` יחד עם השאר; אין צורך לייצא כלום ביד.)
+
+---
+
+## 11. מה **לא** נעשה — במכוון
 
 * **פרודקשן auth** (`supabase-auth` / `supabase-kong:8000`) — אפס בקשות. משתמש
   הבדיקה קיים **רק** ב-`guesthub_staging.auth.users`.
