@@ -595,6 +595,13 @@ async function applyCancellation(
     // one-domain rule, same shape as cancellation_pending_external):
     //   external_cancellation_confirmed_at IS NOT NULL AND status <> 'cancelled'
     // COALESCE keeps the FIRST confirmation time across repeated revisions.
+    //
+    // THIS GATE DOES NOT REPLACE the one in runBeds24BookingReconciliation.
+    // It covers every route that actually reaches this function; the
+    // reconciliation gate covers the window gap, where a cancellation older
+    // than the pull's lookback never produces a revision and therefore never
+    // reaches here at all — and where an unmapped room makes this function
+    // structurally unreachable. Both are required; see the note at that gate.
     await tx`
       UPDATE guesthub.reservations SET
         external_revision_id = ${norm.revisionId},

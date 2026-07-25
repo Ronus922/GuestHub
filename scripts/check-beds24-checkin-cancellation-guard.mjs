@@ -21,10 +21,25 @@
 // A checked-in guest survives all four; a pre-check-in guest is released by
 // all of them exactly as before.
 //
-// ORDER. The behavioral scenarios run FIRST and the structural checks last, on
-// purpose: when this guard goes red it must name the defect that matters, not
-// a grep. A guard whose only teeth are a source regex is the failure mode this
-// repo has already been bitten by.
+// TWO GROUPS, and the difference matters when this goes red.
+//
+//   GROUP A — BEHAVIORAL. Read back from the DATABASE: reservation status,
+//   inventory-blocking, republished ARI ranges, the operator alert row, the
+//   audit row, the revision's import_status. These are D93's promises and they
+//   are layer-agnostic — a red here means a guest's room was really taken away,
+//   or the operator was really not told. THIS GROUP DECIDES CORRECTNESS.
+//
+//   GROUP B — STRUCTURAL / DEFENSE-IN-DEPTH. Read back from a summary counter
+//   that names a specific layer, or from the source shape. These are bound to
+//   the current implementation ON PURPOSE: they hold the two-layer arrangement
+//   in place. A red here can mean the behavior is still fine and only the
+//   arrangement changed — so each one says so in its own failure message and
+//   says what to do about it. Never weaken one of these to get green; either
+//   restore the arrangement or update the assertion deliberately.
+//
+// Behavioral runs first. When this guard goes red it must name the defect that
+// matters, not a grep. A guard whose only teeth are a source regex is the
+// failure mode this repo has already been bitten by.
 //
 // Usage: node scripts/check-beds24-checkin-cancellation-guard.mjs
 import assert from "node:assert/strict";
@@ -197,6 +212,12 @@ try {
   }
   ok("scaffold: two live bookings imported as confirmed, occupying reservations");
 
+  // ████████████████████████████████████████████████████████████████
+  // GROUP A — BEHAVIORAL. Everything below is read back from the DB.
+  // A red here means a real guest's room was released, or a real
+  // operator was never told. Nothing here is bound to a layer.
+  // ████████████████████████████████████████████████████████████████
+
   // ================================================================
   // ROUTE 1 — the ordinary 5-minute window pull (the defect's route)
   // ================================================================
@@ -287,9 +308,9 @@ try {
   assert.equal((await localOf("777002")).status, "checked_in",
     "reconciliation does not release the checked-in guest");
   assert.equal(await dirtyCount(), 0, "reconciliation released no inventory");
-  assert.ok(rec.alerts >= 1, `reconciliation alerts instead of releasing (got ${JSON.stringify(rec)})`);
-  assert.equal(rec.released, 0, "reconciliation released nothing");
+  assert.equal(await alertsFor(r2.id), 1, "the operator is told, exactly once");
   ok("route 4 (reconciliation): a checked-in guest's room is NOT released");
+  // rec.alerts / rec.released name a LAYER, so they belong to group B below.
 
   // ================================================================
   // CONTROL — a guest who has NOT checked in is released exactly as before
@@ -342,9 +363,51 @@ try {
     "a stay whose cancellation was BLOCKED must never end up cancelled by the import");
   ok("invariant: zero checked-in stays released across all four inbound routes");
 
-  // ================================================================
-  // STRUCTURE (last, on purpose) — ONE definition, shared by every route
-  // ================================================================
+  // ████████████████████████████████████████████████████████████████
+  // GROUP B — STRUCTURAL / DEFENSE-IN-DEPTH. Deliberately bound to the
+  // current two-layer arrangement. A red below can coexist with a
+  // perfectly protected room; each message says exactly that, and says
+  // what to do. Do NOT weaken these to get green.
+  // ████████████████████████████████████████████████████████████████
+
+  // ---- B1. the reconciliation gate must stay the one that classifies ----
+  // Why this is not redundant with the import gate, measured (2026-07-25) on
+  // the disposable DB with the reconciliation gate removed and the import gate
+  // left in place, in the window-gap scenario the two sub-cases below:
+  //
+  //   window gap, room still mapped  → room held, D93 alert raised (by the
+  //     import gate), but the reconcile summary reports alerts:0 and pushes
+  //     "שחרור … לא הושלם" — a FALSE failure, re-reported every cycle for the
+  //     rest of the stay, and one Beds24 credit burned each time.
+  //   window gap, room UNMAPPED      → runBeds24InboundPull returns at
+  //     `mappings.size === 0` (beds24-booking-import.ts) BEFORE any revision is
+  //     imported, so applyCancellation is never reached and the D93 alert count
+  //     is ZERO. Nobody is told at all. No other gate covers this.
+  //
+  // So the reconciliation gate owns a scenario of its own. It is not dead code
+  // and must not be removed — see the comment at its definition.
+  assert.ok(rec.alerts >= 1,
+    "the reconciliation gate (beds24-booking-import.ts, `blocksAutomaticRelease(r.status)`) " +
+    "no longer classifies this conflict.\n" +
+    "      NOTE: this is a CONTRACT failure, not a behavioral one — the room was NOT " +
+    "released (group A above is green).\n" +
+    "      That gate covers a window-gap scenario the import gate cannot reach: a " +
+    "cancellation stamped older than\n" +
+    "      LOOKBACK_DAYS=7 never reaches applyCancellation, and if the booking's room is " +
+    "unmapped the targeted pull\n" +
+    "      returns before importing anything — zero D93 alerts are raised by anyone. It " +
+    "also keeps reconciliation from\n" +
+    "      reporting a false \"release did not complete\" every cycle and from burning a " +
+    "credit per cycle.\n" +
+    "      If removing it was DELIBERATE, update this assertion explicitly and say why. " +
+    "Do not delete it to get green.\n" +
+    `      observed summary: ${JSON.stringify(rec)}`);
+  assert.equal(rec.released, 0,
+    "reconciliation must report zero releases for a checked-in stay " +
+    `(contract, same gate as above; observed: ${JSON.stringify(rec)})`);
+  ok("B1 (defense-in-depth): the reconciliation gate still owns the window-gap classification");
+
+  // ---- B2. ONE definition of the gate, shared by every release surface ----
   const rules = readFileSync(join(ROOT, "src/lib/inventory-rules.ts"), "utf8");
   assert.match(rules, /export function blocksAutomaticRelease\(status: string\): boolean/,
     "the predicate lives in the pure rules module");
@@ -363,7 +426,7 @@ try {
     assert.match(readFileSync(join(ROOT, f), "utf8"), /blocksAutomaticRelease\(/,
       `${f} consumes the shared gate rather than re-deciding locally`);
   }
-  ok("structure: one definition of the gate, consumed by all three release surfaces");
+  ok("B2 (structure): one definition of the gate, consumed by all three release surfaces");
 
   console.log(`\ncheck-beds24-checkin-cancellation-guard: all ${n} assertions passed`);
 } finally {
