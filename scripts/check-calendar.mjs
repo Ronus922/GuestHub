@@ -2,10 +2,10 @@
 // as check-guards.mjs): compiles the pure modules with tsc, imports them and
 // asserts the business rules. Usage: node scripts/check-calendar.mjs
 import { execSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import assert from "node:assert/strict";
 
 const out = mkdtempSync(join(tmpdir(), "calendar-"));
@@ -122,12 +122,32 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
   assert.equal(red.rooms[0].price, 100, "non-sensitive data intact");
 }
 
-// ---- outbound ARI cannot originate from a save path (§M/§W, D68) ----
+// ---- outbound ARI cannot originate from a SAVE PATH (§M/§W, D68) ----
 // The old ChannelManagerProvider factory (disabled/dry-run) enforced this by
-// construction. It is gone; the guarantee is now structural and asserted here:
-// no module a canonical save imports may reach the network, and the outbox
-// itself performs no HTTP call. Only the PM2 worker talks to the channel provider.
+// construction. It is gone; the guarantee is asserted here: nothing a canonical
+// save reaches may touch the network, and the outbox itself performs no HTTP
+// call. Only the PM2 worker talks to the channel provider.
+//
+// SCOPE (rescoped): the architectural rule is PATH-scoped, not FILE-scoped. Its
+// earlier implementation matched import SPECIFIER TEXT anywhere in the file,
+// which had two defects:
+//   • false RED — D93 put the SUPERVISED RELEASE escape hatch
+//     (releaseChannelReservationAction) in reservations/actions.ts. That is an
+//     operator-triggered, permission-gated admin action that reads Beds24 live
+//     and then enqueues the worker's pull job; it saves nothing. File-scoping
+//     could not tell it apart from a save, so main shipped RED.
+//   • false GREEN — re-exporting beds24Request from an innocently named module
+//     defeated the specifier regex while the save still reached the socket.
+// The assertions below therefore (a) work on the resolved MODULE GRAPH and on
+// the real network primitives at its leaves, not on module names, and (b) split
+// each save-path file into top-level REGIONS so an allow-listed escape hatch is
+// judged by what it does, not by which file it sits in.
+//
+// Every assertion in this block is a CONTRACT assertion: it fails on an
+// architectural contract breach, not on a behaviour breach.
 {
+  const ts = require("typescript");
+
   const SAVE_PATHS = [
     "src/lib/channel/outbox.ts",
     "src/lib/channel/ranges.ts",
@@ -137,15 +157,199 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
     "src/app/(dashboard)/reservations/actions.ts",
     "src/app/(dashboard)/rate-plans/actions.ts",
   ];
-  const HTTP = /\bfetch\(|XMLHttpRequest|axios|http\.request|https\.request/;
-  // importing any of these transitively drags in the channel HTTP client
-  const HTTP_MODULES = /channel-http|beds24-http|beds24-ari-sync|beds24-properties|channel\/worker/;
+
+  // Operator escape hatches: top-level functions that live in a save-path file
+  // but are NOT a save. Each entry buys nothing for free — the hatch contract
+  // below is asserted for every one of them, and an entry that stops touching
+  // the channel is a failure too, so the allow-list cannot quietly widen.
+  const ESCAPE_HATCHES = new Map([
+    ["src/app/(dashboard)/reservations/actions.ts", ["releaseChannelReservationAction"]],
+  ]);
+
+  const parseFile = (f) =>
+    ts.createSourceFile(f, readFileSync(f, "utf8"), ts.ScriptTarget.ES2022, true,
+      f.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+
+  // "@/x" → src/x, "./x" → sibling; a bare specifier is an external package and
+  // is out of this rule's scope (the rule is about OUR layering).
+  const resolveSpec = (spec, fromFile) => {
+    let base;
+    if (spec.startsWith("@/")) base = join("src", spec.slice(2));
+    else if (spec.startsWith(".")) base = normalize(join(dirname(fromFile), spec));
+    else return null;
+    for (const c of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) {
+      if (existsSync(c)) return c;
+    }
+    return null;
+  };
+
+  // every module specifier this file depends on, re-exports included (a
+  // re-export drags the target in exactly like an import) plus dynamic import()
+  const moduleEdges = (sf) => {
+    const out = [];
+    const walk = (n) => {
+      if ((ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) &&
+          n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) out.push(n.moduleSpecifier.text);
+      if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword &&
+          n.arguments[0] && ts.isStringLiteral(n.arguments[0])) out.push(n.arguments[0].text);
+      ts.forEachChild(n, walk);
+    };
+    ts.forEachChild(sf, walk);
+    return out;
+  };
+
+  // The LEAF predicate: does this module reach the network for real? Not
+  // "is it called *-http" — the actual primitives, in VALUE position. This is
+  // what makes an alias/re-export chain pointless: channel-http.ts and
+  // beds24-http.ts are caught by `opts.fetchImpl ?? fetch`, which no `fetch(`
+  // regex ever saw.
+  const NET_GLOBALS = new Set(["fetch", "XMLHttpRequest", "WebSocket", "EventSource"]);
+  const NET_PKGS = /^(axios|undici|got|node-fetch|superagent|node:https?|https?)$/;
+  const networkIO = (file) => {
+    const sf = parseFile(file);
+    const reasons = [];
+    for (const spec of moduleEdges(sf)) if (NET_PKGS.test(spec)) reasons.push(`imports "${spec}"`);
+    const inTypePosition = (n) => {
+      for (let a = n.parent; a; a = a.parent) if (ts.isTypeQueryNode(a) || ts.isTypeNode(a)) return true;
+      return false;
+    };
+    const walk = (n) => {
+      if (ts.isIdentifier(n) && NET_GLOBALS.has(n.text)) {
+        const p = n.parent;
+        const isName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) ||
+          (ts.isPropertyAssignment(p) && p.name === n) || (ts.isPropertySignature(p) && p.name === n) ||
+          (ts.isBindingElement(p) && p.propertyName === n) || ts.isImportSpecifier(p) ||
+          (ts.isParameter(p) && p.name === n) || (ts.isVariableDeclaration(p) && p.name === n));
+        if (!isName && !inTypePosition(n)) {
+          reasons.push(`uses the global ${n.text} at line ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`);
+        }
+      }
+      if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) &&
+          /^https?$/.test(n.expression.text) && /^(request|get)$/.test(n.name.text)) {
+        reasons.push(`calls ${n.expression.text}.${n.name.text}`);
+      }
+      ts.forEachChild(n, walk);
+    };
+    ts.forEachChild(sf, walk);
+    return reasons;
+  };
+
+  // top-level declarations, so a reference can be attributed to the function it
+  // sits in instead of to the whole file
+  const topLevelRegions = (sf) => {
+    const regions = [];
+    for (const st of sf.statements) {
+      let name = null;
+      if ((ts.isFunctionDeclaration(st) || ts.isClassDeclaration(st)) && st.name) name = st.name.text;
+      else if (ts.isVariableStatement(st)) {
+        const d = st.declarationList.declarations[0];
+        if (d && ts.isIdentifier(d.name)) name = d.name.text;
+      }
+      if (name) regions.push({ name, start: st.getStart(sf), end: st.getEnd() });
+    }
+    return regions;
+  };
+
   for (const f of SAVE_PATHS) {
-    const src = readFileSync(f, "utf8");
-    assert.ok(!HTTP.test(src), `${f} contains no network code`);
-    const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
-    for (const spec of imports) {
-      assert.ok(!HTTP_MODULES.test(spec), `${f} must not import the channel HTTP layer (${spec})`);
+    const sf = parseFile(f);
+    const hatches = ESCAPE_HATCHES.get(f) ?? [];
+    const regions = topLevelRegions(sf);
+    const regionAt = (pos) => regions.find((r) => pos >= r.start && pos < r.end)?.name ?? "<module scope>";
+
+    // 1. the save-path file never reaches the network with its own hands —
+    //    file-wide, hatch or no hatch. The hatch goes through the typed client.
+    const own = networkIO(f);
+    assert.equal(own.length, 0,
+      `CONTRACT BREACH (§M/§W): ${f} contains network code of its own (${own[0]}) — a save path may not hold a socket`);
+
+    // 2. attribute every VALUE import to the region(s) that use it
+    const bindingSpec = new Map();
+    const sideEffectOrUnused = new Set();
+    for (const st of sf.statements) {
+      if (ts.isExportDeclaration(st) && st.moduleSpecifier && ts.isStringLiteral(st.moduleSpecifier)) {
+        sideEffectOrUnused.add(st.moduleSpecifier.text); // a re-export widens the file's surface
+      }
+      if (!ts.isImportDeclaration(st) || !ts.isStringLiteral(st.moduleSpecifier)) continue;
+      const spec = st.moduleSpecifier.text;
+      if (!st.importClause) { sideEffectOrUnused.add(spec); continue; } // import "x" — runs at load
+      if (st.importClause.isTypeOnly) continue; // erased, never in the bundle
+      if (st.importClause.name) bindingSpec.set(st.importClause.name.text, spec);
+      const nb = st.importClause.namedBindings;
+      if (nb && ts.isNamespaceImport(nb)) bindingSpec.set(nb.name.text, spec);
+      if (nb && ts.isNamedImports(nb)) {
+        for (const e of nb.elements) if (!e.isTypeOnly) bindingSpec.set(e.name.text, spec);
+      }
+    }
+    const specRegions = new Map();
+    const hatchRefs = new Map();
+    const walkRefs = (n) => {
+      if (ts.isImportDeclaration(n)) return;
+      if (ts.isIdentifier(n)) {
+        const p = n.parent;
+        const isName = p && ((ts.isPropertyAccessExpression(p) && p.name === n) ||
+          (ts.isPropertyAssignment(p) && p.name === n));
+        if (!isName) {
+          const where = regionAt(n.getStart(sf));
+          if (bindingSpec.has(n.text)) {
+            const spec = bindingSpec.get(n.text);
+            if (!specRegions.has(spec)) specRegions.set(spec, new Set());
+            specRegions.get(spec).add(where);
+          }
+          if (hatches.includes(n.text) && where !== n.text) {
+            if (!hatchRefs.has(n.text)) hatchRefs.set(n.text, new Set());
+            hatchRefs.get(n.text).add(where);
+          }
+        }
+      }
+      ts.forEachChild(n, walkRefs);
+    };
+    ts.forEachChild(sf, walkRefs);
+    // an imported-but-unreferenced value import still ships in the bundle
+    for (const spec of new Set(bindingSpec.values())) if (!specRegions.has(spec)) sideEffectOrUnused.add(spec);
+
+    // 3. the SAVE side of the graph: every specifier reached from anything that
+    //    is not an allow-listed hatch. Walk it transitively to the leaves.
+    const saveSpecs = new Set(sideEffectOrUnused);
+    for (const [spec, where] of specRegions) {
+      if ([...where].some((r) => !hatches.includes(r))) saveSpecs.add(spec);
+    }
+    const seen = new Set([f]);
+    const stack = [...saveSpecs].map((s) => ({ spec: s, chain: [f] }));
+    while (stack.length) {
+      const { spec, chain } = stack.pop();
+      const target = resolveSpec(spec, chain[chain.length - 1]);
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      const reasons = networkIO(target);
+      assert.equal(reasons.length, 0,
+        `CONTRACT BREACH (§M/§W): a canonical save reaches the network — ${[...chain, target].join(" → ")} (${reasons[0]}). ` +
+        `Outbound traffic belongs to the PM2 channel worker, never to a save.`);
+      for (const next of moduleEdges(parseFile(target))) stack.push({ spec: next, chain: [...chain, target] });
+    }
+
+    // 4. the escape-hatch contract — what earns a region its place on the
+    //    allow-list. A hatch may READ the channel; it may not WRITE the stay.
+    for (const name of hatches) {
+      const region = regions.find((r) => r.name === name);
+      assert.ok(region,
+        `CONTRACT BREACH (§M/§W): ${f} allow-lists escape hatch "${name}" but declares no such top-level function — the allow-list has rotted`);
+      const usesChannel = [...specRegions].some(([, where]) => where.has(name));
+      assert.ok(usesChannel,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} no longer touches the channel layer — drop it from the allow-list instead of leaving a standing exemption`);
+      const body = sf.text.slice(region.start, region.end);
+      assert.match(body, /requirePermission\(/,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} must be permission-gated — an operator action, not an open door`);
+      assert.match(body, /writeAudit\(/,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} must audit WHO triggered it and WHAT the source reported`);
+      assert.match(body, /enqueueChannelJob\(/,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} must delegate to the canonical worker job — it may not apply the outcome itself`);
+      assert.doesNotMatch(body, /\b(UPDATE|INSERT INTO|DELETE FROM)\s+guesthub\.reservations/i,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} writes the reservation directly — that makes it a save path, and a save path may not touch the channel`);
+      assert.doesNotMatch(body, /\b(markAriDirty|applyCancellation|recomputePaymentAggregates)\(/,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} applies stay/inventory side effects itself — it must only enqueue the worker`);
+      const callers = [...(hatchRefs.get(name) ?? [])].filter((r) => !hatches.includes(r) && r !== "<module scope>");
+      assert.equal(callers.length, 0,
+        `CONTRACT BREACH (§M/§W): escape hatch ${f}#${name} is called from ${callers[0]} — a save must not reach the channel through the hatch`);
     }
   }
 }
