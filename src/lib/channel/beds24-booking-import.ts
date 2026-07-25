@@ -12,6 +12,7 @@ import {
 } from "./beds24-http";
 import { getBeds24AccessToken } from "./beds24-token";
 import { importNormalizedRevision, type RoomResolver } from "./booking-import";
+import { blocksAutomaticRelease } from "@/lib/inventory-rules";
 import {
   beds24BookingIdentity,
   normalizeBeds24Booking,
@@ -586,9 +587,23 @@ export async function runBeds24BookingReconciliation(
     // absence is not evidence; only an explicit cancelled status releases
     if (!source || source.rawStatus?.toLowerCase() !== "cancelled") continue;
 
-    if (r.status === "checked_in") {
+    if (blocksAutomaticRelease(r.status)) {
       // the guest is physically in the room — releasing would erase a live
       // stay. Loud alert; the operator decides.
+      //
+      // DO NOT REMOVE THIS BECAUSE applyCancellation NOW CARRIES THE SAME GATE.
+      // It does not make this one redundant. This gate owns the window-gap
+      // scenario, which is the whole reason reconciliation exists: a
+      // cancellation stamped older than LOOKBACK_DAYS never arrives through a
+      // window pull, so applyCancellation is never reached for it. Measured
+      // with this gate removed and the import gate left in place:
+      //  · room still mapped → the room is held (import gate) but this loop
+      //    reports alerts:0 and pushes a FALSE "שחרור … לא הושלם" every cycle
+      //    for the rest of the stay, burning one Beds24 credit each time;
+      //  · room UNMAPPED     → runBeds24InboundPull returns at
+      //    `mappings.size === 0` before importing anything, applyCancellation
+      //    is never reached, and ZERO D93 alerts are raised by anyone.
+      // check:beds24-checkin-cancellation-guard pins this as assertion B1.
       summary.alerts += 1;
       await logChannelError(db, {
         tenantId: conn.tenant_id,

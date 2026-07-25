@@ -18,7 +18,12 @@ import {
 } from "./external-changes";
 import { logChannelError } from "./queue";
 import { publishDomainEvent } from "@/lib/realtime/publish";
-import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
+import {
+  blocksAutomaticRelease,
+  checkRoomAvailability,
+  lockRooms,
+  CONFLICT_LABEL,
+} from "@/lib/inventory";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import {
   otaCancellationSnapshot,
@@ -579,6 +584,63 @@ async function applyCancellation(
     // calendar and nothing must be released — record the revision as imported
     // (the durable revision row IS the history) without inventing a reservation
     return null;
+  }
+  if (blocksAutomaticRelease(existing.status)) {
+    // D93 on THIS route too. The cancellation is genuine and is kept — the
+    // revision row is its durable history and the reservation records the
+    // moment the channel confirmed it — but the nights are NOT freed and no
+    // inventory event is published: the guest is in the room.
+    //
+    // "needs a manual decision" stays DERIVED, never a stored flag (031's
+    // one-domain rule, same shape as cancellation_pending_external):
+    //   external_cancellation_confirmed_at IS NOT NULL AND status <> 'cancelled'
+    // COALESCE keeps the FIRST confirmation time across repeated revisions.
+    //
+    // THIS GATE DOES NOT REPLACE the one in runBeds24BookingReconciliation.
+    // It covers every route that actually reaches this function; the
+    // reconciliation gate covers the window gap, where a cancellation older
+    // than the pull's lookback never produces a revision and therefore never
+    // reaches here at all — and where an unmapped room makes this function
+    // structurally unreachable. Both are required; see the note at that gate.
+    await tx`
+      UPDATE guesthub.reservations SET
+        external_revision_id = ${norm.revisionId},
+        external_cancellation_confirmed_at =
+          COALESCE(external_cancellation_confirmed_at, now())
+      WHERE id = ${existing.id} AND tenant_id = ${conn.tenant_id}`;
+    // the same alert code the reconciliation gate raises — ONE vocabulary for
+    // the operator, whichever route noticed the conflict first
+    await logChannelError(tx, {
+      tenantId: conn.tenant_id,
+      connectionId: conn.id,
+      code: "cancelled_at_source_checked_in",
+      message:
+        `הזמנה ${existing.reservation_number} בוטלה ב-${norm.otaName ?? "ערוץ"} ` +
+        `אבל האורח בצ'ק-אין — החדר לא שוחרר, נדרשת החלטת מפעיל`,
+      context: {
+        reservation_id: existing.id,
+        booking_id: norm.bookingId,
+        revision_id: norm.revisionId,
+        reservation_status: existing.status,
+      },
+    });
+    // a DISTINCT audit action: 'channel_import_cancel' means the stay was
+    // cancelled, and nothing here cancelled anything
+    await channelAudit(
+      tx,
+      conn.tenant_id,
+      existing.id,
+      "channel_import_cancel_blocked",
+      {
+        booking_id: norm.bookingId,
+        revision_id: norm.revisionId,
+        reservation_status: existing.status,
+        reason: "guest_checked_in",
+        inventory_released: false,
+      },
+      norm.otaName,
+    );
+    return existing.id;
   }
   if (existing.status !== "cancelled") {
     // Canonical inbound cancellation (D77 §8): cancel-never-delete. The row

@@ -15,6 +15,22 @@ export const CALENDAR_VISIBLE_STATUSES = [
   "draft", "confirmed", "checked_in", "checked_out", "no_show", "blocked",
 ] as const;
 
+// D93 — a guest who is physically IN the room is never released automatically.
+// An inbound OTA cancellation that lands on such a stay is real and is
+// recorded, but the nights stay taken: freeing them would erase a live stay
+// from under a guest standing in it. A loud alert fires and a human decides.
+//
+// THE one definition, deliberately here (pure, no imports, no DB) so every
+// route that can release inventory from an inbound cancellation shares it —
+// the ordinary 5-minute pull (applyCancellation), the reconciliation safety
+// net, and the operator's supervised-release escape hatch. Before this was
+// shared, only the last two carried the rule and the pull released the room.
+export const AUTO_RELEASE_BLOCKED_STATUSES = ["checked_in"] as const;
+
+export function blocksAutomaticRelease(status: string): boolean {
+  return (AUTO_RELEASE_BLOCKED_STATUSES as readonly string[]).includes(status);
+}
+
 export type RoomCapacity = {
   max_occupancy: number;
   max_adults: number;

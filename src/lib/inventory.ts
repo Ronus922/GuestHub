@@ -12,6 +12,8 @@ import type { RoomCapacity } from "@/lib/inventory-rules";
 export {
   INVENTORY_BLOCKING_STATUSES,
   CALENDAR_VISIBLE_STATUSES,
+  AUTO_RELEASE_BLOCKED_STATUSES,
+  blocksAutomaticRelease,
   capacityViolation,
   paymentState,
 } from "@/lib/inventory-rules";
