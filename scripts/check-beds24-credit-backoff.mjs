@@ -18,7 +18,29 @@
 //   (b) HTTP 429                               → its own path, cooldown from
 //       Retry-After when present, else resets-in; never a blind retry.
 //
+// ---- B2 HISTORY: what each section exists to catch --------------------------
+// A guard is only real if it goes RED when the central predicate it claims to
+// protect is turned into `false` while every name, import and call site stays
+// in place. Three predicates survived that treatment and the holes they left
+// are why the last four sections exist (measured 2026-07-25, staging :5434):
+//   · `if (gate.pause) break` in sendCalendarRequests → `false`: 15/15 GREEN.
+//     Every outbound fixture compressed into ONE request body, so the burst-stop
+//     was never asked to stop a burst.        → "burst control" + "burst-stop".
+//   · the gate's `next.waitMs > pause.waitMs` → `false` (i.e. FIRST wait wins
+//     instead of LONGEST): 15/15 GREEN. Only the shortening direction was
+//     tested.                                 → the extending case in "gate".
+//   · `res.category === "rate_limited"` → `false` in the calendar sender:
+//     15/15 GREEN. No outbound fixture ever answered 429.
+//                                             → the two "outbound 429" sections.
+//   · `warnings.length === 0` in the pause condition → `true`: vacuously green,
+//     no fixture ever produced a warning.     → the "partial warnings" section.
+// Keep every one of these sections behavioural: they must read the DATABASE (or
+// the real module's own return value) after a real run, never the source text.
+//
 // Usage: node scripts/check-beds24-credit-backoff.mjs
+//   TEST_DATABASE_URL — any NON-production database with the migration chain
+//   applied. It must NOT be the shared testdb schema when other work is running
+//   against it; an isolated database is the safe choice.
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -147,7 +169,16 @@ assert.equal(gate.pause.waitMs, 20_000, "the 429 set the pause");
 gate.observe({ remaining: 2, resetsInSec: 5, cost: 1.2 });
 assert.equal(gate.pause.waitMs, 20_000, "a shorter later reading never shortens a live pause");
 assert.equal(gate.last.remaining, 2, "the newest meter reading is still surfaced for diagnostics");
-ok("gate: the longest provider-stated wait wins for the whole run");
+// B2 GAP (g25): the assertion above is satisfied by "the FIRST pause wins" just
+// as well as by "the LONGEST pause wins" — replacing the comparison with
+// `pause === null` kept the whole check green. The rule only has teeth in the
+// other direction: a later reading that states a LONGER provider wait must
+// EXTEND the live pause, or the run resumes while the window is still shut.
+gate.observe({ remaining: 1, resetsInSec: 200, cost: 1.2 });
+assert.equal(gate.pause.waitMs, 200_000,
+  "a LATER, LONGER provider-stated wait must EXTEND the live pause — 'longest wins', not 'first wins'");
+assert.equal(gate.pause.reason, "low_credits", "and the extending reading owns the pause it set");
+ok("gate: the longest provider-stated wait wins for the whole run — it extends as well as resists shortening");
 
 // ---- the §16 breaker honours a credit pause as a rate limit ----
 assert.equal(breaker.failureKindOf("credit_paused"), "rate_limited",
@@ -357,8 +388,18 @@ try {
     pushCalls += 1;
     assert.equal(new URL(String(url)).host, "api.beds24.com", "outbound must stay on Beds24");
     const h = meter(push.remaining, push.resetsIn);
+    // Beds24 normally sends NO Retry-After; the scripted cases that DO set one
+    // prove the HTTP core prefers it over the credit window's resets-in.
+    if (push.retryAfterSec !== undefined) h["retry-after"] = String(push.retryAfterSec);
     if (push.status !== 201) {
       return new Response(JSON.stringify({ success: false }), { status: push.status, headers: h });
+    }
+    // a 200/201 that Beds24 qualified: the write landed, but not intact
+    if (push.warnings) {
+      return new Response(
+        JSON.stringify([{ success: true, warnings: [{ field: "minStay" }], roomId: Number(OUT_ROOM) }]),
+        { status: 201, headers: h },
+      );
     }
     return new Response(
       JSON.stringify([{ success: true, modified: { field: "price1" }, roomId: Number(OUT_ROOM) }]),
@@ -389,6 +430,11 @@ try {
     FROM guesthub.channel_connections WHERE id = ${oconn.id}`)[0];
   const lastEvidence = async () => (await sql`
     SELECT outcome, error_code, context FROM guesthub.channel_evidence_ledger
+    WHERE connection_id = ${oconn.id} ORDER BY created_at DESC, id DESC LIMIT 1`)[0];
+  /** the operator-facing error row — the ONE place the pause's REASON is named
+   *  (the evidence ledger records every pause as 'credit_paused') */
+  const lastSyncError = async () => (await sql`
+    SELECT error_code, created_at FROM guesthub.channel_sync_errors
     WHERE connection_id = ${oconn.id} ORDER BY created_at DESC, id DESC LIMIT 1`)[0];
   /** fixture management, never an assertion: the cooldown has elapsed */
   const rearm = (id) => sql`
@@ -478,6 +524,139 @@ try {
   assert.ok(pushCalls - before <= 5,
     `and the drain stops calling Beds24 once the range is dead (issued ${pushCalls - before} calls over 8 scheduler passes)`);
   ok("outbound (D98): a permanently-failing range still reaches the dead letter at max_attempts");
+
+  // ============================================================
+  // g25 — THE SLOWDOWN ITSELF. Everything above claims the drain "stops", but
+  // every outbound fixture so far compresses into exactly ONE request body, so
+  // the loop never reaches a second iteration and the burst-stop
+  //     if (gate.pause) { deferred += …; break; }
+  // could be turned into `if (gate.pause && false)` with all 15 assertions
+  // still green. A gate that is never asked to stop a BURST is not a gate.
+  //
+  // So: 131 consecutive days priced in an alternating pattern. Range
+  // compression cannot collapse them (neighbouring days differ), giving 131
+  // calendar ranges = 2 request bodies at CALENDAR_ENTRIES_PER_REQUEST=100.
+  // The control below PROVES the payload really needs two calls; the low-meter
+  // run then has to issue exactly one.
+  // ============================================================
+  const BURST_FROM = 40, BURST_TO = 171; // date_to is exclusive → days 40..170
+  await sql`
+    INSERT INTO guesthub.pricing_plan_unit_rates
+      (tenant_id, pricing_plan_id, sellable_unit_id, date, price, min_stay_arrival)
+    SELECT ${outTenantId}, ${oplan.id}, ${osu.id},
+           -- anchored on the SAME day() basis the fixtures use, never current_date
+           (${day(0)}::date + d)::date,
+           -- alternating price: consecutive days can never compress into one range
+           CASE WHEN d % 2 = 0 THEN 500.00 ELSE 501.50 END,
+           2
+    FROM generate_series(${BURST_FROM}::int, ${BURST_TO - 1}::int) AS d`;
+
+  // ---- control: the burst really is more than one request ----
+  push = { status: 201, remaining: 97.6, resetsIn: 155 };
+  await rearm(doomed);
+  await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'failed' WHERE id = ${doomed}`;
+  let burst = await markDirty(day(BURST_FROM), day(BURST_TO));
+  pushCalls = 0;
+  s = await drain();
+  assert.ok(pushCalls >= 2,
+    `the burst fixture must need MORE THAN ONE request or the burst-stop is untestable (got ${pushCalls})`);
+  assert.equal(s.synced, 1, `a healthy window still completes the burst (got ${JSON.stringify(s)})`);
+  const burstRequests = pushCalls;
+  ok(`burst control: 131 uncompressible days = ${burstRequests} request bodies, all sent on a healthy window`);
+
+  // ---- the burst-stop: ONE low reading ends the run mid-burst ----
+  push = { status: 201, remaining: 8.4, resetsIn: 137 };
+  await rearm(burst);
+  burst = await markDirty(day(BURST_FROM), day(BURST_TO));
+  pushCalls = 0;
+  s = await drain();
+  assert.equal(pushCalls, 1,
+    `the FIRST low-credit response must end the burst: expected 1 call, got ${pushCalls} of ${burstRequests} — the outbound burst-stop is not running`);
+  assert.equal(s.requests, 1, "and the run reports the single call it actually made");
+  row = await rangeRow(burst);
+  assert.equal(row.status, "pending", "the half-sent range stays claimable for the next window");
+  assert.equal(row.attempts, 0, "a burst cut short by credits is still not a range failure");
+  ev = await lastEvidence();
+  assert.equal(Number(ev.context.deferredBatches), burstRequests - 1,
+    `the evidence ledger records the request bodies the gate held back (got ${ev.context.deferredBatches}, expected ${burstRequests - 1}) — 0 means the run never stopped`);
+  assert.equal(Number(ev.context.creditsRemaining), 8.4,
+    "with the meter reading that caused it, off the row the worker wrote");
+  ok(`burst-stop: the drain issued 1 of ${burstRequests} request bodies and deferred the rest`);
+
+  // ============================================================
+  // g25 — THE OUTBOUND 429. Every outbound scenario above answers 201 or 500,
+  // so nothing ever fed `httpStatus: 429` to the gate from the calendar sender:
+  // deleting that wiring (`res.category === "rate_limited"` → false) left all
+  // 15 assertions green. The discriminating fixture answers 429 while the meter
+  // still reads HEALTHY (45 ≫ threshold 12) — then ONLY the 429 path can
+  // produce a pause, and a run that charges the range an attempt has treated a
+  // provider-stated cooldown as an ordinary failure.
+  // ============================================================
+  await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id = ${burst}`;
+  push = { status: 429, remaining: 45, resetsIn: 90 };
+  await rearm(burst);
+  const throttled = await markDirty(day(3), day(6));
+  pushCalls = 0;
+  s = await drain();
+  assert.equal(pushCalls, 1, `a 429 must end the outbound run at once (got ${pushCalls} calls)`);
+  assert.equal(s.creditPausedMs, 90_000,
+    `an outbound 429 must pause for the provider's own span even on a HEALTHY meter (got ${s.creditPausedMs} — the 429 never reached the credit gate)`);
+  row = await rangeRow(throttled);
+  assert.equal(row.attempts, 0,
+    `a 429 is a provider-stated cooldown, not a range failure: attempts must stay 0 (got ${row.attempts})`);
+  assert.equal(row.status, "pending", "and the range is still claimable after the cooldown");
+  assert.equal(row.deferred_past_a_minute, true, "re-armed for after the 429's own span");
+  ev = await lastEvidence();
+  assert.equal(ev.outcome, "partial",
+    `a 429 is a pause, not a failed run (got '${ev.outcome}' — the 429 never reached the credit gate)`);
+  assert.equal(ev.error_code, "credit_paused", "the ledger files it under the credit pause");
+  assert.equal((await lastSyncError()).error_code, "rate_limited",
+    "and the operator-facing error names the 429 itself, not a generic low-credit slowdown");
+  c = await connRow();
+  assert.ok(Math.abs(Number(c.open_for_sec) - 90) <= 3,
+    `the breaker holds the connection for the 429's span (open for ${c.open_for_sec}s, expected ~90s)`);
+  ok("outbound 429: a healthy meter plus a 429 still pauses — the refusal reaches the gate");
+
+  // ---- and Retry-After outranks the credit window, end to end ----
+  await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id = ${throttled}`;
+  push = { status: 429, remaining: 45, resetsIn: 240, retryAfterSec: 30 };
+  await rearm(throttled);
+  const withRetryAfter = await markDirty(day(3), day(6));
+  pushCalls = 0;
+  s = await drain();
+  assert.equal(s.creditPausedMs, 30_000,
+    `Retry-After (30s) must outrank the credit window's resets-in (240s) through the REAL HTTP core (got ${s.creditPausedMs})`);
+  assert.equal((await rangeRow(withRetryAfter)).attempts, 0, "still not a range failure");
+  c = await connRow();
+  assert.ok(Math.abs(Number(c.open_for_sec) - 30) <= 3,
+    `and the breaker holds for Retry-After, not for resets-in (open for ${c.open_for_sec}s, expected ~30s)`);
+  ok("outbound 429: Retry-After beats resets-in through the real HTTP core");
+
+  // ---- g25: the pause may not swallow PARTIAL WARNINGS either (D98's sibling)
+  // `warnings.length === 0` is the third conjunct of the pause condition and no
+  // fixture ever produced a warning, so it could be replaced by `true` with
+  // everything green. A qualified write (200 + per-room warnings) that happens
+  // to arrive on a low meter must still be charged and surfaced as
+  // partial_warnings — otherwise the operator never learns the calendar landed
+  // incomplete, and the range is re-armed as if nothing was wrong.
+  await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id = ${withRetryAfter}`;
+  push = { status: 201, remaining: 8.4, resetsIn: 137, warnings: true };
+  await rearm(withRetryAfter);
+  const qualified = await markDirty(day(3), day(6));
+  s = await drain();
+  row = await rangeRow(qualified);
+  assert.equal(row.attempts, 1,
+    `a qualified write on a low meter must still be charged an attempt (got ${row.attempts} — the credit pause swallowed the warnings)`);
+  assert.equal(row.last_error_code, "partial_warnings",
+    `the range records that the calendar landed incomplete (got '${row.last_error_code}')`);
+  assert.equal((await lastSyncError()).error_code, "partial_warnings",
+    "and the operator sees the warnings, not a credit-slowdown notice");
+  ev = await lastEvidence();
+  assert.equal(ev.error_code, "partial_warnings", "the ledger names the warnings too");
+  c = await connRow();
+  assert.ok(Math.abs(Number(c.open_for_sec) - 137) <= 3,
+    `while the connection is still paced for the credit window (open for ${c.open_for_sec}s, expected ~137s)`);
+  ok("outbound: a low meter never launders partial warnings into a silent credit pause");
 
   console.log(`\ncheck-beds24-credit-backoff: all ${n} assertions passed`);
 } finally {
