@@ -50,6 +50,16 @@ export type Beds24CalendarMapping = {
   beds24RoomId: string;
   /** the ONE designated local plan whose base-occupancy rate is the price */
   localRatePlanId: string | null;
+  /**
+   * This room's OWN maxStay ceiling, read from the provider (never guessed).
+   * A local `max_stay` of NULL means "no limit", but Beds24 has no value for
+   * that and no clear operation — omitting the field leaves the OLD limit
+   * enforced forever. So NULL is sent as this ceiling, which is the widest
+   * value the room accepts and the only one that answers a clean 201.
+   * `null` here means "we could not read it" ⇒ omit, i.e. previous behaviour.
+   * Measured: docs/MAXSTAY_NO_LIMIT_SPEC.md §2.2–2.3.
+   */
+  maxStayCeiling: number | null;
 };
 
 /** One compressed calendar range. `to` is INCLUSIVE (verified upstream). */
@@ -234,8 +244,12 @@ export function buildBeds24CalendarRequests(
         numAvail: available ? 1 : 0,
         price1: blocked ? null : price1,
         minStay: c && c.minStayArrival != null ? c.minStayArrival : null,
-        // maxStay only when the restrictions carry one — omitted otherwise
-        maxStay: c && c.maxStay != null ? c.maxStay : null,
+        // A local maxStay is sent as-is. A local NULL means "no limit", and
+        // because Beds24 offers no way to express that and no way to clear a
+        // daily value, it is sent as the room's OWN ceiling — the widest the
+        // room accepts, and a clean 201. Only when the ceiling is unknown does
+        // the field get omitted, which leaves the previous value standing.
+        maxStay: c && c.maxStay != null ? c.maxStay : m.maxStayCeiling,
       });
     }
 

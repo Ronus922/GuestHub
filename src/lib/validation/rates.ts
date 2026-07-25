@@ -4,8 +4,17 @@ import { dateOnlySchema } from "./reservation";
 // Zod schemas for the commercial-write paths (§0.2). Client grids are cosmetic;
 // every rates Server Action parses with these.
 
-const stayField = z.number().int().min(0).max(3650).nullable();
-const priceField = z.number().min(0).max(1_000_000).nullable();
+// `0` is not a weaker restriction, it is a STRICTER one — and on the wire it is
+// a payload killer. Beds24 answers maxStay:0 with "capped to 1" (a one-night
+// ceiling, measured 2026-07-25), and our own builder rejects any stay value
+// below 1, which drops the ENTIRE request, not just the field. "No limit" is
+// NULL, never 0. rate-plans.ts has always required .min(1); this path was the
+// outlier. See docs/MAXSTAY_NO_LIMIT_SPEC.md §5.
+const stayField = z.number().int().min(1, "מינימום לילה אחד").max(3650).nullable();
+// price 0 is a SILENT room closure: beds24-ari-payloads.ts treats price1 <= 0
+// as `blocked` and publishes numAvail 0 without anyone asking for it. Closing a
+// room is what stop_sell is for. Clearing a price is NULL, not 0.
+const priceField = z.number().min(1, "מחיר חייב להיות חיובי").max(1_000_000).nullable();
 
 // A grid cell patch — only the touched fields are present; at least one.
 export const rateCellPatchSchema = z
