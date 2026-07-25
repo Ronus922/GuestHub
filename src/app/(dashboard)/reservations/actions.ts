@@ -8,6 +8,7 @@ import { writeAudit } from "@/lib/audit";
 import { eachDay, nightsBetween, rangesOverlap, type DateOnly } from "@/lib/dates";
 import type { CardSource } from "@/lib/card-rules";
 import {
+  blocksAutomaticRelease,
   checkRoomAvailability,
   lockRooms,
   INVENTORY_BLOCKING_STATUSES,
@@ -794,7 +795,7 @@ export async function releaseChannelReservationAction(id: string): Promise<Actio
     if (!res.channel_connection_id || !res.external_booking_id)
       return fail("זו אינה הזמנת ערוץ — השתמש בביטול הרגיל");
     if (res.status === "cancelled") return { success: true };
-    if (res.status === "checked_in")
+    if (blocksAutomaticRelease(res.status))
       return fail("האורח בצ'ק-אין — שחרור אוטומטי חסום. יש לטפל בשהות (צ'ק-אאוט/החלטה ידנית) קודם");
 
     const [conn] = await sql<

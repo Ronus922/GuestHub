@@ -12,6 +12,7 @@ import {
 } from "./beds24-http";
 import { getBeds24AccessToken } from "./beds24-token";
 import { importNormalizedRevision, type RoomResolver } from "./booking-import";
+import { blocksAutomaticRelease } from "@/lib/inventory-rules";
 import {
   beds24BookingIdentity,
   normalizeBeds24Booking,
@@ -586,9 +587,10 @@ export async function runBeds24BookingReconciliation(
     // absence is not evidence; only an explicit cancelled status releases
     if (!source || source.rawStatus?.toLowerCase() !== "cancelled") continue;
 
-    if (r.status === "checked_in") {
+    if (blocksAutomaticRelease(r.status)) {
       // the guest is physically in the room — releasing would erase a live
-      // stay. Loud alert; the operator decides.
+      // stay. Loud alert; the operator decides. (Same predicate the import
+      // core enforces — this gate only saves the targeted pull's credit.)
       summary.alerts += 1;
       await logChannelError(db, {
         tenantId: conn.tenant_id,
