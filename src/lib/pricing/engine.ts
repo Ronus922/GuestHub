@@ -14,7 +14,7 @@ import {
 } from "./resolve";
 import { PRICING_ERROR_MESSAGES } from "./messages";
 import {
-  MAX_QUOTE_NIGHTS, PRICING_ENGINE_VERSION,
+  resolveMaxQuoteNights, PRICING_ENGINE_VERSION,
   type NightQuote, type PriceSource, type PricingError, type PricingErrorCode,
   type PricingQuoteRequest, type PricingQuoteResult, type PricingWarning, type RoomQuote,
 } from "./types";
@@ -54,7 +54,7 @@ function stableStringify(v: unknown): string {
 
 type TenantRow = {
   currency: string; timezone: string | null;
-  vat_rate: string | null; extra_guest: unknown;
+  vat_rate: string | null; extra_guest: unknown; pricing: unknown;
 };
 
 type EngineRoomRow = {
@@ -136,7 +136,8 @@ export async function calculateQuote(
   const [tenant] = await db<TenantRow[]>`
     SELECT currency, timezone,
            settings->>'vat_rate' AS vat_rate,
-           settings->'extra_guest' AS extra_guest
+           settings->'extra_guest' AS extra_guest,
+           settings->'pricing' AS pricing
     FROM guesthub.tenants WHERE id = ${req.tenantId}`;
   if (!tenant) return invalidResult(req, "ILS", DEFAULT_VAT_RATE, [err("MIXED_TENANT_DATA")]);
 
@@ -151,8 +152,13 @@ export async function calculateQuote(
   if (!isDateOnly(req.checkIn) || !isDateOnly(req.checkOut) || req.checkOut <= req.checkIn || req.rooms.length === 0)
     return invalidResult(req, currency, vatRate, [err("INVALID_DATE_RANGE")]);
   const nights = eachDay(req.checkIn, req.checkOut);
-  if (nights.length > MAX_QUOTE_NIGHTS)
-    return invalidResult(req, currency, vatRate, [err("QUOTE_WINDOW_EXCEEDED")]);
+  const maxQuoteNights = resolveMaxQuoteNights(tenant.pricing);
+  if (nights.length > maxQuoteNights)
+    // name the number: "exceeds the window" with no bound left the operator
+    // guessing, and the bound is now per-tenant
+    return invalidResult(req, currency, vatRate, [err("QUOTE_WINDOW_EXCEEDED", {
+      message: `טווח התאריכים חורג מחלון התמחור המותר (${maxQuoteNights} לילות)`,
+    })]);
 
   const stay = { checkIn: req.checkIn, checkOut: req.checkOut, nights };
   const roomIds = [...new Set(req.rooms.map((r) => r.roomId))];
