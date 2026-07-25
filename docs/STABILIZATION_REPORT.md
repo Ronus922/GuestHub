@@ -1,6 +1,32 @@
-# STABILIZATION REPORT — INTERIM (run paused at its designed gate)
+# STABILIZATION REPORT — COMPLETE (all six phases ran)
 
-**Moti ✅ (diagnosed, correctly NOT repaired) | שומרים 0/8 ⏸️ (פאזה 2 מוקפאת) | טריאז' ✅ | UI-verify ✅ | env ✅ | גיבוי ✅ | Channex-sweep ✅ | ledger ⏸️ | mapping ⏸️ | manual-decision ⏸️ | אדוורסרי ⏸️**
+**Moti ✅ (diagnosed, correctly NOT repaired) | שומרים 8/8 ✅ | טריאז' ✅ (now STALE) | UI-verify ✅ | env ✅ | גיבוי ✅ | Channex-sweep ✅ | ledger ✅ | mapping ✅ | manual-decision ✅ | אדוורסרי ✅**
+
+## ⚠️ READ FIRST — the ground moved mid-run
+`origin/main` went **5b171bd → 8494385** while this run executed, and production was deployed to it.
+**#112, #113 and #114 merged.** Consequences that override text written earlier in this document:
+1. **Iron rule 6 is obsolete.** #112 is merged (`c93b401`), so `package.json` and `DECISIONS.md` are
+   free. Every "could not register a check:* script" blocker below can now be cleared — and there
+   are **nine** of them across eight agents.
+2. **`PR_TRIAGE.md`'s merge order is stale.** It was computed against 5b171bd and predates
+   #113/#114. Do not follow it as written.
+3. **#113 re-implements the run's credit work.** Both credit branches conflict with main in
+   `DECISIONS.md`, `package.json`, `beds24-ari-sync.ts`, `beds24-ari.ts`, `beds24-http.ts`.
+4. **The adversarial's worst finding never reached production.** Verified on 8494385:
+   `creditIsTheWholeStory` does not exist, `failRanges` is unconditional, and
+   `const dead = attempts >= r.max_attempts` is intact. The 429-swallow lives only on the
+   unmerged branch.
+5. **`fix/booking-com-reports-credit-meter` no longer merges.** Reproduced: add/add conflict in
+   `beds24-booking-reports.ts`, and after resolution
+   `TS18048: 'r.credits' is possibly 'undefined'` at line 155. My earlier "fix stack is GREEN"
+   result was measured against 5b171bd and is now **stale**.
+
+## ⚠️ AND THE BIGGEST ONE — there is no CI
+Verified independently: no `.github/`, no `.gitlab-ci.yml`, no `.circleci`, no `Jenkinsfile`,
+no `.husky`, no active git hooks (only `.sample`), and **no `check:all`**. All 63 (now 66)
+`check:*` scripts are manual-invocation only. **Nothing in this repository runs any guard
+automatically.** Every "the guard will catch it" claim in this report — including this run's own
+fixes — is conditional on a human remembering to type the command.
 
 Run date 2026-07-25. Production `/var/www/guesthub` = `5b171bd` throughout, working tree clean,
 pm2 restart counts unchanged (guesthub 41 / channel-worker 13 — nothing restarted).
@@ -167,6 +193,43 @@ that today's numbers are far apart — they will drift arbitrarily as rooms chan
 5.3 is **no longer blocked** by 4.1 — the staging auth stack is up and left running.
 
 ## 6. Adversarial — NOT STARTED ⏸️ (depends on Phase 2)
+
+---
+
+## INCIDENT 2026-07-25 ~14:40–16:10 UTC — production web app down ~88 min, undetected
+Cause: another agent session ran `pkill -f "next-server" -u ubuntu` to cycle its own staging
+server on port 3021. Five pm2 apps run as `ubuntu` and several are Next servers, so the pattern
+killed production's `next-server` (port 3007) as well as `mail-system`, `pms` and `sys-app`.
+
+**Nobody intervened and rule 2 was never broken.** The agent that caused it reported instead of
+fixing; asked to run `pm2 restart guesthub` on its behalf, this session refused — a peer cannot
+authorise past a rule the owner set — and escalated. pm2's own autorestart recovered the app
+once the orphaned wrapper exited (`restarts` 42 → 43). Verified back up: `:3007` listening
+(pid 93210), `/` → 307, `/login` → 200 in 158ms.
+
+Blast radius was smaller than it looked: `guesthub-channel-worker` is not a Next server and kept
+running throughout — `reconcile_inventory` and `pull_booking_revisions` both succeeded during the
+outage. **Beds24 ingestion never stopped; only the dashboard was unavailable.**
+
+### The finding that outlives the incident
+**pm2 reported `status=online` for the whole 88 minutes.** It supervises the `npm start` wrapper,
+not the `next-server` grandchild:
+```
+pm2 guesthub        -> status=online, uptime 88min, pid 3940383 alive
+children of 3940409 -> NONE
+ss -ltnp :3007      -> nothing listening
+curl :3007          -> 000
+```
+There is no port-level health check anywhere. Nothing in this system would have surfaced this
+outage except a human noticing the site was down — and the run's own opening snapshot recorded
+`guesthub ↺ 41 online` without that meaning the app was serving. Recommended: a listener probe on
+3007 (and an HTTP 200 assertion on `/login`) wired to the same alerting path as D93, plus
+`pm2 start` under a supervisor that watches the actual server, not the wrapper.
+
+Unresolved and low priority: `guesthub-channel-worker`'s restart counter moved 13 → 14 at some
+point in this session. It is NOT attributable to the pkill (that pattern cannot match
+`node .../channel-worker.cjs`, and the process's 89-minute uptime predates it). Logs are clean and
+`unstable restarts: 0`. Recorded, not explained.
 
 ---
 
