@@ -495,3 +495,125 @@ four production hostname markers and refuses a remote maintenance database.
 5. **Merge the phase-2 sibling branches.** Sixteen rows in §2 are "fixed on a
    branch". Until they merge, `main`'s guard set is the broken one.
 6. **CI.** Until then, §7.3 stands: none of this is enforced.
+
+---
+
+## 10. Closure run, 2026-07-25 — six gaps embedded, and the B2 tally
+
+Recorded by the closure run that merged the nine open PRs and deployed
+`main = 43f0d32`. Source: `docs/GUARD_GAPS_PENDING.md` (branch
+`docs/closure-2026-07-25`), which this section supersedes. Everything below was
+measured, not inferred.
+
+### 10.1 `unmappedRooms` cannot see a room with no mapping row at all
+
+`src/lib/channel/beds24-ari-payloads.ts:196-199`. The counter counts EXISTING
+mappings that lack a rate plan. A room with no row in
+`channel_beds24_room_mappings` never enters the `mappings` array, so it is never
+counted and appears in no summary. **A room that was never mapped looks exactly
+like a room with nothing to publish.**
+
+*Evidence:* 1318 was the only real room not being distributed until 2026-07-25
+11:58, and `unmappedRooms` reported 0 the whole time.
+
+*Fix:* a coverage assertion — every active `rooms` row on the connection must
+have a mapping row, or be counted explicitly as `roomsWithNoMapping`.
+
+### 10.2 `check:beds24-ari` passes over 22 ranges marked `synced` that sent nothing
+
+`scripts/check-beds24-ari.mjs:19-26`. Twenty-two ranges for 1318
+(revisions 834→1606) closed `synced` before the room was mapped — not one byte
+left the process. The guard is green. It also filters `cc.state = 'active'`, so
+**66 pending channex ranges** on a paused connection fall to an informational
+"note" line instead of being counted.
+
+*Fix:* assert on `status = 'synced'` together with `sent_values = 0`.
+`check:beds24-payload-integrity` (#114) covers the live case — "no range is
+synced by a drain that sent nothing" — but not the historical debt.
+
+### 10.3 No guard on `succeeded` without `sentValues` — "mapped but silent"
+
+`src/lib/channel/worker.ts:157` returns `{ sentValues: 0 }` **silently** when the
+connection is not drainable, and a drain with no rows returns an empty summary.
+Both are recorded `succeeded` and are indistinguishable afterwards.
+
+*Evidence:* ledger rows from 2026-07-25 12:18–12:19 show `claimed:1,
+sentValues:0` beside `claimed:1, sentValues:1` — both `succeeded`.
+
+*Fix:* assert against `channel_evidence_ledger` on `claimed > 0 AND
+sentValues = 0` with no declared reason. This is now also rule 2 in AGENTS.md.
+
+### 10.4 #104's guard leaned on a grep — **fixed, and proven fixed**
+
+The old `scripts/check-beds24-credit-backoff.mjs:56-58` was
+`assert.ok(!httpSrc.includes("fivemincreditlimit"), ...)` — a static grep over
+ONE file. It stayed green across 223 evidence rows carrying
+`creditsRemaining = NULL`, and could never have caught the name moving to
+another file.
+
+**Status: ✅ replaced** by four behavioural assertions through the real
+`beds24Request`. Proven by B2: reintroducing the old names as aliases **in a
+different file** (`beds24-credits.ts`) turns the new guard red, and would have
+left the grep green. Merged in #104/#105, live on `main` since 43f0d32.
+
+### 10.5 #110's guard is not self-contained — iron rule 11
+
+`scripts/check-booking-com-reports.mjs:194` applies migration `055` only, and
+assumes the rest of the schema exists, is owned by a role `postgres` can create
+in, and that the table it creates will belong to it.
+
+*Evidence — it failed twice in one run, both environmental:*
+```
+ERROR:  permission denied for schema guesthub
+ERROR:  must be owner of table booking_channel_reports
+```
+#110's code was correct both times; what changed was role ownership in the
+shared DB after another guard ran first. After replaying the chain under one
+role: 18/18 green.
+
+**What this means: the guard's result depends on the order other guards ran in.
+Green does not prove the migration is idempotent — it proves the role happened
+to fit.**
+
+*Fix:* a dedicated DB plus an `ensureSchema()` that replays `db/migrations` in
+`manifest.txt` order, the way `check:beds24-payload-integrity` (#114) does.
+
+### 10.6 `ref/` is gitignored and poisons a local build
+
+`.gitignore:54` — `/ref/`. #110's build in a reused worktree failed with
+`Type error: Property 'externalUniqueId' is missing` in
+`ref/proof/render/entry.tsx`: an **untracked, gitignored** leftover that is not
+part of #110 and not in the repo. Next picks it up because it sits inside the
+project tree. In a clean tree #110 builds green.
+
+**Operational conclusion: a local build in a worktree somebody has been working
+in is not evidence** — exactly what CLAUDE.md says about isolated verification.
+
+### 10.7 The B2 tally for this run
+
+| guards subjected to B2 | mutations applied | stayed green (vacuous) |
+|---|---|---|
+| 7 | 10 | **0** |
+
+Six new guards arrived with the merge — `check:beds24-ari-readback`,
+`check:booking-com-reports`, `check:beds24-credit-backoff`,
+`check:beds24-ari-drain`, `check:beds24-quarantine-selfheal`,
+`check:reservation-source-system` — and every one turned red under a semantic
+neutralisation that left every structural sign in place. A seventh,
+`check:beds24-maxstay-no-limit` (PR #115), took two distinct B2 mutations and a
+leg A that fails **behaviourally**, reproducing the production symptom
+(`enforcing [31,31,31,31,31,31]`) rather than an import error.
+
+**Leg A needs one qualification, recorded so nobody later reads it as a pass.**
+Three of the six were green on leg A: `check:beds24-ari-drain`,
+`check:beds24-quarantine-selfheal` and `check:reservation-source-system`. That is
+**correct for them** — they are regression fixtures for code that already exists
+on `main` (the drain, `sweepUnimportedRows`, `normalizeVisibleChannel`), or their
+subject is a migration rather than `src/`. Leg A only substitutes `src/`, so it
+cannot say anything about a DB seed. For a guard that pins EXISTING behaviour,
+green on leg A is the expected result and B2 is the decisive test.
+
+**One trap worth naming:** `git checkout <tree> -- src/` does **not** delete
+files absent from that tree. The first leg-A attempt in this run left seven new
+modules (1,735 lines) in place and produced four false GREENs. `rm -rf src`
+first, then check out, then verify `git diff <tree> -- src/` prints **0 lines**.
