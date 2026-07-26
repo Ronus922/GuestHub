@@ -1547,6 +1547,12 @@ export type ReservationDetail = {
    *  this snapshot, never the live Settings template */
   cancellation_policy: CancellationPolicySnapshot | null;
   discount_amount: number;
+  discount_mode: DiscountMode;
+  discount_value: number;
+  tax_exempt: boolean;
+  currency: string;
+  exchange_rate: number | null;
+  rooms_total_override: number | null;
   extra_charges: number;
   total_price: number;
   paid_amount: number;
@@ -1575,6 +1581,8 @@ export type ReservationDetail = {
     ratePerNight: number;
     priceTotal: number;
     isManualRate: boolean;
+    priceMode: PriceMode;
+    manualTotal: number | null;
     ratePlanId: string | null;
     ratePlanName: string | null;
     pricingSnapshot: StayPricingSnapshot | null;
@@ -1614,7 +1622,9 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         notes: string | null; expected_arrival_time: string | null;
         expected_arrival_time_source: "ota" | "manual" | null;
         cancellation_policy_snapshot: CancellationPolicySnapshot | null;
-        discount_amount: number; extra_charges: number;
+        discount_amount: number; discount_mode: DiscountMode; discount_value: number;
+        tax_exempt: boolean; currency: string; exchange_rate: number | null;
+        rooms_total_override: number | null; extra_charges: number;
         total_price: number; paid_amount: number; balance: number;
         created_at: string; updated_at: string;
         guest_id: string | null; g_first: string | null; g_last: string | null; g_full: string | null;
@@ -1651,6 +1661,10 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
              res.cancellation_origin, res.cancellation_reason,
              res.external_cancellation_confirmed_at::text AS external_cancellation_confirmed_at,
              res.discount_amount::float8 AS discount_amount,
+             res.discount_mode, res.discount_value::float8 AS discount_value,
+             res.tax_exempt, res.currency,
+             res.exchange_rate::float8 AS exchange_rate,
+             res.rooms_total_override::float8 AS rooms_total_override,
              res.extra_charges::float8 AS extra_charges,
              res.total_price::float8 AS total_price,
              res.paid_amount::float8 AS paid_amount,
@@ -1672,6 +1686,7 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         rr_id: string; room_id: string; room_label: string; room_type_name: string | null;
         check_in: string; check_out: string; adults: number; children: number; infants: number;
         rate_per_night: number; price_total: number; is_manual_rate: boolean;
+        price_mode: PriceMode; manual_total: number | null;
         rate_plan_id: string | null; rate_plan_name: string | null;
         pricing_snapshot: unknown;
         guest_first_name: string | null; guest_last_name: string | null;
@@ -1685,7 +1700,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
              rr.adults, rr.children, rr.infants,
              rr.rate_per_night::float8 AS rate_per_night,
              rr.price_total::float8 AS price_total,
-             rr.is_manual_rate, rr.rate_plan_id,
+             rr.is_manual_rate, rr.price_mode, rr.manual_total::float8 AS manual_total,
+             rr.rate_plan_id,
              COALESCE(pp.public_name, pp.name) AS rate_plan_name,
              rr.pricing_snapshot,
              rr.guest_first_name, rr.guest_last_name, rr.guest_phone,
@@ -1769,6 +1785,12 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         expected_arrival_time_source: res.expected_arrival_time_source,
         cancellation_policy: res.cancellation_policy_snapshot,
         discount_amount: res.discount_amount,
+        discount_mode: res.discount_mode,
+        discount_value: res.discount_value,
+        tax_exempt: res.tax_exempt,
+        currency: res.currency,
+        exchange_rate: res.exchange_rate,
+        rooms_total_override: res.rooms_total_override,
         extra_charges: res.extra_charges,
         total_price: res.total_price,
         paid_amount: res.paid_amount,
@@ -1797,6 +1819,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
           ratePerNight: r.rate_per_night,
           priceTotal: r.price_total,
           isManualRate: r.is_manual_rate,
+          priceMode: r.price_mode,
+          manualTotal: r.manual_total,
           ratePlanId: r.rate_plan_id,
           ratePlanName: r.rate_plan_name,
           pricingSnapshot: (r.pricing_snapshot ?? null) as StayPricingSnapshot | null,

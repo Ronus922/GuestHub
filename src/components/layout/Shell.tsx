@@ -18,6 +18,7 @@ export type NewReservationConfig = {
   workflowStatuses: LookupItem[];
   ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   vatRate: number;
+  enabledCurrencies: string[];
   canSaveCard: boolean;
   canPriceOverride: boolean;
   canCreate: boolean;

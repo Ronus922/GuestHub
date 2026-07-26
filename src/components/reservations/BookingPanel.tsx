@@ -6,8 +6,11 @@ import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, type PaymentState } from "@/lib/inventory-rules";
-import { formatVatRate, includedVatAmount } from "@/lib/vat";
 import type { LosDiscountQuote } from "@/lib/pricing/types";
+import { computeReservationTotals, type DiscountMode, type PriceMode } from "@/lib/pricing/totals";
+import {
+  BalanceBoxes, CurrencySelector, DiscountControls, StayPriceModeControls, VatToggleRow,
+} from "./PricingControls";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import { statusTintPalette } from "@/lib/colors";
 import { paymentTriplet } from "@/lib/status-colors";
@@ -63,7 +66,7 @@ function formSnapshot(
   guest: GuestForm,
   sourceId: string,
   stays: StayDraft[],
-  discount: number,
+  pricing: { discountMode: string; discountValue: number; taxExempt: boolean; currency: string },
   paid: number,
   method: string,
   notes: string,
@@ -72,7 +75,7 @@ function formSnapshot(
   cc: CardDraft,
 ): string {
   return JSON.stringify(
-    [guest, sourceId, stays, discount, paid, method, notes, arrivalTime, asDraft, cc],
+    [guest, sourceId, stays, pricing, paid, method, notes, arrivalTime, asDraft, cc],
     (k, v) => (k === "key" ? undefined : v),
   );
 }
@@ -87,6 +90,7 @@ export function BookingPanel({
   workflowStatuses = [],
   ratePlans,
   vatRate,
+  enabledCurrencies = ["ILS"],
   canSaveCard,
   canPriceOverride,
 }: {
@@ -101,6 +105,8 @@ export function BookingPanel({
   workflowStatuses?: LookupItem[];
   ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   vatRate: number;
+  /** settings.enabled_currencies (D107) — the selector renders only when >1 */
+  enabledCurrencies?: string[];
   canSaveCard: boolean;
   canPriceOverride: boolean;
 }) {
@@ -114,7 +120,12 @@ export function BookingPanel({
   const [quotes, setQuotes] = useState<
     Record<string, { total: number; restriction: string | null; losDiscount: LosDiscountQuote | null }>
   >({});
-  const [discount, setDiscount] = useState(0);
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("none");
+  const [discountValue, setDiscountValue] = useState(0);
+  const [taxExempt, setTaxExempt] = useState(false);
+  const [currency, setCurrency] = useState("ILS");
+  // manual display snapshot to the property currency (D107) — non-base only
+  const [exchangeRate, setExchangeRate] = useState<number | null>(null);
   const [paid, setPaid] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
@@ -164,7 +175,11 @@ export function BookingPanel({
     setSourceId(initialSource);
     setStays(initialStays);
     setQuotes({});
-    setDiscount(0);
+    setDiscountMode("none");
+    setDiscountValue(0);
+    setTaxExempt(false);
+    setCurrency("ILS");
+    setExchangeRate(null);
     setPaid(0);
     setMethod("");
     setNotes("");
@@ -176,12 +191,16 @@ export function BookingPanel({
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
-    snapshotRef.current = formSnapshot(EMPTY_GUEST, initialSource, initialStays, 0, 0, "", "", "", false, EMPTY_CARD);
+    snapshotRef.current = formSnapshot(
+      EMPTY_GUEST, initialSource, initialStays,
+      { discountMode: "none", discountValue: 0, taxExempt: false, currency: "ILS" },
+      0, "", "", "", false, EMPTY_CARD,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const dirty =
-    formSnapshot(guest, sourceId, stays, discount, paid, method, notes, arrivalTime, asDraft, cc) !==
+    formSnapshot(guest, sourceId, stays, { discountMode, discountValue, taxExempt, currency }, paid, method, notes, arrivalTime, asDraft, cc) !==
     snapshotRef.current;
 
   // Escape / X / overlay click route here — unsaved changes get an explicit
@@ -228,11 +247,15 @@ export function BookingPanel({
   const staysValid =
     stays.length > 0 &&
     stays.every((s) => s.roomId && s.checkIn && s.checkOut && s.checkOut > s.checkIn);
-  const roomsTotal = stays.reduce((sum, s) => {
-    const q = quotes[s.key];
+  // mode-aware committed line total (D106): manual figures are the operator's
+  // word; auto comes from the live engine quote
+  const lineTotalOf = (s: StayDraft): number => {
     const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
-    return sum + (s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0));
-  }, 0);
+    if (s.priceMode === "manual_total" && s.manualTotal != null) return s.manualTotal;
+    if ((s.priceMode === "manual_night" || (s.priceMode === undefined && s.isManualRate)) && s.ratePerNight != null)
+      return Math.round(s.ratePerNight * nights * 100) / 100;
+    return quotes[s.key]?.total ?? 0;
+  };
   // length-of-stay discounts already sit INSIDE each line total (the engine
   // applies them); this is the summary figure, shown so the operator sees what
   // the stay length gave away (D104). A manual override is never auto-discounted.
@@ -240,7 +263,25 @@ export function BookingPanel({
     (sum, s) => sum + (s.isManualRate ? 0 : quotes[s.key]?.losDiscount?.amount ?? 0),
     0,
   );
-  const total = Math.max(0, roomsTotal - discount);
+  // THE single totals source (D106) — the same pure module the server persists
+  // with; the client only feeds it state and displays the result
+  const totals = computeReservationTotals(
+    {
+      stays: stays.map((s) => ({
+        priceTotal: lineTotalOf(s),
+        nights: s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0,
+      })),
+      discountMode,
+      discountValue,
+      extraCharges: 0,
+      taxExempt,
+      vatRate,
+      currency,
+      paid,
+    },
+    { validate: false }, // live preview never throws; the server validates on save
+  );
+  const total = totals.grandTotal;
   const payState = paymentState(total, paid);
 
   // שם בעל הכרטיס = שם האורח (עד עריכה ידנית)
@@ -252,7 +293,7 @@ export function BookingPanel({
   // סכום ששולם = סה"כ לתשלום (עד עריכה ידנית / בחירת סטטוס תשלום אחר)
   useEffect(() => {
     if (paidTouched.current) return;
-    const t = Math.round(total);
+    const t = total; // exact to the agora (D106) — never round the money
     setPaid((prev) => (prev === t ? prev : t));
   }, [total]);
 
@@ -333,10 +374,13 @@ export function BookingPanel({
           adults: s.adults,
           children: s.children,
           infants: s.infants,
-          // an explicit operator-set nightly price is an authorized override
-          // (§13); otherwise the server prices through the central engine
-          ratePerNight: s.isManualRate ? s.ratePerNight : undefined,
-          isManualRate: s.isManualRate || undefined,
+          // an explicit operator-set price — nightly or total — is an
+          // authorized override (§13); otherwise the server prices through
+          // the central engine
+          ratePerNight: s.priceMode === "manual_night" || s.isManualRate ? s.ratePerNight : undefined,
+          isManualRate: (s.priceMode ? s.priceMode === "manual_night" : s.isManualRate) || undefined,
+          priceMode: s.priceMode,
+          manualTotal: s.priceMode === "manual_total" ? s.manualTotal : undefined,
           ratePlanId: s.ratePlanId ?? null,
           guestFirstName: s.guestFirstName || undefined,
           guestLastName: s.guestLastName || undefined,
@@ -344,7 +388,11 @@ export function BookingPanel({
         })),
         notes: notes.trim() || undefined,
         expectedArrivalTime: arrivalTime || null,
-        discountAmount: discount || undefined,
+        discountMode,
+        discountValue: discountValue || undefined,
+        taxExempt,
+        currency,
+        exchangeRate: currency !== (enabledCurrencies[0] ?? "ILS") ? exchangeRate : null,
         paidAmount: paid || undefined,
         paymentMethod: method || undefined,
         workflowStatusId: workflowStatusId || undefined,
@@ -674,97 +722,128 @@ export function BookingPanel({
                new-booking-step-3 + booking-window.html) ---- */}
           {step === 2 && (
             <>
-              <BookingCard icon="documents" title="פירוט תמחור">
+              <BookingCard
+                icon="documents"
+                title="תמחור ותשלום"
+                chip={
+                  <span className="flex items-center gap-3">
+                    {currency !== (enabledCurrencies[0] ?? "ILS") && (
+                      <label className="flex items-center gap-1.5 text-xs text-muted">
+                        שער המרה
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.0001"
+                          dir="ltr"
+                          aria-label="שער המרה"
+                          className="field-input ltr-num w-24 text-center"
+                          placeholder="—"
+                          value={exchangeRate ?? ""}
+                          onChange={(e) => setExchangeRate(Number(e.target.value) || null)}
+                        />
+                      </label>
+                    )}
+                    <CurrencySelector
+                      currencies={enabledCurrencies}
+                      value={currency}
+                      onChange={setCurrency}
+                    />
+                  </span>
+                }
+              >
                 {stays.map((s, i) => {
                   const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
                   const q = quotes[s.key];
-                  const autoRate = nights ? Math.round((q?.total ?? 0) / nights) : 0;
-                  const lineTotal =
-                    s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
+                  const mode: PriceMode =
+                    s.priceMode ?? (s.isManualRate ? "manual_night" : "auto");
+                  const autoRate = nights ? Math.round(((q?.total ?? 0) / nights) * 100) / 100 : 0;
                   return (
-                    <div key={s.key} className="bw-price-line">
-                      <div>
-                        <b>חדר {i + 1}</b>
-                        <div className="bw-plr">
-                          {ratePlans.length > 0 && (
-                            <select
-                              className="field-input w-40"
-                              aria-label="תוכנית תעריף"
-                              value={s.ratePlanId ?? ""}
-                              onChange={(e) =>
-                                setStays((all) =>
-                                  all.map((x) =>
-                                    x.key === s.key
-                                      ? { ...x, ratePlanId: e.target.value || null, isManualRate: false, ratePerNight: undefined }
-                                      : x,
-                                  ),
-                                )
-                              }
-                            >
-                              <option value="">מחיר בסיס</option>
-                              {ratePlans.map((p) => (
-                                <option key={p.id} value={p.id}>{p.name}</option>
-                              ))}
-                            </select>
+                    <div key={s.key} className="border-b border-line pb-4 pt-3 last:border-b-0">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <b>חדר {i + 1}</b>
+                            <span className="text-xs text-muted">
+                              <span className="ltr-num">{nights}</span> לילות
+                            </span>
+                            {ratePlans.length > 0 && (
+                              <select
+                                className="field-input w-40"
+                                aria-label="תוכנית תעריף"
+                                value={s.ratePlanId ?? ""}
+                                onChange={(e) =>
+                                  setStays((all) =>
+                                    all.map((x) =>
+                                      x.key === s.key
+                                        ? { ...x, ratePlanId: e.target.value || null, priceMode: "auto", isManualRate: false, ratePerNight: undefined, manualTotal: null }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                <option value="">מחיר בסיס</option>
+                                {ratePlans.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                          <StayPriceModeControls
+                            mode={mode}
+                            onMode={(m) =>
+                              /* switching mode keeps every entered value (SPEC
+                                 rule 6) — only the ACTIVE mode's value prices */
+                              setStays((all) =>
+                                all.map((x) =>
+                                  x.key === s.key
+                                    ? { ...x, priceMode: m, isManualRate: m === "manual_night" }
+                                    : x,
+                                ),
+                              )
+                            }
+                            nights={nights}
+                            autoRate={autoRate}
+                            autoTotal={q?.total ?? 0}
+                            ratePerNight={s.ratePerNight ?? null}
+                            onRatePerNight={(v) =>
+                              setStays((all) =>
+                                all.map((x) =>
+                                  x.key === s.key
+                                    ? { ...x, ratePerNight: v, priceMode: "manual_night", isManualRate: true }
+                                    : x,
+                                ),
+                              )
+                            }
+                            manualTotal={s.manualTotal ?? null}
+                            onManualTotal={(v) =>
+                              setStays((all) =>
+                                all.map((x) =>
+                                  x.key === s.key
+                                    ? { ...x, manualTotal: v, priceMode: "manual_total", isManualRate: false }
+                                    : x,
+                                ),
+                              )
+                            }
+                            canPriceOverride={canPriceOverride}
+                          />
+                          {/* which length-of-stay discount was chosen and how it
+                              was computed — the engine's own sentence (D104) */}
+                          {q?.losDiscount && mode === "auto" && (
+                            <p className="text-sm font-semibold text-status-success">
+                              {q.losDiscount.explanation}
+                            </p>
                           )}
-                          <span className="ltr-num">{nights}</span> לילות × ₪
-                          {canPriceOverride ? (
-                            /* explicit operator edit = authorized manual override (§13) */
-                            <input
-                              type="number"
-                              min={0}
-                              aria-label="מחיר ללילה"
-                              className="field-input ltr-num w-24 text-center"
-                              value={s.isManualRate ? (s.ratePerNight ?? 0) : autoRate}
-                              onChange={(e) =>
-                                setStays((all) =>
-                                  all.map((x) =>
-                                    x.key === s.key
-                                      ? { ...x, ratePerNight: Number(e.target.value) || 0, isManualRate: true }
-                                      : x,
-                                  ),
-                                )
-                              }
-                            />
-                          ) : (
-                            <b className="ltr-num">
-                              {(s.isManualRate ? (s.ratePerNight ?? 0) : autoRate).toLocaleString()}
-                            </b>
-                          )}
-                          / לילה
-                          {s.isManualRate && (
-                            <button
-                              type="button"
-                              className="text-xs font-semibold text-primary underline"
-                              onClick={() =>
-                                setStays((all) =>
-                                  all.map((x) =>
-                                    x.key === s.key ? { ...x, isManualRate: false, ratePerNight: undefined } : x,
-                                  ),
-                                )
-                              }
-                            >
-                              חזרה למחיר אוטומטי
-                            </button>
+                          {/* why there is NO tier on a weekly/monthly plan (D105) —
+                              silence here would read as a bug */}
+                          {!q?.losDiscount && mode === "auto" &&
+                            ratePlans.find((p) => p.id === s.ratePlanId)?.plan_kind === "derived_percentage" && (
+                            <p className="text-xs text-muted">
+                              תוכנית זו מגלמת הנחת שהייה — מדרגות הנחת LOS אינן נערמות עליה
+                            </p>
                           )}
                         </div>
-                        {/* which length-of-stay discount was chosen and how it
-                            was computed — the engine's own sentence (D104) */}
-                        {q?.losDiscount && !s.isManualRate && (
-                          <p className="mt-1.5 text-sm font-semibold text-status-success">
-                            {q.losDiscount.explanation}
-                          </p>
-                        )}
-                        {/* why there is NO tier on a weekly/monthly plan (D105) —
-                            silence here would read as a bug */}
-                        {!q?.losDiscount && !s.isManualRate &&
-                          ratePlans.find((p) => p.id === s.ratePlanId)?.plan_kind === "derived_percentage" && (
-                          <p className="mt-1.5 text-xs text-muted">
-                            תוכנית זו מגלמת הנחת שהייה — מדרגות הנחת LOS אינן נערמות עליה
-                          </p>
-                        )}
+                        <b className="ltr-num tabular-nums">₪{lineTotalOf(s).toLocaleString()}</b>
                       </div>
-                      <b className="ltr-num">₪{lineTotal.toLocaleString()}</b>
                     </div>
                   );
                 })}
@@ -774,19 +853,36 @@ export function BookingPanel({
                     <b className="ltr-num text-status-success">−₪{losDiscountTotal.toLocaleString()}</b>
                   </div>
                 )}
-                {discount > 0 && (
+                <div className="mt-4 border-t border-line pt-4">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-bold">
+                    <Icon name="tags" size={16} />
+                    הנחה
+                  </div>
+                  <DiscountControls
+                    mode={discountMode}
+                    value={discountValue}
+                    onChange={(m, v) => {
+                      setDiscountMode(m);
+                      setDiscountValue(v);
+                    }}
+                  />
+                </div>
+                <div className="bw-price-line mt-3">
+                  <span className="bw-plr">מחיר מלא</span>
+                  <b className="ltr-num tabular-nums">₪{totals.roomsTotal.toLocaleString()}</b>
+                </div>
+                {totals.discountAmount > 0 && (
                   <div className="bw-price-line">
                     <span className="bw-plr">הנחה</span>
-                    <b className="ltr-num text-status-danger">-₪{discount.toLocaleString()}</b>
+                    <b className="ltr-num text-status-danger">−₪{totals.discountAmount.toLocaleString()}</b>
                   </div>
                 )}
-                {/* informational only — the TENANT VAT rate (Settings), already included in the total */}
-                <div className="bw-price-line">
-                  <span className="bw-plr">מע״מ ({formatVatRate(vatRate)}%) — כלול</span>
-                  <b className="ltr-num text-muted">
-                    ₪{includedVatAmount(total, vatRate).toLocaleString()}
-                  </b>
-                </div>
+                <VatToggleRow
+                  vatRate={vatRate}
+                  grandTotal={total}
+                  taxExempt={taxExempt}
+                  onToggle={setTaxExempt}
+                />
                 <div className="bw-price-total">
                   <span>סה״כ לתשלום</span>
                   <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
@@ -824,7 +920,7 @@ export function BookingPanel({
                     onClick={() => {
                       setAsDraft(false);
                       paidTouched.current = true;
-                      setPaid(Math.round(total));
+                      setPaid(total);
                     }}
                   />
                   <PayChip
@@ -867,15 +963,17 @@ export function BookingPanel({
                       }}
                     />
                   </Field>
-                  <Field label="הנחה (₪)">
-                    <input
-                      type="number"
-                      min={0}
-                      className="field-input ltr-num"
-                      value={discount || ""}
-                      placeholder="0"
-                      onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))}
-                    />
+                  <Field label="יתרה לתשלום">
+                    {/* requirement 4: the balance is visible at CREATE time too */}
+                    <b
+                      className={`ltr-num tabular-nums ${
+                        totals.balance > 0 ? "text-status-danger" : totals.balance < 0 ? "text-status-success" : ""
+                      }`}
+                    >
+                      {totals.balance < 0
+                        ? `זיכוי ₪${Math.abs(totals.balance).toLocaleString()}`
+                        : `₪${totals.balance.toLocaleString()}`}
+                    </b>
                   </Field>
                 </div>
                 {/* manual card entry (D77 §15) — the area is always visible but
@@ -944,8 +1042,7 @@ export function BookingPanel({
               <div className="mt-4 flex flex-col gap-2.5">
                 {stays.map((s, i) => {
                   const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
-                  const q = quotes[s.key];
-                  const lineTotal = s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0);
+                  const lineTotal = lineTotalOf(s);
                   return (
                     <div key={s.key} className="bw-price-line bw-price-flat">
                       <div>
@@ -984,6 +1081,10 @@ export function BookingPanel({
               <div className="bw-price-total mt-2">
                 <span>סה״כ לתשלום</span>
                 <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
+              </div>
+              {/* requirement 4 + SPEC step 4: the balance strip at confirm time */}
+              <div className="mt-3">
+                <BalanceBoxes total={total} paid={paid} />
               </div>
             </BookingCard>
           )}

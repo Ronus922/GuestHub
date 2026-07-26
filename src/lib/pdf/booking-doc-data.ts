@@ -4,7 +4,7 @@ import { getReservationAction } from "@/app/(dashboard)/reservations/actions";
 import { getTenantCurrency, getTenantVatRate } from "@/lib/settings";
 import { getPublicPropertyName } from "@/lib/business/store";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
-import { includedVatAmount } from "@/lib/vat";
+import { includedVatForReservation } from "@/lib/vat";
 import { sql } from "@/lib/db";
 
 // ============================================================
@@ -183,7 +183,10 @@ export async function loadBookingDocData(
   const totalNights = stayCheckIn && stayCheckOut ? nightsBetween(stayCheckIn, stayCheckOut) : 0;
 
   const roomsSubtotal = rooms.reduce((sum, room) => sum + room.priceTotal, 0);
-  const vatAmount = includedVatAmount(r.total_price, vatRate);
+  // the invoice-facing number honors the reservation's VAT toggle (D106):
+  // a tax-exempt sale shows ₪0 VAT — includedVatForReservation is the
+  // mandated single VAT-display seam (vat.ts:37-40)
+  const vatAmount = includedVatForReservation(r.total_price, vatRate, r.tax_exempt);
   const canViewInternalNotes = hasPermission(actor, "reservations.edit");
 
   const guestFullName = [r.guest.first_name, r.guest.last_name].filter(Boolean).join(" ").trim();

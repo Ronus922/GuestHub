@@ -34,6 +34,9 @@ export type StayDraft = {
   // authorized manual override (§13) — set ONLY when the operator explicitly
   // edits the nightly price; a displayed auto price never becomes manual.
   isManualRate?: boolean;
+  // per-room price mode (D106): absent = legacy isManualRate semantics
+  priceMode?: "auto" | "manual_night" | "manual_total";
+  manualTotal?: number | null;
   // tenant-level Rate Plan; null/undefined = base pricing (מחיר בסיס)
   ratePlanId?: string | null;
   guestFirstName?: string;

@@ -4,6 +4,7 @@ import { useQueryState, parseAsStringLiteral } from "nuqs";
 import { Icon } from "@/components/shared/Icon";
 import { SETTINGS_GROUPS, SETTINGS_SECTION_KEYS, type SettingsSectionKey } from "./sections";
 import { VatSection } from "./VatSection";
+import { CurrenciesSection } from "./CurrenciesSection";
 import { ExtraGuestSection } from "./ExtraGuestSection";
 import { CancellationSection } from "./CancellationSection";
 import { PaymentSection } from "./PaymentSection";
@@ -38,12 +39,14 @@ export function SettingsShell({
   canManageMessaging,
   messaging,
   workflowStatuses,
+  enabledCurrencies,
 }: {
   /** canonical Business Profile identity line (formatPropertyIdentity) — never
    *  the internal tenants.name label */
   propertyIdentity: string;
   businessProfile: BusinessProfileContext | null;
   currency: string;
+  enabledCurrencies: string[];
   vatRate: number;
   checkInCheckOut: CheckInCheckOutSettings;
   extraGuest: ExtraGuestView;
@@ -122,6 +125,7 @@ export function SettingsShell({
             section={section}
             businessProfile={businessProfile}
             currency={currency}
+            enabledCurrencies={enabledCurrencies}
             vatRate={vatRate}
             checkInCheckOut={checkInCheckOut}
             extraGuest={extraGuest}
@@ -169,6 +173,7 @@ function SectionBody({
   section,
   businessProfile,
   currency,
+  enabledCurrencies,
   vatRate,
   checkInCheckOut,
   extraGuest,
@@ -182,6 +187,7 @@ function SectionBody({
   section: SettingsSectionKey;
   businessProfile: BusinessProfileContext | null;
   currency: string;
+  enabledCurrencies: string[];
   vatRate: number;
   checkInCheckOut: CheckInCheckOutSettings;
   extraGuest: ExtraGuestView;
@@ -196,7 +202,12 @@ function SectionBody({
     case "business":
       return businessProfile ? <BusinessProfileSection initial={businessProfile} /> : null;
     case "vat":
-      return <VatSection vatRate={vatRate} />;
+      return (
+        <>
+          <VatSection vatRate={vatRate} />
+          <CurrenciesSection baseCurrency={currency} enabled={enabledCurrencies} />
+        </>
+      );
     case "extra-guest":
       return <ExtraGuestSection value={extraGuest} currency={currency} vatRate={vatRate} />;
     case "statuses":
