@@ -7,6 +7,7 @@ import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 import { formatVatRate, includedVatAmount } from "@/lib/vat";
+import type { LosDiscountQuote } from "@/lib/pricing/types";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import { statusTintPalette } from "@/lib/colors";
 import { paymentTriplet } from "@/lib/status-colors";
@@ -98,7 +99,7 @@ export function BookingPanel({
   paymentMethods: LookupItem[];
   /** tenant workflow statuses (D77 §11) — optional explicit pick on create */
   workflowStatuses?: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   vatRate: number;
   canSaveCard: boolean;
   canPriceOverride: boolean;
@@ -110,7 +111,9 @@ export function BookingPanel({
   const [guest, setGuest] = useState<GuestForm>(EMPTY_GUEST);
   const [sourceId, setSourceId] = useState<string>("");
   const [stays, setStays] = useState<StayDraft[]>([]);
-  const [quotes, setQuotes] = useState<Record<string, { total: number; restriction: string | null }>>({});
+  const [quotes, setQuotes] = useState<
+    Record<string, { total: number; restriction: string | null; losDiscount: LosDiscountQuote | null }>
+  >({});
   const [discount, setDiscount] = useState(0);
   const [paid, setPaid] = useState(0);
   const [method, setMethod] = useState("");
@@ -212,7 +215,10 @@ export function BookingPanel({
         ratePlanId: s.ratePlanId ?? null,
       }).then((res) => {
         if (res.success && res.data) {
-          setQuotes((q) => ({ ...q, [s.key]: { total: res.data!.total, restriction: res.data!.restriction } }));
+          setQuotes((q) => ({
+            ...q,
+            [s.key]: { total: res.data!.total, restriction: res.data!.restriction, losDiscount: res.data!.losDiscount },
+          }));
         }
       });
     }
@@ -227,6 +233,13 @@ export function BookingPanel({
     const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
     return sum + (s.isManualRate && s.ratePerNight != null ? s.ratePerNight * nights : (q?.total ?? 0));
   }, 0);
+  // length-of-stay discounts already sit INSIDE each line total (the engine
+  // applies them); this is the summary figure, shown so the operator sees what
+  // the stay length gave away (D104). A manual override is never auto-discounted.
+  const losDiscountTotal = stays.reduce(
+    (sum, s) => sum + (s.isManualRate ? 0 : quotes[s.key]?.losDiscount?.amount ?? 0),
+    0,
+  );
   const total = Math.max(0, roomsTotal - discount);
   const payState = paymentState(total, paid);
 
@@ -735,11 +748,32 @@ export function BookingPanel({
                             </button>
                           )}
                         </div>
+                        {/* which length-of-stay discount was chosen and how it
+                            was computed — the engine's own sentence (D104) */}
+                        {q?.losDiscount && !s.isManualRate && (
+                          <p className="mt-1.5 text-sm font-semibold text-status-success">
+                            {q.losDiscount.explanation}
+                          </p>
+                        )}
+                        {/* why there is NO tier on a weekly/monthly plan (D105) —
+                            silence here would read as a bug */}
+                        {!q?.losDiscount && !s.isManualRate &&
+                          ratePlans.find((p) => p.id === s.ratePlanId)?.plan_kind === "derived_percentage" && (
+                          <p className="mt-1.5 text-xs text-muted">
+                            תוכנית זו מגלמת הנחת שהייה — מדרגות הנחת LOS אינן נערמות עליה
+                          </p>
+                        )}
                       </div>
                       <b className="ltr-num">₪{lineTotal.toLocaleString()}</b>
                     </div>
                   );
                 })}
+                {losDiscountTotal > 0 && (
+                  <div className="bw-price-line">
+                    <span className="bw-plr">הנחת שהייה ארוכה</span>
+                    <b className="ltr-num text-status-success">−₪{losDiscountTotal.toLocaleString()}</b>
+                  </div>
+                )}
                 {discount > 0 && (
                   <div className="bw-price-line">
                     <span className="bw-plr">הנחה</span>

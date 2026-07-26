@@ -1,6 +1,9 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { addDays, eachDay, nightsBetween, type DateOnly } from "@/lib/dates";
+import { stayLimit } from "@/lib/rates/rules";
+import { resolveLosDiscount } from "@/lib/pricing/los";
+import type { LosDiscountQuote, LosDiscountTier } from "@/lib/pricing/types";
 import { EXCLUDED_SU_CODES, PUBLIC_TENANT_ID } from "./config";
 
 // ============================================================
@@ -44,7 +47,11 @@ export type BookableUnit = {
   suId: string;
   roomId: string;
   code: string;
+  /** what the guest pays for the stay — accommodation MINUS the length-of-stay discount */
   totalPrice: number;
+  /** accommodation before the discount (D104) */
+  accommodationSubtotal: number;
+  losDiscount: LosDiscountQuote | null;
   nightly: Array<{ date: DateOnly; price: number }>;
 };
 
@@ -57,6 +64,7 @@ export type RoomTypeAvailability = {
   // cheapest bookable unit for the whole stay (null when sold out)
   totalPrice: number | null;
   pricePerNight: number | null;
+  losDiscount: LosDiscountQuote | null;
   nightly: Array<{ date: DateOnly; price: number }>;
   // booking-time detail, sorted (totalPrice ASC, code ASC) — the deterministic
   // room-selection order, so the quoted "from" price is exactly what gets booked
@@ -107,6 +115,26 @@ export async function publicAvailability(
     FROM guesthub.effective_sell_state(${PUBLIC_TENANT_ID}, ${checkIn}, ${toPlusOne})`;
   const essByKey = new Map(ess.map((r) => [`${r.sellable_unit_id}|${r.day}`, r]));
 
+  // Length-of-stay tiers (D104). The public site sells the base layer, so it
+  // reads the tenant-default tiers — the same rows, through the same resolver,
+  // that priceReservationStays will apply when this quote turns into a booking.
+  // Quoting the undiscounted price here and charging the discounted one there
+  // (or the reverse) is exactly the disagreement this surface must not create.
+  const losRows = await db<{
+    id: string; pricing_plan_id: string | null; name: string;
+    min_nights: number; max_nights: number | null;
+    discount_kind: LosDiscountTier["kind"]; discount_value: number; is_active: boolean;
+  }[]>`
+    SELECT id, pricing_plan_id, name, min_nights, max_nights,
+           discount_kind, discount_value::float8 AS discount_value, is_active
+    FROM guesthub.length_of_stay_discounts
+    WHERE tenant_id = ${PUBLIC_TENANT_ID} AND is_active`;
+  const losTiers: LosDiscountTier[] = losRows.map((r) => ({
+    id: r.id, pricingPlanId: r.pricing_plan_id, name: r.name,
+    minNights: r.min_nights, maxNights: r.max_nights,
+    kind: r.discount_kind, value: r.discount_value, isActive: r.is_active,
+  }));
+
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
   const byType = new Map<string, RoomTypeAvailability>();
@@ -125,6 +153,7 @@ export async function publicAvailability(
         availableUnits: 0,
         totalPrice: null,
         pricePerNight: null,
+        losDiscount: null,
         nightly: [],
         units: [],
       };
@@ -139,13 +168,16 @@ export async function publicAvailability(
       if (
         !row || !row.sellable || row.availability < 1 || row.stop_sell ||
         row.price == null ||
-        nights < (row.min_stay_through ?? 1)
+        nights < (stayLimit(row.min_stay_through) ?? 1)
       ) { ok = false; break; }
       if (day === checkIn) {
+        // stayLimit: NULL and 0 alike mean "no limit" (D104) — a stored 0 must
+        // never read as a rule that rejects every stay
+        const maxStay = stayLimit(row.max_stay);
         if (
           row.closed_to_arrival ||
-          nights < (row.min_stay_arrival ?? 1) ||
-          (row.max_stay != null && nights > row.max_stay)
+          nights < (stayLimit(row.min_stay_arrival) ?? 1) ||
+          (maxStay != null && nights > maxStay)
         ) { ok = false; break; }
       }
       nightly.push({ date: day, price: round2(row.price) });
@@ -154,11 +186,19 @@ export async function publicAvailability(
     if (ok && departure?.closed_to_departure) ok = false;
     if (!ok) continue;
 
+    const accommodationSubtotal = round2(nightly.reduce((s, n) => s + n.price, 0));
+    const losDiscount = resolveLosDiscount(losTiers, {
+      ratePlanId: null, // the public site sells the base layer
+      nights,
+      accommodationSubtotal,
+    });
     type.units.push({
       suId: u.su_id,
       roomId: u.room_id,
       code: u.code,
-      totalPrice: round2(nightly.reduce((s, n) => s + n.price, 0)),
+      totalPrice: round2(accommodationSubtotal - (losDiscount?.amount ?? 0)),
+      accommodationSubtotal,
+      losDiscount,
       nightly,
     });
   }
@@ -170,6 +210,7 @@ export async function publicAvailability(
     if (cheapest) {
       type.totalPrice = cheapest.totalPrice;
       type.pricePerNight = round2(cheapest.totalPrice / nights);
+      type.losDiscount = cheapest.losDiscount;
       type.nightly = cheapest.nightly;
     }
   }

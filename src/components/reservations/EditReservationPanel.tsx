@@ -68,7 +68,7 @@ export function EditReservationPanel({
   onClose: () => void;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   statusItems: LookupItem[];
   /** tenant workflow statuses (D77 §11) — active ones, DB colors */
   workflowStatuses?: LookupItem[];
@@ -847,6 +847,21 @@ export function EditReservationPanel({
                         <span className="ltr-num">{Math.round(s.ratePerNight ?? 0).toLocaleString()}</span>
                         {s.isManualRate && <span className="text-xs font-semibold text-primary">· מחיר ידני</span>}
                       </div>
+                      {/* the length-of-stay tier this stay was SOLD with, read
+                          from its stored snapshot — editing the tier later never
+                          rewrites what a committed reservation says (D104) */}
+                      {loadedRoom?.pricingSnapshot?.losDiscount && (
+                        <p className="mt-1.5 text-sm font-semibold text-status-success">
+                          {loadedRoom.pricingSnapshot.losDiscount.explanation}
+                        </p>
+                      )}
+                      {/* why there is NO tier on a weekly/monthly plan (D105) */}
+                      {!loadedRoom?.pricingSnapshot?.losDiscount && !s.isManualRate &&
+                        ratePlans.find((p) => p.id === s.ratePlanId)?.plan_kind === "derived_percentage" && (
+                        <p className="mt-1.5 text-xs text-muted">
+                          תוכנית זו מגלמת הנחת שהייה — מדרגות הנחת LOS אינן נערמות עליה
+                        </p>
+                      )}
                     </div>
                     <b className="ltr-num">₪{Math.round(line).toLocaleString()}</b>
                   </div>

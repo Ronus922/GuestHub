@@ -54,7 +54,7 @@ export function NewReservationProvider({
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
   workflowStatuses: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   vatRate: number;
   canSaveCard: boolean;
   canPriceOverride: boolean;

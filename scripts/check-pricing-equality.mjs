@@ -249,6 +249,26 @@ try {
       ok("weekend stay: weekend base prices flow through the derived plan identically");
     }
 
+    // ---- 3b: a length-of-stay discount reaches the SAVED reservation (D104) ----
+    // The engine applies it, so the seam that commits the stay must store the
+    // chosen tier and its arithmetic — that is how a reservation explains its
+    // own price months later, after the tier itself was edited or deleted.
+    await scenario(tx, async (sp) => {
+      await sp`
+        INSERT INTO guesthub.length_of_stay_discounts
+          (tenant_id, pricing_plan_id, name, min_nights, discount_kind, discount_value)
+        VALUES (${f.T}, NULL, 'תעריף שבועי', 3, 'percent', 10)`;
+      const stay = { roomId: f.R1.roomId, ratePlanId: f.FLEX, checkIn: "2027-03-13", checkOut: "2027-03-16", ...G };
+      const { res } = await assertEquality(sp, f, stay, "long-stay discount");
+      // 700 + 500 + 500 = 1700 accommodation → −10% → 1530
+      assert.equal(res.pricingSnapshot.accommodationSubtotal, 1700);
+      assert.equal(res.pricingSnapshot.losDiscount.name, "תעריף שבועי");
+      assert.equal(res.pricingSnapshot.losDiscount.amount, 170);
+      assert.equal(res.priceTotal, 1530);
+      assert.match(res.pricingSnapshot.losDiscount.explanation, /תעריף שבועי/);
+      ok("length-of-stay discount: applied by the engine, stored in the reservation snapshot with its arithmetic");
+    });
+
     // ---- 4: date-specific override row wins on both surfaces ----
     {
       const { res } = await assertEquality(tx, f, { roomId: f.R1.roomId, ratePlanId: f.FLEX, checkIn: IN, checkOut: OUT, ...G }, "override");

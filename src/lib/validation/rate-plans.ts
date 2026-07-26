@@ -156,6 +156,34 @@ export const simulateQuoteSchema = z.object({
     .max(10, "עד 10 חדרים בסימולציה"),
 });
 
+// ---- length-of-stay discount tiers (D104) ----
+// The DB carries the same CHECKs (migration 055) — this is the friendly layer,
+// not the only one: a bad tier can never reach the pricing engine either way.
+export const losDiscountSaveSchema = z
+  .object({
+    id: z.uuid().optional(),
+    // null = tenant default: base pricing (מחיר בסיס) and every plan with no tiers
+    pricingPlanId: z.uuid("תוכנית תעריף לא תקינה").nullable(),
+    name: z.string().trim().min(1, "נדרש שם להנחה").max(60),
+    minNights: z.number().int().min(1, "מינימום לילה אחד").max(3650),
+    maxNights: z.number().int().min(1).max(3650).nullable(),
+    kind: z.enum(["percent", "amount_per_night", "amount_per_stay"]),
+    value: z.number().positive("ערך ההנחה חייב להיות חיובי").max(1_000_000),
+    isActive: z.boolean(),
+  })
+  .refine((t) => t.maxNights == null || t.maxNights >= t.minNights, {
+    message: "מקסימום הלילות חייב להיות גדול או שווה למינימום",
+    path: ["maxNights"],
+  })
+  .refine((t) => t.kind !== "percent" || t.value <= 100, {
+    message: "אחוז הנחה לא יכול לעלות על 100",
+    path: ["value"],
+  });
+
+export const losDiscountDeleteSchema = z.object({ id: z.uuid() });
+
+export type LosDiscountSaveInput = z.infer<typeof losDiscountSaveSchema>;
+
 export type RatePlanSaveInput = z.infer<typeof ratePlanSaveSchema>;
 export type RatePlanOverridesInput = z.infer<typeof ratePlanOverridesSchema>;
 export type SimulateQuoteInput = z.infer<typeof simulateQuoteSchema>;

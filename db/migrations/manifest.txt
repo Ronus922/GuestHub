@@ -62,3 +62,4 @@
 054_external_column_rename.sql
 055_booking_com_channel_reports.sql
 056_source_system.sql
+057_length_of_stay_discounts.sql

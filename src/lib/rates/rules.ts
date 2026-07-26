@@ -62,10 +62,12 @@ export function stayRestrictionViolationStructured(
   const arrival = byDate.get(stay.checkIn);
   if (arrival) {
     if (arrival.closed_to_arrival) return { code: "CLOSED_ON_ARRIVAL", date: stay.checkIn };
-    if (arrival.min_stay_arrival != null && nightsCount < arrival.min_stay_arrival)
-      return { code: "MIN_STAY_NOT_MET", date: stay.checkIn, required: arrival.min_stay_arrival, scope: "arrival" };
-    if (arrival.max_stay != null && nightsCount > arrival.max_stay)
-      return { code: "MAX_STAY_EXCEEDED", date: stay.checkIn, limit: arrival.max_stay };
+    const minArrival = stayLimit(arrival.min_stay_arrival);
+    const maxStay = stayLimit(arrival.max_stay);
+    if (minArrival != null && nightsCount < minArrival)
+      return { code: "MIN_STAY_NOT_MET", date: stay.checkIn, required: minArrival, scope: "arrival" };
+    if (maxStay != null && nightsCount > maxStay)
+      return { code: "MAX_STAY_EXCEEDED", date: stay.checkIn, limit: maxStay };
   }
 
   const departure = byDate.get(stay.checkOut);
@@ -78,8 +80,9 @@ export function stayRestrictionViolationStructured(
   for (const d of stay.nights) {
     const row = byDate.get(d);
     if (row?.stop_sell) return { code: "STOP_SELL", date: d };
-    if (row?.min_stay_through != null && row.min_stay_through > maxThrough) {
-      maxThrough = row.min_stay_through;
+    const through = stayLimit(row?.min_stay_through);
+    if (through != null && through > maxThrough) {
+      maxThrough = through;
       maxThroughDate = d;
     }
   }
@@ -117,6 +120,14 @@ export function stayRestrictionViolation(
 // read model it already holds.
 export type NightsRuleRow = Pick<PlanRateRow, "min_stay_arrival" | "min_stay_through" | "max_stay">;
 
+// THE stay-length limit reader (D104). NULL and 0 both mean "no limit": the
+// Group Update clears a restriction by writing NULL, and channel/import payloads
+// conventionally send 0 for "unlimited" — read literally, a 0 would be a rule
+// that rejects every possible stay. Only a positive number is a real limit.
+export function stayLimit(v: number | null | undefined): number | null {
+  return v != null && v > 0 ? v : null;
+}
+
 // Focused stay-LENGTH check: a deliberate SUBSET of stayRestrictionViolation-
 // Structured that evaluates ONLY min_stay_arrival, min_stay_through and max_stay
 // — NOT the commercial CTA / CTD / stop_sell gates. Front-desk staff may still
@@ -132,17 +143,19 @@ export function nightsRuleViolation(
 
   const arrival = byDate.get(stay.checkIn);
   if (arrival) {
-    if (arrival.min_stay_arrival != null && nightsCount < arrival.min_stay_arrival)
-      return { code: "MIN_STAY_NOT_MET", date: stay.checkIn, required: arrival.min_stay_arrival, scope: "arrival" };
-    if (arrival.max_stay != null && nightsCount > arrival.max_stay)
-      return { code: "MAX_STAY_EXCEEDED", date: stay.checkIn, limit: arrival.max_stay };
+    const minArrival = stayLimit(arrival.min_stay_arrival);
+    const maxStay = stayLimit(arrival.max_stay);
+    if (minArrival != null && nightsCount < minArrival)
+      return { code: "MIN_STAY_NOT_MET", date: stay.checkIn, required: minArrival, scope: "arrival" };
+    if (maxStay != null && nightsCount > maxStay)
+      return { code: "MAX_STAY_EXCEEDED", date: stay.checkIn, limit: maxStay };
   }
 
   // min_stay_through is the strictest through-min across the occupied nights.
   let maxThrough = 0;
   let maxThroughDate = stay.checkIn;
   for (const d of stay.nights) {
-    const t = byDate.get(d)?.min_stay_through;
+    const t = stayLimit(byDate.get(d)?.min_stay_through);
     if (t != null && t > maxThrough) {
       maxThrough = t;
       maxThroughDate = d;

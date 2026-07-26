@@ -17,6 +17,8 @@ import {
 import { RatePlanWizard } from "./RatePlanWizard";
 import { OverridesPanel } from "./OverridesPanel";
 import { SimulatorPanel } from "./SimulatorPanel";
+import { LosDiscountsPanel } from "./LosDiscountsPanel";
+import type { BookableRatePlan, LosDiscountRow } from "@/lib/rate-plans/service";
 
 // ============================================================
 // Rate Plans board (spec §18–§21). Card list over the server-ordered plans
@@ -39,12 +41,17 @@ type RefundFilter = "all" | "refundable" | "nonref";
 export function RatePlansScreen({
   plans,
   units,
+  losDiscounts,
+  bookablePlans,
   cancellationPolicies,
   paymentPolicies,
   can,
 }: {
   plans: RatePlanListItem[];
   units: AssignableUnit[];
+  /** length-of-stay tiers (D104) — the commercial rule THE engine prices with */
+  losDiscounts: LosDiscountRow[];
+  bookablePlans: BookableRatePlan[];
   cancellationPolicies: PolicyOption[];
   paymentPolicies: PolicyOption[];
   can: RatePlansCan;
@@ -58,6 +65,7 @@ export function RatePlansScreen({
   const [wizard, setWizard] = useState<{ detail: RatePlanDetail | null } | null>(null);
   const [overridesFor, setOverridesFor] = useState<RatePlanListItem | null>(null);
   const [simOpen, setSimOpen] = useState(false);
+  const [losOpen, setLosOpen] = useState(false);
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null);
 
   const needle = q.trim().toLowerCase();
@@ -124,6 +132,11 @@ export function RatePlansScreen({
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
+        <button type="button" className="btn btn-secondary" onClick={() => setLosOpen(true)}>
+          <Icon name="tags" size={20} />
+          הנחות אורך שהייה
+          {losDiscounts.length > 0 && <span className="chip chip-neutral">{losDiscounts.length}</span>}
+        </button>
         {can.simulate && (
           <button type="button" className="btn btn-secondary" onClick={() => setSimOpen(true)}>
             <Icon name="calculator" size={20} />
@@ -264,6 +277,13 @@ export function RatePlansScreen({
       )}
 
       <SimulatorPanel open={simOpen} onClose={() => setSimOpen(false)} units={units} plans={plans} />
+      <LosDiscountsPanel
+        open={losOpen}
+        onClose={() => setLosOpen(false)}
+        discounts={losDiscounts}
+        plans={bookablePlans}
+        canEdit={can.edit}
+      />
     </div>
   );
 }

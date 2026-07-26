@@ -133,6 +133,36 @@ export type PriceSource =
 
 export type AdjustmentSource = "assignment_adjustment" | "plan_adjustment";
 
+// ---- length-of-stay discounts (D104) ----
+export type LosDiscountKind = "percent" | "amount_per_night" | "amount_per_stay";
+
+/** a configured tier (length_of_stay_discounts row), plan-scoped or tenant-default */
+export type LosDiscountTier = {
+  id: string;
+  pricingPlanId: string | null; // null = tenant default
+  name: string;
+  minNights: number;
+  maxNights: number | null;
+  kind: LosDiscountKind;
+  value: number;
+  isActive: boolean;
+};
+
+/** the tier a stay actually won, with the arithmetic that produced the amount */
+export type LosDiscountQuote = {
+  id: string;
+  name: string;
+  kind: LosDiscountKind;
+  value: number;
+  minNights: number;
+  maxNights: number | null;
+  scope: "rate_plan" | "tenant_default";
+  nights: number;
+  basis: number;  // accommodation subtotal the discount was computed on
+  amount: number; // money taken off (positive)
+  explanation: string; // the exact sentence every surface shows
+};
+
 export type NightQuote = {
   date: DateOnly;
   basePrice: number | null; // resolved base room-night price (base layer)
@@ -168,7 +198,9 @@ export type RoomQuote = {
   extraGuestPerStay: number; // one-time extra charge (0 when per_night)
   extraGuestTotal: number;
   nights: NightQuote[];
-  roomSubtotal: number; // gross (VAT-inclusive), sum of night totals + per-stay extras
+  accommodationSubtotal: number; // resolved nightly prices only — the discount basis
+  losDiscount: LosDiscountQuote | null; // the length-of-stay tier this stay won
+  roomSubtotal: number; // gross (VAT-inclusive): night totals + per-stay extras − LOS discount
   available: boolean; // physical availability verdict for this room
   valid: boolean;
   errors: PricingError[];
@@ -190,6 +222,7 @@ export type PricingQuoteResult = {
   subtotalNet: number;
   vatRate: number;
   vatAmount: number;
+  losDiscountTotal: number; // sum of the per-room length-of-stay discounts (D104)
   totalGross: number;
   priceIncludesVat: true; // project canonical: totals are VAT-inclusive (D41)
   roundingPolicy: string;

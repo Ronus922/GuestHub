@@ -21,6 +21,7 @@ import {
   type StayPricingSnapshot,
 } from "@/lib/pricing/reservation-pricing";
 import { calculateReservationPrice } from "@/lib/pricing/engine";
+import type { LosDiscountQuote } from "@/lib/pricing/types";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { loadCollectionView, type CollectionView } from "@/lib/payments/collection";
 import {
@@ -1212,6 +1213,8 @@ export async function getStayQuoteAction(args: {
   vatRate: number;
   vatAmount: number;
   extraGuestTotal: number;
+  accommodationSubtotal: number;
+  losDiscount: LosDiscountQuote | null;
   nightly: { date: string; price: number | null }[];
 }>> {
   try {
@@ -1253,6 +1256,8 @@ export async function getStayQuoteAction(args: {
         vatRate: quote.vatRate,
         vatAmount: quote.vatAmount,
         extraGuestTotal: rq.extraGuestTotal,
+        accommodationSubtotal: rq.accommodationSubtotal,
+        losDiscount: rq.losDiscount,
         nightly: rq.nights.map((n) => ({ date: n.date, price: n.nightTotal })),
       },
     };

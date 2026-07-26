@@ -150,7 +150,7 @@ export function ReservationsScreen({
   paymentMethods: LookupItem[];
   workflowStatuses: LookupItem[];
   statusItems: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   rooms: { id: string; room_number: string }[];
   can: {
     edit: boolean;

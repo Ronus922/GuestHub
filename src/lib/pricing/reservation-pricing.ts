@@ -4,7 +4,7 @@ import { nightsBetween, type DateOnly } from "@/lib/dates";
 import { resolveStayPrice } from "@/lib/rates/rules";
 import { calculateReservationPrice } from "./engine";
 import type {
-  PricingError, PricingErrorCode, PricingQuoteResult, QuoteSource, RoomQuote,
+  LosDiscountQuote, PricingError, PricingErrorCode, PricingQuoteResult, QuoteSource, RoomQuote,
 } from "./types";
 
 // ============================================================
@@ -90,6 +90,11 @@ export type StayPricingSnapshot = {
     extraGuestAmount: number;
     nightTotal: number | null;
   }>;
+  accommodationSubtotal: number;
+  // the length-of-stay tier this stay won, with the arithmetic that produced it
+  // (D104) — stored, never recomputed: a tier edited next month must not change
+  // how a committed reservation explains its own price
+  losDiscount: LosDiscountQuote | null;
   roomSubtotal: number;
   priceSourcesUsed: string[];
   manualOverride: { ratePerNight: number; appliedBy: string | null } | null;
@@ -193,6 +198,8 @@ export function buildStaySnapshot(
       extraGuestAmount: n.extraGuestAmount,
       nightTotal: n.nightTotal,
     })),
+    accommodationSubtotal: rq.accommodationSubtotal,
+    losDiscount: rq.losDiscount,
     roomSubtotal: rq.roomSubtotal,
     priceSourcesUsed: rq.priceSourcesUsed,
     manualOverride:
