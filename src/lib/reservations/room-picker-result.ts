@@ -23,3 +23,16 @@ export function roomsFromResult<R>(res: ActionResult<R[]> | null): RoomsFetchOut
   if (res.data.length === 0) return { rooms: [], error: NO_ROOMS_AVAILABLE };
   return { rooms: res.data, error: null };
 }
+
+// The quote is MONEY read aloud to a guest: stricter than the room list. A
+// quote renders only from a success-with-data response for the range on
+// screen; every other outcome (failure, rejection, missing data) yields
+// quote:null — so no number can render — plus the reason.
+export type QuoteFetchOutcome<Q> = { quote: Q | null; error: string | null };
+
+export const QUOTE_FETCH_FAILED = "חישוב המחיר נכשל — אין מחיר תקף לטווח שנבחר";
+
+export function quoteFromResult<Q>(res: ActionResult<Q> | null): QuoteFetchOutcome<Q> {
+  if (res?.success && res.data) return { quote: res.data, error: null };
+  return { quote: null, error: res && !res.success && res.error ? res.error : QUOTE_FETCH_FAILED };
+}
