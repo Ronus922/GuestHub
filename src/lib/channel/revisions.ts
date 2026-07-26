@@ -205,6 +205,9 @@ async function attachStagedCard(
       is_virtual = EXCLUDED.is_virtual,
       available_from = COALESCE(EXCLUDED.available_from, guesthub.reservation_cards.available_from),
       available_until = COALESCE(EXCLUDED.available_until, guesthub.reservation_cards.available_until),
+      -- same defect class as card-ingest (audit §9 defect 1): the staged card
+      -- replaces the PAN, so a CVV keyed in for the previous card must go
+      cvv_encrypted = NULL,
       received_at = now(),
       updated_at = now()
     RETURNING id`;

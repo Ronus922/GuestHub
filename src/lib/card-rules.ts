@@ -218,8 +218,11 @@ function expDisplay(month: number | null, year: number | null): string {
 //   "fresh"    — a genuinely internal reservation with nothing stored: the
 //                empty form is direct manual entry.
 //
-// The payment method is deliberately NOT an input — it can never decide,
-// lock, or unlock the card section.
+// The payment method is still NOT an input to THIS resolver — the machine
+// stays pure. The UI layer adds a ONE-directional coupling on top (D108):
+// selecting "כרטיס אשראי" with no usable card sets manualEntry (the fields
+// open for typing immediately); no method selection ever locks, hides, or
+// wipes the section, and a stored card is never auto-replaced by it.
 // ============================================================
 export type CardMode = "existing" | "external_unavailable" | "manual" | "fresh";
 

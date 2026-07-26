@@ -18,7 +18,10 @@ import {
   createReservationAction,
   searchGuestsAction,
   getStayQuoteAction,
+  previewCancellationPolicyAction,
 } from "@/app/(dashboard)/reservations/actions";
+import type { CancellationPolicySnapshot } from "@/lib/commercial/policy-snapshot";
+import { CancellationSnapshotView } from "./EditReservationPanel";
 import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
@@ -139,6 +142,9 @@ export function BookingPanel({
   const [cc, setCc] = useState<CardDraft>(EMPTY_CARD);
   // workflow status (D77 §11) — "" = tenant default, applied server-side
   const [workflowStatusId, setWorkflowStatusId] = useState("");
+  // the AT-BOOKING cancellation policy preview (SPEC step 4, ס-7) — the same
+  // resolver the create action snapshots with
+  const [policyPreview, setPolicyPreview] = useState<CancellationPolicySnapshot | null>(null);
   const paidRef = useRef<HTMLInputElement | null>(null);
   // ברירות מחדל אוטומטיות: שם בעל הכרטיס נגזר משם האורח, וסכום ששולם נגזר
   // מהסה"כ — עד שהמשתמש עורך את השדה ידנית, ואז המערכת מפסיקה לדרוס אותו
@@ -297,6 +303,18 @@ export function BookingPanel({
     setPaid((prev) => (prev === t ? prev : t));
   }, [total]);
 
+  useEffect(() => {
+    if (step !== 3) return;
+    let alive = true;
+    previewCancellationPolicyAction(stays[0]?.ratePlanId ?? null).then((res) => {
+      if (alive) setPolicyPreview(res.success && res.data ? res.data : null);
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, stays[0]?.ratePlanId]);
+
   const stepValid = useMemo(() => {
     if (step === 0) return guest.firstName.trim() !== "" && guest.lastName.trim() !== "" && guest.phone.trim() !== "";
     if (step === 1) return staysValid;
@@ -415,7 +433,6 @@ export function BookingPanel({
           expYear: exp.year,
           cvv: cc.cvv || undefined,
           source: cc.source,
-          billingNotes: cc.billingNotes.trim() || undefined,
         });
         if (!saved.success) toast.error(`ההזמנה נוצרה, אך שמירת הכרטיס נכשלה: ${saved.error}`);
       }
@@ -1086,6 +1103,14 @@ export function BookingPanel({
               <div className="mt-3">
                 <BalanceBoxes total={total} paid={paid} />
               </div>
+            </BookingCard>
+          )}
+
+          {/* cancellation policy BELOW the notes (SPEC step 4 / complaint 11):
+              the exact terms the create action will freeze into the snapshot */}
+          {step === 3 && policyPreview && (
+            <BookingCard icon="documents" title="מדיניות ביטול">
+              <CancellationSnapshotView snap={policyPreview} />
             </BookingCard>
           )}
         </div>

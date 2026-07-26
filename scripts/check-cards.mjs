@@ -216,9 +216,16 @@ assert.ok(/clipboard\.writeText/.test(cardFields), "revealed values are copyable
 
 const booking = src("src/components/reservations/BookingPanel.tsx");
 const editPanel = src("src/components/reservations/EditReservationPanel.tsx");
+// The VAT line moved into the ONE shared control (PricingControls.VatToggleRow,
+// D106) — both panels render it with the tenant rate; the shared control is the
+// single place the percentage is formatted, through the tax_exempt-aware seam.
+const pricingControls = src("src/components/reservations/PricingControls.tsx");
+assert.ok(/formatVatRate\(vatRate\)/.test(pricingControls) && /includedVatForReservation\(/.test(pricingControls),
+  "VatToggleRow formats the tenant rate through includedVatForReservation");
 for (const [name, s] of [["BookingPanel", booking], ["EditReservationPanel", editPanel]]) {
   assert.ok(!/17\s*%|VAT_RATE|0\.17/.test(s), `${name}: no hardcoded VAT percentage`);
-  assert.ok(/formatVatRate\(vatRate\)/.test(s), `${name}: VAT line reads the tenant setting`);
+  assert.ok(/<VatToggleRow[\s\S]{0,200}vatRate=\{vatRate\}/.test(s),
+    `${name}: the VAT row renders from the tenant setting via the shared control`);
   assert.ok(/cvv: cc\.cvv/.test(s), `${name}: the save payload forwards the entered CVV (D87)`);
 }
 assert.ok(/saveReservationCardAction/.test(booking) && /setCc\(EMPTY_CARD\)/.test(booking),
@@ -227,7 +234,12 @@ assert.ok(/saveReservationCardAction/.test(booking) && /setCc\(EMPTY_CARD\)/.tes
 // ---- channel card ingest: encrypt PAN on ingest, NEVER a CVV, never log ----
 const cardIngest = src("src/lib/channel/card-ingest.ts");
 assert.ok(/encryptPan\(/.test(cardIngest), "channel PAN is encrypted immediately on ingest");
-assert.ok(!/encryptCvv|cvv_encrypted/.test(cardIngest), "channel ingest NEVER stores a CVV (D52 §2)");
+// D52 §2 still holds: the ingest never ENCRYPTS or WRITES a CVV value. The one
+// permitted mention is `cvv_encrypted = NULL` — the V2 fix that CLEARS a stale
+// manual CVV when a channel re-ingest replaces the PAN (audit §9 defect 1).
+assert.ok(!/encryptCvv/.test(cardIngest), "channel ingest NEVER encrypts a CVV (D52 §2)");
+assert.ok(!/cvv_encrypted(?!\s*=\s*NULL)/i.test(cardIngest.replace(/--[^\n]*/g, "")),
+  "the only cvv_encrypted mention in the ingest SQL is the NULL-clearing SET");
 assert.ok(!/console\.(log|info|debug)/.test(cardIngest), "channel ingest never logs card data");
 assert.ok(/source_channel/.test(cardIngest) && /provider_reservation_ref/.test(cardIngest),
   "channel + original OTA reservation reference are retained");

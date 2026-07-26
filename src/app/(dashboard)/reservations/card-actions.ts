@@ -185,6 +185,12 @@ export async function saveReservationCardAction(raw: {
           source = EXCLUDED.source,
           source_channel = NULL,
           is_virtual = false,
+          -- a manual replacement is a DIFFERENT card: the previous (channel)
+          -- card's charge window and provider ref must not survive onto it —
+          -- they would render as the new card's "חלון חיוב" (audit §9 defect 2)
+          available_from = NULL,
+          available_until = NULL,
+          provider_reservation_ref = NULL,
           billing_notes = EXCLUDED.billing_notes,
           received_at = EXCLUDED.received_at,
           updated_by = ${actor.userId},

@@ -1438,6 +1438,22 @@ export async function getAvailableRoomsAction(args: {
 // dblclick default-checkout rule) — THE central engine, read-only. The same
 // calculation the save path commits, so the preview can never disagree with
 // the stored price.
+// The policy card of the CREATE flow (SPEC step 4, ס-7): the same resolver
+// the create action snapshots with, so what the operator reads before "צור
+// הזמנה" is exactly what the reservation will freeze (034).
+export async function previewCancellationPolicyAction(
+  ratePlanId: string | null,
+): Promise<ActionResult<CancellationPolicySnapshot | null>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "reservations.create");
+    const snap = await resolveCancellationSnapshot(sql, actor.tenantId, ratePlanId);
+    return { success: true, data: snap };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
 export async function getStayQuoteAction(args: {
   roomId: string;
   checkIn: DateOnly;

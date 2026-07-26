@@ -1,5 +1,5 @@
 import "server-only";
-import type { TransactionSql } from "postgres";
+import type { Sql, TransactionSql } from "postgres";
 import type { CancellationTier } from "./cancellation";
 import type { OtaCancellationTerms } from "@/lib/channel/booking-normalize";
 
@@ -42,7 +42,7 @@ export type CancellationPolicySnapshot = {
 };
 
 async function snapshotFromTemplate(
-  tx: TransactionSql,
+  tx: Sql | TransactionSql,
   tenantId: string,
   policyId: string,
   source: "rate_plan" | "property_default",
@@ -74,7 +74,7 @@ async function snapshotFromTemplate(
  * (OTA terms take precedence over this — the import path checks them first.)
  */
 export async function resolveCancellationSnapshot(
-  tx: TransactionSql,
+  tx: Sql | TransactionSql,
   tenantId: string,
   ratePlanId: string | null | undefined,
 ): Promise<CancellationPolicySnapshot | null> {

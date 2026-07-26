@@ -101,6 +101,9 @@ export function EditReservationPanel({
   // both render read-only in the canonical fields until the operator explicitly
   // chooses to key a card in ("החלף כרטיס" / "הזנת כרטיס ידנית במקום").
   const [replacingCard, setReplacingCard] = useState(false);
+  // card-save failure shown INLINE in the card section (role="alert") — a
+  // swallowed/missed failure is exactly complaint 8; cleared on the next try
+  const [cardError, setCardError] = useState<string | null>(null);
   const [cardBusy, startCardBusy] = useTransition();
   const [saving, startSaving] = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -271,11 +274,12 @@ export function EditReservationPanel({
   };
 
   // The payment-method selector registers PAYMENTS (additionalPayment +
-  // paymentMethod on save). It is fully decoupled from the card section:
-  // storing/replacing card details is governed ONLY by the card section's own
-  // mode (replacingCard / resolveCardView) — the method never unlocks, locks,
-  // or wipes the card fields here. (§15's method-gated entry remains only in
-  // the NEW-reservation flow, BookingPanel.)
+  // paymentMethod on save). Coupling to the card section is ONE-directional
+  // (D108, רונן תלונה 7): choosing "כרטיס אשראי" when no usable card exists
+  // (external_unavailable / fresh) ENTERS manual entry so the fields open for
+  // typing immediately — the hidden toggle is no longer the only way in.
+  // Choosing any other method never locks, hides, or wipes the card section,
+  // and a stored card is never auto-replaced by a method click.
 
   const staysValid =
     stays.length > 0 &&
@@ -420,6 +424,7 @@ export function EditReservationPanel({
   const saveCard = () =>
     startCardBusy(async () => {
       if (!detail || ccStateForSave !== "valid") return;
+      setCardError(null);
       const exp = parseExpiry(cc.exp)!;
       const res = await saveReservationCardAction({
         reservationId: detail.id,
@@ -430,16 +435,18 @@ export function EditReservationPanel({
         expYear: exp.year,
         cvv: cc.cvv || undefined,
         source: cc.source,
-        billingNotes: cc.billingNotes.trim() || undefined,
       });
       if (res.success && res.data) {
         // raw values are cleared; only masked metadata remains client-side
         setCc(EMPTY_CARD);
         setCardMeta(res.data);
         setReplacingCard(false);
+        setCardError(null);
         toast.success("הכרטיס נשמר מוצפן");
       } else {
-        toast.error(res.success ? "שמירת הכרטיס נכשלה" : res.error);
+        const msg = res.success ? "שמירת הכרטיס נכשלה" : res.error;
+        setCardError(msg);
+        toast.error(msg);
       }
     });
 
@@ -1041,7 +1048,18 @@ export function EditReservationPanel({
               {canEditNow && !replacingCard && (
                 <div className="bw-grid3 mt-4">
                   <Field label="אמצעי תשלום">
-                    <select className="field-input" value={method} onChange={(e) => setMethod(e.target.value)}>
+                    <select
+                      className="field-input"
+                      value={method}
+                      onChange={(e) => {
+                        setMethod(e.target.value);
+                        // D108 — credit card opens the card fields for typing
+                        // when nothing usable is stored; never the reverse
+                        if (e.target.value === "credit_card" && !cardMeta && !guarantee && canManageCard) {
+                          setReplacingCard(true);
+                        }
+                      }}
+                    >
                       <option value="">בחירה…</option>
                       {paymentMethods.map((m) => (
                         <option key={m.id} value={m.key}>{m.label}</option>
@@ -1110,12 +1128,17 @@ export function EditReservationPanel({
               {/* ---- THE credit-card section (D86) — one interface for every
                    source: the vaulted card (masked, audited reveal), the masked
                    channel guarantee, manual entry, or the empty state. Card
-                   entry is governed ONLY by the section's own mode (the
-                   "הזנת כרטיס ידנית במקום" toggle / empty state) — the
-                   payment-method selector above registers payments and never
-                   gates these fields. ---- */}
+                   entry is governed by the section's own mode; the payment-
+                   method selector above additionally OPENS manual entry when
+                   "כרטיס אשראי" is chosen with nothing stored (D108) — it
+                   never locks or hides these fields. ---- */}
               {showCardSection && (
                 <>
+                  {cardError && (
+                    <p role="alert" className="mb-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
+                      שמירת הכרטיס נכשלה: {cardError} — הפרטים שהוזנו לא נשמרו
+                    </p>
+                  )}
                   <CardFields
                     value={cc}
                     onChange={setCc}
@@ -1217,17 +1240,9 @@ export function EditReservationPanel({
               )}
             </BookingCard>
 
-            {/* cancellation policy — the immutable AT-BOOKING snapshot (034).
-                Displayed from the reservation itself; a later edit to the
-                Settings template never changes what is shown here. */}
-            {detail.cancellation_policy && (
-              <BookingCard icon="documents" title="מדיניות ביטול (בעת ההזמנה)">
-                <CancellationSnapshotView snap={detail.cancellation_policy} />
-              </BookingCard>
-            )}
-
             {/* notes + expected arrival time — separate fields; the arrival
-                time is never folded into the notes text (D80 §6) */}
+                time is never folded into the notes text (D80 §6). Notes sit
+                ABOVE the cancellation policy (complaint 11 / SPEC step 4). */}
             <BookingCard icon="documents" title="הערות להזמנה">
               <div className="bw-grid2 mb-4">
                 <Field label="שעת צ'ק-אין צפויה">
@@ -1253,6 +1268,15 @@ export function EditReservationPanel({
               <textarea className="field-input min-h-[184px]" value={notes} disabled={!canEditNow}
                 placeholder="בקשות מיוחדות…" onChange={(e) => setNotes(e.target.value)} />
             </BookingCard>
+
+            {/* cancellation policy — the immutable AT-BOOKING snapshot (034).
+                Displayed from the reservation itself; a later edit to the
+                Settings template never changes what is shown here. */}
+            {detail.cancellation_policy && (
+              <BookingCard icon="documents" title="מדיניות ביטול (בעת ההזמנה)">
+                <CancellationSnapshotView snap={detail.cancellation_policy} />
+              </BookingCard>
+            )}
           </div>
 
           {/* ---- sidebar: summary + activity (reference) ---- */}
@@ -1407,7 +1431,7 @@ export function EditReservationPanel({
 // The reservation's at-booking cancellation terms (034) — pure display of the
 // stored snapshot. Template sources show the copied title + tiers; the OTA
 // source shows the imported text/penalties verbatim. Never re-reads Settings.
-function CancellationSnapshotView({
+export function CancellationSnapshotView({
   snap,
 }: {
   snap: NonNullable<ReservationDetail["cancellation_policy"]>;
