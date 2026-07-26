@@ -1,0 +1,96 @@
+# Guard sweep — feat/booking-window-v2 · 2026-07-26
+# 79 guards; DB guards on :5433 (self-replay: DROP; consumers: DROP+chain);
+# env-file guards re-run with DATABASE_URL=:5433 restored production copy + keys.
+guard	result	duration	class
+check:e2e-safety	PASS	1s	selfreplay
+check:guard-roots	PASS	1s	static
+check:commercial	PASS	2s	static
+check:commercial-db	PASS	7s	selfreplay
+check:room-pricing	PASS	3s	static
+check:room-db	PASS	7s	selfreplay
+check:settings-regression	PASS	1s	static
+check:check-in-check-out	PASS	3s	static
+check:check-in-check-out-db	PASS	9s	selfreplay
+check:rate-plans	PASS	7s	selfreplay
+check:pricing-engine	PASS	10s	selfreplay
+check:pricing-equality	PASS	10s	selfreplay
+check:totals-parity	PASS	10s	selfreplay
+check:public-quote	PASS	9s	selfreplay
+check:room-picker-window	PASS	9s	selfreplay
+check:rates-ui	PASS	0s	static
+check:rate-grid	FAIL	1s	static
+check:beds24-connection	FAIL	0s	static
+check:beds24-jobs	FAIL	1s	static
+check:beds24-revisions	FAIL	1s	static
+check:beds24-ari	FAIL	0s	static
+check:beds24-credit-headers	FAIL	1s	static
+check:beds24-payload-integrity	PASS	5s	selfreplay
+check:beds24	FAIL	2s	static
+check:beds24-cancellation-sync	PASS	5s	consumer
+check:beds24-checkin-cancellation-guard	PASS	6s	consumer
+check:beds24-ari-readback	PASS	5s	consumer
+check:booking-com-reports	FAIL	3s	selfreplay
+check:beds24-credit-backoff	PASS	6s	consumer
+check:beds24-maxstay-no-limit	FAIL	5s	consumer
+check:beds24-ari-drain	PASS	6s	consumer
+check:beds24-quarantine-selfheal	PASS	5s	consumer
+check:effective-state	FAIL	1s	static
+check:inventory	FAIL	1s	static
+check:sellability	FAIL	0s	static
+check:reservation-snapshot	PASS	3s	static
+check:calendar	FAIL	3s	static
+check:channels-badge	FAIL	2s	static
+check:cards	FAIL	3s	static
+check:payments	PASS	1s	static
+check:channel-card-ingest	PASS	3s	consumer
+check:card-save-flow	PASS	0s	static
+check:messaging	PASS	5s	static
+check:guest-communications	PASS	8s	static
+check:guest-communications-db	FAIL	0s	selfreplay
+check:business-profile	PASS	3s	static
+check:maps-picker	PASS	3s	static
+check:su-lifecycle	PASS	7s	selfreplay
+check:room-identity	PASS	10s	selfreplay
+check:db-isolation	FAIL	1s	static
+check:channel-security	PASS	1s	static
+check:channel-chaos	PASS	0s	static
+check:housekeeping	PASS	1s	static
+check:maintenance-closures	PASS	1s	static
+check:reports	PASS	1s	static
+check:israel-market	PASS	1s	static
+check:agents-concurrency	PASS	0s	static
+check:channels-fullsync-ui	PASS	1s	static
+check:hydration-browser	FAIL	1s	static
+check:status-default	PASS	1s	static
+check:calendar-ui	FAIL	3s	static
+check:calendar-departure-edge	PASS	3s	consumer
+check:design	FAIL	1s	static
+check:datepicker	PASS	3s	static
+check:reservations-ui	PASS	1s	static
+check:reservation-concurrency	FAIL	1s	consumer
+check:reservation-source-system	PASS	2s	static
+check:inventory-integrity	FAIL	1s	static
+check:payment-ledger-integrity	FAIL	1s	static
+check:payment-refund-void	FAIL	1s	static
+check:timezone-and-money-invariants	PASS	2s	static
+check:pms-domain-invariants	FAIL	1s	static
+check:background-job-recovery	FAIL	0s	static
+check:no-secrets	PASS	0s	static
+check:supply-chain	FAIL	2s	static
+check:retention	PASS	1s	static
+check:performance	PASS	0s	static
+check:code-documentation	PASS	1s	static
+
+# env-file re-runs against the restored copy:
+check:rate-grid	PASS	(copy)	env-file
+check:beds24-connection	PASS	(copy)	env-file
+check:beds24-jobs	PASS	(copy)	env-file
+check:beds24-revisions	FAIL*	(copy)	env-file — operational freshness monitor (last pull 76m old on a FROZEN snapshot; cadence 5m on live)
+check:beds24-credit-headers	PASS	(copy)	env-file
+check:beds24-ari	FAIL	(copy)	baseline red — the documented 28 stuck dirty ranges (GUARD_AUDIT)
+check:effective-state	PASS	(copy)	env-file
+check:inventory	PASS	(copy)	env-file
+check:sellability	PASS	(copy)	env-file
+
+# check:beds24-maxstay-no-limit FAIL is PRE-EXISTING: identical failure on origin/main 939f888
+# (the wire fix lives in unmerged PR #115); the guard postdates the GUARD_AUDIT baseline.
