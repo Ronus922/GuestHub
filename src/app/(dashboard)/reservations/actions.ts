@@ -5,19 +5,14 @@ import type { TransactionSql } from "postgres";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
-import { eachDay, nightsBetween, rangesOverlap, type DateOnly } from "@/lib/dates";
+import { rangesOverlap, type DateOnly } from "@/lib/dates";
 import type { CardSource } from "@/lib/card-rules";
 import {
   blocksAutomaticRelease,
-  checkRoomAvailability,
   lockRooms,
   INVENTORY_BLOCKING_STATUSES,
 } from "@/lib/inventory";
-// getRoomPlanRates/planNightlyPrice remain ONLY for the room-picker's
-// display-only avg_price hint — never an authoritative price (that is the
-// engine's, via the seam below).
-import { getRoomPlanRates } from "@/lib/rates/effective-state";
-import { indexByDate, planNightlyPrice } from "@/lib/rates/rules";
+import { listAvailableRooms, type AvailableRoom } from "@/lib/reservations/available-rooms";
 import {
   priceReservationStays,
   reservationTotal,
@@ -1178,81 +1173,20 @@ export async function searchGuestsAction(q: string): Promise<
 }
 
 // Free, sellable rooms for a window (booking panel room picker) with the
-// resolved average nightly price.
+// resolved average nightly price. The window bound is the tenant's quote
+// window (resolveMaxQuoteNights, D100) — enforced in listAvailableRooms, the
+// same lib the guard drives; a leftover hardcoded 90 here used to refuse
+// pickers the engine had priced happily since D100.
 export async function getAvailableRoomsAction(args: {
   checkIn: DateOnly;
   checkOut: DateOnly;
   excludeReservationId?: string;
-}): Promise<
-  ActionResult<{
-    id: string; room_number: string; name: string | null;
-    room_type_id: string | null; room_type_name: string | null;
-    max_occupancy: number; max_adults: number; max_children: number; max_infants: number;
-    avg_price: number; free: boolean;
-  }[]>
-> {
+}): Promise<ActionResult<AvailableRoom[]>> {
   try {
     const actor = await getActor();
     requirePermission(actor, "reservations.create");
-    if (!(args.checkIn < args.checkOut)) return fail("טווח תאריכים לא תקין");
-    if (nightsBetween(args.checkIn, args.checkOut) > 90) return fail("טווח ארוך מדי");
-
-    const rooms = await sql<
-      { id: string; room_number: string; name: string | null; room_type_id: string | null;
-        room_type_name: string | null; base_price: number;
-        max_occupancy: number; max_adults: number; max_children: number; max_infants: number }[]
-    >`
-      SELECT r.id, r.room_number, r.name, r.room_type_id, rt.name AS room_type_name,
-             COALESCE(rt.base_price, 0)::float8 AS base_price,
-             r.max_occupancy, r.max_adults, r.max_children, r.max_infants
-      FROM guesthub.rooms r
-      LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
-      WHERE r.tenant_id = ${actor.tenantId} AND r.status = 'available' AND r.is_active
-      ORDER BY r.room_number`;
-
-    const excludeRr = args.excludeReservationId
-      ? (
-          await sql<{ id: string }[]>`
-            SELECT id FROM guesthub.reservation_rooms
-            WHERE reservation_id = ${args.excludeReservationId} AND tenant_id = ${actor.tenantId}`
-        ).map((r) => r.id)
-      : [];
-
-    const conflicts = await checkRoomAvailability(sql, {
-      tenantId: actor.tenantId,
-      roomIds: rooms.map((r) => r.id),
-      checkIn: args.checkIn,
-      checkOut: args.checkOut,
-      excludeReservationRoomIds: excludeRr,
-    });
-    const busy = new Set(conflicts.map((c) => c.room_id));
-
-    // Canonical commercial prices (§0.4): room → SU → base plan → pricing_plan_rates.
-    const planRates = await getRoomPlanRates(
-      sql, actor.tenantId, rooms.map((r) => r.id), args.checkIn, args.checkOut,
-    );
-
-    const nights = eachDay(args.checkIn, args.checkOut);
-    const data = rooms.map((r) => {
-      const rp = planRates.get(r.id);
-      const byDate = indexByDate(rp?.rows ?? []);
-      const base = rp?.basePrice ?? r.base_price;
-      const total = nights.reduce((sum, d) => sum + planNightlyPrice(byDate, d, base), 0);
-      return {
-        id: r.id,
-        room_number: r.room_number,
-        name: r.name,
-        room_type_id: r.room_type_id,
-        room_type_name: r.room_type_name,
-        max_occupancy: r.max_occupancy,
-        max_adults: r.max_adults,
-        max_children: r.max_children,
-        max_infants: r.max_infants,
-        avg_price: nights.length > 0 ? Math.round(total / nights.length) : 0,
-        free: !busy.has(r.id),
-      };
-    });
-    return { success: true, data };
+    const res = await listAvailableRooms(sql, actor.tenantId, args);
+    return res.ok ? { success: true, data: res.rooms } : fail(res.error);
   } catch (e) {
     return fail(errorMessage(e));
   }

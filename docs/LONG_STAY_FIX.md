@@ -43,7 +43,13 @@
 | DB — הזמנות | `reservations_check` · `reservation_rooms_check` | `check_out > check_in` בלבד | לא |
 | לוח התפוסה | [calendar/data.ts:19](src/app/(dashboard)/calendar/data.ts#L19) | `MAX_DAYS = 62` | לא — **חלון תצוגה**, לא שמירה |
 | צד לקוח | [BookingPanel.tsx:227](src/components/reservations/BookingPanel.tsx#L227) | `nightsBetween` בלבד | לא |
+| **בורר החדרים (server action)** | [available-rooms.ts](src/lib/reservations/available-rooms.ts) (היה `getAvailableRoomsAction`, actions.ts:1198) | היה `> 90` קשיח שנותר **אחרי** שהתיקון כאן העלה את המנוע ל-400 — והכשל נבלע בשקט ב-[StayEditor.tsx](src/components/reservations/StayEditor.tsx), שהשאיר על המסך רשימת חדרים **של טווח אחר** | לא — G.1 ירה דרך תפר התמחור; התגלה בביקורת התמחור ([PRICING_AUDIT.md §יא](PRICING_AUDIT.md)) |
 | חיפוש טקסטואלי `31` | — | **אפס מופעים** במסלולי ההזמנה/התמחור | — |
+
+> **השלמה (2026-07-26):** שורת בורר החדרים נוספה אחרי שביקורת התמחור מצאה אותה
+> חסרה כאן. תוקן: החסם הוא `resolveMaxQuoteNights` — אותו מקור אמת של המנוע, בלי
+> קבוע שני — וכשל/ריק בשליפה **מרוקן את הרשימה ומוצג כשגיאה** (לעולם לא שורות
+> מיושנות). שומר: `check:room-picker-window`.
 
 ## G.3 — מה באמת עוצר, ובאיזה סדר
 

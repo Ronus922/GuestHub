@@ -5,6 +5,12 @@ import { DateRangeField } from "@/components/shared/DateRangeField";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween } from "@/lib/dates";
 import {
+  roomsFromResult,
+  quoteFromResult,
+  type RoomsFetchOutcome,
+  type QuoteFetchOutcome,
+} from "@/lib/reservations/room-picker-result";
+import {
   getAvailableRoomsAction,
   getStayQuoteAction,
 } from "@/app/(dashboard)/reservations/actions";
@@ -70,7 +76,9 @@ export function StayEditor({
   showErrors?: boolean;
 }) {
   const [rooms, setRooms] = useState<RoomOption[]>([]);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ total: number; restriction: string | null } | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   const [showGuest, setShowGuest] = useState(
     Boolean(value.guestFirstName || value.guestLastName || value.guestPhone),
   );
@@ -83,29 +91,49 @@ export function StayEditor({
   const datesInvalid = showErrors && !validRange;
   const roomInvalid = showErrors && !value.roomId;
 
-  // free rooms for the chosen window
+  // free rooms for the chosen window. A failed refresh must never leave the
+  // previous window's rows on screen — their free flags and avg_price belong
+  // to other dates — so every outcome goes through roomsFromResult.
   useEffect(() => {
-    if (!validRange) return;
+    if (!validRange) {
+      setRooms([]);
+      setRoomsError(null);
+      return;
+    }
     let alive = true;
+    const apply = (outcome: RoomsFetchOutcome<RoomOption>) => {
+      if (!alive) return;
+      setRooms(outcome.rooms);
+      setRoomsError(outcome.error);
+    };
     getAvailableRoomsAction({
       checkIn: value.checkIn,
       checkOut: value.checkOut,
       excludeReservationId,
-    }).then((res) => {
-      if (alive && res.success && res.data) setRooms(res.data);
-    });
+    }).then(
+      (res) => apply(roomsFromResult(res)),
+      () => apply(roomsFromResult(null)),
+    );
     return () => {
       alive = false;
     };
   }, [value.checkIn, value.checkOut, validRange, excludeReservationId]);
 
-  // live price + restriction quote for the chosen room
+  // live price + restriction quote for the chosen room. This number is read
+  // aloud to guests, so it is stricter than the room list: the moment any
+  // input changes the old total leaves the screen (no in-flight carry-over),
+  // and only a success-with-data response for THESE inputs puts one back —
+  // every other outcome renders a reason instead (quoteFromResult).
   useEffect(() => {
-    if (!validRange || !value.roomId) {
-      setQuote(null);
-      return;
-    }
+    setQuote(null);
+    setQuoteError(null);
+    if (!validRange || !value.roomId) return;
     let alive = true;
+    const apply = (outcome: QuoteFetchOutcome<{ total: number; restriction: string | null }>) => {
+      if (!alive) return;
+      setQuote(outcome.quote && { total: outcome.quote.total, restriction: outcome.quote.restriction });
+      setQuoteError(outcome.error);
+    };
     getStayQuoteAction({
       roomId: value.roomId,
       checkIn: value.checkIn,
@@ -115,11 +143,8 @@ export function StayEditor({
       infants: value.infants,
       ratePlanId: value.ratePlanId ?? null,
     }).then(
-      (res) => {
-        if (alive && res.success && res.data) {
-          setQuote({ total: res.data.total, restriction: res.data.restriction });
-        }
-      },
+      (res) => apply(quoteFromResult(res)),
+      () => apply(quoteFromResult(null)),
     );
     return () => {
       alive = false;
@@ -232,6 +257,12 @@ export function StayEditor({
         </label>
       )}
 
+      {roomsError && (
+        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
+          {roomsError}
+        </p>
+      )}
+
       {quote && value.roomId && (
         <div className="bw-price-line mt-1.5 border-b-0">
           <span className="bw-plr">
@@ -239,6 +270,11 @@ export function StayEditor({
           </span>
           <b className="ltr-num text-primary">₪{quote.total.toLocaleString()}</b>
         </div>
+      )}
+      {quoteError && value.roomId && (
+        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
+          {quoteError}
+        </p>
       )}
       {quote?.restriction && (
         <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
