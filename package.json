@@ -25,6 +25,7 @@
     "check:pricing-engine": "node scripts/check-pricing-engine.mjs",
     "check:pricing-equality": "node scripts/check-pricing-equality.mjs",
     "check:totals-parity": "node scripts/check-totals-parity.mjs",
+    "check:public-quote": "node scripts/check-public-quote.mjs",
     "check:room-picker-window": "node scripts/check-room-picker-window.mjs",
     "check:rates-ui": "node scripts/check-rates-ui.mjs",
     "check:rate-grid": "node --env-file=.env.local scripts/check-rate-grid.mjs",
