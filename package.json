@@ -24,6 +24,7 @@
     "check:rate-plans": "node scripts/check-rate-plans.mjs",
     "check:pricing-engine": "node scripts/check-pricing-engine.mjs",
     "check:pricing-equality": "node scripts/check-pricing-equality.mjs",
+    "check:room-picker-window": "node scripts/check-room-picker-window.mjs",
     "check:rates-ui": "node scripts/check-rates-ui.mjs",
     "check:rate-grid": "node --env-file=.env.local scripts/check-rate-grid.mjs",
     "check:beds24-connection": "node --env-file=.env.local scripts/check-beds24-connection.mjs",
