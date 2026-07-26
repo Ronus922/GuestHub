@@ -6,19 +6,26 @@
 // 1. getAvailableRoomsAction kept a hardcoded 90-night refusal after D100 made
 //    the quote window per-tenant (resolveMaxQuoteNights, default 400) — the
 //    picker refused stays the engine priced happily.
-// 2. StayEditor swallowed the failure (`res.success && res.data`): the
-//    PREVIOUS window's rows stayed on screen — free flags and avg_price of
-//    other dates — with no error anywhere.
+// 2. StayEditor swallowed failures (`res.success && res.data`) on BOTH of its
+//    fetches: the room list kept the PREVIOUS window's rows (free flags,
+//    avg_price of other dates), and the quote kept the PREVIOUS range's ₪total
+//    — a number that gets read aloud to a guest — with no error anywhere.
 //
 // Part A — static wiring: the action delegates to listAvailableRooms; the lib
 //   takes its bound from resolveMaxQuoteNights (no second constant); StayEditor
-//   routes fulfilled, failed AND rejected outcomes through roomsFromResult and
-//   renders the error.
-// Part B — pure: roomsFromResult never keeps rows on a failed/empty result.
+//   routes fulfilled, failed AND rejected outcomes of BOTH fetches through the
+//   pure reducers (roomsFromResult / quoteFromResult) and renders the errors.
+//   The quote is stricter: any input change clears the displayed total BEFORE
+//   the new fetch, so an in-flight quote never shows the old range's money.
+// Part B — pure: roomsFromResult never keeps rows, and quoteFromResult never
+//   keeps a number, on a failed/empty result.
 // Part C — DB: listAvailableRooms end-to-end against the ISOLATED test DB
 //   (:5433 guesthub-testdb): 120- and 200-night windows return the full,
 //   range-correct list; the default ceiling refuses at ceiling+1; a tenant's
-//   settings.pricing.max_quote_nights=150 refuses 151 and allows 150.
+//   settings.pricing.max_quote_nights=150 refuses 151 and allows 150. The
+//   REAL engine (calculateQuote) prices the same 120-night window and its
+//   roomSubtotal both matches the picker's avg hint and passes through
+//   quoteFromResult untouched.
 //   Everything runs in one rolled-back transaction — NOTHING is committed.
 //
 // Usage: node scripts/check-room-picker-window.mjs
@@ -85,6 +92,18 @@ const read = (p) => readFileSync(join(ROOT, p), "utf8");
   assert.ok(/\{roomsError\s*&&[\s\S]{0,200}role="alert"/.test(editor),
     "the fetch error renders as a role=\"alert\" message");
   ok("StayEditor: every outcome clears-or-fills the list and says why — no stale rows");
+
+  assert.ok(!/alive\s*&&\s*res\.success\s*&&\s*res\.data/.test(editor),
+    "the silent apply-only-on-success pattern is gone from the QUOTE fetch too");
+  assert.ok(/useEffect\(\(\)\s*=>\s*\{\s*\n\s*setQuote\(null\);\s*\n\s*setQuoteError\(null\);/.test(editor),
+    "any input change clears the displayed total BEFORE fetching — no in-flight stale money");
+  assert.ok(/apply\(quoteFromResult\(res\)\)/.test(editor) && /apply\(quoteFromResult\(null\)\)/.test(editor),
+    "fulfilled AND rejected quote outcomes go through quoteFromResult");
+  assert.ok(/setQuoteError\(outcome\.error\)/.test(editor),
+    "the quote outcome's reason reaches state");
+  assert.ok(/\{quoteError\s*&&[\s\S]{0,220}role="alert"/.test(editor),
+    "the quote error renders as a role=\"alert\" message");
+  ok("StayEditor: the quote — money read aloud — clears on change, fails loud, never stale");
 }
 
 // ============================================================
@@ -104,6 +123,7 @@ writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({
   include: [
     join(ROOT, "src/lib/reservations/available-rooms.ts"),
     join(ROOT, "src/lib/reservations/room-picker-result.ts"),
+    join(ROOT, "src/lib/pricing/engine.ts"),
   ],
 }));
 execSync(`npx tsc --project ${join(tmp, "tsconfig.json")}`, { cwd: ROOT, stdio: "inherit" });
@@ -120,9 +140,10 @@ Module._resolveFilename = function (request, ...rest) {
 };
 
 const { listAvailableRooms } = req(join(out, "lib/reservations/available-rooms.js"));
-const { roomsFromResult, ROOMS_FETCH_FAILED, NO_ROOMS_AVAILABLE } =
+const { roomsFromResult, quoteFromResult, ROOMS_FETCH_FAILED, NO_ROOMS_AVAILABLE, QUOTE_FETCH_FAILED } =
   req(join(out, "lib/reservations/room-picker-result.js"));
 const { resolveMaxQuoteNights } = req(join(out, "lib/pricing/types.js"));
+const { calculateQuote } = req(join(out, "lib/pricing/engine.js"));
 const { nightsBetween } = req(join(out, "lib/dates.js"));
 
 // ============================================================
@@ -138,6 +159,14 @@ const { nightsBetween } = req(join(out, "lib/dates.js"));
     { rooms: [], error: NO_ROOMS_AVAILABLE });
   assert.deepEqual(roomsFromResult(null), { rooms: [], error: ROOMS_FETCH_FAILED });
   ok("roomsFromResult: rows only on success-with-rows; every other outcome = empty list + reason");
+
+  const q = { total: 54_000, restriction: null };
+  assert.deepEqual(quoteFromResult({ success: true, data: q }), { quote: q, error: null });
+  assert.deepEqual(quoteFromResult({ success: false, error: "חישוב המחיר נכשל בצד השרת" }),
+    { quote: null, error: "חישוב המחיר נכשל בצד השרת" });
+  assert.deepEqual(quoteFromResult({ success: true }), { quote: null, error: QUOTE_FETCH_FAILED });
+  assert.deepEqual(quoteFromResult(null), { quote: null, error: QUOTE_FETCH_FAILED });
+  ok("quoteFromResult: a ₪total only from success-with-data; every other outcome = NO number + reason");
 }
 
 // ============================================================
@@ -259,6 +288,31 @@ try {
       assert.equal(rx.rooms.find((x) => x.room_number === "902").free, true,
         "excludeReservationId frees the room its own stay occupies");
       ok("120 nights + excludeReservationId: a stay never conflicts with itself");
+    }
+
+    // ---- the quote for the same 120-night window: the REAL engine's number,
+    //      matching the picker's hint, surviving the reducer untouched ----
+    {
+      const OUT = addD(IN, 120);
+      const q = await calculateQuote(tx, {
+        tenantId: f.T, checkIn: IN, checkOut: OUT,
+        rooms: [{ roomId: f.R1.roomId, ratePlanId: null,
+                  adults: 2, children: 0, infants: 0, manualRatePerNight: null }],
+        source: "manual_reservation",
+      });
+      assert.equal(q.valid, true, `the engine must price 120 nights (errors: ${JSON.stringify(q.errors)})`);
+      const subtotal = q.rooms[0].roomSubtotal;
+      assert.equal(subtotal, 54_000, "60×500 + 60×400 — the engine prices THIS window's rates");
+      assert.equal(subtotal, 450 * 120, "the quoted total and the picker's avg hint agree");
+      // the action's success payload (total = roomSubtotal) passes through untouched…
+      const shown = quoteFromResult({ success: true, data: { total: subtotal, restriction: null } });
+      assert.equal(shown.quote.total, 54_000);
+      assert.equal(shown.error, null);
+      // …and the action's failure shape yields NO number, only the reason
+      const failed = quoteFromResult({ success: false, error: "חישוב המחיר נכשל" });
+      assert.equal(failed.quote, null, "a failed quote never yields a number to render");
+      summary.push({ nights: 120, ok: "YES", rooms: "-", "902_free": "-", avg901: "₪54,000 quote" });
+      ok("quote 120 nights: engine total ₪54,000 = 450×120; success renders it, failure renders NO number");
     }
 
     // ---- 200 nights, disjoint window: same rooms, different truth ----
