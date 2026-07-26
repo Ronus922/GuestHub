@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { DateRangeField } from "@/components/shared/DateRangeField";
 import { Icon } from "@/components/shared/Icon";
 import { nightsBetween } from "@/lib/dates";
+import { roomsFromResult, type RoomsFetchOutcome } from "@/lib/reservations/room-picker-result";
 import {
   getAvailableRoomsAction,
   getStayQuoteAction,
@@ -70,6 +71,7 @@ export function StayEditor({
   showErrors?: boolean;
 }) {
   const [rooms, setRooms] = useState<RoomOption[]>([]);
+  const [roomsError, setRoomsError] = useState<string | null>(null);
   const [quote, setQuote] = useState<{ total: number; restriction: string | null } | null>(null);
   const [showGuest, setShowGuest] = useState(
     Boolean(value.guestFirstName || value.guestLastName || value.guestPhone),
@@ -83,17 +85,29 @@ export function StayEditor({
   const datesInvalid = showErrors && !validRange;
   const roomInvalid = showErrors && !value.roomId;
 
-  // free rooms for the chosen window
+  // free rooms for the chosen window. A failed refresh must never leave the
+  // previous window's rows on screen — their free flags and avg_price belong
+  // to other dates — so every outcome goes through roomsFromResult.
   useEffect(() => {
-    if (!validRange) return;
+    if (!validRange) {
+      setRooms([]);
+      setRoomsError(null);
+      return;
+    }
     let alive = true;
+    const apply = (outcome: RoomsFetchOutcome<RoomOption>) => {
+      if (!alive) return;
+      setRooms(outcome.rooms);
+      setRoomsError(outcome.error);
+    };
     getAvailableRoomsAction({
       checkIn: value.checkIn,
       checkOut: value.checkOut,
       excludeReservationId,
-    }).then((res) => {
-      if (alive && res.success && res.data) setRooms(res.data);
-    });
+    }).then(
+      (res) => apply(roomsFromResult(res)),
+      () => apply(roomsFromResult(null)),
+    );
     return () => {
       alive = false;
     };
@@ -230,6 +244,12 @@ export function StayEditor({
             ))}
           </select>
         </label>
+      )}
+
+      {roomsError && (
+        <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
+          {roomsError}
+        </p>
       )}
 
       {quote && value.roomId && (
