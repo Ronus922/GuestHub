@@ -276,24 +276,32 @@ export function roomAdminStateOf(
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // Resolve the committed price for ONE stay (§6). Precedence:
-//   1. manual override — an explicit authorized rate, always honored;
-//   2. committed snapshot — a confirmed stay whose price basis (room + dates)
+//   1. manual TOTAL — the operator's exact final amount for the whole stay
+//      (price_mode='manual_total', D106): priceTotal is the entered number to
+//      the agora; ratePerNight is a display-only spread and never re-derives it;
+//   2. manual nightly override — an explicit authorized rate, always honored;
+//   3. committed snapshot — a confirmed stay whose price basis (room + dates)
 //      is unchanged keeps its stored price and is NEVER re-priced from the
 //      current rate table, so a guest-agreed total can't drift when rates
 //      change later (snapshot.priceTotal preserves exact per-night variation);
-//   3. otherwise auto-price from the CURRENT rate table (autoTotal = the sum of
+//   4. otherwise auto-price from the CURRENT rate table (autoTotal = the sum of
 //      the nightly prices the caller already resolved).
 export function resolveStayPrice(input: {
   nights: number;
   isManualRate: boolean;
   manualRatePerNight?: number | null;
+  manualTotal?: number | null;
   snapshot?: { ratePerNight: number; priceTotal?: number } | null;
   autoTotal: number;
 }): { ratePerNight: number; priceTotal: number } {
   const { nights } = input;
+  if (input.manualTotal != null) {
+    const t = round2(input.manualTotal);
+    return { ratePerNight: nights > 0 ? round2(t / nights) : t, priceTotal: t };
+  }
   if (input.isManualRate) {
     const r = input.manualRatePerNight ?? 0;
-    return { ratePerNight: r, priceTotal: r * nights };
+    return { ratePerNight: r, priceTotal: round2(r * nights) };
   }
   if (input.snapshot) {
     const r = input.snapshot.ratePerNight;

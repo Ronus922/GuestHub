@@ -3,6 +3,7 @@ import type { Sql, TransactionSql } from "postgres";
 import { nightsBetween, type DateOnly } from "@/lib/dates";
 import { resolveStayPrice } from "@/lib/rates/rules";
 import { calculateReservationPrice } from "./engine";
+import { computeReservationTotals, type PriceMode } from "./totals";
 import type {
   LosDiscountQuote, PricingError, PricingErrorCode, PricingQuoteResult, QuoteSource, RoomQuote,
 } from "./types";
@@ -46,6 +47,11 @@ export type ReservationStayInput = {
   infants: number;
   ratePerNight?: number | null;
   isManualRate?: boolean;
+  // per-room price mode (D106). Absent = legacy semantics: isManualRate maps to
+  // "manual_night", otherwise "auto". "manual_total" carries the operator's
+  // exact stay total in manualTotal — agora-exact, spread display-only.
+  priceMode?: PriceMode;
+  manualTotal?: number | null;
 };
 
 // The immutable commercial snapshot stored per stay (reservation_rooms
@@ -58,7 +64,11 @@ export type StayPricingSnapshot = {
   calculatedAt: string; // ISO timestamp
   currency: string;
   vatRate: number;
-  priceIncludesVat: true;
+  // false when the reservation was sold tax-exempt (D106) — snapshots written
+  // before 058 carry the literal true
+  priceIncludesVat: boolean;
+  // absent on pre-058 snapshots (read as false)
+  taxExempt?: boolean;
   checkIn: DateOnly;
   checkOut: DateOnly;
   nights: number;
@@ -97,7 +107,16 @@ export type StayPricingSnapshot = {
   losDiscount: LosDiscountQuote | null;
   roomSubtotal: number;
   priceSourcesUsed: string[];
-  manualOverride: { ratePerNight: number; appliedBy: string | null } | null;
+  // pre-058 rows: { ratePerNight, appliedBy } — mode/total absent means a
+  // legacy manual_night override
+  manualOverride: {
+    mode?: PriceMode;
+    ratePerNight: number | null;
+    total?: number | null;
+    appliedBy: string | null;
+  } | null;
+  // absent on pre-058 snapshots (read as "auto"/"manual_night" per manualOverride)
+  priceMode?: PriceMode;
 };
 
 export type PricedReservationStay<T extends ReservationStayInput> = T & {
@@ -157,7 +176,13 @@ export function firstEnforcedError(
 export function buildStaySnapshot(
   quote: PricingQuoteResult,
   rq: RoomQuote,
-  meta: { source: QuoteSource; manualRatePerNight: number | null; actorUserId: string | null },
+  meta: {
+    source: QuoteSource;
+    manualRatePerNight: number | null;
+    manualTotal?: number | null;
+    taxExempt?: boolean;
+    actorUserId: string | null;
+  },
 ): StayPricingSnapshot {
   return {
     engineVersion: quote.engineVersion,
@@ -166,7 +191,8 @@ export function buildStaySnapshot(
     calculatedAt: new Date().toISOString(),
     currency: quote.currency,
     vatRate: quote.vatRate,
-    priceIncludesVat: true,
+    priceIncludesVat: !(meta.taxExempt ?? false),
+    taxExempt: meta.taxExempt ?? false,
     checkIn: quote.checkIn,
     checkOut: quote.checkOut,
     nights: quote.numberOfNights,
@@ -203,9 +229,13 @@ export function buildStaySnapshot(
     roomSubtotal: rq.roomSubtotal,
     priceSourcesUsed: rq.priceSourcesUsed,
     manualOverride:
-      meta.manualRatePerNight != null
-        ? { ratePerNight: meta.manualRatePerNight, appliedBy: meta.actorUserId }
-        : null,
+      meta.manualTotal != null
+        ? { mode: "manual_total", ratePerNight: null, total: meta.manualTotal, appliedBy: meta.actorUserId }
+        : meta.manualRatePerNight != null
+          ? { mode: "manual_night", ratePerNight: meta.manualRatePerNight, appliedBy: meta.actorUserId }
+          : null,
+    priceMode:
+      meta.manualTotal != null ? "manual_total" : meta.manualRatePerNight != null ? "manual_night" : "auto",
   };
 }
 
@@ -220,6 +250,9 @@ export type PriceStaysOptions = {
   // rates; its stored pricing_snapshot is preserved (pricingSnapshot: null).
   snapshotByRr?: Map<string, { ratePerNight: number; priceTotal?: number }>;
   actorUserId?: string | null;
+  // the reservation-level VAT toggle at save time (D106) — recorded in each
+  // fresh stay snapshot so a sold price keeps its VAT context forever
+  taxExempt?: boolean;
 };
 
 // Price a set of reservation stays through THE central engine. Throws
@@ -235,16 +268,20 @@ export async function priceReservationStays<T extends ReservationStayInput>(
 
   for (const stay of stays) {
     const skip = stay.rrId != null && (opts.skipChecksForRr?.has(stay.rrId) ?? false);
-    const isManualRate = stay.isManualRate ?? false;
-    const snapshot = !isManualRate && stay.rrId != null ? opts.snapshotByRr?.get(stay.rrId) : undefined;
+    // manual_total (D106) outranks everything: the operator's exact stay total
+    const manualTotal = stay.priceMode === "manual_total" ? (stay.manualTotal ?? null) : null;
+    const isManualRate = manualTotal == null && (stay.isManualRate ?? stay.priceMode === "manual_night");
+    const isManual = manualTotal != null || isManualRate;
+    const snapshot = !isManual && stay.rrId != null ? opts.snapshotByRr?.get(stay.rrId) : undefined;
     const nights = nightsBetween(stay.checkIn, stay.checkOut);
 
     // A stay that skips validation AND keeps its committed/manual price needs
     // nothing from the engine — exactly the legacy fast path.
-    if (skip && (snapshot || isManualRate)) {
+    if (skip && (snapshot || isManual)) {
       const { ratePerNight, priceTotal } = resolveStayPrice({
         nights, isManualRate,
         manualRatePerNight: stay.ratePerNight,
+        manualTotal,
         snapshot: snapshot ?? null,
         autoTotal: 0, // unreachable: manual or snapshot always wins here
       });
@@ -256,7 +293,15 @@ export async function priceReservationStays<T extends ReservationStayInput>(
       continue;
     }
 
-    const manualRatePerNight = isManualRate ? (stay.ratePerNight ?? 0) : null;
+    // manual_total presents to the engine as a manual override (nightly spread)
+    // so §13 semantics apply — extra-guest charging and LOS both skip, pricing
+    // errors don't enforce; the EXACT entered total then wins in resolveStayPrice.
+    const manualRatePerNight =
+      manualTotal != null
+        ? (nights > 0 ? Math.round((manualTotal / nights) * 100) / 100 : manualTotal)
+        : isManualRate
+          ? (stay.ratePerNight ?? 0)
+          : null;
     const quote = await calculateReservationPrice(db, {
       tenantId,
       checkIn: stay.checkIn,
@@ -289,10 +334,11 @@ export async function priceReservationStays<T extends ReservationStayInput>(
         });
     if (enforced) throw new StayPricingError(enforced.message, enforced.code, stay.roomId);
 
-    // precedence: manual override → committed snapshot → engine auto price
+    // precedence: manual total → manual nightly → committed snapshot → engine auto
     const { ratePerNight, priceTotal } = resolveStayPrice({
       nights, isManualRate,
       manualRatePerNight: stay.ratePerNight,
+      manualTotal,
       snapshot: snapshot ?? null,
       autoTotal: rq.roomSubtotal,
     });
@@ -304,7 +350,9 @@ export async function priceReservationStays<T extends ReservationStayInput>(
         ? null // committed price kept → stored snapshot stays authoritative
         : buildStaySnapshot(quote, rq, {
             source: opts.source,
-            manualRatePerNight,
+            manualRatePerNight: manualTotal != null ? null : manualRatePerNight,
+            manualTotal,
+            taxExempt: opts.taxExempt ?? false,
             actorUserId: opts.actorUserId ?? null,
           }),
     });
@@ -312,16 +360,24 @@ export async function priceReservationStays<T extends ReservationStayInput>(
   return out;
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
-// THE canonical reservation-total formula (D51). Replaces the three divergent
-// server formulas (create ignored extra_charges; edit floored twice; the
-// reschedule SQL floored once): discount applies to the whole commercial bill,
-// floored once at zero.
+/**
+ * @deprecated D106 — the reservation total lives in ONE place now:
+ * computeReservationTotals (src/lib/pricing/totals.ts). This wrapper keeps the
+ * legacy (roomsTotal, discountAmount, extraCharges) signature for the equality
+ * suite's direct assertions and delegates the arithmetic; call sites use the
+ * full helper.
+ */
 export function reservationTotal(
   roomsTotal: number,
   discountAmount: number,
   extraCharges: number,
 ): number {
-  return Math.max(0, round2(roomsTotal + extraCharges - discountAmount));
+  return computeReservationTotals(
+    {
+      stays: [], roomsTotalOverride: roomsTotal,
+      discountMode: "amount_total", discountValue: discountAmount,
+      extraCharges, taxExempt: false, vatRate: 0, currency: "ILS",
+    },
+    { validate: false }, // legacy semantics: floor-only, no rejection
+  ).grandTotal;
 }
