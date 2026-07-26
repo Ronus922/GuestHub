@@ -3,6 +3,7 @@ import type { Sql, TransactionSql } from "postgres";
 import { addDays, eachDay, nightsBetween, type DateOnly } from "@/lib/dates";
 import { stayLimit } from "@/lib/rates/rules";
 import { resolveLosDiscount } from "@/lib/pricing/los";
+import { calculateReservationPrice } from "@/lib/pricing/engine";
 import type { LosDiscountQuote, LosDiscountTier } from "@/lib/pricing/types";
 import { EXCLUDED_SU_CODES, PUBLIC_TENANT_ID } from "./config";
 
@@ -212,6 +213,46 @@ export async function publicAvailability(
       type.pricePerNight = round2(cheapest.totalPrice / nights);
       type.losDiscount = cheapest.losDiscount;
       type.nightly = cheapest.nightly;
+    }
+  }
+
+  // ---- the quoted price comes from THE engine (D106 — audit §ז' #2) ----
+  // ESS above decides which units are AVAILABLE; the number read to the guest
+  // must be the same calculation the booking commits (priceReservationStays →
+  // calculateReservationPrice). ONE engine call covers the ESS-cheapest unit
+  // of every room type (≤ types, never N units); an engine miss (unlikely —
+  // ESS already said sellable) keeps the ESS figure, and the booking-time
+  // expectedTotal comparison stays the honest backstop.
+  const candidates = [...byType.values()]
+    .map((t) => ({ type: t, unit: t.units[0] }))
+    .filter((c): c is { type: RoomTypeAvailability; unit: BookableUnit } => c.unit != null);
+  if (candidates.length > 0) {
+    const quote = await calculateReservationPrice(db, {
+      tenantId: PUBLIC_TENANT_ID,
+      checkIn,
+      checkOut,
+      rooms: candidates.map((c) => ({
+        roomId: c.unit.roomId,
+        ratePlanId: null, // the public site sells the base layer
+        adults: 2, children: 0, infants: 0, // base occupancy — the booking re-prices actual guests
+        manualRatePerNight: null,
+      })),
+      source: "website",
+    });
+    for (const rq of quote.rooms) {
+      const hit = candidates.find((c) => c.unit.roomId === rq.roomId);
+      if (!hit || rq.roomSubtotal <= 0) continue;
+      const engineNightly = rq.nights
+        .filter((n) => n.nightTotal != null)
+        .map((n) => ({ date: n.date, price: round2(n.nightTotal!) }));
+      hit.unit.totalPrice = rq.roomSubtotal;
+      hit.unit.accommodationSubtotal = rq.accommodationSubtotal;
+      hit.unit.losDiscount = rq.losDiscount;
+      hit.unit.nightly = engineNightly;
+      hit.type.totalPrice = rq.roomSubtotal;
+      hit.type.pricePerNight = round2(rq.roomSubtotal / nights);
+      hit.type.losDiscount = rq.losDiscount;
+      hit.type.nightly = engineNightly;
     }
   }
 
