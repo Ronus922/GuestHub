@@ -358,10 +358,27 @@ try {
       assert.equal(seam.reservationTotal(980, 0, 50), 1030);   // fee (extra charges)
       assert.equal(seam.reservationTotal(980, 2000, 50), 0);   // floored once, never negative
       assert.equal(seam.reservationTotal(980.004, 0.004, 0), 980); // cents rounding
+      // ---- textual pins (D106): every money writer goes through THE source ----
       const src = readFileSync(join(ROOT, "src/app/(dashboard)/reservations/actions.ts"), "utf8");
-      assert.ok((src.match(/reservationTotal\(/g) ?? []).length >= 3,
-        "create/update/preview all derive totals via reservationTotal");
-      ok("discount + fee: one canonical reservation-total formula used by every action");
+      assert.ok((src.match(/resolveTotals\(/g) ?? []).length >= 5,
+        "create/update/move/preview all derive totals via resolveTotals→computeReservationTotals (definition + 4 call sites)");
+      assert.equal((src.match(/reservationTotal\(/g) ?? []).length, 0,
+        "no action calls the deprecated wrapper directly");
+      const channelSrc = readFileSync(join(ROOT, "src/lib/channel/booking-import.ts"), "utf8");
+      assert.ok((channelSrc.match(/computeReservationTotals\(/g) ?? []).length >= 2,
+        "channel import (modify + new) folds the OTA total through the single source");
+      const publicSrc = readFileSync(join(ROOT, "src/lib/public-booking/create-booking.ts"), "utf8");
+      assert.ok((publicSrc.match(/computeReservationTotals\(/g) ?? []).length >= 1,
+        "the public booking derives its total from the single source");
+      // the SQL re-implementations are dead and must stay dead
+      for (const [file, text] of [
+        ["src/app/(dashboard)/reservations/actions.ts", src],
+        ["src/lib/channel/booking-import.ts", channelSrc],
+      ]) {
+        assert.ok(!/GREATEST\(0[^)]*discount_amount/.test(text),
+          `${file}: no SQL re-implementation of the total formula`);
+      }
+      ok("discount + fee: one canonical totals source wired into every money-writing surface (textual pins)");
     }
 
     // ---- 18b: computeReservationTotals — THE single totals source (D106) ----

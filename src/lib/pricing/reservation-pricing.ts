@@ -268,9 +268,13 @@ export async function priceReservationStays<T extends ReservationStayInput>(
 
   for (const stay of stays) {
     const skip = stay.rrId != null && (opts.skipChecksForRr?.has(stay.rrId) ?? false);
-    // manual_total (D106) outranks everything: the operator's exact stay total
+    // manual_total (D106) outranks everything: the operator's exact stay total.
+    // An explicit priceMode wins; absent = the legacy isManualRate semantics.
     const manualTotal = stay.priceMode === "manual_total" ? (stay.manualTotal ?? null) : null;
-    const isManualRate = manualTotal == null && (stay.isManualRate ?? stay.priceMode === "manual_night");
+    const isManualRate =
+      manualTotal == null &&
+      (stay.priceMode === "manual_night" ||
+        (stay.priceMode === undefined && (stay.isManualRate ?? false)));
     const isManual = manualTotal != null || isManualRate;
     const snapshot = !isManual && stay.rrId != null ? opts.snapshotByRr?.get(stay.rrId) : undefined;
     const nights = nightsBetween(stay.checkIn, stay.checkOut);
