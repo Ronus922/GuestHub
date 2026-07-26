@@ -1093,10 +1093,20 @@ export function EditReservationPanel({
                         {detail.ota.otaReservationCode ?? "—"}
                       </b>
                     </Field>
-                    {/* honest PIN state (D80 §4): the channel supplies no dedicated
-                        Booking.com PIN/secret field — never mined from notes */}
+                    {/* honest CVC state (D110): the generic "לא התקבל" is
+                        replaced by the MEASURED reason — Ronen must know WHY.
+                        Probe 2026-07-26 (read-only, this account's token):
+                        GET /v2/bookings returns no card fields and empty
+                        stripeToken/pcibookingToken on every booking; the
+                        import requests no card endpoint (none is public).
+                        Card data for this account lives only in the Beds24
+                        dashboard behind its card-access permission. */}
                     <Field label="קוד סודי מהערוץ">
-                      <b className="text-sm text-muted">לא התקבל קוד סודי מהערוץ</b>
+                      <b className="text-sm text-muted">
+                        {cardMeta?.source === "channel"
+                          ? "הערוץ העביר כרטיס ללא קוד סודי — CVC אינו נמסר ב-API של Beds24; ניתן להזין ידנית בכרטיס האשראי למטה"
+                          : "Beds24 אינו מעביר פרטי כרטיס וקוד סודי ב-API לחשבון זה (נמדד 26/07/2026) — הצפייה נעשית בלוח Beds24 בהרשאת כרטיסים, או בהזנה ידנית למטה"}
+                      </b>
                     </Field>
                     <Field label="אמצעי תשלום">
                       <b className="text-sm text-ink">

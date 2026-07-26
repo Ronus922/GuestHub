@@ -39,12 +39,11 @@ import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 // Nothing here ever logs a request body, puts digits in an error/audit payload
 // beyond last4, or returns the PAN from save/list.
 //
-// CVV/CVC is NEVER accepted, stored, encrypted, revealed, logged or audited
-// (D52 §2). The save action does not take a CVV; the reveal never returns one;
-// no cvv_encrypted column exists (dropped in migration 018). A CVV may exist
-// only transiently inside a single PSP authorization request via the gateway
-// seam, and is discarded immediately after. Every reveal and charge — success
-// OR rejected — is recorded with IP + session.
+// CVV/CVC: restored for MANUAL entry by owner decision D87 (migration 047,
+// with the declared PCI-DSS Req. 3.2 caveat) — encrypted via the same vault,
+// revealed only through the audited reveal action (the audit rows record the
+// field list, never digits). The CHANNEL path stays CVV-free (D52 §2). Every
+// reveal and charge — success OR rejected — is recorded with IP + session.
 // ============================================================
 
 class DomainError extends Error {}
@@ -75,7 +74,7 @@ export type StoredCardMeta = {
 };
 
 // The full plaintext bundle returned ONLY by the audited reveal action.
-// NOTE (D52): no CVV — it is never stored, so it can never be revealed.
+// CVV present only when a manual D87 entry stored one (channel cards: never).
 export type RevealedCard = {
   pan: string;
   holderName: string;

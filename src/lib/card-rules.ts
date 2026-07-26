@@ -1,10 +1,11 @@
 // Pure card-input rules shared by the card form, the guarded server actions
 // and scripts/check-cards.mjs. NO storage, NO crypto here — encryption lives
-// server-only in src/lib/card-vault.ts. CVV/CVC is deliberately absent from
-// every type, validator and formatter in this module: as of D52 it is never
-// collected for storage, never persisted and never revealed anywhere. A CVV may
-// exist only transiently inside a single PSP authorization request (the gateway
-// seam) and is discarded immediately — it never flows through these rules.
+// server-only in src/lib/card-vault.ts. CVV history: D52 removed it entirely;
+// D87 (owner decision, migration 047) restored MANUAL-entry CVV storage —
+// encrypted at rest, revealed only through the audited reveal action, with the
+// PCI-DSS Req. 3.2 caveat declared in 047. The CHANNEL path remains CVV-free
+// (D52 §2): an imported guarantee never carries one, and the V2 ingest fix
+// clears any stale manual CVV when a channel card replaces the PAN.
 
 import { CARD_BRAND_LABEL } from "./payments/collection-labels";
 
