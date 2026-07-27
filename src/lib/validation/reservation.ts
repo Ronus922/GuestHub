@@ -20,6 +20,10 @@ const stayCore = {
   // authorized manual override (§13) — explicit, never inferred from a price
   // being present (the edit panel resubmits the stored rate on every save).
   isManualRate: z.boolean().optional(),
+  // per-room price mode (D106): omitted = legacy semantics (isManualRate).
+  // "manual_total" carries the exact stay total in manualTotal.
+  priceMode: z.enum(["auto", "manual_night", "manual_total"]).optional(),
+  manualTotal: z.number().min(0).max(10_000_000).nullable().optional(),
   // tenant-level Rate Plan for the stay; null/omitted = base-ARI pricing.
   // undefined on edit = keep the stay's stored plan (preserved server-side).
   ratePlanId: z.uuid().nullable().optional(),
@@ -35,13 +39,23 @@ export const roomStaySchema = z
   .refine((s) => s.checkOut > s.checkIn, {
     message: "תאריך היציאה חייב להיות אחרי תאריך הכניסה",
     path: ["checkOut"],
+  })
+  .refine((s) => s.priceMode !== "manual_total" || s.manualTotal != null, {
+    message: "מצב 'סה״כ מחיר' דורש סכום",
+    path: ["manualTotal"],
   });
 
+// edit: manualTotal may be omitted on an existing manual_total stay — the
+// server preserves the stored total (same rule as a resubmitted ratePerNight)
 export const existingRoomStaySchema = z
   .object({ rrId: z.uuid().optional(), ...stayCore })
   .refine((s) => s.checkOut > s.checkIn, {
     message: "תאריך היציאה חייב להיות אחרי תאריך הכניסה",
     path: ["checkOut"],
+  })
+  .refine((s) => s.priceMode !== "manual_total" || s.manualTotal != null || s.rrId != null, {
+    message: "מצב 'סה״כ מחיר' דורש סכום",
+    path: ["manualTotal"],
   });
 
 export const guestInputSchema = z.object({
@@ -72,6 +86,13 @@ export const EDITABLE_STATUSES = [
   "no_show",
 ] as const;
 
+// reservation-level discount (D106): one mode + one value; the legacy
+// discountAmount stays accepted (= amount_total) so older clients keep working
+export const discountModeSchema = z
+  .enum(["none", "amount_per_night", "percent_per_night", "amount_total", "percent_total"])
+  .optional();
+export const discountValueSchema = z.number().min(0).max(1_000_000).optional();
+
 export const createReservationSchema = z.object({
   guest: guestInputSchema,
   sourceId: z.uuid().nullable().optional(),
@@ -81,6 +102,13 @@ export const createReservationSchema = z.object({
   // שעת הגעה משוערת — dedicated field (D80), never folded into notes
   expectedArrivalTime: expectedArrivalTimeSchema,
   discountAmount: z.number().min(0).max(1_000_000).optional(),
+  discountMode: discountModeSchema,
+  discountValue: discountValueSchema,
+  // the VAT toggle (D106): omitted = includes VAT (tax_exempt=false)
+  taxExempt: z.boolean().optional(),
+  // ISO-4217 code from settings.enabled_currencies (D107); omitted = tenant currency
+  currency: z.string().trim().length(3).toUpperCase().optional(),
+  exchangeRate: z.number().positive().max(1_000_000).nullable().optional(),
   paidAmount: z.number().min(0).max(10_000_000).optional(),
   paymentMethod: z.string().trim().max(40).optional(),
   // D77 §11 — optional explicit workflow status; omitted → tenant default
@@ -100,6 +128,10 @@ export const updateReservationSchema = z.object({
   // null clears the value; undefined (omitted) keeps the stored one
   expectedArrivalTime: expectedArrivalTimeSchema,
   discountAmount: z.number().min(0).max(1_000_000).optional(),
+  // omitted = keep the stored mode/value (legacy clients send discountAmount only)
+  discountMode: discountModeSchema,
+  discountValue: discountValueSchema,
+  taxExempt: z.boolean().optional(),
   additionalPayment: z.number().min(0).max(10_000_000).optional(),
   paymentMethod: z.string().trim().max(40).optional(),
 });

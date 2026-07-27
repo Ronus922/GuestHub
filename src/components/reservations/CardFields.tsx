@@ -409,21 +409,10 @@ export function CardFields({
           </div>
         )}
 
-        <label className="field mt-4">
-          <span className="field-label">
-            הערות חיוב <span className="field-hint">(לא חובה)</span>
-          </span>
-          <textarea
-            className={`field-input ${roCls}`}
-            placeholder={ro ? "—" : "הערה לחיוב"}
-            autoComplete="off"
-            maxLength={500}
-            rows={3}
-            readOnly={ro}
-            value={view.billingNotes}
-            onChange={(e) => onChange((p) => ({ ...p, billingNotes: e.target.value }))}
-          />
-        </label>
+        {/* הערות חיוב is GONE from the card (D109, complaint 9): billing
+            remarks are reservation notes — the migration moved the stored
+            content into "הערות להזמנה" with a [הערת חיוב] prefix; the column
+            stays deprecated until a later drop. */}
       </fieldset>
 
       {/* subordinate status metadata — NOT a second presentation of the card */}

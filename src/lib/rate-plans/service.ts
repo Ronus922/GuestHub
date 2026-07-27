@@ -96,19 +96,48 @@ export async function listRatePlans(
 }
 
 // Lightweight list for the booking/edit panels' plan selector: active,
-// non-archived tenant-level plans only (id + display name + code).
-export type BookableRatePlan = { id: string; name: string; code: string };
+// non-archived tenant-level plans only. plan_kind rides along so the panels
+// can explain D105 (a derived_percentage plan never inherits default LOS tiers).
+export type BookableRatePlan = { id: string; name: string; code: string; plan_kind: PlanKind };
 
 export async function listBookableRatePlans(
   tenantId: string,
   db: Sql | TransactionSql = sql,
 ): Promise<BookableRatePlan[]> {
   return db<BookableRatePlan[]>`
-    SELECT id, COALESCE(public_name, name) AS name, code
+    SELECT id, COALESCE(public_name, name) AS name, code, plan_kind
     FROM guesthub.pricing_plans
     WHERE tenant_id = ${tenantId} AND sellable_unit_id IS NULL
       AND is_active AND NOT is_archived
     ORDER BY sort_order, name`;
+}
+
+// ---- length-of-stay discounts (D104) — the admin read; the engine loads the
+// same table itself so pricing never depends on this screen ----
+export type LosDiscountRow = {
+  id: string;
+  pricing_plan_id: string | null; // null = tenant default (base pricing + plans without tiers)
+  plan_name: string | null;
+  name: string;
+  min_nights: number;
+  max_nights: number | null;
+  discount_kind: "percent" | "amount_per_night" | "amount_per_stay";
+  discount_value: number;
+  is_active: boolean;
+};
+
+export async function listLosDiscounts(
+  tenantId: string,
+  db: Sql | TransactionSql = sql,
+): Promise<LosDiscountRow[]> {
+  return db<LosDiscountRow[]>`
+    SELECT d.id, d.pricing_plan_id, COALESCE(p.public_name, p.name) AS plan_name,
+           d.name, d.min_nights, d.max_nights,
+           d.discount_kind, d.discount_value::float8 AS discount_value, d.is_active
+    FROM guesthub.length_of_stay_discounts d
+    LEFT JOIN guesthub.pricing_plans p ON p.id = d.pricing_plan_id
+    WHERE d.tenant_id = ${tenantId}
+    ORDER BY d.pricing_plan_id NULLS FIRST, d.min_nights`;
 }
 
 export type PlanAssignmentRow = {

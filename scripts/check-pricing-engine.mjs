@@ -580,6 +580,82 @@ try {
       });
       ok("engine: fingerprint stable for identical inputs, changes when a price source changes");
     }
+    // 28b. length-of-stay discounts (D104) — the commercial rule every surface
+    // inherits by pricing through this engine
+    {
+      const mkTier = (sp, planId, t) => sp`
+        INSERT INTO guesthub.length_of_stay_discounts
+          (tenant_id, pricing_plan_id, name, min_nights, max_nights, discount_kind, discount_value)
+        VALUES (${f.T}, ${planId}, ${t.name}, ${t.min}, ${t.max ?? null}, ${t.kind}, ${t.value})`;
+      const room = [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests }];
+      // the fixture stay is 2 nights: 500 + 520 = 1020 accommodation
+      await scenario(tx, async (sp) => {
+        await mkTier(sp, null, { name: "שבועי", min: 2, kind: "percent", value: 10 });
+        const r = (await quoteFor(sp, f, room)).rooms[0];
+        assert.equal(r.accommodationSubtotal, 1020);
+        assert.equal(r.losDiscount.amount, 102);
+        assert.equal(r.losDiscount.scope, "tenant_default");
+        assert.equal(r.roomSubtotal, 918);
+        // a stay SHORTER than the threshold wins nothing
+        const short = await calculateQuote(sp, {
+          tenantId: f.T, checkIn: IN, checkOut: "2027-03-11", rooms: room, source: "internal",
+        });
+        assert.equal(short.rooms[0].losDiscount, null);
+        assert.equal(short.rooms[0].roomSubtotal, 500);
+      });
+      // most specific wins: 3+ beats 2+ …and a plan's own tiers replace the defaults
+      await scenario(tx, async (sp) => {
+        await mkTier(sp, null, { name: "מ-2", min: 2, kind: "percent", value: 10 });
+        await mkTier(sp, null, { name: "מ-3", min: 3, kind: "percent", value: 25 });
+        assert.equal((await quoteFor(sp, f, room)).rooms[0].losDiscount.name, "מ-2");
+        await mkTier(sp, f.FLEX, { name: "תוכנית", min: 2, kind: "amount_per_night", value: 50 });
+        const r = (await quoteFor(sp, f, room)).rooms[0];
+        assert.equal(r.losDiscount.name, "תוכנית");
+        assert.equal(r.losDiscount.scope, "rate_plan");
+        assert.equal(r.losDiscount.amount, 100); // 50 × 2 nights
+        assert.equal(r.roomSubtotal, 920);
+      });
+      // the basis is ACCOMMODATION only — extra-guest money is never discounted
+      await scenario(tx, async (sp) => {
+        await mkTier(sp, null, { name: "עשרה", min: 2, kind: "percent", value: 10 });
+        const r = (await quoteFor(sp, f, [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, adults: 3, children: 0, infants: 0 }])).rooms[0];
+        assert.equal(r.extraGuestTotal, 200);
+        assert.equal(r.accommodationSubtotal, 1020);
+        assert.equal(r.losDiscount.amount, 102); // 10% of 1020, NOT of 1220
+        assert.equal(r.roomSubtotal, 1118);
+      });
+      // an authorized manual override (§13) is the operator's final price
+      await scenario(tx, async (sp) => {
+        await mkTier(sp, null, { name: "עשרה", min: 2, kind: "percent", value: 10 });
+        const r = (await quoteFor(sp, f, [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests, manualRatePerNight: 300 }])).rooms[0];
+        assert.equal(r.losDiscount, null);
+        assert.equal(r.roomSubtotal, 600);
+      });
+      // a discount can never exceed what it discounts
+      await scenario(tx, async (sp) => {
+        await mkTier(sp, null, { name: "ענק", min: 1, kind: "amount_per_stay", value: 99999 });
+        const r = (await quoteFor(sp, f, room)).rooms[0];
+        assert.equal(r.losDiscount.amount, 1020);
+        assert.equal(r.roomSubtotal, 0);
+      });
+      // D105: a derived_percentage plan IS length-of-stay pricing — tenant
+      // default tiers never stack on it; only its own explicit tier applies
+      await scenario(tx, async (sp) => {
+        await mkTier(sp, null, { name: "דיפולט", min: 2, kind: "percent", value: 10 });
+        const nrRoom = [{ roomId: f.R1.roomId, ratePlanId: f.NR, ...guests }];
+        const blocked = (await quoteFor(sp, f, nrRoom)).rooms[0];
+        assert.equal(blocked.losDiscount, null, "default tier must NOT stack on derived_percentage");
+        assert.equal(blocked.roomSubtotal, 918); // −10% plan price, nothing more
+        await mkTier(sp, f.NR, { name: "מדרגת התוכנית", min: 2, kind: "percent", value: 5 });
+        const own = (await quoteFor(sp, f, nrRoom)).rooms[0];
+        assert.equal(own.losDiscount.name, "מדרגת התוכנית");
+        assert.equal(own.losDiscount.scope, "rate_plan");
+        // …and the base layer / base-kind plans still inherit the default
+        const flexAgain = (await quoteFor(sp, f, room)).rooms[0];
+        assert.equal(flexAgain.losDiscount.name, "דיפולט");
+      });
+      ok("engine: length-of-stay discount — most specific tier, plan over default, accommodation-only basis, manual override exempt, capped, derived_percentage never inherits defaults (D105)");
+    }
     // 29. tenant isolation
     {
       const [t2] = await tx`

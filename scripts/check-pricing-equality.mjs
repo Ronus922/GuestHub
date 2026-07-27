@@ -249,6 +249,26 @@ try {
       ok("weekend stay: weekend base prices flow through the derived plan identically");
     }
 
+    // ---- 3b: a length-of-stay discount reaches the SAVED reservation (D104) ----
+    // The engine applies it, so the seam that commits the stay must store the
+    // chosen tier and its arithmetic — that is how a reservation explains its
+    // own price months later, after the tier itself was edited or deleted.
+    await scenario(tx, async (sp) => {
+      await sp`
+        INSERT INTO guesthub.length_of_stay_discounts
+          (tenant_id, pricing_plan_id, name, min_nights, discount_kind, discount_value)
+        VALUES (${f.T}, NULL, 'תעריף שבועי', 3, 'percent', 10)`;
+      const stay = { roomId: f.R1.roomId, ratePlanId: f.FLEX, checkIn: "2027-03-13", checkOut: "2027-03-16", ...G };
+      const { res } = await assertEquality(sp, f, stay, "long-stay discount");
+      // 700 + 500 + 500 = 1700 accommodation → −10% → 1530
+      assert.equal(res.pricingSnapshot.accommodationSubtotal, 1700);
+      assert.equal(res.pricingSnapshot.losDiscount.name, "תעריף שבועי");
+      assert.equal(res.pricingSnapshot.losDiscount.amount, 170);
+      assert.equal(res.priceTotal, 1530);
+      assert.match(res.pricingSnapshot.losDiscount.explanation, /תעריף שבועי/);
+      ok("length-of-stay discount: applied by the engine, stored in the reservation snapshot with its arithmetic");
+    });
+
     // ---- 4: date-specific override row wins on both surfaces ----
     {
       const { res } = await assertEquality(tx, f, { roomId: f.R1.roomId, ratePlanId: f.FLEX, checkIn: IN, checkOut: OUT, ...G }, "override");
@@ -338,10 +358,88 @@ try {
       assert.equal(seam.reservationTotal(980, 0, 50), 1030);   // fee (extra charges)
       assert.equal(seam.reservationTotal(980, 2000, 50), 0);   // floored once, never negative
       assert.equal(seam.reservationTotal(980.004, 0.004, 0), 980); // cents rounding
+      // ---- textual pins (D106): every money writer goes through THE source ----
       const src = readFileSync(join(ROOT, "src/app/(dashboard)/reservations/actions.ts"), "utf8");
-      assert.ok((src.match(/reservationTotal\(/g) ?? []).length >= 3,
-        "create/update/preview all derive totals via reservationTotal");
-      ok("discount + fee: one canonical reservation-total formula used by every action");
+      assert.ok((src.match(/resolveTotals\(/g) ?? []).length >= 5,
+        "create/update/move/preview all derive totals via resolveTotals→computeReservationTotals (definition + 4 call sites)");
+      assert.equal((src.match(/reservationTotal\(/g) ?? []).length, 0,
+        "no action calls the deprecated wrapper directly");
+      const channelSrc = readFileSync(join(ROOT, "src/lib/channel/booking-import.ts"), "utf8");
+      assert.ok((channelSrc.match(/computeReservationTotals\(/g) ?? []).length >= 2,
+        "channel import (modify + new) folds the OTA total through the single source");
+      const publicSrc = readFileSync(join(ROOT, "src/lib/public-booking/create-booking.ts"), "utf8");
+      assert.ok((publicSrc.match(/computeReservationTotals\(/g) ?? []).length >= 1,
+        "the public booking derives its total from the single source");
+      // the SQL re-implementations are dead and must stay dead
+      for (const [file, text] of [
+        ["src/app/(dashboard)/reservations/actions.ts", src],
+        ["src/lib/channel/booking-import.ts", channelSrc],
+      ]) {
+        assert.ok(!/GREATEST\(0[^)]*discount_amount/.test(text),
+          `${file}: no SQL re-implementation of the total formula`);
+      }
+      ok("discount + fee: one canonical totals source wired into every money-writing surface (textual pins)");
+    }
+
+    // ---- 18b: computeReservationTotals — THE single totals source (D106) ----
+    // Pure and isomorphic: the same compiled module the seam delegates to.
+    {
+      const totals = req(join(out, "lib/pricing/totals.js"));
+      const base = {
+        stays: [{ priceTotal: 500, nights: 1 }, { priceTotal: 520, nights: 2 }],
+        extraCharges: 0, taxExempt: false, vatRate: 18, currency: "ILS",
+      };
+      // full price — no discount
+      const full = totals.computeReservationTotals({ ...base, discountMode: "none", discountValue: 999 });
+      assert.equal(full.roomsTotal, 1020);
+      assert.equal(full.nightsTotal, 3);
+      assert.equal(full.discountAmount, 0);
+      assert.equal(full.grandTotal, 1020);
+      // all five modes resolve to an absolute ₪ figure
+      assert.equal(totals.computeReservationTotals({ ...base, discountMode: "amount_total", discountValue: 120 }).grandTotal, 900);
+      assert.equal(totals.computeReservationTotals({ ...base, discountMode: "amount_per_night", discountValue: 40 }).discountAmount, 120); // 40 × 3
+      assert.equal(totals.computeReservationTotals({ ...base, discountMode: "percent_total", discountValue: 10 }).grandTotal, 918);
+      assert.equal(totals.computeReservationTotals({ ...base, discountMode: "percent_per_night", discountValue: 10 }).discountAmount, 102);
+      // VAT is extracted AFTER discount + extras, honors tax_exempt, and never moves the total
+      const vat = totals.computeReservationTotals({ ...base, discountMode: "amount_total", discountValue: 120 });
+      assert.equal(vat.vatAmount, 137); // included VAT of 900 @18% (whole-shekel rule)
+      assert.equal(vat.netTotal, 763);
+      const exempt = totals.computeReservationTotals({ ...base, discountMode: "amount_total", discountValue: 120, taxExempt: true });
+      assert.equal(exempt.vatAmount, 0);
+      assert.equal(exempt.grandTotal, 900, "the VAT toggle never changes the price");
+      assert.equal(exempt.netTotal, 900);
+      // manual-total exactness: agora arithmetic, no float drift
+      const exact = totals.computeReservationTotals({
+        stays: [{ priceTotal: 1000.01, nights: 3 }], discountMode: "none", discountValue: 0,
+        extraCharges: 0, taxExempt: false, vatRate: 18, currency: "ILS",
+      });
+      assert.equal(exact.grandTotal, 1000.01, "an entered total survives to the agora");
+      assert.deepEqual(totals.spreadTotalOverNights(1000.01, 3), [333.34, 333.34, 333.33]);
+      assert.equal(totals.spreadTotalOverNights(1000.01, 3).reduce((s, x) => s + Math.round(x * 100), 0), 100001);
+      // the OTA-sent total is sovereign over Σ stays (channel imports)
+      const ota = totals.computeReservationTotals(
+        { ...base, roomsTotalOverride: 1234.56, discountMode: "amount_total", discountValue: 4000 },
+        { validate: false },
+      );
+      assert.equal(ota.roomsTotal, 1234.56);
+      assert.equal(ota.grandTotal, 0, "channel path floors instead of rejecting");
+      // server-side validation fails closed
+      assert.throws(() => totals.computeReservationTotals({ ...base, discountMode: "percent_total", discountValue: 101 }), /אחוז/);
+      assert.throws(() => totals.computeReservationTotals({ ...base, discountMode: "amount_total", discountValue: 5000 }), /גדולה/);
+      assert.throws(() => totals.computeReservationTotals({ ...base, discountMode: "amount_total", discountValue: -1 }), /שלילי/);
+      // balance mirrors the ledger convention exactly: total − paid, NOT floored
+      const bal = totals.computeReservationTotals({ ...base, discountMode: "none", discountValue: 0, paid: 1100 });
+      assert.equal(bal.balance, -80, "overpayment is a negative balance (credit), same as the ledger");
+      // the legacy wrapper is a pure delegate — byte-identical results
+      assert.equal(seam.reservationTotal(980, 100, 50), 930);
+      assert.equal(
+        seam.reservationTotal(980.004, 0.004, 0),
+        totals.computeReservationTotals(
+          { stays: [], roomsTotalOverride: 980.004, discountMode: "amount_total", discountValue: 0.004, extraCharges: 0, taxExempt: false, vatRate: 0, currency: "ILS" },
+          { validate: false },
+        ).grandTotal,
+      );
+      ok("computeReservationTotals: 5 discount modes, VAT after discount + tax_exempt, agora-exact totals, OTA override, fail-closed validation, ledger balance");
     }
 
     // ---- 19-20: payment status derives from the LEDGER against the total ----
@@ -385,6 +483,30 @@ try {
       assert.equal(res.pricingSnapshot.manualOverride.appliedBy, "00000000-0000-0000-0000-00000000d51a");
       ok("manual override with authorization: final price, provenance + user recorded in the snapshot");
     }
+
+    // ---- 21b: manual TOTAL (price_mode='manual_total', D106) through the seam ----
+    await scenario(tx, async (sp) => {
+      // a tier that would fire on 2 nights — the manual total must be exempt
+      await sp`
+        INSERT INTO guesthub.length_of_stay_discounts
+          (tenant_id, pricing_plan_id, name, min_nights, discount_kind, discount_value)
+        VALUES (${f.T}, NULL, 'מדרגה', 2, 'percent', 10)`;
+      const [res] = await reservation(sp, f, {
+        roomId: f.R1.roomId, ratePlanId: f.FLEX, checkIn: IN, checkOut: OUT, ...G,
+        priceMode: "manual_total", manualTotal: 1000.01,
+      }, { actorUserId: "00000000-0000-0000-0000-00000000d51a" });
+      assert.equal(res.priceTotal, 1000.01, "the entered total IS the committed price, to the agora");
+      // 1000.01/2 → round2(500.005) = 500.01: the nightly figure is a DISPLAY
+      // spread (2dp) — 500.01 × 2 = 1000.02 ≠ the total, and that is fine,
+      // because priceTotal is the authoritative money, never rate × nights
+      assert.equal(res.ratePerNight, 500.01, "nightly figure is a display spread, never authoritative");
+      assert.equal(res.pricingSnapshot.priceMode, "manual_total");
+      assert.equal(res.pricingSnapshot.manualOverride.mode, "manual_total");
+      assert.equal(res.pricingSnapshot.manualOverride.total, 1000.01);
+      assert.equal(res.pricingSnapshot.manualOverride.appliedBy, "00000000-0000-0000-0000-00000000d51a");
+      assert.equal(res.pricingSnapshot.losDiscount, null, "a manual total is never auto-discounted (LOS exempt)");
+      ok("manual TOTAL: agora-exact committed price, provenance in the snapshot, LOS exempt");
+    });
     {
       // without permission the ACTION refuses before pricing: the gate is the
       // dedicated permission, granted to manager only (migration 017)

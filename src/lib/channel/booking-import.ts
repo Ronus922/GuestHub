@@ -25,6 +25,8 @@ import {
   CONFLICT_LABEL,
 } from "@/lib/inventory";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
+import { computeReservationTotals, type DiscountMode } from "@/lib/pricing/totals";
+import { DEFAULT_VAT_RATE } from "@/lib/vat";
 import {
   otaCancellationSnapshot,
   resolveCancellationSnapshot,
@@ -242,6 +244,10 @@ type ExistingReservation = {
   check_in: string;
   check_out: string;
   external_cancellation_requested_at: string | null;
+  discount_mode: string;
+  discount_value: string;
+  extra_charges: string;
+  tax_exempt: boolean;
 };
 
 async function lockExternalReservation(
@@ -252,7 +258,9 @@ async function lockExternalReservation(
   const [existing] = await tx<ExistingReservation[]>`
     SELECT id, reservation_number, status, primary_guest_id,
            check_in::text AS check_in, check_out::text AS check_out,
-           external_cancellation_requested_at::text AS external_cancellation_requested_at
+           external_cancellation_requested_at::text AS external_cancellation_requested_at,
+           discount_mode, discount_value::text AS discount_value,
+           extra_charges::text AS extra_charges, tax_exempt
     FROM guesthub.reservations
     WHERE tenant_id = ${conn.tenant_id}
       AND channel_connection_id = ${conn.id}
@@ -410,6 +418,22 @@ async function applyLiveRevision(
   let reservationId: string;
   if (existing) {
     const status = PRESERVED_STATUSES.has(existing.status) ? existing.status : "confirmed";
+    // THE single totals source (D106): OTA rooms figure sovereign, local
+    // discount/extras preserved, floor-only (a weird stored discount must
+    // never block an import)
+    const channelTotals = computeReservationTotals(
+      {
+        stays: stays.map((s) => ({ priceTotal: s.amount, nights: s.nights })),
+        roomsTotalOverride: norm.amount ?? null,
+        discountMode: existing.discount_mode as DiscountMode,
+        discountValue: Number(existing.discount_value),
+        extraCharges: Number(existing.extra_charges),
+        taxExempt: existing.tax_exempt,
+        vatRate: DEFAULT_VAT_RATE,
+        currency: norm.currency ?? "ILS",
+      },
+      { validate: false },
+    );
     await tx`
       UPDATE guesthub.reservations SET
         primary_guest_id = ${guestId},
@@ -418,10 +442,13 @@ async function applyLiveRevision(
         check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
         adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
         -- H6: preserve locally-added discount/extra_charges across an OTA
-        -- modification. The channel total is folded through the reservation's
-        -- own adjustments (reservationTotal semantics: max(0, channel+extra−disc))
-        -- instead of blindly overwriting total_price with the raw channel amount.
-        total_price = GREATEST(0, ${total} + extra_charges - discount_amount),
+        -- modification. The channel total is folded through THE single totals
+        -- source (computeReservationTotals, D106) — the OTA amount is the
+        -- sovereign rooms figure, validation is skipped (floor only), and the
+        -- resolved values are computed in TS above this statement.
+        total_price = ${channelTotals.grandTotal},
+        discount_amount = ${channelTotals.discountAmount},
+        rooms_total_override = ${norm.amount ?? null},
         currency = ${norm.currency ?? "ILS"},
         notes = ${norm.notes},
         expected_arrival_time = COALESCE(${norm.arrivalHour}, expected_arrival_time),
@@ -454,11 +481,23 @@ async function applyLiveRevision(
     const cancellationSnapshot = norm.cancellation
       ? otaCancellationSnapshot(norm.cancellation, norm.otaName)
       : await resolveCancellationSnapshot(tx, conn.tenant_id, stays[0]?.localRatePlanId ?? null);
+    // THE single totals source (D106) — a fresh import has no local discount/
+    // extras yet; the OTA amount (when sent) is the sovereign rooms figure
+    const newTotals = computeReservationTotals(
+      {
+        stays: stays.map((s) => ({ priceTotal: s.amount, nights: s.nights })),
+        roomsTotalOverride: norm.amount ?? null,
+        discountMode: "amount_total", discountValue: 0, extraCharges: 0,
+        taxExempt: false, vatRate: DEFAULT_VAT_RATE, currency: norm.currency ?? "ILS",
+      },
+      { validate: false },
+    );
     const [created] = await tx<{ id: string }[]>`
       INSERT INTO guesthub.reservations
         (tenant_id, reservation_number, primary_guest_id, source_id, status,
          check_in, check_out, adults, children, infants,
-         total_price, paid_amount, balance, currency, notes, expected_arrival_time,
+         total_price, paid_amount, balance, currency, rooms_total_override,
+         notes, expected_arrival_time,
          expected_arrival_time_source, cancellation_policy_snapshot,
          created_by, booking_origin,
          channel_connection_id, external_booking_id, external_revision_id,
@@ -467,7 +506,8 @@ async function applyLiveRevision(
       VALUES (${conn.tenant_id}, ${number}, ${guestId}, ${sourceId}, 'confirmed',
               ${agg.checkIn}, ${agg.checkOut},
               ${agg.adults}, ${agg.children}, ${agg.infants},
-              ${total}, 0, ${total}, ${norm.currency ?? "ILS"}, ${norm.notes},
+              ${newTotals.grandTotal}, 0, ${newTotals.grandTotal}, ${norm.currency ?? "ILS"},
+              ${norm.amount ?? null}, ${norm.notes},
               ${norm.arrivalHour},
               ${norm.arrivalHour ? "ota" : null},
               ${cancellationSnapshot === null ? null : tx.json(cancellationSnapshot as never)},
@@ -481,20 +521,21 @@ async function applyLiveRevision(
 
   for (const stay of stays) {
     // the channel's price is authoritative for its own booking: is_manual_rate
-    // marks "not engine-priced"; pricing_snapshot stays NULL — there is no
-    // engine quote to snapshot, and inventing one would be dishonest.
+    // + price_mode='manual_night' mark "not engine-priced"; pricing_snapshot
+    // stays NULL — there is no engine quote to snapshot, and inventing one
+    // would be dishonest.
     const ratePerNight = round2(stay.nights > 0 ? stay.amount / stay.nights : stay.amount);
     await tx`
       INSERT INTO guesthub.reservation_rooms
         (tenant_id, reservation_id, room_id, check_in, check_out,
          adults, children, infants, rate_per_night, price_total,
-         is_manual_rate, rate_plan_id, pricing_snapshot,
+         is_manual_rate, price_mode, rate_plan_id, pricing_snapshot,
          guest_first_name, guest_last_name, guest_phone, guest_email)
       VALUES (${conn.tenant_id}, ${reservationId}, ${stay.roomId},
               ${stay.checkIn}, ${stay.checkOut},
               ${stay.adults}, ${stay.children}, ${stay.infants},
               ${ratePerNight}, ${round2(stay.amount)},
-              true, ${stay.localRatePlanId}, NULL,
+              true, 'manual_night', ${stay.localRatePlanId}, NULL,
               ${norm.customer.firstName}, ${norm.customer.lastName},
               ${norm.customer.phone}, ${norm.customer.email})`;
   }

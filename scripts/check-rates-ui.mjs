@@ -174,6 +174,21 @@ ok(/widthClassName="w-\[60vw\]/.test(groupUpdate) && /grid-template-columns:\s*m
 ok(/<RateGrid[\s\S]*<GroupUpdatePanel/.test(screen),
   "the grid stays mounted underneath the locally controlled panel");
 
+// ---- 13b. removing the max-stay limit is expressible, and clears (D99/D104) ----
+// A stepper that could only reach 0 would write max_stay = 0 — a rule that
+// rejects EVERY stay. "ללא הגבלה" must reach the server as null (main's D99
+// shape: NO_LIMIT sentinel + Stepper zeroLabel; the defensive read side is
+// stayLimit, which treats a stored NULL and 0 alike).
+const rules = read("src/lib/rates/rules.ts");
+ok(/maxStay: maxStay === NO_LIMIT \? null : maxStay/.test(groupUpdate),
+  "max stay sends null (clear the restriction), never a literal 0");
+ok(/zeroLabel="ללא הגבלה"/.test(groupUpdate),
+  "the max-stay stepper offers an explicit ״ללא הגבלה״ state");
+ok(/export function stayLimit/.test(rules)
+  && !/\.max_stay != null/.test(rules)
+  && !/\.min_stay_arrival != null/.test(rules),
+  "stay-length limits are read through stayLimit — NULL and 0 both mean 'no limit'");
+
 // ---- 14. room order: ONE ascending list, no room-type bands ----
 // The board must read 926 → 1000 → 1006 → 1102 …  Banding by room type made the
 // order ascend only INSIDE a band, which is not an ascending board.

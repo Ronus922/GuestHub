@@ -1,0 +1,19 @@
+
+> guesthub@0.1.0 check:totals-parity /home/ubuntu/worktrees/booking-window-v2
+> node scripts/check-totals-parity.mjs
+
+# tree under test: /home/ubuntu/worktrees/booking-window-v2
+# mode: COPY (42 reservations)
+✓ 1. COPY: 057+058 applied — every money column of 42 reservations is byte-identical
+NOTICE:  column "discount_mode" of relation "reservations" already exists, skipping
+NOTICE:  column "discount_value" of relation "reservations" already exists, skipping
+NOTICE:  column "rooms_total_override" of relation "reservations" already exists, skipping
+NOTICE:  column "exchange_rate" of relation "reservations" already exists, skipping
+NOTICE:  column "price_mode" of relation "reservation_rooms" already exists, skipping
+NOTICE:  column "manual_total" of relation "reservation_rooms" already exists, skipping
+✓ 2. 058 is idempotent — a re-run never moves money
+compiling totals.ts + ledger via tsc…
+✓ 3. replay: computeReservationTotals reproduces the stored total of all 42 reservations
+✓ 4. ledger: recomputePaymentAggregates reproduces stored paid/balance for every reservation (rolled back)
+
+ALL 4 TOTALS-PARITY CHECKS PASSED — nothing committed

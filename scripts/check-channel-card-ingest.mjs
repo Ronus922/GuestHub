@@ -76,9 +76,16 @@ const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
 
 try {
   await sql.begin(async (tx) => {
-    const [{ id: tenantId }] = await tx`SELECT id FROM guesthub.tenants LIMIT 1`;
+    // self-sufficient fixture: the guard must be green on a fresh chain AND on
+    // a restored production copy — never dependent on leftover testdb state
+    // (a bare tenant SELECT broke on empty DBs; a default-provider connection
+    // collided with the restored production connection).
+    const [{ id: tenantId }] = await tx`
+      INSERT INTO guesthub.tenants (name, slug)
+      VALUES ('card-ingest-check', ${"card-ingest-" + Date.now()}) RETURNING id`;
     const [{ id: connectionId }] = await tx`
-      INSERT INTO guesthub.channel_connections (tenant_id) VALUES (${tenantId}) RETURNING id`;
+      INSERT INTO guesthub.channel_connections (tenant_id, provider, environment)
+      VALUES (${tenantId}, 'beds24', 'staging') RETURNING id`;
     const mkReservation = async (num) => {
       const [r] = await tx`
         INSERT INTO guesthub.reservations (tenant_id, reservation_number, check_in, check_out)
@@ -149,6 +156,22 @@ try {
     assert.equal(r1.stored, true, "direct ingest stored the card");
     const [c2] = await tx`SELECT pan_encrypted, last4 FROM guesthub.reservation_cards WHERE reservation_id = ${resB}`;
     assert.equal(vault.decryptPan(c2.pan_encrypted), TEST_PAN, "direct-ingest PAN round-trips");
+
+    // ---- audit §9 defect 1 (V2 fix): a channel RE-ingest replaces the PAN,
+    // so a CVV keyed in manually for the PREVIOUS card must not survive onto
+    // the new one — the reveal path would hand staff a wrong-card CVV.
+    await tx`
+      UPDATE guesthub.reservation_cards
+      SET cvv_encrypted = ${vault.encryptCvv("123")}
+      WHERE reservation_id = ${resB}`;
+    const r2 = await ingest.ingestChannelCard(tx, {
+      tenantId, reservationId: resB, otaName: "Expedia", card: extracted,
+    });
+    assert.equal(r2.stored, true, "re-ingest stored");
+    const [c3] = await tx`
+      SELECT cvv_encrypted FROM guesthub.reservation_cards WHERE reservation_id = ${resB}`;
+    assert.equal(c3.cvv_encrypted, null,
+      "re-ingest clears the stale manual CVV — a new PAN never keeps another card's code");
 
     // ---- the ingest audit rows carry no plaintext PAN, no CVV, no cvv flag ----
     const auditRows = await tx`

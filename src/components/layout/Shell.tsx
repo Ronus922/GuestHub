@@ -16,8 +16,9 @@ export type NewReservationConfig = {
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
   workflowStatuses: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   vatRate: number;
+  enabledCurrencies: string[];
   canSaveCard: boolean;
   canPriceOverride: boolean;
   canCreate: boolean;

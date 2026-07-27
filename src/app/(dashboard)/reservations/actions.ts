@@ -15,12 +15,21 @@ import {
 import { listAvailableRooms, type AvailableRoom } from "@/lib/reservations/available-rooms";
 import {
   priceReservationStays,
-  reservationTotal,
   StayPricingError,
   type PricedReservationStay,
   type StayPricingSnapshot,
 } from "@/lib/pricing/reservation-pricing";
+import {
+  computeReservationTotals,
+  TotalsValidationError,
+  type DiscountMode,
+  type PriceMode,
+  type ReservationTotals,
+} from "@/lib/pricing/totals";
 import { calculateReservationPrice } from "@/lib/pricing/engine";
+import type { LosDiscountQuote } from "@/lib/pricing/types";
+import { parseEnabledCurrencies } from "@/lib/settings";
+import { DEFAULT_VAT_RATE, parseVatRate } from "@/lib/vat";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { loadCollectionView, type CollectionView } from "@/lib/payments/collection";
 import {
@@ -108,6 +117,7 @@ async function validateAndPriceStays(
     skipChecksForRr?: Set<string>;
     snapshotByRr?: Map<string, { ratePerNight: number; priceTotal?: number }>;
     actorUserId?: string;
+    taxExempt?: boolean;
   },
 ): Promise<PricedStay[]> {
   assertNoInternalOverlap(stays);
@@ -132,6 +142,95 @@ function aggregates(stays: PricedStay[]) {
     children: stays.reduce((n, s) => n + s.children, 0),
     infants: stays.reduce((n, s) => n + s.infants, 0),
     roomsTotal: stays.reduce((sum, s) => sum + s.priceTotal, 0),
+  };
+}
+
+// ---- the reservation money context + THE single totals source (D106) ----
+
+// one tenant read per money-writing action: base currency, VAT rate, and the
+// currencies a reservation may be priced in (D107)
+async function moneyContext(tx: TransactionSql, tenantId: string) {
+  const [row] = await tx<{ currency: string; vat_rate: string | null; enabled_currencies: unknown }[]>`
+    SELECT currency, settings->>'vat_rate' AS vat_rate,
+           settings->'enabled_currencies' AS enabled_currencies
+    FROM guesthub.tenants WHERE id = ${tenantId}`;
+  const currency = row?.currency ?? "ILS";
+  return {
+    tenantCurrency: currency,
+    vatRate: parseVatRate(row?.vat_rate) ?? DEFAULT_VAT_RATE,
+    enabledCurrencies: parseEnabledCurrencies(row?.enabled_currencies, currency),
+  };
+}
+
+// D107: the reservation currency must be enabled, and a NON-tenant currency
+// requires every room in a manual price mode — the rate tables (and Beds24
+// publishing) live in the tenant currency, so an engine price must never be
+// silently relabeled into another one.
+function resolveReservationCurrency(
+  ctx: { tenantCurrency: string; enabledCurrencies: string[] },
+  requested: string | undefined,
+  stays: { isManualRate?: boolean; priceMode?: PriceMode; manualTotal?: number | null }[],
+): string {
+  const currency = (requested ?? ctx.tenantCurrency).toUpperCase();
+  if (!ctx.enabledCurrencies.includes(currency)) {
+    throw new DomainError(`המטבע ${currency} אינו מופעל בהגדרות הנכס`);
+  }
+  if (currency !== ctx.tenantCurrency) {
+    const allManual = stays.every(
+      (s) => s.priceMode === "manual_total" || s.priceMode === "manual_night" || s.isManualRate === true,
+    );
+    if (!allManual) {
+      throw new DomainError(
+        `הזמנה במטבע ${currency} דורשת מחיר ידני לכל חדר — טבלאות התעריפים הן במטבע הנכס (${ctx.tenantCurrency})`,
+      );
+    }
+  }
+  return currency;
+}
+
+// computeReservationTotals with domain-error mapping: a validation failure is
+// an operator-facing message, never an unexpected 500.
+function resolveTotals(
+  input: Parameters<typeof computeReservationTotals>[0],
+  opts?: Parameters<typeof computeReservationTotals>[1],
+): ReservationTotals {
+  try {
+    return computeReservationTotals(input, opts);
+  } catch (e) {
+    if (e instanceof TotalsValidationError) throw new DomainError(e.message);
+    throw e;
+  }
+}
+
+// legacy → mode/value pair: older clients send discountAmount only (= amount_total)
+function discountPair(input: {
+  discountMode?: DiscountMode;
+  discountValue?: number;
+  discountAmount?: number;
+}): { mode: DiscountMode; value: number } {
+  if (input.discountMode) return { mode: input.discountMode, value: input.discountValue ?? 0 };
+  const legacy = input.discountAmount ?? 0;
+  return { mode: "amount_total", value: legacy };
+}
+
+// the consistent (price_mode, manual_total, is_manual_rate) triple for a stay
+// row — is_manual_rate is KEPT in sync (legacy readers/scripts, D106).
+// An explicit priceMode wins; absent = the legacy isManualRate semantics.
+function stayModeCols(s: { isManualRate: boolean; priceMode?: PriceMode; manualTotal?: number | null }) {
+  const mode: PriceMode =
+    s.priceMode === "manual_total" && s.manualTotal != null
+      ? "manual_total"
+      : s.priceMode === "manual_night"
+        ? "manual_night"
+        : s.priceMode === "auto"
+          ? "auto"
+          : s.isManualRate
+            ? "manual_night"
+            : "auto";
+  return {
+    price_mode: mode,
+    manual_total: mode === "manual_total" ? (s.manualTotal ?? null) : null,
+    is_manual_rate: mode === "manual_night",
   };
 }
 
@@ -208,23 +307,37 @@ export async function createReservationAction(
     const parsed = createReservationSchema.safeParse(raw);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
     const input = parsed.data;
-    // an explicit manual nightly price is an authorized override (§13)
-    if (input.rooms.some((s) => s.isManualRate === true))
+    // an explicit manual price — nightly or total — is an authorized override (§13)
+    if (input.rooms.some((s) => s.isManualRate === true || s.priceMode === "manual_total"))
       requirePermission(actor, "reservations.price_override");
 
     const result = await sql.begin(async (tx) => {
       await lockRooms(tx, actor.tenantId, input.rooms.map((r) => r.roomId));
+      const money = await moneyContext(tx, actor.tenantId);
+      const currency = resolveReservationCurrency(money, input.currency, input.rooms);
+      const taxExempt = input.taxExempt ?? false;
       const priced = await validateAndPriceStays(tx, actor.tenantId, input.rooms, {
         enforceAvailability: true,
         enforceRestrictions: true,
         actorUserId: actor.userId,
+        taxExempt,
       });
 
       const guestId = await upsertGuest(tx, actor.tenantId, input.guest);
       const number = await allocateReservationNumber(tx, actor.tenantId);
-      const discount = input.discountAmount ?? 0;
       const agg = aggregates(priced);
-      const total = reservationTotal(agg.roomsTotal, discount, 0);
+      const disc = discountPair(input);
+      const totals = resolveTotals({
+        stays: priced,
+        discountMode: disc.mode,
+        discountValue: disc.value,
+        extraCharges: 0,
+        taxExempt,
+        vatRate: money.vatRate,
+        currency,
+        exchangeRate: currency === money.tenantCurrency ? null : (input.exchangeRate ?? null),
+      });
+      const total = totals.grandTotal;
       const paid = input.paidAmount ?? 0;
 
       // explicit workflow choice (validated: this tenant, active) or default
@@ -251,13 +364,15 @@ export async function createReservationAction(
         INSERT INTO guesthub.reservations
           (tenant_id, reservation_number, primary_guest_id, source_id, status,
            check_in, check_out, adults, children, infants,
-           discount_amount, total_price, paid_amount, balance, currency,
+           discount_amount, discount_mode, discount_value, tax_exempt,
+           total_price, paid_amount, balance, currency, exchange_rate,
            notes, expected_arrival_time, expected_arrival_time_source,
            cancellation_policy_snapshot, booking_origin, created_by, workflow_status_id)
         VALUES (${actor.tenantId}, ${number}, ${guestId}, ${input.sourceId ?? null},
                 ${input.status}, ${agg.checkIn}, ${agg.checkOut},
                 ${agg.adults}, ${agg.children}, ${agg.infants},
-                ${discount}, ${total}, 0, ${total}, 'ILS',
+                ${totals.discountAmount}, ${disc.mode}, ${disc.value}, ${taxExempt},
+                ${total}, 0, ${total}, ${currency}, ${totals.exchangeRate},
                 ${input.notes || null}, ${input.expectedArrivalTime ?? null},
                 ${input.expectedArrivalTime ? "manual" : null},
                 ${cancellationSnapshot === null ? null : tx.json(cancellationSnapshot as never)},
@@ -266,15 +381,16 @@ export async function createReservationAction(
 
       for (const s of priced) {
         const g = stayGuestCols(s);
+        const m = stayModeCols(s);
         await tx`
           INSERT INTO guesthub.reservation_rooms
             (tenant_id, reservation_id, room_id, check_in, check_out,
              adults, children, infants, rate_per_night, price_total,
-             is_manual_rate, rate_plan_id, pricing_snapshot,
+             is_manual_rate, price_mode, manual_total, rate_plan_id, pricing_snapshot,
              guest_first_name, guest_last_name, guest_phone, guest_email, guest_id_number)
           VALUES (${actor.tenantId}, ${res.id}, ${s.roomId}, ${s.checkIn}, ${s.checkOut},
                   ${s.adults}, ${s.children}, ${s.infants}, ${s.ratePerNight}, ${s.priceTotal},
-                  ${s.isManualRate}, ${s.ratePlanId},
+                  ${m.is_manual_rate}, ${m.price_mode}, ${m.manual_total}, ${s.ratePlanId},
                   ${s.pricingSnapshot === null ? null : tx.json(s.pricingSnapshot as never)},
                   ${g.guest_first_name}, ${g.guest_last_name}, ${g.guest_phone},
                   ${g.guest_email}, ${g.guest_id_number})`;
@@ -357,10 +473,14 @@ export async function updateReservationAction(
     await sql.begin(async (tx) => {
       const [existing] = await tx<
         { id: string; status: string; booking_origin: string; primary_guest_id: string | null; check_in: string; check_out: string;
-          discount_amount: string; extra_charges: string; paid_amount: string }[]
+          discount_amount: string; discount_mode: DiscountMode; discount_value: string;
+          extra_charges: string; paid_amount: string; tax_exempt: boolean;
+          currency: string; exchange_rate: string | null; rooms_total_override: string | null }[]
       >`
         SELECT id, status, booking_origin, primary_guest_id, check_in::text, check_out::text,
-               discount_amount, extra_charges, paid_amount
+               discount_amount, discount_mode, discount_value,
+               extra_charges, paid_amount, tax_exempt,
+               currency, exchange_rate::text, rooms_total_override::text
         FROM guesthub.reservations
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
         FOR UPDATE`;
@@ -376,41 +496,53 @@ export async function updateReservationAction(
       const oldRows = await tx<
         { id: string; room_id: string | null; check_in: string; check_out: string;
           adults: number; children: number; infants: number; room_type_id: string | null;
-          is_manual_rate: boolean; rate_per_night: number; price_total: number;
+          is_manual_rate: boolean; price_mode: PriceMode; manual_total: number | null;
+          rate_per_night: number; price_total: number;
           rate_plan_id: string | null }[]
       >`
         SELECT rr.id, rr.room_id, rr.check_in::text, rr.check_out::text,
                rr.adults, rr.children, rr.infants, r.room_type_id,
-               rr.is_manual_rate, rr.rate_per_night::float8 AS rate_per_night,
+               rr.is_manual_rate, rr.price_mode, rr.manual_total::float8 AS manual_total,
+               rr.rate_per_night::float8 AS rate_per_night,
                rr.price_total::float8 AS price_total, rr.rate_plan_id
         FROM guesthub.reservation_rooms rr
         LEFT JOIN guesthub.rooms r ON r.id = rr.room_id
         WHERE rr.reservation_id = ${input.id} AND rr.tenant_id = ${actor.tenantId}`;
       const oldById = new Map(oldRows.map((r) => [r.id, r]));
 
-      // Turning ON a manual override, or changing an override's rate, requires
+      // Turning ON a manual price — nightly or total — or changing one, requires
       // the authorization (§13). Preserved stored overrides don't re-require it
       // — an unauthorized editor can keep an approved price, never set one.
       const setsNewOverride = input.rooms.some((s) => {
-        if (s.isManualRate !== true) return false;
         const old = s.rrId ? oldById.get(s.rrId) : undefined;
+        if (s.priceMode === "manual_total") {
+          if (!old) return true;
+          return old.price_mode !== "manual_total" ||
+            (s.manualTotal != null && s.manualTotal !== old.manual_total);
+        }
+        if (s.isManualRate !== true) return false;
         if (!old) return true;
         return !old.is_manual_rate || (s.ratePerNight != null && s.ratePerNight !== old.rate_per_night);
       });
       if (setsNewOverride) requirePermission(actor, "reservations.price_override");
 
-      // Preserve the authorized-override flag AND its committed rate across a
+      // Preserve the authorized-override flag AND its committed price across a
       // recompute-triggering edit (§13): an existing stay keeps its stored
-      // is_manual_rate unless the caller explicitly changes it, and a manual
-      // stay keeps its committed rate when no new price is resubmitted — so the
-      // recompute can never silently overwrite the override or corrupt the flag.
-      // The stay's Rate Plan is preserved the same way.
+      // price mode unless the caller explicitly changes it, and a manual stay
+      // keeps its committed rate/total when no new price is resubmitted — so
+      // the recompute can never silently overwrite the override or corrupt the
+      // flag. The stay's Rate Plan is preserved the same way.
       for (const s of input.rooms) {
         if (!s.rrId) continue;
         const old = oldById.get(s.rrId);
         if (!old) continue;
-        if (s.isManualRate === undefined) s.isManualRate = old.is_manual_rate;
-        if (old.is_manual_rate && s.ratePerNight == null) s.ratePerNight = old.rate_per_night;
+        if (s.priceMode === undefined && s.isManualRate === undefined) {
+          s.priceMode = old.price_mode;
+          s.isManualRate = old.is_manual_rate;
+        }
+        if (s.priceMode === "manual_total" && s.manualTotal == null) s.manualTotal = old.manual_total;
+        if ((s.isManualRate || s.priceMode === "manual_night") && s.ratePerNight == null)
+          s.ratePerNight = old.rate_per_night;
         if (s.ratePlanId === undefined) s.ratePlanId = old.rate_plan_id;
       }
 
@@ -446,11 +578,14 @@ export async function updateReservationAction(
       for (const s of input.rooms) {
         if (!s.rrId) continue;
         const old = oldById.get(s.rrId);
-        if (!old || s.isManualRate) continue;
+        if (!old || s.isManualRate || s.priceMode === "manual_total" || s.priceMode === "manual_night") continue;
         if (
           old.room_id === s.roomId && old.check_in === s.checkIn && old.check_out === s.checkOut &&
           old.adults === s.adults && old.children === s.children && old.infants === s.infants &&
-          old.rate_plan_id === (s.ratePlanId ?? null)
+          old.rate_plan_id === (s.ratePlanId ?? null) &&
+          // a price-MODE change is a price-basis change: switching a manual
+          // stay back to auto must re-price, never resurrect the manual number
+          old.price_mode === (s.priceMode ?? "auto")
         ) {
           snapshotByRr.set(s.rrId, { ratePerNight: old.rate_per_night, priceTotal: old.price_total });
         }
@@ -464,12 +599,15 @@ export async function updateReservationAction(
       ];
       await lockRooms(tx, actor.tenantId, allRoomIds);
 
+      const taxExempt = input.taxExempt ?? existing.tax_exempt;
       const priced = await validateAndPriceStays(tx, actor.tenantId, input.rooms, {
         excludeRrIds: oldRows.map((r) => r.id),
         enforceAvailability: nowBlocking,
         enforceRestrictions: nowBlocking,
         skipChecksForRr,
         snapshotByRr,
+        actorUserId: actor.userId,
+        taxExempt,
       });
 
       const guestId = await upsertGuest(tx, actor.tenantId, {
@@ -495,7 +633,7 @@ export async function updateReservationAction(
           infants: s.infants,
           rate_per_night: s.ratePerNight,
           price_total: s.priceTotal,
-          is_manual_rate: s.isManualRate,
+          ...stayModeCols(s),
           rate_plan_id: s.ratePlanId,
           ...stayGuestCols(s),
         };
@@ -514,25 +652,54 @@ export async function updateReservationAction(
           }
         } else {
           const g = stayGuestCols(s);
+          const m = stayModeCols(s);
           await tx`
             INSERT INTO guesthub.reservation_rooms
               (tenant_id, reservation_id, room_id, check_in, check_out,
                adults, children, infants, rate_per_night, price_total,
-               is_manual_rate, rate_plan_id, pricing_snapshot,
+               is_manual_rate, price_mode, manual_total, rate_plan_id, pricing_snapshot,
                guest_first_name, guest_last_name, guest_phone, guest_email, guest_id_number)
             VALUES (${actor.tenantId}, ${input.id}, ${s.roomId}, ${s.checkIn}, ${s.checkOut},
                     ${s.adults}, ${s.children}, ${s.infants}, ${s.ratePerNight}, ${s.priceTotal},
-                    ${s.isManualRate}, ${s.ratePlanId},
+                    ${m.is_manual_rate}, ${m.price_mode}, ${m.manual_total}, ${s.ratePlanId},
                     ${s.pricingSnapshot === null ? null : tx.json(s.pricingSnapshot as never)},
                     ${g.guest_first_name}, ${g.guest_last_name}, ${g.guest_phone},
                     ${g.guest_email}, ${g.guest_id_number})`;
         }
       }
 
-      const discount = input.discountAmount ?? Number(existing.discount_amount);
+      const disc = discountPair({
+        discountMode: input.discountMode,
+        discountValue: input.discountValue,
+        discountAmount: input.discountAmount,
+      });
+      // omitted mode AND omitted legacy amount = keep the stored pair
+      const effDisc =
+        input.discountMode == null && input.discountAmount == null && input.discountValue == null
+          ? { mode: existing.discount_mode, value: Number(existing.discount_value) }
+          : disc;
       const agg = aggregates(priced);
       const extra = Number(existing.extra_charges);
-      const total = reservationTotal(agg.roomsTotal, discount, extra);
+      // the OTA-sent total (H6) survives only a pure metadata edit: any stay
+      // that re-priced or changed mode supersedes it with local arithmetic
+      const staysRepriced = priced.some((s) => s.pricingSnapshot !== null);
+      const roomsTotalOverride =
+        existing.rooms_total_override != null && !staysRepriced
+          ? Number(existing.rooms_total_override)
+          : null;
+      const money = await moneyContext(tx, actor.tenantId);
+      const totals = resolveTotals({
+        stays: priced,
+        roomsTotalOverride,
+        discountMode: effDisc.mode,
+        discountValue: effDisc.value,
+        extraCharges: extra,
+        taxExempt,
+        vatRate: money.vatRate,
+        currency: existing.currency,
+        exchangeRate: existing.exchange_rate == null ? null : Number(existing.exchange_rate),
+      });
+      const total = totals.grandTotal;
       const addPay = input.additionalPayment ?? 0;
 
       await tx`
@@ -542,7 +709,11 @@ export async function updateReservationAction(
           status = ${nextStatus},
           check_in = ${agg.checkIn}, check_out = ${agg.checkOut},
           adults = ${agg.adults}, children = ${agg.children}, infants = ${agg.infants},
-          discount_amount = ${discount},
+          discount_amount = ${totals.discountAmount},
+          discount_mode = ${effDisc.mode},
+          discount_value = ${effDisc.value},
+          tax_exempt = ${taxExempt},
+          rooms_total_override = ${roomsTotalOverride},
           total_price = ${total},
           notes = ${input.notes || null},
           expected_arrival_time = CASE
@@ -925,12 +1096,14 @@ export async function rescheduleReservationRoomAction(raw: {
           check_in: string; check_out: string;
           adults: number; children: number; infants: number;
           rate_per_night: string; is_manual_rate: boolean; status: string;
+          price_mode: PriceMode; manual_total: string | null;
           rate_plan_id: string | null; old_room_type: string | null;
         }[]
       >`
         SELECT rr.id, rr.reservation_id, rr.room_id,
                rr.check_in::text, rr.check_out::text,
                rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
+               rr.price_mode, rr.manual_total::text AS manual_total,
                rr.rate_plan_id, res.status, r.room_type_id AS old_room_type
         FROM guesthub.reservation_rooms rr
         JOIN guesthub.reservations res ON res.id = rr.reservation_id
@@ -944,11 +1117,14 @@ export async function rescheduleReservationRoomAction(raw: {
       await lockRooms(tx, actor.tenantId, lockIds);
 
       const blocking = isBlocking(rr.status);
-      // Manual overrides survive a move — room change included — exactly like the
-      // edit path (§13). For an auto-priced stay: a same-room date change keeps the
-      // committed nightly (§6); a room change re-prices from the target's rates.
-      // The stay's Rate Plan rides along unchanged.
-      const isManual = rr.is_manual_rate;
+      // Manual prices survive a move — room change included — exactly like the
+      // edit path (§13): a manual-nightly stay keeps its rate, a manual-TOTAL
+      // stay keeps its exact total (that is the mode's semantic, D106). For an
+      // auto-priced stay: a same-room date change keeps the committed nightly
+      // (§6); a room change re-prices from the target's rates. The stay's Rate
+      // Plan rides along unchanged.
+      const isManualTotal = rr.price_mode === "manual_total" && rr.manual_total != null;
+      const isManual = isManualTotal || rr.is_manual_rate;
       const sameRoom = rr.room_id === input.targetRoomId;
       const priced = await validateAndPriceStays(
         tx,
@@ -962,7 +1138,11 @@ export async function rescheduleReservationRoomAction(raw: {
           children: rr.children,
           infants: rr.infants,
           ratePlanId: rr.rate_plan_id,
-          ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
+          ...(isManualTotal
+            ? { priceMode: "manual_total" as const, manualTotal: Number(rr.manual_total) }
+            : rr.is_manual_rate
+              ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) }
+              : {}),
         }],
         {
           excludeRrIds: [rr.id],
@@ -991,23 +1171,57 @@ export async function rescheduleReservationRoomAction(raw: {
           WHERE id = ${rr.id} AND tenant_id = ${actor.tenantId}`;
       }
 
-      // recompute parent dates + canonical total from ALL rooms, then derive
-      // paid_amount/balance from the LEDGER (M7 fix, D51/D52 one-source-of-truth):
-      // no inline balance formula — recomputePaymentAggregates owns balance and
-      // re-derives paid_amount from guesthub.payments, so a stale cached
-      // paid_amount can never leak into the balance on a reschedule. The
-      // total_price expression matches reservationTotal() (max(0, rooms+extra−disc)).
-      await tx`
-        UPDATE guesthub.reservations res SET
-          check_in = x.min_ci, check_out = x.max_co,
-          total_price = GREATEST(0, x.rooms_total - res.discount_amount + res.extra_charges)
-        FROM (
+      // recompute parent dates + canonical total from ALL rooms — through THE
+      // single totals source (D106), no SQL re-implementation — then derive
+      // paid_amount/balance from the LEDGER (M7 fix, D51/D52 one-source-of-
+      // truth): recomputePaymentAggregates owns balance and re-derives
+      // paid_amount from guesthub.payments, so a stale cached paid_amount can
+      // never leak into the balance on a reschedule.
+      const [resRow] = await tx<
+        { discount_mode: DiscountMode; discount_value: string; extra_charges: string;
+          tax_exempt: boolean; currency: string; exchange_rate: string | null;
+          rooms_total_override: string | null; min_ci: string; max_co: string;
+          stays: { priceTotal: number; nights: number }[] }[]
+      >`
+        SELECT res.discount_mode, res.discount_value, res.extra_charges,
+               res.tax_exempt, res.currency, res.exchange_rate::text, res.rooms_total_override::text,
+               x.min_ci::text, x.max_co::text, x.stays
+        FROM guesthub.reservations res,
+        LATERAL (
           SELECT MIN(check_in) AS min_ci, MAX(check_out) AS max_co,
-                 COALESCE(SUM(price_total), 0) AS rooms_total
+                 COALESCE(json_agg(json_build_object(
+                   'priceTotal', price_total, 'nights', (check_out - check_in))), '[]') AS stays
           FROM guesthub.reservation_rooms
           WHERE reservation_id = ${rr.reservation_id} AND tenant_id = ${actor.tenantId}
         ) x
         WHERE res.id = ${rr.reservation_id} AND res.tenant_id = ${actor.tenantId}`;
+      const money = await moneyContext(tx, actor.tenantId);
+      // a re-priced stay supersedes an OTA-sent total; a kept committed price doesn't
+      const keptOverride =
+        resRow.rooms_total_override != null && s.pricingSnapshot === null
+          ? Number(resRow.rooms_total_override)
+          : null;
+      const totals = resolveTotals(
+        {
+          stays: resRow.stays.map((x) => ({ priceTotal: Number(x.priceTotal), nights: Number(x.nights) })),
+          roomsTotalOverride: keptOverride,
+          discountMode: resRow.discount_mode,
+          discountValue: Number(resRow.discount_value),
+          extraCharges: Number(resRow.extra_charges),
+          taxExempt: resRow.tax_exempt,
+          vatRate: money.vatRate,
+          currency: resRow.currency,
+          exchangeRate: resRow.exchange_rate == null ? null : Number(resRow.exchange_rate),
+        },
+        { validate: false }, // stored data replays as-is (floor only), like the SQL it replaces
+      );
+      await tx`
+        UPDATE guesthub.reservations SET
+          check_in = ${resRow.min_ci}, check_out = ${resRow.max_co},
+          total_price = ${totals.grandTotal},
+          discount_amount = ${totals.discountAmount},
+          rooms_total_override = ${keptOverride}
+        WHERE id = ${rr.reservation_id} AND tenant_id = ${actor.tenantId}`;
       await recomputePaymentAggregates(tx, actor.tenantId, rr.reservation_id);
 
       await writeAudit(actor, {
@@ -1079,11 +1293,13 @@ export async function previewRescheduleAction(raw: {
             id: string; reservation_id: string; room_id: string | null;
             adults: number; children: number; infants: number;
             rate_per_night: string; is_manual_rate: boolean; status: string;
+            price_mode: PriceMode; manual_total: string | null;
             rate_plan_id: string | null; price_total: string;
           }[]
         >`
           SELECT rr.id, rr.reservation_id, rr.room_id,
                  rr.adults, rr.children, rr.infants, rr.rate_per_night, rr.is_manual_rate,
+                 rr.price_mode, rr.manual_total::text AS manual_total,
                  rr.rate_plan_id, res.status, rr.price_total
           FROM guesthub.reservation_rooms rr
           JOIN guesthub.reservations res ON res.id = rr.reservation_id
@@ -1091,7 +1307,8 @@ export async function previewRescheduleAction(raw: {
         if (!rr) throw new DomainError("הזמנה לא נמצאה");
         if (rr.status === "cancelled") throw new DomainError("הזמנה מבוטלת — לא ניתן להזיז");
 
-        const isManual = rr.is_manual_rate;
+        const isManualTotal = rr.price_mode === "manual_total" && rr.manual_total != null;
+        const isManual = isManualTotal || rr.is_manual_rate;
         const sameRoom = rr.room_id === input.targetRoomId;
         const priced = await validateAndPriceStays(
           tx,
@@ -1105,7 +1322,11 @@ export async function previewRescheduleAction(raw: {
             children: rr.children,
             infants: rr.infants,
             ratePlanId: rr.rate_plan_id,
-            ...(isManual ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) } : {}),
+            ...(isManualTotal
+              ? { priceMode: "manual_total" as const, manualTotal: Number(rr.manual_total) }
+              : rr.is_manual_rate
+                ? { isManualRate: true, ratePerNight: Number(rr.rate_per_night) }
+                : {}),
           }],
           {
             excludeRrIds: [rr.id],
@@ -1117,19 +1338,40 @@ export async function previewRescheduleAction(raw: {
           },
         );
 
-        const [agg] = await tx<{ others: number; discount: number; extra: number; current_total: number }[]>`
+        const [agg] = await tx<
+          { others: number; other_nights: number; discount_mode: DiscountMode; discount_value: number;
+            extra: number; tax_exempt: boolean; currency: string; current_total: number }[]
+        >`
           SELECT
             COALESCE(SUM(rr.price_total) FILTER (WHERE rr.id <> ${rr.id}), 0)::float8 AS others,
-            res.discount_amount::float8 AS discount,
+            COALESCE(SUM(rr.check_out - rr.check_in) FILTER (WHERE rr.id <> ${rr.id}), 0)::int AS other_nights,
+            res.discount_mode, res.discount_value::float8 AS discount_value,
             res.extra_charges::float8 AS extra,
+            res.tax_exempt, res.currency,
             res.total_price::float8 AS current_total
           FROM guesthub.reservations res
           JOIN guesthub.reservation_rooms rr ON rr.reservation_id = res.id
           WHERE res.id = ${rr.reservation_id} AND res.tenant_id = ${actor.tenantId}
-          GROUP BY res.discount_amount, res.extra_charges, res.total_price`;
+          GROUP BY res.discount_mode, res.discount_value, res.extra_charges,
+                   res.tax_exempt, res.currency, res.total_price`;
 
-        const proposedRooms = (agg?.others ?? 0) + priced[0].priceTotal;
-        const proposedTotal = reservationTotal(proposedRooms, agg?.discount ?? 0, agg?.extra ?? 0);
+        // one totals source (D106): the proposed stay joins its siblings; the
+        // OTA override never applies to a preview of a repriced stay
+        const proposedTotal = resolveTotals(
+          {
+            stays: [
+              { priceTotal: agg?.others ?? 0, nights: agg?.other_nights ?? 0 },
+              { priceTotal: priced[0].priceTotal, nights: priced[0].nights },
+            ],
+            discountMode: agg?.discount_mode ?? "amount_total",
+            discountValue: agg?.discount_value ?? 0,
+            extraCharges: agg?.extra ?? 0,
+            taxExempt: agg?.tax_exempt ?? false,
+            vatRate: DEFAULT_VAT_RATE,
+            currency: agg?.currency ?? "ILS",
+          },
+          { validate: false },
+        ).grandTotal;
         result = { currentTotal: agg?.current_total ?? 0, proposedTotal };
         throw ROLLBACK; // never persist a preview
       });
@@ -1196,6 +1438,22 @@ export async function getAvailableRoomsAction(args: {
 // dblclick default-checkout rule) — THE central engine, read-only. The same
 // calculation the save path commits, so the preview can never disagree with
 // the stored price.
+// The policy card of the CREATE flow (SPEC step 4, ס-7): the same resolver
+// the create action snapshots with, so what the operator reads before "צור
+// הזמנה" is exactly what the reservation will freeze (034).
+export async function previewCancellationPolicyAction(
+  ratePlanId: string | null,
+): Promise<ActionResult<CancellationPolicySnapshot | null>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "reservations.create");
+    const snap = await resolveCancellationSnapshot(sql, actor.tenantId, ratePlanId);
+    return { success: true, data: snap };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
 export async function getStayQuoteAction(args: {
   roomId: string;
   checkIn: DateOnly;
@@ -1212,6 +1470,8 @@ export async function getStayQuoteAction(args: {
   vatRate: number;
   vatAmount: number;
   extraGuestTotal: number;
+  accommodationSubtotal: number;
+  losDiscount: LosDiscountQuote | null;
   nightly: { date: string; price: number | null }[];
 }>> {
   try {
@@ -1253,6 +1513,8 @@ export async function getStayQuoteAction(args: {
         vatRate: quote.vatRate,
         vatAmount: quote.vatAmount,
         extraGuestTotal: rq.extraGuestTotal,
+        accommodationSubtotal: rq.accommodationSubtotal,
+        losDiscount: rq.losDiscount,
         nightly: rq.nights.map((n) => ({ date: n.date, price: n.nightTotal })),
       },
     };
@@ -1301,6 +1563,12 @@ export type ReservationDetail = {
    *  this snapshot, never the live Settings template */
   cancellation_policy: CancellationPolicySnapshot | null;
   discount_amount: number;
+  discount_mode: DiscountMode;
+  discount_value: number;
+  tax_exempt: boolean;
+  currency: string;
+  exchange_rate: number | null;
+  rooms_total_override: number | null;
   extra_charges: number;
   total_price: number;
   paid_amount: number;
@@ -1329,6 +1597,8 @@ export type ReservationDetail = {
     ratePerNight: number;
     priceTotal: number;
     isManualRate: boolean;
+    priceMode: PriceMode;
+    manualTotal: number | null;
     ratePlanId: string | null;
     ratePlanName: string | null;
     pricingSnapshot: StayPricingSnapshot | null;
@@ -1368,7 +1638,9 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         notes: string | null; expected_arrival_time: string | null;
         expected_arrival_time_source: "ota" | "manual" | null;
         cancellation_policy_snapshot: CancellationPolicySnapshot | null;
-        discount_amount: number; extra_charges: number;
+        discount_amount: number; discount_mode: DiscountMode; discount_value: number;
+        tax_exempt: boolean; currency: string; exchange_rate: number | null;
+        rooms_total_override: number | null; extra_charges: number;
         total_price: number; paid_amount: number; balance: number;
         created_at: string; updated_at: string;
         guest_id: string | null; g_first: string | null; g_last: string | null; g_full: string | null;
@@ -1405,6 +1677,10 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
              res.cancellation_origin, res.cancellation_reason,
              res.external_cancellation_confirmed_at::text AS external_cancellation_confirmed_at,
              res.discount_amount::float8 AS discount_amount,
+             res.discount_mode, res.discount_value::float8 AS discount_value,
+             res.tax_exempt, res.currency,
+             res.exchange_rate::float8 AS exchange_rate,
+             res.rooms_total_override::float8 AS rooms_total_override,
              res.extra_charges::float8 AS extra_charges,
              res.total_price::float8 AS total_price,
              res.paid_amount::float8 AS paid_amount,
@@ -1426,6 +1702,7 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         rr_id: string; room_id: string; room_label: string; room_type_name: string | null;
         check_in: string; check_out: string; adults: number; children: number; infants: number;
         rate_per_night: number; price_total: number; is_manual_rate: boolean;
+        price_mode: PriceMode; manual_total: number | null;
         rate_plan_id: string | null; rate_plan_name: string | null;
         pricing_snapshot: unknown;
         guest_first_name: string | null; guest_last_name: string | null;
@@ -1439,7 +1716,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
              rr.adults, rr.children, rr.infants,
              rr.rate_per_night::float8 AS rate_per_night,
              rr.price_total::float8 AS price_total,
-             rr.is_manual_rate, rr.rate_plan_id,
+             rr.is_manual_rate, rr.price_mode, rr.manual_total::float8 AS manual_total,
+             rr.rate_plan_id,
              COALESCE(pp.public_name, pp.name) AS rate_plan_name,
              rr.pricing_snapshot,
              rr.guest_first_name, rr.guest_last_name, rr.guest_phone,
@@ -1523,6 +1801,12 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
         expected_arrival_time_source: res.expected_arrival_time_source,
         cancellation_policy: res.cancellation_policy_snapshot,
         discount_amount: res.discount_amount,
+        discount_mode: res.discount_mode,
+        discount_value: res.discount_value,
+        tax_exempt: res.tax_exempt,
+        currency: res.currency,
+        exchange_rate: res.exchange_rate,
+        rooms_total_override: res.rooms_total_override,
         extra_charges: res.extra_charges,
         total_price: res.total_price,
         paid_amount: res.paid_amount,
@@ -1551,6 +1835,8 @@ export async function getReservationAction(id: string): Promise<ActionResult<Res
           ratePerNight: r.rate_per_night,
           priceTotal: r.price_total,
           isManualRate: r.is_manual_rate,
+          priceMode: r.price_mode,
+          manualTotal: r.manual_total,
           ratePlanId: r.rate_plan_id,
           ratePlanName: r.rate_plan_name,
           pricingSnapshot: (r.pricing_snapshot ?? null) as StayPricingSnapshot | null,

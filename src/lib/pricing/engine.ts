@@ -13,8 +13,10 @@ import {
   type EngineAssignment, type EnginePlan, type PlanKind,
 } from "./resolve";
 import { PRICING_ERROR_MESSAGES } from "./messages";
+import { resolveLosDiscount } from "./los";
 import {
   resolveMaxQuoteNights, PRICING_ENGINE_VERSION,
+  type LosDiscountKind, type LosDiscountTier,
   type NightQuote, type PriceSource, type PricingError, type PricingErrorCode,
   type PricingQuoteRequest, type PricingQuoteResult, type PricingWarning, type RoomQuote,
 } from "./types";
@@ -79,6 +81,12 @@ type PlanDbRow = {
 
 type OverlayDbRow = PlanRateRow & { pricing_plan_id: string; sellable_unit_id: string };
 
+type LosDbRow = {
+  id: string; pricing_plan_id: string | null; name: string;
+  min_nights: number; max_nights: number | null;
+  discount_kind: LosDiscountKind; discount_value: number; is_active: boolean;
+};
+
 function toEnginePlan(r: PlanDbRow): EnginePlan {
   return {
     id: r.id, code: r.code, name: r.name, publicName: r.public_name,
@@ -103,7 +111,7 @@ function invalidResult(
     tenantId: req.tenantId, currency,
     checkIn: req.checkIn, checkOut: req.checkOut,
     numberOfNights: 0, valid: false, rooms: [],
-    subtotalNet: 0, vatRate, vatAmount: 0, totalGross: 0,
+    subtotalNet: 0, vatRate, vatAmount: 0, losDiscountTotal: 0, totalGross: 0,
     priceIncludesVat: true, roundingPolicy: ROUNDING_POLICY,
     warnings: [], errors,
   };
@@ -242,6 +250,20 @@ export async function calculateQuote(
     m.set(row.date, row);
   }
   const EMPTY_OVERLAY = new Map<string, PlanRateRow>();
+
+  // Length-of-stay tiers — the whole (tiny) active set for the tenant in one
+  // query (§28), so plan-scoped and default tiers resolve without a roundtrip
+  // per room. The table is new; a tenant that configured none simply gets [].
+  const losRows = await db<LosDbRow[]>`
+    SELECT id, pricing_plan_id, name, min_nights, max_nights,
+           discount_kind, discount_value::float8 AS discount_value, is_active
+    FROM guesthub.length_of_stay_discounts
+    WHERE tenant_id = ${req.tenantId} AND is_active`;
+  const losTiers: LosDiscountTier[] = losRows.map((r) => ({
+    id: r.id, pricingPlanId: r.pricing_plan_id, name: r.name,
+    minNights: r.min_nights, maxNights: r.max_nights,
+    kind: r.discount_kind, value: r.discount_value, isActive: r.is_active,
+  }));
 
   // Physical availability for all rooms at once (same seam as reservations).
   // An edit/move excludes the stay's own rows exactly like the legacy path.
@@ -419,6 +441,9 @@ export async function calculateQuote(
     const nightQuotes: NightQuote[] = [];
     const sourcesUsed = new Set<PriceSource>();
     let subtotalCents = 0;
+    // accommodation only (resolved nightly prices, no extra-guest charges) —
+    // the basis a length-of-stay discount is computed on (D104)
+    let accommodationCents = 0;
     let priced = true;
     for (const date of nights) {
       const baseRow = baseByDate.get(date);
@@ -431,6 +456,7 @@ export async function calculateQuote(
         const resolved = round2(manualRate);
         sourcesUsed.add("manual_override");
         subtotalCents += cents(resolved);
+        accommodationCents += cents(resolved);
         nightQuotes.push({
           date,
           basePrice: basePriceRaw != null ? round2(basePriceRaw) : null,
@@ -468,7 +494,10 @@ export async function calculateQuote(
       if (resolved != null && resolution.source) sourcesUsed.add(resolution.source);
 
       const nightTotal = resolved != null && resolved > 0 ? round2(resolved + extraPerNight) : null;
-      if (nightTotal != null) subtotalCents += cents(nightTotal);
+      if (nightTotal != null) {
+        subtotalCents += cents(nightTotal);
+        accommodationCents += cents(round2(resolved!));
+      }
       nightQuotes.push({
         date,
         basePrice: basePriceRaw != null ? round2(basePriceRaw) : null,
@@ -489,6 +518,24 @@ export async function calculateQuote(
       (frequency === "per_night" ? extraPerNight * nights.length : extraPerStay),
     );
 
+    // Length-of-stay discount (D104) — commercial rule, so it runs for every
+    // surface that prices through this engine. An authorized manual override
+    // (§13) is EXEMPT: that price is the operator's final word, and quietly
+    // discounting it further would contradict the override's whole meaning.
+    const accommodationSubtotal = priced ? round2(accommodationCents / 100) : 0;
+    const losDiscount =
+      priced && manualRate == null
+        ? resolveLosDiscount(losTiers, {
+            ratePlanId: plan?.id ?? null,
+            // derived_percentage IS length-of-stay pricing — default tiers do
+            // not stack on it; only its own explicit tiers apply (D105)
+            planKind: plan?.planKind ?? null,
+            nights: nights.length,
+            accommodationSubtotal,
+          })
+        : null;
+    if (losDiscount) subtotalCents -= cents(losDiscount.amount);
+
     roomQuotes.push({
       roomId: entry.roomId,
       roomNumber: room.room_number,
@@ -505,7 +552,9 @@ export async function calculateQuote(
       extraGuestPerStay: extraPerStay,
       extraGuestTotal,
       nights: nightQuotes,
-      roomSubtotal: priced ? round2(subtotalCents / 100) : 0,
+      accommodationSubtotal,
+      losDiscount,
+      roomSubtotal: priced ? round2(Math.max(0, subtotalCents) / 100) : 0,
       available,
       valid: roomErrors.length === 0,
       errors: roomErrors,
@@ -518,6 +567,9 @@ export async function calculateQuote(
   // ---- totals (§16): per-room subtotals + one combined total; never averaged ----
   const grossCents = roomQuotes.reduce((acc, r) => acc + cents(r.roomSubtotal), 0);
   const totalGross = round2(grossCents / 100);
+  const losDiscountTotal = round2(
+    roomQuotes.reduce((acc, r) => acc + cents(r.losDiscount?.amount ?? 0), 0) / 100,
+  );
   const vatAmount = includedVatAmount(totalGross, vatRate);
   const subtotalNet = round2(totalGross - vatAmount);
   const valid = roomQuotes.length > 0 && roomQuotes.every((r) => r.valid);
@@ -536,6 +588,7 @@ export async function calculateQuote(
         d: n.date, p: n.resolvedPlanPrice, s: n.priceSource, b: n.basePrice, a: n.adjustmentValue,
       })),
       egN: r.extraGuestPerNight, egS: r.extraGuestPerStay, egSrc: r.extraGuestSource,
+      los: r.losDiscount ? [r.losDiscount.id, r.losDiscount.amount] : null,
       subtotal: r.roomSubtotal, valid: r.valid,
       errs: r.errors.map((e) => e.code).sort(),
     })),
@@ -554,6 +607,7 @@ export async function calculateQuote(
     subtotalNet,
     vatRate,
     vatAmount,
+    losDiscountTotal,
     totalGross,
     priceIncludesVat: true,
     roundingPolicy: ROUNDING_POLICY,
@@ -582,6 +636,8 @@ function emptyRoomQuote(
     extraGuestFrequency: "per_night",
     extraGuestPerNight: 0, extraGuestPerStay: 0, extraGuestTotal: 0,
     nights: [],
+    accommodationSubtotal: 0,
+    losDiscount: null,
     roomSubtotal: 0,
     available,
     valid: false,

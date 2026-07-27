@@ -69,7 +69,7 @@ export function GuestsScreen({
   paymentMethods: LookupItem[];
   workflowStatuses: LookupItem[];
   statusItems: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   can: {
     edit: boolean;
     cancel: boolean;

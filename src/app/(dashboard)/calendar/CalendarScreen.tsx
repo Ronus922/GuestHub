@@ -72,7 +72,7 @@ export function CalendarScreen({
   paymentMethods: LookupItem[];
   bookingSources: LookupItem[];
   workflowStatuses?: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   can: CalendarCan;
   vatRate: number;
 }) {

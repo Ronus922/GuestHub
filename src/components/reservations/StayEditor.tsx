@@ -14,6 +14,7 @@ import {
   getAvailableRoomsAction,
   getStayQuoteAction,
 } from "@/app/(dashboard)/reservations/actions";
+import type { LosDiscountQuote } from "@/lib/pricing/types";
 
 // One reservation-room editor block (locked per-room model §C): its own
 // dates, occupancy, physical room and optional per-room guest. Used by both
@@ -33,6 +34,9 @@ export type StayDraft = {
   // authorized manual override (§13) — set ONLY when the operator explicitly
   // edits the nightly price; a displayed auto price never becomes manual.
   isManualRate?: boolean;
+  // per-room price mode (D106): absent = legacy isManualRate semantics
+  priceMode?: "auto" | "manual_night" | "manual_total";
+  manualTotal?: number | null;
   // tenant-level Rate Plan; null/undefined = base pricing (מחיר בסיס)
   ratePlanId?: string | null;
   guestFirstName?: string;
@@ -57,6 +61,47 @@ export function newStayKey(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/** what both booking surfaces render from one engine quote (D104) */
+export type LiveQuote = {
+  total: number;
+  /** server-resolved nightly price (2dp) — never re-derived by dividing on the client */
+  ratePerNight: number;
+  /** the "N לילות × ₪R" line really reproduces the total */
+  uniformNightly: boolean;
+  /** accommodation before the length-of-stay discount (D104) */
+  accommodationSubtotal: number;
+  losDiscount: LosDiscountQuote | null;
+  restriction: string | null;
+};
+
+// `uniformNightly` is the honest test of the multiplication shown to the
+// operator: every night priced, all of them equal, AND rate × nights landing on
+// the total (a per-stay extra-guest fee is the case that breaks the last one).
+export function toLiveQuote(d: {
+  total: number;
+  nights: number;
+  ratePerNight: number;
+  accommodationSubtotal: number;
+  losDiscount: LosDiscountQuote | null;
+  restriction: string | null;
+  nightly: { price: number | null }[];
+}): LiveQuote {
+  const priced = d.nightly.map((n) => n.price).filter((p): p is number => p != null);
+  return {
+    total: d.total,
+    ratePerNight: d.ratePerNight,
+    uniformNightly:
+      priced.length === d.nights &&
+      priced.every((p) => p === priced[0]) &&
+      // a length-of-stay discount is a separate line: "nights × rate" describes
+      // the accommodation above it, not the discounted total
+      Math.abs(d.ratePerNight * d.nights - (d.total + (d.losDiscount?.amount ?? 0))) < 0.005,
+    accommodationSubtotal: d.accommodationSubtotal,
+    losDiscount: d.losDiscount,
+    restriction: d.restriction,
+  };
+}
+
 export function StayEditor({
   index,
   value,
@@ -77,7 +122,7 @@ export function StayEditor({
 }) {
   const [rooms, setRooms] = useState<RoomOption[]>([]);
   const [roomsError, setRoomsError] = useState<string | null>(null);
-  const [quote, setQuote] = useState<{ total: number; restriction: string | null } | null>(null);
+  const [quote, setQuote] = useState<LiveQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [showGuest, setShowGuest] = useState(
     Boolean(value.guestFirstName || value.guestLastName || value.guestPhone),
@@ -129,9 +174,19 @@ export function StayEditor({
     setQuoteError(null);
     if (!validRange || !value.roomId) return;
     let alive = true;
-    const apply = (outcome: QuoteFetchOutcome<{ total: number; restriction: string | null }>) => {
+    const apply = (
+      outcome: QuoteFetchOutcome<{
+        total: number;
+        nights: number;
+        ratePerNight: number;
+        accommodationSubtotal: number;
+        losDiscount: LosDiscountQuote | null;
+        restriction: string | null;
+        nightly: { price: number | null }[];
+      }>,
+    ) => {
       if (!alive) return;
-      setQuote(outcome.quote && { total: outcome.quote.total, restriction: outcome.quote.restriction });
+      setQuote(outcome.quote && toLiveQuote(outcome.quote));
       setQuoteError(outcome.error);
     };
     getStayQuoteAction({
@@ -264,12 +319,23 @@ export function StayEditor({
       )}
 
       {quote && value.roomId && (
-        <div className="bw-price-line mt-1.5 border-b-0">
-          <span className="bw-plr">
-            {nights} לילות × ₪{nights ? Math.round(quote.total / nights) : 0}
-          </span>
-          <b className="ltr-num text-primary">₪{quote.total.toLocaleString()}</b>
-        </div>
+        <>
+          <div className="bw-price-line mt-1.5 border-b-0">
+            <span className="bw-plr">
+              {nights} לילות × ₪{quote.ratePerNight.toLocaleString()}
+              {!quote.uniformNightly && <span className="text-xs text-muted"> (ממוצע)</span>}
+            </span>
+            <b className="ltr-num text-primary">
+              ₪{(quote.losDiscount ? quote.accommodationSubtotal : quote.total).toLocaleString()}
+            </b>
+          </div>
+          {quote.losDiscount && (
+            <div className="bw-price-line border-b-0">
+              <span className="bw-plr text-status-success">{quote.losDiscount.explanation}</span>
+              <b className="ltr-num text-primary">₪{quote.total.toLocaleString()}</b>
+            </div>
+          )}
+        </>
       )}
       {quoteError && value.roomId && (
         <p role="alert" className="mt-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">

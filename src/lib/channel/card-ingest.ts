@@ -69,6 +69,12 @@ export async function ingestChannelCard(
       is_virtual = EXCLUDED.is_virtual,
       available_from = COALESCE(EXCLUDED.available_from, guesthub.reservation_cards.available_from),
       available_until = COALESCE(EXCLUDED.available_until, guesthub.reservation_cards.available_until),
+      -- a channel re-ingest replaces the PAN — a CVV keyed in for the PREVIOUS
+      -- card must never stay attached to the new one (audit §9 defect 1): the
+      -- reveal path would hand it to staff as this card's CVV. D52 §2 still
+      -- holds: the channel itself never supplies a CVV, so NULL is the only
+      -- honest value here.
+      cvv_encrypted = NULL,
       received_at = now(),
       updated_at = now()
     RETURNING id`;

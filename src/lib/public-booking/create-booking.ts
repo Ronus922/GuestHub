@@ -5,9 +5,10 @@ import type { DateOnly } from "@/lib/dates";
 import { lockRooms } from "@/lib/inventory";
 import {
   priceReservationStays,
-  reservationTotal,
   StayPricingError,
 } from "@/lib/pricing/reservation-pricing";
+import { computeReservationTotals } from "@/lib/pricing/totals";
+import { DEFAULT_VAT_RATE } from "@/lib/vat";
 import { recomputePaymentAggregates } from "@/lib/payments/ledger";
 import { enqueueReservationConfirmed } from "@/lib/communications/outbox";
 import { resolveCancellationSnapshot } from "@/lib/commercial/policy-snapshot";
@@ -115,11 +116,12 @@ export async function createPublicBooking(input: PublicBookingInput): Promise<{
       { source: "website", enforceAvailability: true, enforceRestrictions: true },
     );
 
-    const total = reservationTotal(
-      stays.reduce((s, st) => s + st.priceTotal, 0),
-      0,
-      0,
-    );
+    // THE single totals source (D106) — a public booking has no discount/extras
+    const total = computeReservationTotals({
+      stays,
+      discountMode: "none", discountValue: 0, extraCharges: 0,
+      taxExempt: false, vatRate: DEFAULT_VAT_RATE, currency: "ILS",
+    }).grandTotal;
     if (Math.abs(total - input.expectedTotal) > PRICE_TOLERANCE_ILS) {
       throw new PublicBookingError(
         "price_changed",

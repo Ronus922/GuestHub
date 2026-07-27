@@ -6,7 +6,8 @@ import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, formatBalance } from "@/lib/inventory-rules";
-import { formatVatRate, includedVatAmount } from "@/lib/vat";
+import { computeReservationTotals, type DiscountMode, type PriceMode } from "@/lib/pricing/totals";
+import { DiscountControls, StayPriceModeControls, VatToggleRow } from "./PricingControls";
 import { normalizePan, parseExpiry, resolveCardMode } from "@/lib/card-rules";
 import { describeCancellationTier } from "@/lib/commercial/cancellation";
 import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
@@ -68,7 +69,7 @@ export function EditReservationPanel({
   onClose: () => void;
   bookingSources: LookupItem[];
   paymentMethods: LookupItem[];
-  ratePlans: { id: string; name: string; code: string }[];
+  ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   statusItems: LookupItem[];
   /** tenant workflow statuses (D77 §11) — active ones, DB colors */
   workflowStatuses?: LookupItem[];
@@ -84,7 +85,9 @@ export function EditReservationPanel({
   const [guest, setGuest] = useState({ firstName: "", lastName: "", phone: "", email: "", idNumber: "" });
   const [sourceId, setSourceId] = useState("");
   const [stays, setStays] = useState<StayDraft[]>([]);
-  const [discount, setDiscount] = useState(0);
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("none");
+  const [discountValue, setDiscountValue] = useState(0);
+  const [taxExempt, setTaxExempt] = useState(false);
   const [addPay, setAddPay] = useState(0);
   const [method, setMethod] = useState("");
   const [notes, setNotes] = useState("");
@@ -98,6 +101,9 @@ export function EditReservationPanel({
   // both render read-only in the canonical fields until the operator explicitly
   // chooses to key a card in ("החלף כרטיס" / "הזנת כרטיס ידנית במקום").
   const [replacingCard, setReplacingCard] = useState(false);
+  // card-save failure shown INLINE in the card section (role="alert") — a
+  // swallowed/missed failure is exactly complaint 8; cleared on the next try
+  const [cardError, setCardError] = useState<string | null>(null);
   const [cardBusy, startCardBusy] = useTransition();
   const [saving, startSaving] = useTransition();
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -163,13 +169,17 @@ export function EditReservationPanel({
         infants: r.infants,
         ratePerNight: r.ratePerNight,
         isManualRate: r.isManualRate,
+        priceMode: r.priceMode,
+        manualTotal: r.manualTotal,
         ratePlanId: r.ratePlanId,
         guestFirstName: r.guestFirstName ?? undefined,
         guestLastName: r.guestLastName ?? undefined,
         guestPhone: r.guestPhone ?? undefined,
       }));
       setStays(loadedStays);
-      setDiscount(d.discount_amount);
+      setDiscountMode(d.discount_mode);
+      setDiscountValue(d.discount_value);
+      setTaxExempt(d.tax_exempt);
       setAddPay(0);
       setMethod("");
       setCc(EMPTY_CARD);
@@ -189,7 +199,7 @@ export function EditReservationPanel({
         loadedGuest,
         d.source_id ?? "",
         loadedStays,
-        d.discount_amount,
+        { discountMode: d.discount_mode, discountValue: d.discount_value, taxExempt: d.tax_exempt },
         0,
         "",
         d.notes ?? "",
@@ -225,7 +235,7 @@ export function EditReservationPanel({
 
   const dirty =
     detail !== null &&
-    editSnapshot(guest, sourceId, stays, discount, addPay, method, notes, arrivalTime, cc) !==
+    editSnapshot(guest, sourceId, stays, { discountMode, discountValue, taxExempt }, addPay, method, notes, arrivalTime, cc) !==
       snapshotRef.current;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -264,22 +274,52 @@ export function EditReservationPanel({
   };
 
   // The payment-method selector registers PAYMENTS (additionalPayment +
-  // paymentMethod on save). It is fully decoupled from the card section:
-  // storing/replacing card details is governed ONLY by the card section's own
-  // mode (replacingCard / resolveCardView) — the method never unlocks, locks,
-  // or wipes the card fields here. (§15's method-gated entry remains only in
-  // the NEW-reservation flow, BookingPanel.)
+  // paymentMethod on save). Coupling to the card section is ONE-directional
+  // (D108, רונן תלונה 7): choosing "כרטיס אשראי" when no usable card exists
+  // (external_unavailable / fresh) ENTERS manual entry so the fields open for
+  // typing immediately — the hidden toggle is no longer the only way in.
+  // Choosing any other method never locks, hides, or wipes the card section,
+  // and a stored card is never auto-replaced by a method click.
 
   const staysValid =
     stays.length > 0 &&
     stays.every((s) => s.roomId && s.checkIn && s.checkOut && s.checkOut > s.checkIn);
-  const roomsTotal = stays.reduce(
-    (sum, s) =>
-      sum +
-      (s.ratePerNight ?? 0) * (s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0),
-    0,
+  // committed line total (D106): a stay whose price BASIS is unchanged shows
+  // the SERVER-stored price_total (audit F-10 — never re-derived rate×nights);
+  // manual figures are the operator's word; a re-based auto stay estimates
+  // rate×nights until the save re-prices it.
+  const lineTotalOf = (s: StayDraft): number => {
+    const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
+    if (s.priceMode === "manual_total" && s.manualTotal != null) return s.manualTotal;
+    if ((s.priceMode === "manual_night" || (s.priceMode === undefined && s.isManualRate)) && s.ratePerNight != null)
+      return Math.round(s.ratePerNight * nights * 100) / 100;
+    const loaded = detail?.rooms.find((r) => r.rrId === s.rrId);
+    const basisUnchanged =
+      loaded != null &&
+      loaded.roomId === s.roomId && loaded.checkIn === s.checkIn && loaded.checkOut === s.checkOut &&
+      loaded.adults === s.adults && loaded.children === s.children && loaded.infants === s.infants &&
+      loaded.ratePlanId === (s.ratePlanId ?? null) && loaded.priceMode === (s.priceMode ?? "auto");
+    if (basisUnchanged) return loaded.priceTotal;
+    return (s.ratePerNight ?? 0) * nights;
+  };
+  // THE single totals source (D106) — same pure module the server persists with
+  const totals = computeReservationTotals(
+    {
+      stays: stays.map((s) => ({
+        priceTotal: lineTotalOf(s),
+        nights: s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0,
+      })),
+      roomsTotalOverride: detail?.rooms_total_override ?? null,
+      discountMode,
+      discountValue,
+      extraCharges: detail?.extra_charges ?? 0,
+      taxExempt,
+      vatRate,
+      currency: detail?.currency ?? "ILS",
+    },
+    { validate: false }, // live preview never throws; the server validates on save
   );
-  const total = Math.max(0, roomsTotal - discount + (detail?.extra_charges ?? 0));
+  const total = totals.grandTotal;
   const paidAfter = (detail?.paid_amount ?? 0) + addPay;
 
   // statusOverride serves the quick actions (e.g. בצע צ׳ק-אין) — same
@@ -309,9 +349,12 @@ export function EditReservationPanel({
           adults: s.adults,
           children: s.children,
           infants: s.infants,
-          // a stored manual rate rides along; auto-priced stays never resend a
-          // price (the server prices through the central engine)
-          ratePerNight: s.isManualRate ? s.ratePerNight : undefined,
+          // a stored manual price rides along; auto-priced stays never resend
+          // a price (the server prices through the central engine)
+          ratePerNight: s.isManualRate || s.priceMode === "manual_night" ? s.ratePerNight : undefined,
+          isManualRate: s.priceMode ? s.priceMode === "manual_night" : s.isManualRate,
+          priceMode: s.priceMode ?? (s.isManualRate ? "manual_night" : "auto"),
+          manualTotal: s.priceMode === "manual_total" ? s.manualTotal : undefined,
           ratePlanId: s.ratePlanId ?? null,
           guestFirstName: s.guestFirstName || undefined,
           guestLastName: s.guestLastName || undefined,
@@ -319,7 +362,9 @@ export function EditReservationPanel({
         })),
         notes: notes.trim() || undefined,
         expectedArrivalTime: arrivalTime || null,
-        discountAmount: discount,
+        discountMode,
+        discountValue,
+        taxExempt,
         additionalPayment: addPay || undefined,
         paymentMethod: method || undefined,
       });
@@ -379,6 +424,7 @@ export function EditReservationPanel({
   const saveCard = () =>
     startCardBusy(async () => {
       if (!detail || ccStateForSave !== "valid") return;
+      setCardError(null);
       const exp = parseExpiry(cc.exp)!;
       const res = await saveReservationCardAction({
         reservationId: detail.id,
@@ -389,16 +435,18 @@ export function EditReservationPanel({
         expYear: exp.year,
         cvv: cc.cvv || undefined,
         source: cc.source,
-        billingNotes: cc.billingNotes.trim() || undefined,
       });
       if (res.success && res.data) {
         // raw values are cleared; only masked metadata remains client-side
         setCc(EMPTY_CARD);
         setCardMeta(res.data);
         setReplacingCard(false);
+        setCardError(null);
         toast.success("הכרטיס נשמר מוצפן");
       } else {
-        toast.error(res.success ? "שמירת הכרטיס נכשלה" : res.error);
+        const msg = res.success ? "שמירת הכרטיס נכשלה" : res.error;
+        setCardError(msg);
+        toast.error(msg);
       }
     });
 
@@ -809,7 +857,8 @@ export function EditReservationPanel({
             <BookingCard icon="finance" title="תמחור ותשלום">
               {stays.map((s, i) => {
                 const nights = s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0;
-                const line = (s.ratePerNight ?? 0) * nights;
+                const line = lineTotalOf(s);
+                const mode: PriceMode = s.priceMode ?? (s.isManualRate ? "manual_night" : "auto");
                 // V2 line label: real room number + type when the stay still
                 // points at its loaded room; a swapped/new room falls back to
                 // the ordinal (the parent doesn't hold the rooms lookup)
@@ -843,10 +892,69 @@ export function EditReservationPanel({
                             ))}
                           </select>
                         )}
-                        <span className="ltr-num">{nights}</span> לילות × ₪
-                        <span className="ltr-num">{Math.round(s.ratePerNight ?? 0).toLocaleString()}</span>
-                        {s.isManualRate && <span className="text-xs font-semibold text-primary">· מחיר ידני</span>}
+                        <span className="text-xs text-muted">
+                          <span className="ltr-num">{nights}</span> לילות
+                        </span>
                       </div>
+                      <div className="mt-2">
+                        <StayPriceModeControls
+                          mode={mode}
+                          onMode={(m) =>
+                            /* switching mode keeps entered values (SPEC rule 6);
+                               back-to-auto re-prices server-side on save */
+                            canEditNow &&
+                            setStays((all) =>
+                              all.map((x) =>
+                                x.key === s.key
+                                  ? { ...x, priceMode: m, isManualRate: m === "manual_night" }
+                                  : x,
+                              ),
+                            )
+                          }
+                          nights={nights}
+                          autoRate={s.ratePerNight ?? 0}
+                          autoTotal={line}
+                          ratePerNight={s.ratePerNight ?? null}
+                          onRatePerNight={(v) =>
+                            canEditNow &&
+                            setStays((all) =>
+                              all.map((x) =>
+                                x.key === s.key
+                                  ? { ...x, ratePerNight: v, priceMode: "manual_night", isManualRate: true }
+                                  : x,
+                              ),
+                            )
+                          }
+                          manualTotal={s.manualTotal ?? null}
+                          onManualTotal={(v) =>
+                            canEditNow &&
+                            setStays((all) =>
+                              all.map((x) =>
+                                x.key === s.key
+                                  ? { ...x, manualTotal: v, priceMode: "manual_total", isManualRate: false }
+                                  : x,
+                              ),
+                            )
+                          }
+                          canPriceOverride={canEditNow}
+                          disabled={!canEditNow}
+                        />
+                      </div>
+                      {/* the length-of-stay tier this stay was SOLD with, read
+                          from its stored snapshot — editing the tier later never
+                          rewrites what a committed reservation says (D104) */}
+                      {loadedRoom?.pricingSnapshot?.losDiscount && (
+                        <p className="mt-1.5 text-sm font-semibold text-status-success">
+                          {loadedRoom.pricingSnapshot.losDiscount.explanation}
+                        </p>
+                      )}
+                      {/* why there is NO tier on a weekly/monthly plan (D105) */}
+                      {!loadedRoom?.pricingSnapshot?.losDiscount && mode === "auto" &&
+                        ratePlans.find((p) => p.id === s.ratePlanId)?.plan_kind === "derived_percentage" && (
+                        <p className="mt-1.5 text-xs text-muted">
+                          תוכנית זו מגלמת הנחת שהייה — מדרגות הנחת LOS אינן נערמות עליה
+                        </p>
+                      )}
                     </div>
                     <b className="ltr-num">₪{Math.round(line).toLocaleString()}</b>
                   </div>
@@ -858,22 +966,41 @@ export function EditReservationPanel({
                   <b className="ltr-num">₪{detail.extra_charges.toLocaleString()}</b>
                 </div>
               )}
-              {discount > 0 && (
+              <div className="mt-4 border-t border-line pt-4">
+                <div className="mb-2 flex items-center gap-2 text-sm font-bold">
+                  <Icon name="tags" size={16} />
+                  הנחה
+                </div>
+                <DiscountControls
+                  mode={discountMode}
+                  value={discountValue}
+                  onChange={(m, v) => {
+                    setDiscountMode(m);
+                    setDiscountValue(v);
+                  }}
+                  disabled={!canEditNow}
+                />
+              </div>
+              <div className="bw-price-line mt-3">
+                <span className="bw-plr">מחיר מלא</span>
+                <b className="ltr-num tabular-nums">₪{totals.roomsTotal.toLocaleString()}</b>
+              </div>
+              {totals.discountAmount > 0 && (
                 <div className="bw-price-line">
                   <span className="bw-plr">הנחה</span>
-                  <b className="ltr-num text-status-danger">-₪{discount.toLocaleString()}</b>
+                  <b className="ltr-num text-status-danger">−₪{totals.discountAmount.toLocaleString()}</b>
                 </div>
               )}
-              {/* informational only — the TENANT VAT rate (Settings), already included in the total */}
-              <div className="bw-price-line">
-                <span className="bw-plr">מע״מ ({formatVatRate(vatRate)}%) — כלול</span>
-                <b className="ltr-num text-muted">
-                  ₪{includedVatAmount(total, vatRate).toLocaleString()}
-                </b>
-              </div>
+              <VatToggleRow
+                vatRate={vatRate}
+                grandTotal={total}
+                taxExempt={taxExempt}
+                onToggle={(v) => canEditNow && setTaxExempt(v)}
+                disabled={!canEditNow}
+              />
               <div className="bw-price-total">
                 <span>סה״כ לתשלום</span>
-                <span className="bw-amt ltr-num">₪{Math.round(total).toLocaleString()}</span>
+                <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
               </div>
 
               {/* payment-state chips (V2 .paychip) — a DISPLAY of the derived
@@ -921,7 +1048,18 @@ export function EditReservationPanel({
               {canEditNow && !replacingCard && (
                 <div className="bw-grid3 mt-4">
                   <Field label="אמצעי תשלום">
-                    <select className="field-input" value={method} onChange={(e) => setMethod(e.target.value)}>
+                    <select
+                      className="field-input"
+                      value={method}
+                      onChange={(e) => {
+                        setMethod(e.target.value);
+                        // D108 — credit card opens the card fields for typing
+                        // when nothing usable is stored; never the reverse
+                        if (e.target.value === "credit_card" && !cardMeta && !guarantee && canManageCard) {
+                          setReplacingCard(true);
+                        }
+                      }}
+                    >
                       <option value="">בחירה…</option>
                       {paymentMethods.map((m) => (
                         <option key={m.id} value={m.key}>{m.label}</option>
@@ -931,10 +1069,6 @@ export function EditReservationPanel({
                   <Field label="תשלום נוסף (₪)">
                     <input ref={addPayRef} type="number" min={0} className="field-input ltr-num" value={addPay || ""}
                       placeholder="0" onChange={(e) => setAddPay(Math.max(0, Number(e.target.value) || 0))} />
-                  </Field>
-                  <Field label="הנחה (₪)">
-                    <input type="number" min={0} className="field-input ltr-num" value={discount || ""}
-                      placeholder="0" onChange={(e) => setDiscount(Math.max(0, Number(e.target.value) || 0))} />
                   </Field>
                 </div>
               )}
@@ -959,10 +1093,20 @@ export function EditReservationPanel({
                         {detail.ota.otaReservationCode ?? "—"}
                       </b>
                     </Field>
-                    {/* honest PIN state (D80 §4): the channel supplies no dedicated
-                        Booking.com PIN/secret field — never mined from notes */}
+                    {/* honest CVC state (D110): the generic "לא התקבל" is
+                        replaced by the MEASURED reason — Ronen must know WHY.
+                        Probe 2026-07-26 (read-only, this account's token):
+                        GET /v2/bookings returns no card fields and empty
+                        stripeToken/pcibookingToken on every booking; the
+                        import requests no card endpoint (none is public).
+                        Card data for this account lives only in the Beds24
+                        dashboard behind its card-access permission. */}
                     <Field label="קוד סודי מהערוץ">
-                      <b className="text-sm text-muted">לא התקבל קוד סודי מהערוץ</b>
+                      <b className="text-sm text-muted">
+                        {cardMeta?.source === "channel"
+                          ? "הערוץ העביר כרטיס ללא קוד סודי — CVC אינו נמסר ב-API של Beds24; ניתן להזין ידנית בכרטיס האשראי למטה"
+                          : "Beds24 אינו מעביר פרטי כרטיס וקוד סודי ב-API לחשבון זה (נמדד 26/07/2026) — הצפייה נעשית בלוח Beds24 בהרשאת כרטיסים, או בהזנה ידנית למטה"}
+                      </b>
                     </Field>
                     <Field label="אמצעי תשלום">
                       <b className="text-sm text-ink">
@@ -994,12 +1138,17 @@ export function EditReservationPanel({
               {/* ---- THE credit-card section (D86) — one interface for every
                    source: the vaulted card (masked, audited reveal), the masked
                    channel guarantee, manual entry, or the empty state. Card
-                   entry is governed ONLY by the section's own mode (the
-                   "הזנת כרטיס ידנית במקום" toggle / empty state) — the
-                   payment-method selector above registers payments and never
-                   gates these fields. ---- */}
+                   entry is governed by the section's own mode; the payment-
+                   method selector above additionally OPENS manual entry when
+                   "כרטיס אשראי" is chosen with nothing stored (D108) — it
+                   never locks or hides these fields. ---- */}
               {showCardSection && (
                 <>
+                  {cardError && (
+                    <p role="alert" className="mb-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
+                      שמירת הכרטיס נכשלה: {cardError} — הפרטים שהוזנו לא נשמרו
+                    </p>
+                  )}
                   <CardFields
                     value={cc}
                     onChange={setCc}
@@ -1070,12 +1219,12 @@ export function EditReservationPanel({
               <div className="bw-grid3 mt-4">
                 <div className="bw-bal">
                   <p className="bw-bal-l">סה״כ</p>
-                  <p className="bw-bal-v ltr-num">₪{Math.round(total).toLocaleString()}</p>
+                  <p className="bw-bal-v ltr-num">₪{total.toLocaleString()}</p>
                 </div>
                 <div className="bw-bal">
                   <p className="bw-bal-l">שולם</p>
                   <p className="bw-bal-v ltr-num" style={{ color: BAL_COLOR.settled }}>
-                    ₪{Math.round(paidAfter).toLocaleString()}
+                    ₪{paidAfter.toLocaleString()}
                   </p>
                 </div>
                 <div className="bw-bal">
@@ -1101,17 +1250,9 @@ export function EditReservationPanel({
               )}
             </BookingCard>
 
-            {/* cancellation policy — the immutable AT-BOOKING snapshot (034).
-                Displayed from the reservation itself; a later edit to the
-                Settings template never changes what is shown here. */}
-            {detail.cancellation_policy && (
-              <BookingCard icon="documents" title="מדיניות ביטול (בעת ההזמנה)">
-                <CancellationSnapshotView snap={detail.cancellation_policy} />
-              </BookingCard>
-            )}
-
             {/* notes + expected arrival time — separate fields; the arrival
-                time is never folded into the notes text (D80 §6) */}
+                time is never folded into the notes text (D80 §6). Notes sit
+                ABOVE the cancellation policy (complaint 11 / SPEC step 4). */}
             <BookingCard icon="documents" title="הערות להזמנה">
               <div className="bw-grid2 mb-4">
                 <Field label="שעת צ'ק-אין צפויה">
@@ -1137,6 +1278,15 @@ export function EditReservationPanel({
               <textarea className="field-input min-h-[184px]" value={notes} disabled={!canEditNow}
                 placeholder="בקשות מיוחדות…" onChange={(e) => setNotes(e.target.value)} />
             </BookingCard>
+
+            {/* cancellation policy — the immutable AT-BOOKING snapshot (034).
+                Displayed from the reservation itself; a later edit to the
+                Settings template never changes what is shown here. */}
+            {detail.cancellation_policy && (
+              <BookingCard icon="documents" title="מדיניות ביטול (בעת ההזמנה)">
+                <CancellationSnapshotView snap={detail.cancellation_policy} />
+              </BookingCard>
+            )}
           </div>
 
           {/* ---- sidebar: summary + activity (reference) ---- */}
@@ -1200,7 +1350,7 @@ export function EditReservationPanel({
                 </div>
                 <div className="bw-sum-total">
                   <span className="bw-l">סה״כ</span>
-                  <span className="bw-v ltr-num">₪{Math.round(total).toLocaleString()}</span>
+                  <span className="bw-v ltr-num">₪{total.toLocaleString()}</span>
                 </div>
               </div>
             </div>
@@ -1291,7 +1441,7 @@ export function EditReservationPanel({
 // The reservation's at-booking cancellation terms (034) — pure display of the
 // stored snapshot. Template sources show the copied title + tiers; the OTA
 // source shows the imported text/penalties verbatim. Never re-reads Settings.
-function CancellationSnapshotView({
+export function CancellationSnapshotView({
   snap,
 }: {
   snap: NonNullable<ReservationDetail["cancellation_policy"]>;
@@ -1465,7 +1615,7 @@ function editSnapshot(
   guest: { firstName: string; lastName: string; phone: string; email: string; idNumber: string },
   sourceId: string,
   stays: (StayDraft | Omit<StayDraft, "key">)[],
-  discount: number,
+  pricing: { discountMode: string; discountValue: number; taxExempt: boolean },
   addPay: number,
   method: string,
   notes: string,
@@ -1473,7 +1623,7 @@ function editSnapshot(
   cc: CardDraft,
 ): string {
   return JSON.stringify(
-    [guest, sourceId, stays, discount, addPay, method, notes, arrivalTime, cc],
+    [guest, sourceId, stays, pricing, addPay, method, notes, arrivalTime, cc],
     dropStayKey,
   );
 }
