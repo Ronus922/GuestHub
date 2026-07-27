@@ -17,7 +17,7 @@ writeFileSync(tsconfig, JSON.stringify({
   files: [
     "src/lib/communications/types.ts", "src/lib/communications/variables.ts",
     "src/lib/communications/schemas.ts", "src/lib/communications/renderer.ts",
-    "src/lib/communications/styles.ts",
+    "src/lib/communications/styles.ts", "src/lib/communications/triggers.ts",
     "src/lib/colors.ts", "src/lib/auth/permission-check.ts",
     "src/lib/messaging/types.ts", "src/lib/messaging/email/headers.ts",
     "src/lib/messaging/email/gmail.ts",
@@ -31,7 +31,8 @@ const patchImports = (path, replacements) => {
   writeFileSync(path, source);
 };
 patchImports(join(out, "communications/variables.js"), [['"./types"', '"./types.js"']]);
-patchImports(join(out, "communications/schemas.js"), [['"./types"', '"./types.js"']]);
+patchImports(join(out, "communications/schemas.js"), [['"./types"', '"./types.js"'], ['"./triggers"', '"./triggers.js"']]);
+patchImports(join(out, "communications/triggers.js"), [['"./types"', '"./types.js"']]);
 patchImports(join(out, "communications/styles.js"), [['"@/lib/colors"', '"../colors.js"']]);
 patchImports(join(out, "communications/renderer.js"), [
   ['"./schemas"', '"./schemas.js"'],
@@ -50,6 +51,7 @@ patchImports(join(out, "messaging/email/gmail.js"), [
 const schemas = await import(join(out, "communications/schemas.js"));
 const variables = await import(join(out, "communications/variables.js"));
 const renderer = await import(join(out, "communications/renderer.js"));
+const triggers = await import(join(out, "communications/triggers.js"));
 const permissions = await import(join(out, "auth/permission-check.js"));
 const gmail = await import(join(out, "messaging/email/gmail.js"));
 
@@ -116,10 +118,70 @@ ok("structured template schema is strict and rejects duplicate IDs and incomplet
 
 assert.equal(schemas.timingConfigSchema.safeParse({ mode: "delay", quietHours: "respect" }).success, false);
 assert.equal(schemas.timingConfigSchema.safeParse({ mode: "immediate", quietHours: "bypass" }).success, true);
+// the scheduled arm is new; the stored event-timing rows above must keep parsing untouched
+assert.equal(schemas.timingConfigSchema.safeParse({ mode: "scheduled", offsetDays: 3, sendTime: "10:00", quietHours: "bypass" }).success, true);
+assert.equal(schemas.timingConfigSchema.safeParse({ mode: "scheduled", offsetDays: 3, quietHours: "bypass" }).success, false);
+assert.equal(schemas.timingConfigSchema.safeParse({ mode: "scheduled", offsetDays: 99, sendTime: "10:00", quietHours: "bypass" }).success, false);
 assert.equal(schemas.sourceFiltersSchema.safeParse({ include: ["back_office", "direct_website"] }).success, true);
 assert.equal(schemas.sourceFiltersSchema.safeParse({ include: ["booking_com"] }).success, false);
 assert.equal(schemas.failureNotificationSchema.safeParse({ enabled: true }).success, false);
-ok("automation schemas enforce explicit origins, immediate bypass, and valid notification settings");
+// a scheduled trigger must carry scheduled timing, an event trigger must not
+assert.equal(schemas.automationConfigSchema.safeParse({
+  triggerType: "reservation.pre_arrival",
+  timing: { mode: "immediate", quietHours: "bypass" },
+  sources: { include: ["back_office"] },
+  conditions: { logic: "all", items: [] },
+  exclusions: {}, recipient: { type: "primary_guest" }, channel: "email",
+}).success, false);
+assert.equal(schemas.automationConfigSchema.safeParse({
+  triggerType: "reservation.pre_arrival",
+  timing: { mode: "scheduled", offsetDays: 3, sendTime: "10:00", quietHours: "bypass" },
+  sources: { include: ["back_office"] },
+  conditions: { logic: "all", items: [] },
+  exclusions: {}, recipient: { type: "primary_guest" }, channel: "whatsapp",
+}).success, true);
+assert.equal(schemas.automationConfigSchema.safeParse({
+  triggerType: "reservation.made_up",
+  timing: { mode: "immediate", quietHours: "bypass" },
+  sources: { include: ["back_office"] },
+  conditions: { logic: "all", items: [] },
+  exclusions: {}, recipient: { type: "primary_guest" }, channel: "email",
+}).success, false);
+ok("automation schemas enforce explicit origins, per-kind timing, and the closed trigger registry");
+
+// ---- trigger registry invariants the pipeline relies on ----
+assert.deepEqual(triggers.TRIGGERS["reservation.confirmed"].eligibleStatuses, ["confirmed"]);
+assert.equal(triggers.TRIGGERS["reservation.confirmed"].otaHardSkip, true, "the OTA hard-skip on confirmations must never be dropped");
+assert.deepEqual(triggers.TRIGGERS["reservation.cancelled"].eligibleStatuses, ["cancelled"]);
+assert.equal(
+  triggers.TRIGGERS["reservation.cancelled"].defaultConditions.items.some(
+    (item) => item.field === "reservation.status" && item.value === "confirmed",
+  ),
+  false,
+  "a cancellation automation must not require status=confirmed",
+);
+for (const def of triggers.TRIGGER_LIST) {
+  assert.equal(def.defaultExclusions.ota, true, `${def.id} must default to excluding OTA bookings`);
+  if (def.kind === "scheduled") assert.match(def.defaultSendTime ?? "", /^([01]\d|2[0-3]):[0-5]\d$/);
+}
+ok("trigger registry keeps confirmed semantics byte-compatible and cancellation conditions sane");
+
+// ---- quiet hours clamp is pure and handles the over-midnight window ----
+{
+  const at = (h, m) => { const d = new Date(2026, 6, 27); d.setHours(h, m, 0, 0); return d; };
+  const window = { enabled: true, start: "22:00", end: "07:00" };
+  assert.equal(triggers.applyQuietHours(at(12, 0), window).getTime(), at(12, 0).getTime());
+  const evening = triggers.applyQuietHours(at(23, 30), window);
+  assert.equal(evening.getHours(), 7);
+  assert.equal(evening.getDate(), at(0, 0).getDate() + 1, "an evening quiet-hours hit must clamp to TOMORROW morning");
+  const night = triggers.applyQuietHours(at(3, 0), window);
+  assert.equal(night.getHours(), 7);
+  assert.equal(night.getDate(), at(0, 0).getDate());
+  assert.equal(triggers.applyQuietHours(at(23, 30), { enabled: false, start: "22:00", end: "07:00" }).getHours(), 23);
+  const sameDay = triggers.applyQuietHours(at(14, 0), { enabled: true, start: "13:00", end: "15:00" });
+  assert.equal(sameDay.getHours(), 15);
+}
+ok("applyQuietHours clamps into the window's end and survives midnight-crossing windows");
 
 const rendered = renderer.renderStructuredCommunication(validContent, context, { preheader: "אישור {{reservation.number}}" });
 assert.equal(rendered.html.includes("<script>"), false);
@@ -147,6 +209,50 @@ const subject = renderer.renderTemplateString("אישור {{reservation.number}}
 assert.equal(subject.value, "אישור GH-42 / ");
 assert.equal(subject.canSend, false);
 ok("subject interpolation blocks unknown variables before delivery");
+
+// ---- content kinds: a missing `kind` is a legacy block tree, forever ----
+assert.equal(schemas.templateContentKind(schemas.parseTemplateContent(validContent)), "blocks");
+assert.equal(schemas.templateContentKind(schemas.parseTemplateContent({ schemaVersion: 1, kind: "html", html: "<p>שלום</p>" })), "html");
+assert.equal(schemas.templateContentKind(schemas.parseTemplateContent({ schemaVersion: 1, kind: "whatsapp_text", text: "שלום" })), "whatsapp_text");
+assert.throws(() => schemas.parseTemplateContent({ schemaVersion: 1, kind: "html", html: "<script>alert(1)</script>" }),
+  undefined, "script tags must be rejected in html templates");
+assert.equal(schemas.htmlTemplateContentSchema.safeParse({ schemaVersion: 1, kind: "html", html: "" }).success, true,
+  "an empty draft is a legal draft — publish is where completeness is enforced");
+assert.equal(schemas.whatsappTemplateContentSchema.safeParse({ schemaVersion: 1, kind: "whatsapp_text", text: "x".repeat(5000) }).success, false);
+ok("parseTemplateContent dispatches on kind, keeps legacy trees parsing, and rejects scripts");
+
+// ---- html-kind rendering: interpolated VALUES are escaped, author markup is not ----
+{
+  const htmlContent = { schemaVersion: 1, kind: "html", html: "<p>שלום {{guest.first_name}} — {{property.name}}</p>" };
+  const renderedHtml = renderer.renderHtmlCommunication(htmlContent, context);
+  assert.equal(renderedHtml.html.includes("<p>שלום"), true, "the author's markup IS the markup");
+  assert.equal(renderedHtml.html.includes("נועה &lt;script&gt;"), true, "a guest value can never become markup");
+  assert.equal(/<script>alert/.test(renderedHtml.html), false);
+  assert.match(renderedHtml.html, /<html lang="he" dir="rtl">/, "a fragment gets an RTL document shell");
+  assert.equal(renderedHtml.canSend, true);
+  const full = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "<html><body>{{guest.first_name}}</body></html>" }, context);
+  assert.equal((full.html.match(/<html/g) ?? []).length, 1, "a full document must not be double-wrapped");
+  const unknown = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "{{not.real}}" }, context);
+  assert.equal(unknown.canSend, false);
+  const missing = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "{{payment.total}}" }, { ...context, values: {} });
+  assert.equal(missing.canSend, false, "a missing required variable must block the send");
+}
+ok("html templates interpolate with escaped values, wrap fragments RTL, and fail closed on bad variables");
+
+// ---- whatsapp rendering: plain text, NO escaping — "&amp;" must never reach a guest ----
+{
+  const wa = renderer.renderWhatsAppCommunication({ schemaVersion: 1, kind: "whatsapp_text", text: "שלום {{guest.first_name}} — {{property.name}}" }, context);
+  assert.equal(wa.text.includes("בית & ים"), true, "WhatsApp is a text medium — no HTML entities");
+  assert.equal(wa.text.includes("&amp;"), false);
+  assert.equal(wa.canSend, true);
+  const waBad = renderer.renderWhatsAppCommunication({ schemaVersion: 1, kind: "whatsapp_text", text: "{{not.real}}" }, context);
+  assert.equal(waBad.canSend, false);
+  // the ONE dispatch routes whatsapp text into plainText and never into html
+  const dispatched = renderer.renderTemplateContent({ schemaVersion: 1, kind: "whatsapp_text", text: "שלום" }, context);
+  assert.equal(dispatched.html, "");
+  assert.equal(dispatched.plainText, "שלום");
+}
+ok("whatsapp rendering never HTML-escapes and the unified dispatch keeps it out of the html path");
 
 // ---- builder v2: style tokens are a KEY→literal map; an unstyled block is unchanged ----
 const styledHeading = { schemaVersion: 1, blocks: [
@@ -258,21 +364,59 @@ const delivery = source("src/lib/communications/delivery.ts");
 const reservationAction = source("src/app/(dashboard)/reservations/actions.ts");
 const bookingImport = source("src/lib/channel/booking-import.ts");
 assert.match(outbox, /reservation:\$\{args\.reservationId\}:confirmed:v1/);
+assert.match(outbox, /reservation:\$\{args\.reservationId\}:cancelled:v1/);
 assert.match(outbox, /ON CONFLICT \(tenant_id, event_type, aggregate_type, occurrence_key\) DO NOTHING/);
 assert.match(reservationAction, /enqueueReservationConfirmed\(tx/);
+assert.match(reservationAction, /enqueueReservationCancelled\(tx/);
+assert.match(bookingImport, /enqueueReservationCancelled\(tx/);
 assert.match(automation, /reservation\.booking_origin !== event\.source/);
 assert.match(automation, /OTA_ORIGINS\.has\(reservation\.booking_origin\)/);
 assert.match(automation, /reservation\.external_booking_id/);
-assert.match(automation, /reservation\.status !== "confirmed"/);
+// eligibility is registry-driven now; the runtime assert above pins
+// TRIGGERS["reservation.confirmed"].eligibleStatuses to exactly ['confirmed']
+assert.match(automation, /trigger\.eligibleStatuses\.includes\(reservation\.status\)/);
+assert.match(automation, /trigger\.otaHardSkip/);
 assert.match(automation, /reservation\.is_test/);
 assert.match(automation, /guest_communication_opt_out/);
 assert.match(automation, /!reservation\.guest_email \|\| !EMAIL_RE/);
+assert.match(automation, /missing_guest_phone/);
 assert.match(bookingImport, /booking_origin/);
 assert.match(bookingImport, /'ota'/);
 assert.match(delivery, /status = 'queued'/);
 assert.match(delivery, /status = 'submitting'/);
 assert.match(delivery, /ambiguous_provider_outcome/);
-ok("durable outbox statically guards duplicate, OTA, non-confirmed, test, opt-out, missing-email, and crash branches");
+ok("durable outbox statically guards duplicate, OTA, ineligible, test, opt-out, missing-recipient, and crash branches");
+
+// ---- scheduler: idempotent set-based emission, per-automation occurrence keys ----
+const scheduler = source("src/lib/communications/scheduler.ts");
+const workerSrc = source("src/lib/communications/worker.ts");
+assert.match(scheduler, /ON CONFLICT \(tenant_id, event_type, aggregate_type, occurrence_key\) DO NOTHING/);
+assert.match(scheduler, /'reservation:' \|\| r\.id \|\| ':' \|\| \$\{trigger\.shortName\} \|\| ':' \|\| a\.id \|\| ':'/,
+  "a scheduled occurrence key must embed the automation id AND the anchor date");
+assert.match(scheduler, /AT TIME ZONE 'Asia\/Jerusalem'/, "scheduling is Israel-local like the rest of the stack");
+assert.match(scheduler, /a\.status = 'active' AND a\.archived_at IS NULL/);
+assert.match(workerSrc, /runScheduledTriggerScan/, "the tick must run the scheduled scan");
+assert.equal(
+  workerSrc.indexOf("runScheduledTriggerScan") < workerSrc.indexOf("claimCommunicationEvents(workerId"),
+  true,
+  "the scan must run BEFORE the claim so fresh events ride the same tick",
+);
+assert.match(automation, /scheduledAutomationId/,
+  "a scheduled event must target ONLY its own automation, not every trigger match");
+ok("time-based triggers emit idempotently per automation and ride the same worker tick");
+
+// ---- whatsapp delivery: real provider path, honest failure taxonomy ----
+assert.match(delivery, /deliverClaimedWhatsApp/);
+assert.match(delivery, /resolveWhatsAppProvider/);
+assert.match(delivery, /classifyWhatsAppFailure/);
+assert.match(delivery, /validation_failed/,
+  "green-api reports an invalid number as validation_failed — it must never be recorded as sent");
+assert.equal(/from "@\/lib\/messaging\/service"/.test(delivery), false,
+  "the delivery path must use the provider adapter directly, not the legacy actor-bound service");
+// both queued INSERT paths (email + whatsapp) must stamp the trigger's statuses
+assert.equal((automation.match(/eligible_statuses/g) ?? []).length >= 2, true,
+  "both the email and whatsapp INSERTs must carry eligible_statuses");
+ok("whatsapp deliveries ride the same lease pipeline with their own provider and error taxonomy");
 
 for (const path of [
   "src/lib/channel/beds24-ari-sync.ts",
@@ -287,6 +431,11 @@ ok("communications remain isolated from channel ARI, rates, inventory, and payme
 
 const shell = source("src/components/communications/CommunicationsShell.tsx");
 const editor = source("src/components/communications/TemplateEditor.tsx");
+const htmlEditor = source("src/components/communications/HtmlTemplateEditor.tsx");
+const waEditor = source("src/components/communications/WhatsAppTemplateEditor.tsx");
+const editorShared = source("src/components/communications/editorShared.tsx");
+const gallery = source("src/lib/communications/gallery.ts");
+const blocksLib = source("src/lib/communications/blocks.ts");
 const sectionPage = source("src/app/(dashboard)/communications/[section]/page.tsx");
 const uiActions = source("src/app/(dashboard)/communications/actions.ts");
 const uiData = source("src/app/(dashboard)/communications/data.ts");
@@ -301,12 +450,43 @@ ok("module navigation exposes stable routes and the granular permissions");
 
 // GUIDELINES §7: there is ONE drawer. Neither surface may hand-roll a second
 // overlay — every dialog here is the canonical <SidePanel>.
-for (const [name, src] of [["shell", shell], ["editor", editor]]) {
+for (const [name, src] of [["shell", shell], ["editor", editor], ["htmlEditor", htmlEditor], ["waEditor", waEditor]]) {
   assert.match(src, /<SidePanel/, `${name} must use the canonical §7 drawer`);
   assert.equal(/className="[^"]*\bfixed inset-0\b/.test(src), false,
     `${name} must not hand-roll a second overlay shell`);
 }
-ok("template editor and delivery panel are the canonical §7 SidePanel, not a second drawer");
+assert.equal(/className="[^"]*\bfixed inset-0\b/.test(editorShared), false,
+  "editorShared must not hand-roll a second overlay shell");
+ok("all three template editors and the delivery panel are the canonical §7 SidePanel");
+
+// ---- html editor: the pasted HTML NEVER touches the dashboard DOM ----
+assert.match(htmlEditor, /sandbox=""/, "the HTML preview must be a sandboxed iframe");
+assert.equal(/dangerouslySetInnerHTML=/.test(htmlEditor), false,
+  "operator HTML must never be injected into the dashboard DOM");
+assert.match(htmlEditor, /renderHtmlCommunication/, "preview must render the REAL send bytes");
+assert.match(htmlEditor, /application\/x-gh-variable/, "the HTML editor must accept variable drops");
+ok("the HTML editor previews only through a sandboxed iframe of the real bytes");
+
+// ---- whatsapp editor: text-only, no email concepts, text-node preview ----
+assert.equal(/dangerouslySetInnerHTML/.test(waEditor), false);
+assert.equal(/setPreheader|setReplyTo|setSubject|senderDisplayName/.test(waEditor), false,
+  "a WhatsApp template has no subject/preheader/sender — email concepts must not leak in");
+assert.match(waEditor, /renderWhatsAppCommunication/);
+assert.match(waEditor, /gc-wa-bubble/, "the preview is a chat bubble");
+assert.match(waEditor, /4096/, "the WhatsApp length cap must be enforced in the editor");
+assert.match(waEditor, /sendTestWhatsAppAction/);
+ok("the WhatsApp editor is plain text + variables with a bubble preview, not an email form");
+
+// ---- blank means BLANK: the forced 13-block seed is gone ----
+assert.equal(/defaultTemplateContent/.test(blocksLib), false,
+  "the forced booking-confirmation seed must stay deleted from blocks.ts");
+assert.match(gallery, /blocks: \[\]|blocks:\[\]/, "the blank starting point must have zero blocks");
+assert.match(gallery, /TEMPLATE_GALLERY/);
+assert.match(gallery, /kind: "whatsapp_text"/, "the gallery must carry WhatsApp examples");
+assert.match(editor, /schemaVersion: 1, blocks: \[\]/, "a new blocks template must start empty");
+assert.equal(/\?\? "תבנית חדשה"|\?\? "ההזמנה שלכם אושרה/.test(editor + htmlEditor + waEditor), false,
+  "no editor may hard-code a default name or subject");
+ok("a new template is truly blank; examples live in the opt-in gallery only");
 
 // The canvas must paint the EMAIL'S OWN BYTES. If the editor ever grows a
 // private preview renderer, an operator could approve something that does not
@@ -354,7 +534,9 @@ ok("template creation opens a real window with an editable name and blank/duplic
 // A queued email is not a sent email: the booking can be cancelled during the
 // retry backoff, and the send path only ever reads the frozen snapshot.
 assert.match(delivery, /cancelIneligibleDeliveries/);
-assert.match(delivery, /r\.status <> 'confirmed' OR r\.is_test OR r\.guest_communication_opt_out/);
+// eligibility is per-row now (eligible_statuses stamped at preparation): a queued
+// CANCELLATION message must survive status='cancelled' while a confirmation dies
+assert.match(delivery, /NOT \(r\.status = ANY\(o\.eligible_statuses\)\) OR r\.is_test OR r\.guest_communication_opt_out/);
 assert.match(delivery, /status = 'cancelled'/);
 // Assert the CALL inside drainDeliveries — not merely that the function exists.
 // (A first cut of this check matched the declaration and happily passed with the

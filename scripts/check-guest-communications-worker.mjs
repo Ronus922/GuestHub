@@ -32,6 +32,7 @@ let deliverySource = readFileSync(deliveryPath, "utf8")
   .replace('import "server-only";\n', "")
   .replace('"@/lib/db"', '"./test-db.js"')
   .replace('"@/lib/messaging/providers"', '"./test-provider.js"')
+  .replace('"@/lib/phone"', '"../phone.js"')
   .replace('"@/lib/messaging/types"', '"../messaging/types.js"');
 writeFileSync(deliveryPath, deliverySource);
 writeFileSync(join(out, "communications/test-db.js"), `
@@ -49,8 +50,11 @@ export const clearCalls = () => { calls.length = 0; };
 `);
 writeFileSync(join(out, "communications/test-provider.js"), `
 let current = null;
+let currentWhatsApp = null;
 export const setProvider = (value) => { current = value; };
+export const setWhatsAppProvider = (value) => { currentWhatsApp = value; };
 export const resolveEmailProvider = async () => current;
+export const resolveWhatsAppProvider = async () => currentWhatsApp;
 `);
 
 const delivery = await import(deliveryPath);
@@ -62,6 +66,7 @@ const ok = (name) => { process.stdout.write(`  ✓ ${name}\n`); checks += 1; };
 const base = {
   id: "00000000-0000-4000-8000-000000000001",
   tenant_id: "00000000-0000-4000-8000-000000000002",
+  channel: "email",
   to_address: "guest@example.test",
   subject: "אישור",
   rendered_html: "<p>אישור</p>",
@@ -129,5 +134,52 @@ db.clearCalls();
 assert.equal(await delivery.deliverClaimedEmail(base, "worker-a"), "failed");
 assert.equal(db.calls.some((call) => call.values.includes("provider_not_configured")), true);
 ok("missing provider configuration fails explicitly and permanently");
+
+// ---- v2: WhatsApp deliveries ride the same lease path with their own taxonomy ----
+const waBase = {
+  ...base,
+  channel: "whatsapp",
+  to_address: "+972500000000",
+  subject: null,
+  rendered_html: "",
+  rendered_plain_text: "שלום נועה",
+};
+
+assert.deepEqual(delivery.classifyWhatsAppFailure({ status: "failed", providerMessageId: null, errorCode: "green_466" }), { category: "provider_authentication", permanent: true });
+assert.deepEqual(delivery.classifyWhatsAppFailure({ status: "failed", providerMessageId: null, errorCode: "twilio_21211" }), { category: "invalid_recipient", permanent: true });
+assert.deepEqual(delivery.classifyWhatsAppFailure({ status: "failed", providerMessageId: null, errorCode: "green_network" }), { category: "provider_transient", permanent: false });
+assert.deepEqual(delivery.classifyWhatsAppFailure({ status: "failed", providerMessageId: null, errorCode: "twilio_20429" }), { category: "provider_rate_limit", permanent: false });
+ok("WhatsApp provider failures classify into the same transient/rate-limit/permanent taxonomy");
+
+let waPayload;
+providers.setWhatsAppProvider({ id: "green_api", provider: { id: "green_api", sendMessage: async (message) => {
+  waPayload = message;
+  return { status: "submitted", providerMessageId: "green-1" };
+} } });
+db.clearCalls();
+assert.equal(await delivery.deliverClaimed(waBase, "worker-a"), "sent");
+assert.deepEqual(waPayload, { to: "+972500000000", body: "שלום נועה" });
+assert.equal(db.calls.some((call) => call.values.includes("green-1")), true);
+ok("a WhatsApp delivery dispatches by channel and records the provider message id");
+
+// green-api reports an invalid number as validation_failed — success it is NOT
+providers.setWhatsAppProvider({ id: "green_api", provider: { id: "green_api", sendMessage: async () => (
+  { status: "validation_failed", providerMessageId: null, errorDetail: "מספר טלפון לא תקין" }
+) } });
+db.clearCalls();
+assert.equal(await delivery.deliverClaimedWhatsApp(waBase, "worker-a"), "failed");
+assert.equal(db.calls.some((call) => call.values.includes("invalid_recipient")), true);
+ok("a validation_failed provider status is a permanent failure, never a sent");
+
+providers.setWhatsAppProvider(null);
+db.clearCalls();
+assert.equal(await delivery.deliverClaimedWhatsApp(waBase, "worker-a"), "failed");
+assert.equal(db.calls.some((call) => call.values.includes("provider_not_configured")), true);
+ok("a missing WhatsApp provider fails explicitly and permanently");
+
+db.clearCalls();
+assert.equal(await delivery.deliverClaimedWhatsApp({ ...waBase, to_address: "abc" }, "worker-a"), "failed");
+assert.equal(db.calls.some((call) => call.values.includes("invalid_recipient")), true);
+ok("an invalid phone fails permanently without invoking the provider");
 
 process.stdout.write(`\n✓ Guest Communications mocked-worker checks passed (${checks} groups)\n`);

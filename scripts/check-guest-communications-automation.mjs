@@ -27,9 +27,11 @@ let source = readFileSync(automationPath, "utf8")
   .replaceAll('"./schemas"', '"./schemas.js"')
   .replaceAll('"./renderer"', '"./renderer.js"')
   .replaceAll('"./outbox"', '"./outbox.js"')
+  .replaceAll('"./triggers"', '"./triggers.js"')
+  .replaceAll('"@/lib/phone"', '"../phone.js"')
   .replaceAll('"./types"', '"./types.js"');
 writeFileSync(automationPath, source);
-for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js"]) {
+for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js", "triggers.js"]) {
   const path = join(out, `communications/${file}`);
   if (!readFileSync(path, "utf8")) continue;
   let emitted = readFileSync(path, "utf8")
@@ -37,6 +39,7 @@ for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js"]) {
     .replaceAll('"./schemas"', '"./schemas.js"')
     .replaceAll('"./variables"', '"./variables.js"')
     .replaceAll('"./styles"', '"./styles.js"')
+    .replaceAll('"./triggers"', '"./triggers.js"')
     .replaceAll('"@/lib/colors"', '"../colors.js"');
   writeFileSync(path, emitted);
 }
@@ -52,13 +55,14 @@ export const nightsBetween = () => 2;
 `);
 writeFileSync(join(out, "communications/test-db.js"), `
 export const state = {
-  reservation: null, automations: [], version: null, channel: null, siblingByLang: null,
+  reservation: null, automations: [], version: null, channel: null, waChannel: null, siblingByLang: null,
   deliveryKeys: new Set(), insertions: [], attention: [],
 };
 const queryText = (strings) => strings.join("?");
 export const sql = (strings, ...values) => {
   const text = queryText(strings);
   if (text.includes("FROM guesthub.reservations r")) return Promise.resolve(state.reservation ? [state.reservation] : []);
+  if (text.includes("FROM guesthub.tenants t")) return Promise.resolve(state.waChannel ? [state.waChannel] : []);
   if (text.includes("FROM guesthub.communication_automations")) return Promise.resolve(state.automations);
   // guest-language sibling lookup (FROM message_templates cfg JOIN … language = $target)
   if (text.includes("guesthub.message_templates cfg")) {
@@ -85,7 +89,7 @@ export const sql = (strings, ...values) => {
 sql.json = (value) => value;
 export const reset = () => {
   state.deliveryKeys.clear(); state.insertions.length = 0; state.attention.length = 0;
-  state.siblingByLang = null;
+  state.siblingByLang = null; state.waChannel = null;
 };
 `);
 
@@ -106,7 +110,7 @@ const baseReservation = {
   room_numbers: "101", room_types: "סטודיו", room_floors: "1",
 };
 const baseAutomation = {
-  id: "automation-1", tenant_id: "tenant-1", template_id: "template-1",
+  id: "automation-1", tenant_id: "tenant-1", channel: "email", template_id: "template-1",
   template_version_policy: "latest_published", locked_template_version_id: null,
   timing_config: { mode: "immediate", quietHours: "bypass" },
   source_filters: { include: ["back_office", "direct_website"] },
@@ -231,5 +235,70 @@ db.state.siblingByLang = { en: enVersion };
 assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-locked")), { created: 1, duplicates: 0, skipped: 0 });
 assert.equal(db.state.insertions[0].values.includes("version-1"), true, "locked policy kept its pinned version");
 ok("a locked automation is never language-overridden (explicit operator choice)");
+
+// ---- v2: WhatsApp automations ride the same preparation with their own recipient rules ----
+const waAutomation = { ...baseAutomation, id: "automation-wa", channel: "whatsapp", template_id: "template-wa",
+  conditions: { logic: "all", items: [
+    { field: "reservation.status", operator: "equals", value: "confirmed" },
+    { field: "reservation.is_test", operator: "equals", value: false },
+  ] } };
+const waVersion = { ...version, id: "version-wa", template_id: "template-wa", subject: "",
+  reply_to_behavior: "none", preheader: null,
+  content: { schemaVersion: 1, kind: "whatsapp_text", text: "שלום {{guest.first_name}}, הזמנה {{reservation.number}}" } };
+
+db.reset(); db.state.reservation = baseReservation; db.state.automations = [waAutomation];
+db.state.version = waVersion; db.state.waChannel = { provider: "green_api" };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-wa")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("+972500000000"), true, "recipient must be the guest's E.164 phone");
+assert.equal(db.state.insertions[0].values.includes("green_api"), true, "provider is the tenant's active WhatsApp provider");
+assert.equal(db.state.insertions[0].values.some((v) => typeof v === "string" && v.includes("שלום נועה")), true,
+  "the rendered text must interpolate without HTML escaping");
+ok("a WhatsApp automation queues a real E.164 delivery through the active provider");
+
+db.reset(); db.state.reservation = { ...baseReservation, guest_phone: null }; db.state.automations = [waAutomation];
+db.state.version = waVersion; db.state.waChannel = { provider: "green_api" };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-wa-nophone")), { created: 0, duplicates: 0, skipped: 1 });
+assert.match(db.state.insertions[0].text, /'skipped'/);
+ok("a guest without a phone gets a truthful skipped row, never a queued WhatsApp delivery");
+
+db.reset(); db.state.reservation = baseReservation; db.state.automations = [waAutomation];
+db.state.version = waVersion; db.state.waChannel = null;
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-wa-noprovider")), { created: 0, duplicates: 0, skipped: 1 });
+assert.equal(db.state.attention.length, 1, "a disconnected WhatsApp provider flags the automation");
+ok("no connected WhatsApp provider → attention + skip, nothing queued");
+
+// a WhatsApp automation must never send an email-shaped template
+db.reset(); db.state.reservation = baseReservation; db.state.automations = [waAutomation];
+db.state.version = version; db.state.waChannel = { provider: "green_api" };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-wa-mismatch")), { created: 0, duplicates: 0, skipped: 1 });
+ok("a channel/template kind mismatch is refused with a skip, never sent");
+
+// ---- v2: the cancellation trigger accepts ONLY cancelled reservations ----
+const cancelAutomation = { ...baseAutomation, id: "automation-cancel",
+  conditions: { logic: "all", items: [
+    { field: "reservation.status", operator: "equals", value: "cancelled" },
+    { field: "reservation.is_test", operator: "equals", value: false },
+  ] } };
+const cancelledEvent = (id) => ({ ...eventFor("back_office", id), event_type: "reservation.cancelled" });
+
+db.reset(); db.state.reservation = { ...baseReservation, status: "cancelled" };
+db.state.automations = [cancelAutomation]; db.state.version = version;
+db.state.channel = { sender_name: "GuestHub Test", reply_to: "reply@example.test" };
+assert.deepEqual(await prepareDeliveriesForEvent(cancelledEvent("event-cancelled")), { created: 1, duplicates: 0, skipped: 0 });
+ok("a cancellation automation queues for a CANCELLED reservation — the old confirmed-only gate is gone");
+
+db.reset(); db.state.reservation = baseReservation; // still confirmed
+db.state.automations = [cancelAutomation]; db.state.version = version;
+db.state.channel = { sender_name: "GuestHub Test", reply_to: "reply@example.test" };
+assert.deepEqual(await prepareDeliveriesForEvent(cancelledEvent("event-cancelled-early")), { created: 0, duplicates: 0, skipped: 1 });
+assert.match(db.state.insertions[0].text, /'skipped'/);
+ok("a cancellation event for a still-confirmed reservation is skipped, never queued");
+
+// an unknown trigger type is refused outright
+db.reset(); db.state.reservation = baseReservation; db.state.automations = [baseAutomation]; db.state.version = version;
+assert.deepEqual(await prepareDeliveriesForEvent({ ...eventFor("back_office", "event-unknown"), event_type: "reservation.made_up" }),
+  { created: 0, duplicates: 0, skipped: 1 });
+assert.equal(db.state.insertions.length, 0, "an unknown trigger writes nothing");
+ok("an event type outside the registry is dropped without touching outbound_messages");
 
 process.stdout.write(`\n✓ Guest Communications automation checks passed (${checks} groups)\n`);
