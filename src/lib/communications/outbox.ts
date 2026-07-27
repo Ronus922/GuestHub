@@ -56,6 +56,45 @@ export async function enqueueReservationConfirmed(
   return rows[0];
 }
 
+/**
+ * Transactional reservation-cancelled outbox seam. The occurrence key is
+ * per-reservation-LIFETIME (`:cancelled:v1`): a cancel → restore → cancel
+ * sequence produces ONE cancellation message. That is the safe direction — a
+ * duplicate "ההזמנה בוטלה" reaching a guest is worse than a missed edge case.
+ *
+ * OTA-originated cancellations DO fire this event: the event records a fact;
+ * whether anything sends is decided per automation (exclusions.ota, default
+ * true → a truthful `ota_excluded` skipped row, nothing sent).
+ */
+export async function enqueueReservationCancelled(
+  tx: TransactionSql,
+  args: {
+    tenantId: string;
+    reservationId: string;
+    bookingOrigin: BookingOriginInput;
+    cancellationOrigin: string;
+    initiatedBy?: string | null;
+    occurredAt?: Date | string;
+  },
+): Promise<{ id: string } | { duplicate: true }> {
+  const source = canonicalOrigin(args.bookingOrigin);
+  const occurrenceKey = `reservation:${args.reservationId}:cancelled:v1`;
+  const rows = await tx<{ id: string }[]>`
+    INSERT INTO guesthub.communication_events
+      (tenant_id, event_type, aggregate_type, reservation_id, source,
+       occurrence_key, payload, occurred_at)
+    VALUES (
+      ${args.tenantId}, 'reservation.cancelled', 'reservation',
+      ${args.reservationId}, ${source}, ${occurrenceKey},
+      ${tx.json({ initiatedBy: args.initiatedBy ?? null, cancellationOrigin: args.cancellationOrigin } as never)},
+      ${args.occurredAt ?? new Date()})
+    ON CONFLICT (tenant_id, event_type, aggregate_type, occurrence_key) DO NOTHING
+    RETURNING id`;
+  if (!rows[0]) return { duplicate: true };
+  await tx`SELECT pg_notify(${JOBS_WAKE_CHANNEL}, 'communication_event')`;
+  return rows[0];
+}
+
 /** Atomic lease claim. Expired processing rows are reclaimed after a crash. */
 export async function claimCommunicationEvents(workerId: string, limit = 10): Promise<CommunicationEvent[]> {
   return sql.begin(async (tx) => tx<CommunicationEvent[]>`
