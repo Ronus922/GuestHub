@@ -65,3 +65,5 @@
 057_length_of_stay_discounts.sql
 058_reservation_totals_v2.sql
 059_billing_notes_to_reservation_notes.sql
+060_template_content_kinds.sql
+061_communication_triggers.sql

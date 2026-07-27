@@ -3,14 +3,17 @@ import {
   BG_COLOR, BLOCK_PADDING, BUTTON_BG, BUTTON_TEXT,
   FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, TEXT_COLOR, cssAlign,
 } from "./styles";
-import { structuredTemplateContentSchema } from "./schemas";
+import { structuredTemplateContentSchema, templateContentKind } from "./schemas";
 import type {
   BlockCondition,
   CommunicationRenderContext,
+  HtmlTemplateContent,
   RenderIssue,
   RenderedCommunication,
   StructuredTemplateContent,
   TemplateBlock,
+  TemplateContent,
+  WhatsAppTemplateContent,
 } from "./types";
 import { hasValue, interpolateVariables, resolveVariable } from "./variables";
 
@@ -424,4 +427,113 @@ export function renderTemplateString(
     ...rendered,
     canSend: !rendered.issues.some((issue) => issue.kind !== "missing_optional"),
   };
+}
+
+// ============================================================
+// html-kind templates: the operator's own document. Interpolated VALUES are
+// escaped (a guest named "<script>" stays text — same invariant as blocks);
+// the author's markup is the markup and is sent untouched. No sanitizer:
+// authoring requires communications.templates.edit, mail goes out through the
+// tenant's own account, and the only in-app surface is a sandbox="" iframe.
+// ============================================================
+
+/** Best-effort text part for the multipart email — never shown in the app. */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<(style|script|title)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+}
+
+export function renderHtmlCommunication(
+  content: HtmlTemplateContent,
+  context: Ctx,
+  options: Opts & { preheader?: string } = {},
+): RenderedCommunication {
+  const issues: RenderIssue[] = [];
+  const interpolated = content.html.replace(
+    /{{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\s*}}/gi,
+    (_token, key: string) => {
+      const resolved = resolveVariable(key, context);
+      if (resolved.issue) issues.push(resolved.issue);
+      return mark(escapeHtml(resolved.value), Boolean(options.highlight));
+    },
+  );
+
+  const preheader = options.preheader
+    ? interpolateVariables(options.preheader, context)
+    : { value: "", issues: [] };
+  issues.push(...preheader.issues);
+
+  // A pasted fragment gets a minimal RTL document shell (charset + viewport,
+  // no styling). A full document passes through untouched — its own <head>
+  // wins, so the preheader div is only injectable in the fragment case.
+  const isFullDocument = /<html[\s>]/i.test(interpolated);
+  const html = isFullDocument
+    ? interpolated
+    : `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">`
+      + `<meta name="viewport" content="width=device-width,initial-scale=1"></head>`
+      + `<body style="margin:0;padding:0">`
+      + `<div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preheader.value)}</div>`
+      + `${interpolated}</body></html>`;
+
+  const allIssues = uniqueIssues(issues);
+  return {
+    html,
+    plainText: htmlToPlainText(interpolated),
+    issues: allIssues,
+    canSend: !allIssues.some(
+      (issue) => issue.kind === "missing_required" || issue.kind === "unknown_variable" || issue.kind === "invalid_url",
+    ),
+  };
+}
+
+/**
+ * whatsapp_text templates: plain interpolation, NO escaping — WhatsApp is a
+ * text medium and escaping would ship "&amp;" to guests. There is no injection
+ * surface: the result is never interpreted as markup anywhere (the editor
+ * preview renders it as a text node).
+ */
+export function renderWhatsAppCommunication(
+  content: WhatsAppTemplateContent,
+  context: Ctx,
+): { text: string; issues: RenderIssue[]; canSend: boolean } {
+  const rendered = interpolateVariables(content.text, context);
+  const issues = uniqueIssues(rendered.issues);
+  return {
+    text: rendered.value,
+    issues,
+    canSend: !issues.some((issue) => issue.kind !== "missing_optional"),
+  };
+}
+
+/**
+ * The ONE dispatch for anything holding a TemplateContent — editor preview,
+ * test send, and the automation pipeline. For whatsapp_text the message lives
+ * in plainText and html is empty (the email path must refuse it explicitly).
+ */
+export function renderTemplateContent(
+  content: TemplateContent,
+  context: Ctx,
+  options: Opts & { preheader?: string } = {},
+): RenderedCommunication {
+  const kind = templateContentKind(content);
+  if (kind === "html") {
+    return renderHtmlCommunication(content as HtmlTemplateContent, context, options);
+  }
+  if (kind === "whatsapp_text") {
+    const rendered = renderWhatsAppCommunication(content as WhatsAppTemplateContent, context);
+    return { html: "", plainText: rendered.text, issues: rendered.issues, canSend: rendered.canSend };
+  }
+  return renderStructuredCommunication(content as StructuredTemplateContent, context, options);
 }

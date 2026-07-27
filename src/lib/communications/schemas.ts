@@ -5,6 +5,8 @@ import {
   COMMUNICATION_CHANNELS,
   TEMPLATE_BLOCK_TYPES,
 } from "./types";
+import type { TemplateContent, TemplateContentKind } from "./types";
+import { TRIGGERS, TRIGGER_IDS } from "./triggers";
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
@@ -57,7 +59,47 @@ export const structuredTemplateContentSchema = z.object({
   }
 });
 
-export const timingConfigSchema = z.object({
+export const htmlTemplateContentSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal("html"),
+  // Empty is a legal DRAFT state; publish enforces non-empty content.
+  html: z.string().max(200_000),
+}).strict().superRefine((value, ctx) => {
+  // Mail clients strip scripts anyway; rejecting them here catches the honest
+  // paste mistake without a sanitizer that would mangle email-builder markup.
+  if (/<script\b/i.test(value.html)) {
+    ctx.addIssue({ code: "custom", path: ["html"], message: "תגיות script אינן מותרות בתבנית HTML" });
+  }
+});
+
+export const whatsappTemplateContentSchema = z.object({
+  schemaVersion: z.literal(1),
+  kind: z.literal("whatsapp_text"),
+  // Empty is a legal DRAFT state; publish enforces non-empty content.
+  text: z.string().max(4096),
+}).strict();
+
+/**
+ * Parse any stored template content. Dispatches on the `kind` property so each
+ * shape reports its own zod errors; ABSENCE of `kind` means a legacy block tree
+ * — mandatory leniency, because message_template_versions rows are immutable
+ * and pre-kind content must keep parsing forever.
+ */
+export function parseTemplateContent(value: unknown): TemplateContent {
+  const kind = (value as { kind?: unknown } | null)?.kind;
+  if (kind === "html") return htmlTemplateContentSchema.parse(value);
+  if (kind === "whatsapp_text") return whatsappTemplateContentSchema.parse(value);
+  return structuredTemplateContentSchema.parse(value);
+}
+
+export function templateContentKind(content: TemplateContent): TemplateContentKind {
+  return "kind" in content ? content.kind : "blocks";
+}
+
+// Event triggers keep the original shape untouched — every stored
+// {"mode":"immediate"|"delay"} row must keep parsing byte-for-byte. Scheduled
+// triggers add their own arm.
+const eventTimingSchema = z.object({
   mode: z.enum(["immediate", "delay"]),
   delayMinutes: z.number().int().min(0).max(525_600).optional(),
   quietHours: z.enum(["respect", "bypass"]),
@@ -66,6 +108,15 @@ export const timingConfigSchema = z.object({
     ctx.addIssue({ code: "custom", path: ["delayMinutes"], message: "Delayed timing requires delayMinutes" });
   }
 });
+
+export const scheduledTimingSchema = z.object({
+  mode: z.literal("scheduled"),
+  offsetDays: z.number().int().min(0).max(60),
+  sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  quietHours: z.enum(["respect", "bypass"]),
+}).strict();
+
+export const timingConfigSchema = z.union([eventTimingSchema, scheduledTimingSchema]);
 
 export const sourceFiltersSchema = z.object({
   include: z.array(z.enum(BOOKING_ORIGINS)).min(1),
@@ -132,14 +183,22 @@ export const communicationSettingsSchema = z.object({
 }).strict();
 
 export const automationConfigSchema = z.object({
-  triggerType: z.string().trim().min(1).max(120),
+  triggerType: z.enum(TRIGGER_IDS),
   timing: timingConfigSchema,
   sources: sourceFiltersSchema,
   conditions: automationConditionsSchema,
   exclusions: exclusionRulesSchema,
   recipient: recipientConfigSchema,
   channel: z.enum(COMMUNICATION_CHANNELS),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const scheduled = TRIGGERS[value.triggerType].kind === "scheduled";
+  if (scheduled !== (value.timing.mode === "scheduled")) {
+    ctx.addIssue({
+      code: "custom", path: ["timing"],
+      message: scheduled ? "Scheduled triggers require scheduled timing" : "Event triggers cannot use scheduled timing",
+    });
+  }
+});
 
 export type CommunicationSettingsInput = z.infer<typeof communicationSettingsSchema>;
 export type AutomationConfigInput = z.infer<typeof automationConfigSchema>;

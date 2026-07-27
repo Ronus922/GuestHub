@@ -85,6 +85,30 @@ export type StructuredTemplateContent = {
   blocks: TemplateBlock[];
 };
 
+/** A full HTML email document (or fragment) pasted by the operator. {{...}}
+ *  variables interpolate; the author's markup is sent as-is. */
+export type HtmlTemplateContent = {
+  schemaVersion: 1;
+  kind: "html";
+  html: string;
+};
+
+/** A plain-text WhatsApp message with {{...}} variables. Never HTML. */
+export type WhatsAppTemplateContent = {
+  schemaVersion: 1;
+  kind: "whatsapp_text";
+  text: string;
+};
+
+/** Discriminated on `kind`; a missing `kind` means a legacy block tree, so every
+ *  version row published before kinds existed keeps parsing forever. */
+export type TemplateContent =
+  | StructuredTemplateContent
+  | HtmlTemplateContent
+  | WhatsAppTemplateContent;
+
+export type TemplateContentKind = "blocks" | "html" | "whatsapp_text";
+
 export type TemplateVersionPolicy = "latest_published" | "locked";
 export type AutomationStatus = "draft" | "active" | "disabled" | "needs_attention" | "archived";
 
@@ -115,5 +139,5 @@ export type PublishedTemplateVersion = {
   replyToAddress: string | null;
   subject: string;
   preheader: string | null;
-  content: StructuredTemplateContent;
+  content: TemplateContent;
 };
