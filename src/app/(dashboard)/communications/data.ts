@@ -38,7 +38,9 @@ export type DeliveryRow = {
 
 export type ChannelView = {
   email: { status: string; detail: string | null; lastTestedAt: string | null; sender: string | null };
-  whatsappAvailable: false;
+  whatsapp: { provider: "green_api" | "twilio" | null; status: string; detail: string | null; lastTestedAt: string | null };
+  /** true only when the ACTIVE WhatsApp provider is connected + tested. */
+  whatsappAvailable: boolean;
   smsAvailable: false;
 };
 
@@ -59,7 +61,7 @@ export type CommunicationsData = {
 };
 
 export async function loadCommunicationsData(tenantId: string, access: { templates: boolean; automations: boolean; deliveries: boolean; channels: boolean }): Promise<CommunicationsData> {
-  const [templates, automations, deliveries, emailConnection, settings] = await Promise.all([
+  const [templates, automations, deliveries, emailConnection, settings, whatsappConnection] = await Promise.all([
     access.templates ? sql<{
       id: string; name: string; subject: string | null; channel: string; category: string;
       language: string; lifecycle_state: string; version_number: number | null; used_by: number;
@@ -160,10 +162,23 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       SELECT quiet_hours, retry_policy, failure_notification,
              manual_booking_recipients, direct_booking_recipients
       FROM guesthub.communication_settings WHERE tenant_id = ${tenantId}` : Promise.resolve([]),
+    access.channels ? sql<{
+      provider: "green_api" | "twilio"; status: string; status_detail: string | null; last_tested_at: string | null;
+    }[]>`
+      SELECT c.provider, c.status, c.status_detail, c.last_tested_at::text AS last_tested_at
+      FROM guesthub.tenants t
+      JOIN guesthub.messaging_provider_connections c
+        ON c.tenant_id = t.id
+       AND c.provider = t.settings->'messaging'->>'whatsappProvider'
+      WHERE t.id = ${tenantId}
+        AND t.settings->'messaging'->>'whatsappProvider' IN ('green_api','twilio')
+      LIMIT 1` : Promise.resolve([]),
   ]);
 
   const conn = emailConnection[0];
   const connectionConfig = conn?.config ?? {};
+  const waConn = whatsappConnection[0];
+  const whatsappAvailable = Boolean(waConn && waConn.status === "connected" && waConn.last_tested_at);
   return {
     templates: templates.map((r) => ({
       id: r.id, name: r.name, subject: r.subject ?? "", channel: r.channel as "email" | "whatsapp",
@@ -202,7 +217,13 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
         lastTestedAt: conn?.last_tested_at ?? null,
         sender: typeof connectionConfig.senderEmail === "string" ? connectionConfig.senderEmail : null,
       },
-      whatsappAvailable: false,
+      whatsapp: {
+        provider: waConn?.provider ?? null,
+        status: waConn?.status ?? "not_configured",
+        detail: waConn?.status_detail ?? null,
+        lastTestedAt: waConn?.last_tested_at ?? null,
+      },
+      whatsappAvailable,
       smsAvailable: false,
     },
     settings: settings[0] ? {

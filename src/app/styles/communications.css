@@ -336,9 +336,52 @@
   .gc-col > * {
     flex-shrink: 0;
   }
+  /* two columns (HTML / WhatsApp editors): palette · canvas */
+  .gc-b2 {
+    display: grid;
+    grid-template-columns: 302px minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+  }
   .gc-col-canvas {
     padding: 16px 22px;
     background: var(--line);
+  }
+  /* raw-HTML code area (HTML editor) */
+  .gc-code {
+    min-height: 420px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  /* WhatsApp bubble preview — content is a text node, never innerHTML */
+  .gc-wa-chat {
+    background: var(--field-bg);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    justify-content: flex-start;
+  }
+  .gc-wa-bubble {
+    max-width: min(420px, 100%);
+    background: var(--ok-soft);
+    color: var(--ink);
+    border-radius: 12px;
+    border-start-end-radius: 7px;
+    padding: 10px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .gc-cnt.is-over {
+    color: var(--danger);
+    font-weight: 700;
   }
   .gc-col-start {
     border-inline-start: 1px solid var(--line);
@@ -873,7 +916,8 @@
   }
 
   @media (max-width: 1100px) {
-    .gc-b3 {
+    .gc-b3,
+    .gc-b2 {
       grid-template-columns: minmax(0, 1fr);
       overflow-y: auto;
     }
