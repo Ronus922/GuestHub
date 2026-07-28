@@ -153,6 +153,10 @@ export async function failChannelJob(
 }
 
 // Structured, grouped error record (§AA) — never rely on text logs alone.
+// D112: an outbound-provider failure must also carry its raw evidence —
+// verbatim HTTP status, raw response body (2KB, explicit truncation marker),
+// the request payload that produced it, and the UTC moment it was observed.
+// The mapped `code` is derived data; it never replaces the original.
 export async function logChannelError(
   db: Sql | TransactionSql,
   e: {
@@ -167,15 +171,31 @@ export async function logChannelError(
     code?: string;
     message: string;
     context?: unknown;
+    /** the actual HTTP status received, verbatim; null/absent = none arrived */
+    httpStatus?: number | null;
+    /** raw response body text, unmodified, pre-truncated to 2KB upstream */
+    responseBody?: string | null;
+    /** explicit marker that responseBody was cut at the 2KB bound */
+    responseTruncated?: boolean;
+    /** the request payload that produced the failure */
+    requestPayload?: unknown;
+    /** UTC timestamp taken when the response/failure was observed */
+    responseReceivedAt?: string | null;
   },
 ) {
   await db`
     INSERT INTO guesthub.channel_sync_errors
       (tenant_id, connection_id, job_id, room_type_id, rate_plan_mapping_id,
-       date_from, date_to, provider_task_id, error_code, error_message, context)
+       date_from, date_to, provider_task_id, error_code, error_message, context,
+       http_status, response_body, response_truncated, request_payload,
+       response_received_at)
     VALUES
       (${e.tenantId}, ${e.connectionId ?? null}, ${e.jobId ?? null},
        ${e.roomTypeId ?? null}, ${e.ratePlanMappingId ?? null},
        ${e.dateFrom ?? null}, ${e.dateTo ?? null}, ${e.providerTaskId ?? null},
-       ${e.code ?? null}, ${e.message}, ${db.json((e.context ?? {}) as never)})`;
+       ${e.code ?? null}, ${e.message}, ${db.json((e.context ?? {}) as never)},
+       ${e.httpStatus ?? null}, ${e.responseBody ?? null},
+       ${e.responseTruncated ?? false},
+       ${e.requestPayload === undefined ? null : db.json(e.requestPayload as never)},
+       ${e.responseReceivedAt ?? null})`;
 }

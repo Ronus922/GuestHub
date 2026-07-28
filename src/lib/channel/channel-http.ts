@@ -33,7 +33,42 @@ export type ChannelApiFailure = {
   httpStatus?: number;
   /** §16 — cooldown the provider asked for (429 Retry-After), in ms, when present */
   retryAfterMs?: number;
+  /** D112 — the raw evidence of what the provider actually said */
+  raw?: RawResponseEvidence;
 };
+
+// ---- D112: failures must carry their own evidence ----
+// The category above is DERIVED data. What an operator (or a later diagnosis)
+// needs is what the provider actually said — captured verbatim, at the moment
+// of failure, BEFORE any parsing or mapping. A category may stand beside the
+// original; it must never replace it.
+export const RAW_BODY_MAX_CHARS = 2048;
+
+export type RawResponseEvidence = {
+  /** the actual HTTP status received, verbatim. null = no response arrived
+   *  (timeout / network failure / payload rejected before sending) */
+  httpStatus: number | null;
+  /** the raw response body text, unmodified — first RAW_BODY_MAX_CHARS chars.
+   *  The stored prefix is verbatim; `truncated` is the explicit marker. */
+  body: string | null;
+  truncated: boolean;
+  /** UTC timestamp taken when the response (or transport failure) was observed */
+  receivedAt: string;
+};
+
+export function rawEvidenceOf(
+  httpStatus: number | null,
+  bodyText: string | null,
+  now: Date = new Date(),
+): RawResponseEvidence {
+  const truncated = bodyText !== null && bodyText.length > RAW_BODY_MAX_CHARS;
+  return {
+    httpStatus,
+    body: bodyText !== null && truncated ? bodyText.slice(0, RAW_BODY_MAX_CHARS) : bodyText,
+    truncated,
+    receivedAt: now.toISOString(),
+  };
+}
 
 // Parse a Retry-After header: either delta-seconds ("120") or an HTTP-date.
 // Returns ms, or null when absent/unparseable. `now` is injectable for tests.

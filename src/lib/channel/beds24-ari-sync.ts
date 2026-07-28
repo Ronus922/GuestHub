@@ -15,6 +15,7 @@ import {
   pushBeds24Calendar, summarizeBeds24Warnings,
   type Beds24CalendarPushResult, type SafeBeds24Warning,
 } from "./beds24-ari";
+import { rawEvidenceOf, type RawResponseEvidence } from "./beds24-http";
 import { recordAriEvidence, type EvidenceOutcome } from "./evidence";
 import {
   loadBeds24RoomCeilings, EMPTY_BEDS24_CEILINGS, type Beds24RoomCeilings,
@@ -144,6 +145,10 @@ export type Beds24SendOutcome = {
    *  BURNED. null (not 0) when the provider metered nothing, so an unmetered
    *  run is never mistaken for a free one. Observability, never control. */
   runRequestCost: number | null;
+  /** D112 — verbatim evidence of the response that failed this run (or, for a
+   *  partial run, the last warnings-carrying response), with the request
+   *  payload that produced it. null = clean run or nothing sent. */
+  evidence: { raw: RawResponseEvidence; requestPayload: unknown } | null;
 };
 
 export type Beds24FullSyncResult = {
@@ -243,6 +248,29 @@ export const toBuilderMappings = (
     maxStayCeiling: ceilings.get(m.beds24_room_id) ?? null,
   }));
 
+// ---- D112: failures must carry their own evidence ----
+// The raw-evidence fields an error record persists, taken from a send outcome.
+// Empty when no response evidence exists (nothing was sent / pre-send failure)
+// — absent evidence stays absent; it is never faked.
+const evidenceFields = (ev: Beds24SendOutcome["evidence"]) =>
+  ev
+    ? {
+        httpStatus: ev.raw.httpStatus,
+        responseBody: ev.raw.body,
+        responseTruncated: ev.raw.truncated,
+        requestPayload: ev.requestPayload,
+        responseReceivedAt: ev.raw.receivedAt,
+      }
+    : {};
+
+// The same evidence for the evidence-ledger's jsonb context (no DDL there).
+const evidenceContext = (ev: Beds24SendOutcome["evidence"]) => ({
+  httpStatus: ev?.raw.httpStatus ?? null,
+  rawBody: ev?.raw.body ?? null,
+  rawTruncated: ev?.raw.truncated ?? false,
+  responseReceivedAt: ev?.raw.receivedAt ?? null,
+});
+
 // ---- send every request body, paced, bounded (mirror of
 // ari-sync.ts::sendBatches: stop this run on the first failure — the caller
 // keeps the ranges retryable) ----
@@ -253,6 +281,7 @@ async function sendCalendarRequests(
   const outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
     deferredBatches: 0, credits: null, creditPause: null, runRequestCost: null,
+    evidence: null,
   };
   const gate = createBeds24CreditGate();
   const sendable = requests.slice(0, MAX_REQUESTS_PER_RUN);
@@ -288,10 +317,20 @@ async function sendCalendarRequests(
         code: res.category, message: res.message,
         ...(res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}),
       };
+      // D112 — keep what the provider actually said, with the payload that
+      // produced it. A transport failure carries null status/body: evidence
+      // that nothing arrived, never a stand-in.
+      outcome.evidence = {
+        raw: res.raw ?? rawEvidenceOf(null, null),
+        requestPayload: sendable[i],
+      };
       return outcome; // stop — the caller keeps the ranges retryable
     }
     outcome.sentRanges += sendable[i].reduce((n, e) => n + e.calendar.length, 0);
-    if (res.partial) outcome.warnings.push(...res.warnings);
+    if (res.partial) {
+      outcome.warnings.push(...res.warnings);
+      outcome.evidence = { raw: res.raw, requestPayload: sendable[i] };
+    }
   }
   return outcome;
 }
@@ -315,6 +354,7 @@ export async function runBeds24FullSync(
   const emptyOutcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
     deferredBatches: 0, credits: null, creditPause: null, runRequestCost: null,
+    evidence: null,
   };
 
   // A failed run leaves full_sync_required=true so the operator re-runs after
@@ -330,6 +370,7 @@ export async function runBeds24FullSync(
       tenantId: conn.tenant_id, connectionId: conn.id, jobId: jobId ?? undefined,
       dateFrom: today, dateTo: dateToInclusive,
       code: category, message: error,
+      ...evidenceFields(extra?.outcome?.evidence ?? null),
     });
     await recordAriEvidence(db, {
       tenantId: conn.tenant_id,
@@ -356,6 +397,7 @@ export async function runBeds24FullSync(
         creditsResetsInSec: extra?.outcome?.credits?.resetsInSec ?? null,
         lastRequestCost: extra?.outcome?.credits?.requestCost ?? null,
         requestCost: extra?.outcome?.runRequestCost ?? null,
+        ...evidenceContext(extra?.outcome?.evidence ?? null),
       },
     });
     return {
@@ -434,6 +476,7 @@ export async function runBeds24FullSync(
       tenantId: conn.tenant_id, connectionId: conn.id, jobId: jobId ?? undefined,
       dateFrom: today, dateTo: dateToInclusive,
       code: failure.code, message: failure.message,
+      ...evidenceFields(outcome.evidence),
     });
   } else if (warnings.length > 0) {
     await logChannelError(db, {
@@ -441,6 +484,7 @@ export async function runBeds24FullSync(
       dateFrom: today, dateTo: dateToInclusive,
       code: "partial_warnings", message: summarizeBeds24Warnings(warnings),
       context: { warnings },
+      ...evidenceFields(outcome.evidence),
     });
   }
 
@@ -494,6 +538,7 @@ export async function runBeds24FullSync(
       lastRequestCost: outcome.credits?.requestCost ?? null,
       requestCost: outcome.runRequestCost,
       creditPause: outcome.creditPause?.reason ?? null,
+      ...evidenceContext(outcome.evidence),
     },
   });
 
@@ -594,6 +639,7 @@ export async function drainBeds24AriDirtyRanges(
   let outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
     deferredBatches: 0, credits: null, creditPause: null, runRequestCost: null,
+    evidence: null,
   };
   if (builderMappings.length > 0) {
     const projection = await projectBeds24Ari(db, {
@@ -648,6 +694,7 @@ export async function drainBeds24AriDirtyRanges(
         lastRequestCost: outcome.credits?.requestCost ?? null,
         requestCost: outcome.runRequestCost,
         creditPause: outcome.creditPause?.reason ?? null,
+        ...evidenceContext(outcome.evidence),
       },
     });
 
@@ -713,6 +760,7 @@ export async function drainBeds24AriDirtyRanges(
       dateFrom: from, dateTo: to,
       code: err.code, message: err.message,
       ...(warnings.length > 0 ? { context: { warnings } } : {}),
+      ...evidenceFields(outcome.evidence),
     });
     // a pause that coincided with a real failure still owes its cooldown: the
     // range is charged an attempt (it may be permanently bad) AND held until the

@@ -45,6 +45,9 @@ type CountsRow = {
   quarantined_revisions: number;
 };
 
+// D112 — the raw provider evidence rides on the error record: verbatim HTTP
+// status and raw body. Internal operator screen — provider technical text IS
+// shown here (guest-facing surfaces are unaffected).
 type SyncErrorRow = {
   id: string;
   connection_id: string | null;
@@ -53,6 +56,9 @@ type SyncErrorRow = {
   date_to: string | Date | null;
   error_code: string | null;
   error_message: string | null;
+  http_status: number | null;
+  response_body: string | null;
+  response_truncated: boolean;
   created_at: string | Date;
 };
 
@@ -283,6 +289,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
               <thead>
                 <tr className="border-b border-line">
                   <th className="t-label px-4 py-3 text-start text-faint">קוד</th>
+                  <th className="t-label px-4 py-3 text-start text-faint">HTTP</th>
                   <th className="t-label px-4 py-3 text-start text-faint">הודעה</th>
                   <th className="t-label px-4 py-3 text-start text-faint">טווח</th>
                   <th className="t-label px-4 py-3 text-start text-faint">מתי</th>
@@ -294,7 +301,29 @@ function StatusView({ data }: { data: ChannelStatus }) {
                     <td className="px-4 py-3 text-status-danger">
                       <bdi className="ltr-num font-mono">{e.error_code ?? "—"}</bdi>
                     </td>
-                    <td className="px-4 py-3 text-text2">{e.error_message ?? "—"}</td>
+                    {/* D112 — the status ACTUALLY received, verbatim; "—" means
+                        no response arrived. Never a number the code made up. */}
+                    <td className="px-4 py-3 text-muted">
+                      <bdi className="ltr-num font-mono">{e.http_status ?? "—"}</bdi>
+                    </td>
+                    <td className="px-4 py-3 text-text2">
+                      <div className="flex flex-col gap-1">
+                        <span>{e.error_message ?? "—"}</span>
+                        {/* D112 — the provider's raw answer, as stored (2KB,
+                            truncation marked). Internal operator surface. */}
+                        {e.response_body ? (
+                          <details>
+                            <summary className="cursor-pointer text-xs text-faint">
+                              תשובת הספק המלאה{e.response_truncated ? " (קטועה ל-2KB)" : ""}
+                            </summary>
+                            <pre
+                              dir="ltr"
+                              className="mt-1 max-h-40 overflow-auto rounded-lg bg-field p-3 font-mono text-xs whitespace-pre-wrap break-all"
+                            >{e.response_body}</pre>
+                          </details>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-muted">
                       <bdi className="ltr-num">
                         {e.date_from || e.date_to ? `${fmtDate(e.date_from)} – ${fmtDate(e.date_to)}` : "—"}
