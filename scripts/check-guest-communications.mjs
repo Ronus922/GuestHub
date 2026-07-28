@@ -314,6 +314,59 @@ ok("an unquoted-attribute payload cannot introduce a new attribute, and normal v
 }
 ok("the html path refuses javascript:/data:/vbscript:/file: through safeHttpUrl and keeps http(s)/mailto/tel");
 
+// ---- GAP 2b: scheme detection must see what the CLIENT resolves ----
+// Every browser/mail client strips leading C0 controls and removes ASCII
+// tab/CR/LF from ANYWHERE in a URL before resolving it. A naive `^[a-z]…:`
+// test on the raw value therefore misses `java\tscript:` and `\0javascript:` —
+// both were measured reaching the outbound href live. Reverting urlProbe (or
+// dropping its .trim()) makes these fail while the rest of the suite passes.
+{
+  const obfuscated = [
+    ["leading newline", "\njavascript:alert(1)"],
+    ["leading space", " javascript:alert(1)"],
+    ["tab inside the scheme", "java\tscript:alert(1)"],
+    ["CR inside the scheme", "java\rscript:alert(1)"],
+    ["LF inside the scheme", "java\nscript:alert(1)"],
+    ["mixed case", "JaVaScRiPt:alert(1)"],
+    ["leading NUL", "\u0000javascript:alert(1)"],
+    ["trailing control", "javascript:alert(1)\u0001"],
+    ["NUL inside the scheme", "java\u0000script:alert(1)"],
+  ];
+  for (const [name, payload] of obfuscated) {
+    // a NON-url-kind variable: the guest's own name, the realistic carrier
+    const out = renderer.renderHtmlCommunication(
+      { schemaVersion: 1, kind: "html", html: '<a href="{{guest.first_name}}">x</a>' },
+      { ...context, values: { ...context.values, "guest.first_name": payload } },
+    );
+    const href = out.html.match(/href="([^"]*)"/)[1];
+    assert.equal(/javascript\s*:/i.test(href.replace(/[\u0000-\u001F\u007F]/g, "")), false,
+      `${name}: a javascript: URL must not survive into the href`);
+    assert.equal(href, "", `${name}: a rejected URL is emitted EMPTY`);
+    assert.deepEqual(
+      out.issues.find((issue) => issue.key === "guest.first_name"),
+      { key: "guest.first_name", kind: "invalid_url" },
+      `${name}: must be recorded as invalid_url`,
+    );
+    assert.equal(out.canSend, false, `${name}: must block the send`);
+  }
+  // …and the probe must NOT mangle an ordinary multi-line value: a guest note
+  // carrying newlines is not a URL and keeps its own bytes.
+  const note = renderer.renderHtmlCommunication(
+    { schemaVersion: 1, kind: "html", html: "<p>{{reservation.cancellation_policy}}</p>" },
+    { ...context, values: { ...context.values, "reservation.cancellation_policy": "שורה א\nשורה ב" } },
+  );
+  assert.match(note.html, /שורה א\nשורה ב/, "a non-URL value keeps its newlines untouched");
+  assert.equal(note.canSend, true);
+  // a real https URL carrying a stray tab is cleaned, not dropped
+  const messyOk = renderer.renderHtmlCommunication(
+    { schemaVersion: 1, kind: "html", html: '<a href="{{reservation.manage_url}}">x</a>' },
+    { ...context, values: { ...context.values, "reservation.manage_url": " https://gh.test/manage\t" } },
+  );
+  assert.match(messyOk.html, /href="https:\/\/gh\.test\/manage"/);
+  assert.equal(messyOk.canSend, true);
+}
+ok("obfuscated schemes (leading/embedded control chars, NUL, case) are detected exactly as a client would resolve them");
+
 // ---- whatsapp rendering: plain text, NO escaping — "&amp;" must never reach a guest ----
 {
   const wa = renderer.renderWhatsAppCommunication({ schemaVersion: 1, kind: "whatsapp_text", text: "שלום {{guest.first_name}} — {{property.name}}" }, context);

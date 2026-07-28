@@ -474,6 +474,20 @@ const SCHEME_PREFIX = /^[a-z][a-z0-9+.-]*:/i;
 const SAFE_NON_HTTP_SCHEME = /^(mailto|tel):/i;
 
 /**
+ * Detection must see the string the CLIENT will resolve, not the one we were
+ * handed. Before resolving a URL every browser and mail client strips leading
+ * and trailing C0 controls, and removes ASCII tab/CR/LF from ANYWHERE in it —
+ * so `java\tscript:` and `\0javascript:` resolve as `javascript:` while sailing
+ * past a naive `^[a-z]…:` test. Whole C0 range + DEL, not just \t\r\n\0: every
+ * one of them is stripped or rejected by the URL parser the same way, and this
+ * probe is used for DETECTION only — a value that turns out not to be a URL is
+ * still emitted with its own bytes intact (a guest note keeps its newlines).
+ */
+function urlProbe(value: string): string {
+  return value.replace(/[\u0000-\u001F\u007F]/g, "").trim();
+}
+
+/**
  * Gate a value that IS a URL (a url-kind variable) or merely looks like one
  * (any scheme-prefixed string) before it reaches the author's markup — the
  * html path has no `href="…"` of its own to guard, so the guard travels with
@@ -483,12 +497,12 @@ const SAFE_NON_HTTP_SCHEME = /^(mailto|tel):/i;
  * an EMPTY value, never the raw string. invalid_url also forces canSend=false.
  */
 function guardUrlValue(key: string, value: string, issues: RenderIssue[]): string {
-  const trimmed = value.trim();
-  if (!trimmed) return value;
+  const probe = urlProbe(value);
+  if (!probe) return value;
   const isUrlVariable = getVariableDefinition(key)?.kind === "url";
-  if (!isUrlVariable && !SCHEME_PREFIX.test(trimmed)) return value;
-  if (SAFE_NON_HTTP_SCHEME.test(trimmed)) return value;
-  const safe = safeHttpUrl(trimmed);
+  if (!isUrlVariable && !SCHEME_PREFIX.test(probe)) return value;
+  if (SAFE_NON_HTTP_SCHEME.test(probe)) return probe;
+  const safe = safeHttpUrl(probe);
   if (safe) return safe;
   issues.push({ key, kind: "invalid_url" });
   return "";
