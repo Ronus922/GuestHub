@@ -673,7 +673,7 @@ The local GuestHub Rate Plan (tenant-scoped `pricing_plans` row, `sellable_unit_
 
 **Outbox re-keyed (migration 027).** `channel_dirty_ranges` now names a `room_id` and, optionally, one `local_rate_plan_id` (NULL = every channel-visible plan of that room — what a Bulk Update means, since it writes the unit's BASE plan rows from which every derived plan is computed). `channel_sync_state` is dropped: the drain always recomputes the payload from current canonical state at send time, so a late or duplicate drain is naturally idempotent and a watermark could only drop a range. Ranges gained bounded retry (`attempts`, `next_attempt_at`, `last_error_code`, status `failed`).
 
-**Hooks.** `writeRateCells` (the ONE path the Rate Grid and Bulk Update share) marks rates+restrictions per room, never availability. Rate Plan mutations mark the plan **plus its transitive children** (a derived plan's price is computed from its parent's resolved price) on their assigned rooms, and — on an assignment change — on the rooms observed *before* the write, so a dropped room is republished rather than forgotten. `savePlanOverridesAction`, which previously reached Channex not at all, marks its exact units/dates. Reservation create/modify/cancel/move mark old **and** new ranges; closures and room status mark availability over the published horizon (`ARI_HORIZON_DAYS = 500`, in the import-free `ranges.ts` so no save path pulls in the HTTP client).
+**Hooks.** `writeRateCells` (the ONE path the Rate Grid and Bulk Update share) marks rates+restrictions per room, never availability. Rate Plan mutations mark the plan **plus its transitive children** (a derived plan's price is computed from its parent's resolved price) on their assigned rooms, and — on an assignment change — on the rooms observed *before* the write, so a dropped room is republished rather than forgotten. `savePlanOverridesAction`, which previously reached Channex not at all, marks its exact units/dates. Reservation create/modify/cancel/move mark old **and** new ranges; closures and room status mark availability over the published horizon (`ARI_HORIZON_DAYS`, in the import-free `ranges.ts` so no save path pulls in the HTTP client; 500 at the time of this entry — **720 since D111**: Beds24 rejects a range crossing its ~24-month limit wholesale rather than clipping it, so the horizon is pinned to the documented 24 months minus a 10-day margin).
 
 **Withdrawal is a publication.** A plan that is archived, deactivated or hidden from channels is still projected — as `stop_sell` with no rate. Filtering it out would leave its Channex Rate Plan selling the last prices we published.
 
@@ -1369,3 +1369,27 @@ total_price ו-discount_amount שמורים, וה-ledger לא זז. הראיה:
 נקודת הכניסה המחווטת קיימת (`persistBookingRevision`→`attachStagedCard`,
 מכוסה ב-`check:channel-card-ingest`), וזו תהיה החלטה חדשה. D52 §2 (הערוץ לא
 מוסר CVC) נשאר עומד — לא כמדיניות שלנו אלא כעובדת הספק.
+
+## D111 — ARI_HORIZON_DAYS = 720; האופק חוסם הכנסה-לתור בלבד, וחלון הייבוא נשאר 500 בנפרד (2026-07-28)
+
+**למה 720 (נמדד, לא הונח).** Beds24 ענה HTTP 201 עם `success:false` ואזהרת
+"invalid dates"; `modified` קיבל כל טווח עד 2028-05-31 והפיל את
+2028-06-01 → 2029-11-01 **כמקשה אחת** — טווח שחוצה את המגבלה נדחה בשלמותו,
+לא נחתך בצד הספק. הגבול האמיתי לא ננעץ — ידוע רק שהוא בתוך [673, 1191]
+ימים. 720 = 24 החודשים המתועדים של Beds24 פחות שולי ביטחון של 10 ימים.
+(מוזג ב-PR #124, f1bd073.)
+
+**האופק היוצא וחלון הייבוא הנכנס הם עכשיו שני קבועים נפרדים — בכוונה.**
+`ARI_HORIZON_DAYS = 720` (`ranges.ts`) מגביל את הפרסום היוצא בלבד.
+`BEDS24_INBOUND_FORWARD_DAYS` (`beds24-booking-import.ts:125`) נשאר **500**
+עד שהליכת השערים של D94 תבוצע עבור 720 — הרחבת חלון הייבוא היא החלטה
+נפרדת עם השלכות משלה, ולא נגררת אוטומטית מהאופק היוצא.
+
+**האופק חוסם ENQUEUE בלבד, לא פרסום — וזה הפער הפתוח שנשאר אחרי הניקוי.**
+החיתוך שנוסף ב-`writeRateCells` מונע יצירת שורה מלוכלכת מעבר לאופק, אבל
+בונה ה-drain גוזר את הטווח שלו מ-`date_to` המאוחסן של השורה
+(`beds24-ari-sync.ts:580-582`: clamp לעבר בלבד — `from = rawFrom < today ?
+today : rawFrom`, ו-`to` הוא המקסימום של `date_to` — ללא תקרת אופק). לכן
+שורה שנוצרה לפני התיקון עדיין תפלוט מטען out-of-range שיידחה בשלמותו.
+הניקוי (Phase 1/2) מטפל ב-28 השורות הקיימות; חסימת האופק בצד ה-drain עצמו
+היא עבודה פתוחה.
