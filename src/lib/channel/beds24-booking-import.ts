@@ -176,7 +176,7 @@ async function fetchBookingsPage(
   const res = await beds24Request({ ...opts, method: "GET", path });
   if ("ok" in res) return res;
   if (res.status !== 200) {
-    const f = beds24Fail(mapErrorStatus(res.status), res.status);
+    const f = beds24Fail(mapErrorStatus(res.status), res.status, res.raw);
     // P0-4 — a 429 carries its own cooldown forward (Retry-After, else the
     // credit window's resets-in); the page walker turns it into a real pause.
     return res.retryAfterMs !== undefined
@@ -184,9 +184,10 @@ async function fetchBookingsPage(
       : { ...f, credits: res.credits };
   }
   const root = asObj(res.body);
-  if (root && root.success === false) return beds24Fail("bad_response", res.status);
+  // D112 — the "unexpected" body is exactly the evidence; it rides on `raw`
+  if (root && root.success === false) return beds24Fail("bad_response", res.status, res.raw);
   const data = root?.data ?? res.body;
-  if (!Array.isArray(data)) return beds24Fail("bad_response", res.status);
+  if (!Array.isArray(data)) return beds24Fail("bad_response", res.status, res.raw);
   return {
     ok: true,
     bookings: data,
@@ -459,6 +460,26 @@ async function pullWindow(
     summary.creditPause = gate.pause;
     if (!res.ok) {
       pushError(summary, gate.pause ? beds24CreditPauseMessage(gate.pause) : res.message);
+      // D112 — the pull's HTTP failure used to survive only as a message on the
+      // job row. The raw evidence lands on the error record; one unresolved row
+      // per code, because the poll repeats every cycle while the API is broken.
+      const [dup] = await db<{ x: number }[]>`
+        SELECT 1 AS x FROM guesthub.channel_sync_errors
+        WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+          AND error_code = ${`inbound_pull_${res.category}`} AND resolved_at IS NULL
+        LIMIT 1`;
+      if (!dup) {
+        await logChannelError(db, {
+          tenantId: conn.tenant_id,
+          connectionId: conn.id,
+          code: `inbound_pull_${res.category}`,
+          message: res.message,
+          httpStatus: res.raw?.httpStatus ?? null,
+          responseBody: res.raw?.body ?? null,
+          responseTruncated: res.raw?.truncated ?? false,
+          responseReceivedAt: res.raw?.receivedAt ?? null,
+        });
+      }
       break;
     }
     for (const booking of res.bookings) {

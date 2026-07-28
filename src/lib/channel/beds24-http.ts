@@ -22,7 +22,9 @@ import {
   parseRetryAfterMs,
   DEFAULT_TIMEOUT_MS,
   mapErrorStatus,
+  rawEvidenceOf,
   type ChannelApiErrorCategory,
+  type RawResponseEvidence,
 } from "./channel-http";
 import {
   readBeds24Credits,
@@ -44,15 +46,21 @@ export type Beds24ApiFailure = {
   retryAfterMs?: number;
   /** the credit meter the failing response carried, when it reached Beds24 */
   credits?: Beds24CreditSnapshot;
+  /** D112 — what Beds24 actually said: verbatim status + raw body, captured
+   *  BEFORE any parsing/mapping. httpStatus:null = no response arrived. */
+  raw?: RawResponseEvidence;
 };
 
+// D112/C2 — the base texts carry NO status numbers. A fixed string standing in
+// for a status is forbidden: the number shown to an operator is composed below
+// from the httpStatus that actually arrived, and only when one arrived.
 const CATEGORY_MESSAGE: Record<Beds24ApiErrorCategory, string> = {
-  unauthorized: "האימות מול Beds24 נדחה (401) — בדוק שקוד ההזמנה/הטוקן תקף ולא פג",
-  forbidden: "הגישה נאסרה (403) — לטוקן Beds24 אין הרשאה (scope) מתאימה",
-  not_found: "הפריט לא נמצא (404) — ייתכן שאינו נגיש לטוקן Beds24 זה",
-  conflict: "התקבלה התנגשות (409) — ייתכן שהפריט כבר קיים",
-  validation: "הנתונים נדחו (422) — יש להשלים או לתקן שדות חובה",
-  rate_limited: "יותר מדי בקשות ל-Beds24 (429) — מכסת הקרדיטים מוצתה, נסה שוב מאוחר יותר",
+  unauthorized: "האימות מול Beds24 נדחה — בדוק שקוד ההזמנה/הטוקן תקף ולא פג",
+  forbidden: "הגישה נאסרה — לטוקן Beds24 אין הרשאה (scope) מתאימה",
+  not_found: "הפריט לא נמצא — ייתכן שאינו נגיש לטוקן Beds24 זה",
+  conflict: "התקבלה התנגשות — ייתכן שהפריט כבר קיים",
+  validation: "הנתונים נדחו — יש להשלים או לתקן שדות חובה",
+  rate_limited: "יותר מדי בקשות ל-Beds24 — מכסת הקרדיטים מוצתה, נסה שוב מאוחר יותר",
   server_error: "שגיאת שרת אצל Beds24 — נסה שוב מאוחר יותר",
   timeout: "הבקשה חרגה מהזמן המוקצב",
   network_error: "שגיאת רשת בחיבור ל-Beds24",
@@ -62,18 +70,33 @@ const CATEGORY_MESSAGE: Record<Beds24ApiErrorCategory, string> = {
 export function beds24Fail(
   category: Beds24ApiErrorCategory,
   httpStatus?: number,
+  raw?: RawResponseEvidence,
 ): Beds24ApiFailure {
-  return { ok: false, category, message: CATEGORY_MESSAGE[category], httpStatus };
+  // the only number ever shown is the one that was actually received
+  const suffix = httpStatus !== undefined ? ` (HTTP ${httpStatus})` : "";
+  return {
+    ok: false, category, message: `${CATEGORY_MESSAGE[category]}${suffix}`, httpStatus,
+    ...(raw ? { raw } : {}),
+  };
 }
 
-export { mapErrorStatus, parseRetryAfterMs };
+export { mapErrorStatus, parseRetryAfterMs, rawEvidenceOf };
+export type { RawResponseEvidence };
 
-// Read the body as JSON without ever throwing.
-async function safeJson(res: Response): Promise<unknown> {
+// D112 — the body is read as TEXT first, so the verbatim evidence exists
+// before (and regardless of) JSON parsing. A non-JSON error page yields
+// body:undefined but its raw text survives on `raw`.
+async function readBody(res: Response): Promise<{ text: string | null; json: unknown }> {
+  let text: string | null = null;
   try {
-    return await res.json();
+    text = await res.text();
   } catch {
-    return undefined;
+    return { text: null, json: undefined };
+  }
+  try {
+    return { text, json: JSON.parse(text) };
+  } catch {
+    return { text, json: undefined };
   }
 }
 
@@ -137,6 +160,9 @@ export type Beds24Response = {
    *  explicit `measured` flag. ALWAYS present: an unmetered endpoint yields a
    *  snapshot of nulls with measured:false, never a missing object. */
   credits: Beds24CreditSnapshot;
+  /** D112 — verbatim status + raw body text of THIS response, captured before
+   *  parsing. Always present on a response that arrived. */
+  raw: RawResponseEvidence;
 };
 
 export type Beds24ReqOpts = {
@@ -173,11 +199,14 @@ async function beds24Fetch(opts: {
     });
   } catch (e) {
     const aborted = e instanceof Error && e.name === "AbortError";
-    return beds24Fail(aborted ? "timeout" : "network_error");
+    // no response arrived — the evidence records exactly that (null status,
+    // null body) with the UTC moment it was observed.
+    return beds24Fail(aborted ? "timeout" : "network_error", undefined, rawEvidenceOf(null, null));
   } finally {
     clearTimeout(timer);
   }
-  const body = await safeJson(res);
+  const { text, json: body } = await readBody(res);
+  const raw = rawEvidenceOf(res.status, text);
   const credits = readCreditSnapshot(res.headers);
   // `?? undefined` keeps an ABSENT header absent on the wire object, so a
   // consumer can still tell "not measured" from a real number; `credits.measured`
@@ -191,9 +220,9 @@ async function beds24Fetch(opts: {
     const retryAfterMs =
       parseRetryAfterMs(res.headers?.get?.("retry-after") ?? null) ??
       beds24ResetWaitMs(credits.resetsInSec);
-    return { status: res.status, body, retryAfterMs, creditsRemaining, requestCost, credits };
+    return { status: res.status, body, retryAfterMs, creditsRemaining, requestCost, credits, raw };
   }
-  return { status: res.status, body, creditsRemaining, requestCost, credits };
+  return { status: res.status, body, creditsRemaining, requestCost, credits, raw };
 }
 
 // Regular API call — header `token: <accessToken>` (Beds24's scheme; NOT Bearer).
