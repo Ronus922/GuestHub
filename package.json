@@ -32,6 +32,7 @@
     "check:beds24-connection": "node --env-file=.env.local scripts/check-beds24-connection.mjs",
     "check:beds24-jobs": "node --env-file=.env.local scripts/check-beds24-jobs.mjs",
     "check:beds24-revisions": "node --env-file=.env.local scripts/check-beds24-revisions.mjs",
+    "check:ari-horizon": "node scripts/check-ari-horizon.mjs",
     "check:beds24-ari": "node --env-file=.env.local scripts/check-beds24-ari.mjs",
     "check:beds24-credit-headers": "node --env-file=.env.local scripts/check-beds24-credit-headers.mjs",
     "check:beds24-payload-integrity": "node scripts/check-beds24-payload-integrity.mjs",
