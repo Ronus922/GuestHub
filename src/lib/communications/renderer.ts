@@ -508,6 +508,38 @@ function guardUrlValue(key: string, value: string, issues: RenderIssue[]): strin
   return "";
 }
 
+/**
+ * Attributes a client resolves as a URL, in all three value forms (double
+ * quoted, single quoted, bare). The leading `^|[\s/]` keeps `data-href` and
+ * friends out — only a real attribute boundary counts.
+ */
+const URL_ATTRIBUTE = /(?:^|[\s/])((?:xlink:)?(?:href|src|action|formaction))\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]*))/gi;
+/** The only schemes an email body may resolve. `cid:` addresses an inline attachment. */
+const ALLOWED_DOCUMENT_SCHEME = /^(?:https?|mailto|tel|cid):/i;
+
+/**
+ * Belt and braces over guardUrlValue, which judges each {{variable}} on its
+ * own — but URL safety is a property of the WHOLE attribute value. Split the
+ * scheme across two variables (`href="{{a}}{{b}}"` with a=`javascript` and
+ * b=`:alert(1)`) and neither token looks like a URL: the first carries no
+ * colon, the second does not start with a letter. Joined, the attribute is a
+ * live javascript: URL. No per-token check can see that, so the FINISHED
+ * document is read once more, exactly as a client would read it.
+ *
+ * The document is never rewritten or sanitized — a rejected URL raises
+ * invalid_url, which forces canSend=false and stops the send whole. Blocking,
+ * not patching: a half-repaired document is a document nobody proofread.
+ */
+function scanDocumentUrls(html: string, issues: RenderIssue[]): void {
+  for (const match of html.matchAll(URL_ATTRIBUTE)) {
+    const probe = urlProbe(match[2] ?? match[3] ?? match[4] ?? "");
+    // empty, scheme-relative (//cdn/…) or plain relative (/x, #a, ?q): no scheme to abuse
+    if (!probe || probe.startsWith("//") || !SCHEME_PREFIX.test(probe)) continue;
+    if (ALLOWED_DOCUMENT_SCHEME.test(probe)) continue;
+    issues.push({ key: `html.${(match[1] ?? "").toLowerCase()}`, kind: "invalid_url" });
+  }
+}
+
 export function renderHtmlCommunication(
   content: HtmlTemplateContent,
   context: Ctx,
@@ -540,6 +572,8 @@ export function renderHtmlCommunication(
       + `<body style="margin:0;padding:0">`
       + `<div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preheader.value)}</div>`
       + `${interpolated}</body></html>`;
+
+  scanDocumentUrls(html, issues);
 
   const allIssues = uniqueIssues(issues);
   return {

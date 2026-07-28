@@ -367,6 +367,75 @@ ok("the html path refuses javascript:/data:/vbscript:/file: through safeHttpUrl 
 }
 ok("obfuscated schemes (leading/embedded control chars, NUL, case) are detected exactly as a client would resolve them");
 
+// ---- GAP 3: URL safety belongs to the WHOLE attribute, not to one token ----
+// guardUrlValue judges each {{variable}} alone, so a scheme split across two of
+// them slips through both checks: "javascript" carries no colon, ":alert(1)"
+// does not start with a letter — joined they are a live javascript: URL. Only a
+// post-interpolation scan of the finished document can see it. Reverting
+// scanDocumentUrls makes every case here fail while the rest of the file passes.
+{
+  const split = (a, b, markup = '<a href="{{guest.first_name}}{{guest.last_name}}">x</a>') =>
+    renderer.renderHtmlCommunication(
+      { schemaVersion: 1, kind: "html", html: markup },
+      { ...context, values: { ...context.values, "guest.first_name": a, "guest.last_name": b } },
+    );
+
+  // the premise: neither half is refused on its own — the join is what is unsafe
+  const lone = (key, value) => renderer.renderHtmlCommunication(
+    { schemaVersion: 1, kind: "html", html: `<a href="{{${key}}}">x</a>` },
+    { ...context, values: { ...context.values, [key]: value } },
+  );
+  assert.equal(lone("guest.first_name", "javascript").canSend, true, "'javascript' alone carries no colon and is a legal value");
+  assert.equal(lone("guest.last_name", ":alert(1)").canSend, true, "':alert(1)' alone starts with no letter and is a legal value");
+
+  for (const [name, a, b] of [
+    ["javascript", "javascript", ":alert(1)"],
+    ["data", "data", ":text/html,<b>x</b>"],
+    ["vbscript", "vbscript", ":msgbox(1)"],
+  ]) {
+    const out = split(a, b);
+    assert.equal(out.canSend, false, `${name}: a scheme split across two variables must block the send`);
+    assert.deepEqual(
+      out.issues.find((issue) => issue.kind === "invalid_url"),
+      { key: "html.href", kind: "invalid_url" },
+      `${name}: the document scan must record invalid_url`,
+    );
+  }
+  // …and with no quotes around the attribute at all
+  const bare = split("javascript", ":alert(1)", "<a href={{guest.first_name}}{{guest.last_name}}>x</a>");
+  assert.equal(bare.canSend, false, "an unquoted split payload must block the send too");
+  // …and on the other URL-bearing attributes
+  for (const markup of [
+    "<img src={{guest.first_name}}{{guest.last_name}}>",
+    "<form action='{{guest.first_name}}{{guest.last_name}}'></form>",
+    '<button formaction="{{guest.first_name}}{{guest.last_name}}">x</button>',
+    '<use xlink:href="{{guest.first_name}}{{guest.last_name}}"/>',
+  ]) {
+    assert.equal(split("javascript", ":alert(1)", markup).canSend, false, `${markup} must be scanned too`);
+  }
+
+  // over-blocking guard: a normal document of legitimate links must still send,
+  // byte-for-byte unchanged — the scan reads the document, it never edits it.
+  const safeDoc = '<a href="https://gh.test/manage?a=1#top">ניהול</a>'
+    + '<a href="mailto:hi@gh.test">מייל</a>'
+    + '<a href="tel:+972500000000">טלפון</a>'
+    + '<img src="/static/logo.png" alt="">'
+    + '<img src="//cdn.example.com/logo.png" alt="">'
+    + '<img src="cid:logo@guesthub" alt="">'
+    + '<a href="#top">למעלה</a>'
+    + "<p>שלום {{guest.first_name}}</p>";
+  const safe = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: safeDoc }, context);
+  assert.equal(safe.issues.some((issue) => issue.kind === "invalid_url"), false,
+    "https/mailto/tel/cid, relative, scheme-relative and anchors must all pass");
+  assert.equal(safe.canSend, true);
+  assert.equal(
+    safe.html.endsWith(`${safeDoc.replace("{{guest.first_name}}", "נועה &lt;script&gt;")}</body></html>`),
+    true,
+    "a normal template renders byte-identically — the scan must not rewrite the document",
+  );
+}
+ok("a scheme split across two variables is caught by the document scan, and normal documents render byte-identically");
+
 // ---- whatsapp rendering: plain text, NO escaping — "&amp;" must never reach a guest ----
 {
   const wa = renderer.renderWhatsAppCommunication({ schemaVersion: 1, kind: "whatsapp_text", text: "שלום {{guest.first_name}} — {{property.name}}" }, context);
