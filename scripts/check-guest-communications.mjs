@@ -239,6 +239,81 @@ ok("parseTemplateContent dispatches on kind, keeps legacy trees parsing, and rej
 }
 ok("html templates interpolate with escaped values, wrap fragments RTL, and fail closed on bad variables");
 
+// ---- GAP 1: an unquoted attribute must not be escapable into a NEW attribute ----
+// Escaping <>&"' is not enough there: `x onerror=alert(1)` needs no angle bracket
+// and no quote, only a space and an `=`. Reverting escapeHtml's `=` entity makes
+// this fail while every other assertion in this file still passes.
+{
+  const attrCtx = { ...context, values: { ...context.values, "guest.first_name": "x onerror=alert(1)" } };
+  const unquoted = renderer.renderHtmlCommunication(
+    { schemaVersion: 1, kind: "html", html: "<img alt={{guest.first_name}}>" }, attrCtx,
+  ).html;
+  assert.equal(/onerror\s*=/.test(unquoted), false,
+    "a guest value in an unquoted attribute must not be able to introduce onerror=");
+  assert.match(unquoted, /onerror&#61;alert\(1\)/, "the '=' must be entity-encoded");
+  // the same payload in the blocks renderer (quoted/text contexts) stays inert too
+  const blockAttr = renderer.renderStructuredCommunication(
+    { schemaVersion: 1, blocks: [{ id: "t", type: "text", enabled: true, condition: "always", data: { text: "{{guest.first_name}}" } }] },
+    attrCtx,
+  ).html;
+  assert.equal(/onerror\s*=/.test(blockAttr), false);
+  // …and a NORMAL value is untouched: a space is still a space, never an entity
+  const normal = renderer.renderStructuredCommunication(
+    { schemaVersion: 1, blocks: [{ id: "t", type: "text", enabled: true, condition: "always", data: { text: "{{property.name}} · {{stay.guests}}" } }] },
+    context,
+  );
+  assert.match(normal.html, /2 מבוגרים/, "a space inside a rendered value must stay a literal space");
+  assert.equal(normal.html.includes("&#32;"), false, "whitespace must never be entity-encoded");
+  assert.equal(normal.canSend, true);
+}
+ok("an unquoted-attribute payload cannot introduce a new attribute, and normal values keep their spaces");
+
+// ---- GAP 2: the html path gates URL schemes through the SAME safeHttpUrl ----
+// The blocks renderer already refuses javascript:; the html path had no href of
+// its own to guard, so the guard travels with the value. Reverting guardUrlValue
+// makes this fail while the rest of the suite stays green.
+{
+  const jsCtx = { ...context, values: { ...context.values, "reservation.manage_url": "javascript:alert(1)" } };
+  const injected = renderer.renderHtmlCommunication(
+    { schemaVersion: 1, kind: "html", html: '<a href="{{reservation.manage_url}}">x</a>' }, jsCtx,
+  );
+  assert.equal(injected.html.includes("javascript:"), false, "javascript: must never reach the outbound href");
+  assert.match(injected.html, /href=""/, "a rejected URL is emitted EMPTY, exactly like the blocks path");
+  assert.deepEqual(
+    injected.issues.find((issue) => issue.key === "reservation.manage_url"),
+    { key: "reservation.manage_url", kind: "invalid_url" },
+  );
+  assert.equal(injected.canSend, false, "an invalid URL must block the send");
+
+  // data: and vbscript: are refused on the same path
+  for (const scheme of ["data:text/html,<b>x</b>", "vbscript:msgbox(1)", "file:///etc/passwd"]) {
+    const out = renderer.renderHtmlCommunication(
+      { schemaVersion: 1, kind: "html", html: '<a href="{{reservation.manage_url}}">x</a>' },
+      { ...context, values: { ...context.values, "reservation.manage_url": scheme } },
+    );
+    assert.match(out.html, /href=""/, `${scheme} must be rejected`);
+    assert.equal(out.canSend, false);
+  }
+  // a legitimate https URL still renders (the guard must not over-block)
+  const good = renderer.renderHtmlCommunication(
+    { schemaVersion: 1, kind: "html", html: '<a href="{{reservation.manage_url}}">x</a>' },
+    { ...context, values: { ...context.values, "reservation.manage_url": "https://gh.test/manage?a=1" } },
+  );
+  assert.match(good.html, /href="https:\/\/gh\.test\/manage\?a&#61;1"/,
+    "a valid https URL survives; its '=' is entity-encoded and decodes back before the URL is read");
+  assert.equal(good.canSend, true);
+  // mailto:/tel: are legitimate in an email and must pass untouched
+  for (const safe of ["mailto:property@example.test", "tel:+972500000000"]) {
+    const out = renderer.renderHtmlCommunication(
+      { schemaVersion: 1, kind: "html", html: '<a href="{{property.email}}">x</a>' },
+      { ...context, values: { ...context.values, "property.email": safe } },
+    );
+    assert.equal(out.html.includes(safe), true, `${safe} must pass through`);
+    assert.equal(out.canSend, true);
+  }
+}
+ok("the html path refuses javascript:/data:/vbscript:/file: through safeHttpUrl and keeps http(s)/mailto/tel");
+
 // ---- whatsapp rendering: plain text, NO escaping — "&amp;" must never reach a guest ----
 {
   const wa = renderer.renderWhatsAppCommunication({ schemaVersion: 1, kind: "whatsapp_text", text: "שלום {{guest.first_name}} — {{property.name}}" }, context);

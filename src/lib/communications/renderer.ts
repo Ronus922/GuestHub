@@ -15,7 +15,7 @@ import type {
   TemplateContent,
   WhatsAppTemplateContent,
 } from "./types";
-import { hasValue, interpolateVariables, resolveVariable } from "./variables";
+import { getVariableDefinition, hasValue, interpolateVariables, resolveVariable } from "./variables";
 
 // ============================================================
 // The ONE renderer. It produces the bytes the guest receives — and the editor
@@ -32,13 +32,24 @@ import { hasValue, interpolateVariables, resolveVariable } from "./variables";
 // Upgrade path if they are ever wanted: inline data-URI SVGs, not a font.
 // ============================================================
 
+/**
+ * `=` and the backtick are escaped alongside the five classic entities so a
+ * value landing inside an UNQUOTED attribute (`<img alt={{guest.first_name}}>`)
+ * cannot introduce a new one: without a literal `=` there is no way to attach a
+ * handler body, and the backtick closes the legacy IE attribute-delimiter quirk.
+ * Whitespace is deliberately NOT escaped — a space must still render as a space.
+ * `&#61;` is decoded back to `=` by every HTML parser before a URL or an
+ * attribute value is read, so normal values (query strings, prose) are unchanged.
+ */
 export function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replaceAll("'", "&#39;")
+    .replaceAll("=", "&#61;")
+    .replaceAll("`", "&#96;");
 }
 
 type Ctx = CommunicationRenderContext;
@@ -450,9 +461,37 @@ function htmlToPlainText(html: string): string {
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
     .replaceAll("&#39;", "'")
+    .replaceAll("&#61;", "=")
+    .replaceAll("&#96;", "`")
     .replace(/[ \t]+/g, " ")
     .replace(/\s*\n\s*/g, "\n")
     .trim();
+}
+
+/** A scheme-looking prefix: letter, then letters/digits/+/-/. up to a colon. */
+const SCHEME_PREFIX = /^[a-z][a-z0-9+.-]*:/i;
+/** Schemes that carry no script and are legitimate in an email href. */
+const SAFE_NON_HTTP_SCHEME = /^(mailto|tel):/i;
+
+/**
+ * Gate a value that IS a URL (a url-kind variable) or merely looks like one
+ * (any scheme-prefixed string) before it reaches the author's markup — the
+ * html path has no `href="…"` of its own to guard, so the guard travels with
+ * the value. http/https go through the SAME safeHttpUrl the blocks renderer
+ * uses; mailto/tel pass; everything else (javascript:, data:, vbscript:, file:)
+ * is rejected exactly as the blocks path rejects one: an invalid_url issue and
+ * an EMPTY value, never the raw string. invalid_url also forces canSend=false.
+ */
+function guardUrlValue(key: string, value: string, issues: RenderIssue[]): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const isUrlVariable = getVariableDefinition(key)?.kind === "url";
+  if (!isUrlVariable && !SCHEME_PREFIX.test(trimmed)) return value;
+  if (SAFE_NON_HTTP_SCHEME.test(trimmed)) return value;
+  const safe = safeHttpUrl(trimmed);
+  if (safe) return safe;
+  issues.push({ key, kind: "invalid_url" });
+  return "";
 }
 
 export function renderHtmlCommunication(
@@ -466,7 +505,8 @@ export function renderHtmlCommunication(
     (_token, key: string) => {
       const resolved = resolveVariable(key, context);
       if (resolved.issue) issues.push(resolved.issue);
-      return mark(escapeHtml(resolved.value), Boolean(options.highlight));
+      const guarded = guardUrlValue(key, resolved.value, issues);
+      return mark(escapeHtml(guarded), Boolean(options.highlight));
     },
   );
 
