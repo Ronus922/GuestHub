@@ -51,13 +51,16 @@ export type Beds24ApiFailure = {
   raw?: RawResponseEvidence;
 };
 
+// D112/C2 — the base texts carry NO status numbers. A fixed string standing in
+// for a status is forbidden: the number shown to an operator is composed below
+// from the httpStatus that actually arrived, and only when one arrived.
 const CATEGORY_MESSAGE: Record<Beds24ApiErrorCategory, string> = {
-  unauthorized: "האימות מול Beds24 נדחה (401) — בדוק שקוד ההזמנה/הטוקן תקף ולא פג",
-  forbidden: "הגישה נאסרה (403) — לטוקן Beds24 אין הרשאה (scope) מתאימה",
-  not_found: "הפריט לא נמצא (404) — ייתכן שאינו נגיש לטוקן Beds24 זה",
-  conflict: "התקבלה התנגשות (409) — ייתכן שהפריט כבר קיים",
-  validation: "הנתונים נדחו (422) — יש להשלים או לתקן שדות חובה",
-  rate_limited: "יותר מדי בקשות ל-Beds24 (429) — מכסת הקרדיטים מוצתה, נסה שוב מאוחר יותר",
+  unauthorized: "האימות מול Beds24 נדחה — בדוק שקוד ההזמנה/הטוקן תקף ולא פג",
+  forbidden: "הגישה נאסרה — לטוקן Beds24 אין הרשאה (scope) מתאימה",
+  not_found: "הפריט לא נמצא — ייתכן שאינו נגיש לטוקן Beds24 זה",
+  conflict: "התקבלה התנגשות — ייתכן שהפריט כבר קיים",
+  validation: "הנתונים נדחו — יש להשלים או לתקן שדות חובה",
+  rate_limited: "יותר מדי בקשות ל-Beds24 — מכסת הקרדיטים מוצתה, נסה שוב מאוחר יותר",
   server_error: "שגיאת שרת אצל Beds24 — נסה שוב מאוחר יותר",
   timeout: "הבקשה חרגה מהזמן המוקצב",
   network_error: "שגיאת רשת בחיבור ל-Beds24",
@@ -69,8 +72,10 @@ export function beds24Fail(
   httpStatus?: number,
   raw?: RawResponseEvidence,
 ): Beds24ApiFailure {
+  // the only number ever shown is the one that was actually received
+  const suffix = httpStatus !== undefined ? ` (HTTP ${httpStatus})` : "";
   return {
-    ok: false, category, message: CATEGORY_MESSAGE[category], httpStatus,
+    ok: false, category, message: `${CATEGORY_MESSAGE[category]}${suffix}`, httpStatus,
     ...(raw ? { raw } : {}),
   };
 }

@@ -192,7 +192,7 @@ async function credentialsFor(
   db: Sql,
   conn: Beds24AriConnection,
   deps?: Beds24AriSyncDeps,
-): Promise<Creds | { error: string; code: string }> {
+): Promise<Creds | { error: string; code: string; raw?: RawResponseEvidence }> {
   if (!channelSecretsConfigured())
     return { error: "מפתח ההצפנה CHANNEL_SECRETS_KEY אינו מוגדר בשרת", code: "configuration" };
   const access = await getBeds24AccessToken(db, conn, {
@@ -204,7 +204,8 @@ async function credentialsFor(
       access.category === "not_configured" || access.category === "undecryptable"
         ? "configuration"
         : access.category;
-    return { error: access.error, code };
+    // D112 — the auth body says WHY the mint failed; carry it to the sinks
+    return { error: access.error, code, ...(access.raw ? { raw: access.raw } : {}) };
   }
   return {
     token: access.token,
@@ -361,7 +362,11 @@ export async function runBeds24FullSync(
   // fixing — identical policy to ari-sync.ts.
   const fail = async (error: string, category: string, extra?: {
     outcome?: Beds24SendOutcome; rooms?: number; blocked?: number; requestBytes?: number;
+    /** D112 — evidence of a pre-send failure (e.g. the auth response) */
+    raw?: RawResponseEvidence;
   }): Promise<Beds24FullSyncResult> => {
+    const evidence = extra?.outcome?.evidence
+      ?? (extra?.raw ? { raw: extra.raw, requestPayload: null } : null);
     await db`
       UPDATE guesthub.channel_connections SET
         full_sync_required = true, last_error = ${error}
@@ -370,7 +375,7 @@ export async function runBeds24FullSync(
       tenantId: conn.tenant_id, connectionId: conn.id, jobId: jobId ?? undefined,
       dateFrom: today, dateTo: dateToInclusive,
       code: category, message: error,
-      ...evidenceFields(extra?.outcome?.evidence ?? null),
+      ...evidenceFields(evidence),
     });
     await recordAriEvidence(db, {
       tenantId: conn.tenant_id,
@@ -397,7 +402,7 @@ export async function runBeds24FullSync(
         creditsResetsInSec: extra?.outcome?.credits?.resetsInSec ?? null,
         lastRequestCost: extra?.outcome?.credits?.requestCost ?? null,
         requestCost: extra?.outcome?.runRequestCost ?? null,
-        ...evidenceContext(extra?.outcome?.evidence ?? null),
+        ...evidenceContext(evidence),
       },
     });
     return {
@@ -415,7 +420,7 @@ export async function runBeds24FullSync(
   }
 
   const creds = await credentialsFor(db, conn, deps);
-  if ("error" in creds) return fail(creds.error, creds.code);
+  if ("error" in creds) return fail(creds.error, creds.code, creds.raw ? { raw: creds.raw } : undefined);
 
   // the room-level ceiling every local NULL maxStay is sent as (cached, and
   // fail-open: unreadable ⇒ the field is omitted, exactly as before)
@@ -602,6 +607,21 @@ export async function drainBeds24AriDirtyRanges(
     const outcome = await failRanges(db, conn, rows, { code: creds.code, message: creds.error });
     summary.retried = outcome.retried;
     summary.failed = outcome.failed;
+    // D112 — a credential failure used to leave NO error record at all (only
+    // last_error on the connection). The auth body that explains it lands on
+    // the record; one unresolved row per code, because the drain retries.
+    const [dup] = await db<{ x: number }[]>`
+      SELECT 1 AS x FROM guesthub.channel_sync_errors
+      WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+        AND error_code = ${`credentials_${creds.code}`} AND resolved_at IS NULL
+      LIMIT 1`;
+    if (!dup) {
+      await logChannelError(db, {
+        tenantId: conn.tenant_id, connectionId: conn.id,
+        code: `credentials_${creds.code}`, message: creds.error,
+        ...evidenceFields(creds.raw ? { raw: creds.raw, requestPayload: null } : null),
+      });
+    }
     return summary;
   }
 

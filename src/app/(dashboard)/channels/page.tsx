@@ -372,8 +372,10 @@ function CreditWindowSection({ credits }: { credits: CreditsRow | null }) {
                 </p>
                 <span className={`chip ${low || paused ? "chip-approval" : "chip-paid"}`}>
                   <span className="dot" />
+                  {/* D112/C2 — no number here: the chip reflects a stored pause
+                      reason, not a response in hand, so it names no status */}
                   {paused === "rate_limited"
-                    ? "נחסם (429) — ממתין לאיפוס"
+                    ? "נחסם על ידי הספק — ממתין לאיפוס"
                     : paused === "low_credits"
                       ? "האטה — המכסה קרובה למיצוי"
                       : "זורם"}

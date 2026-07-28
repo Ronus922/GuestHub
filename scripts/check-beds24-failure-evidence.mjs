@@ -34,7 +34,7 @@
 // ============================================================
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import Module from "node:module";
 import { join } from "node:path";
@@ -85,6 +85,23 @@ ok("FIXTURE: full migration chain applied from scratch (includes 062_channel_fai
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit", cwd: ROOT });
 const OUT = join(ROOT, "dist", "worker");
+// beds24-properties / beds24-booking-reports sit OUTSIDE the worker graph
+// (admin-action modules) — compile them into the same tree with the same
+// options so the guard tests the real code, not a re-implementation.
+// (`paths` has no CLI flag, so this goes through a transient tsconfig.)
+const EXTRA_TSCONFIG = join(ROOT, "tsconfig.check-failure-evidence.tmp.json");
+writeFileSync(EXTRA_TSCONFIG, JSON.stringify({
+  extends: "./tsconfig.worker.json",
+  include: [
+    "src/lib/channel/beds24-properties.ts",
+    "src/lib/channel/beds24-booking-reports.ts",
+  ],
+}));
+try {
+  execSync(`pnpm exec tsc -p "${EXTRA_TSCONFIG}"`, { stdio: "inherit", cwd: ROOT });
+} finally {
+  rmSync(EXTRA_TSCONFIG, { force: true });
+}
 const STUB = join(ROOT, "scripts", "server-only-stub.cjs");
 const origResolve = Module._resolveFilename;
 Module._resolveFilename = function (request, ...rest) {
@@ -94,6 +111,9 @@ Module._resolveFilename = function (request, ...rest) {
 };
 const require2 = createRequire(import.meta.url);
 const ari = require2(join(OUT, "lib/channel/beds24-ari-sync.js"));
+const props = require2(join(OUT, "lib/channel/beds24-properties.js"));
+const reports = require2(join(OUT, "lib/channel/beds24-booking-reports.js"));
+const inbound = require2(join(OUT, "lib/channel/beds24-booking-import.js"));
 const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 
 // ============================================================
@@ -121,6 +141,12 @@ const creditHeaders = {
 
 const fakeFetch = async (url, init) => {
   const u = new URL(String(url));
+  if (u.pathname === "/v2/authentication/token") {
+    // scenario: the mint is rejected and the auth body says WHY
+    const text = JSON.stringify({ error: "invalid refresh token", code: 401 });
+    wireBodies.push(text);
+    return new Response(text, { status: 401, headers: { "Content-Type": "application/json" } });
+  }
   if (u.pathname === "/v2/properties") {
     return new Response(JSON.stringify({
       success: true,
@@ -343,6 +369,129 @@ try {
   assert.ok(err.request_payload, "the payload that went unanswered is still stored");
   assert.ok(err.response_received_at, "the moment the transport failure was observed is stamped");
   ok("transport failure: explicit null status/body (absence recorded, never faked), payload + stamp still stored");
+
+  // ============================================================
+  // 5. FABRICATED STATUS — properties: a 200 without the property is a 200
+  // ============================================================
+  {
+    const wire = JSON.stringify({
+      success: true,
+      data: [{ id: 111, name: "Somebody Else's Property", roomTypes: [] }],
+      pages: { nextPageExists: false },
+    });
+    const missing = await props.getBeds24Property({
+      token: ACCESS_TOKEN, baseUrl: "https://api.beds24.com/v2", id: "999777",
+      fetchImpl: async () => new Response(wire, { status: 200, headers: { "Content-Type": "application/json" } }),
+    });
+    assert.equal(missing.ok, false, "a missing property is a failure");
+    assert.equal(missing.httpStatus, 200,
+      `the wire said 200 — a fabricated 404 is forbidden (got ${missing.httpStatus})`);
+    assert.ok(/HTTP 200/.test(missing.message) && !missing.message.includes("404"),
+      `the message must name the status actually received, got: ${missing.message}`);
+    assert.equal(missing.raw?.body, wire, "the listing that lacked the property is kept verbatim");
+
+    // bad_response on a 2xx: the "unexpected" body IS the evidence
+    const weird = JSON.stringify({ success: false, error: "maintenance window" });
+    const bad = await props.getBeds24Property({
+      token: ACCESS_TOKEN, baseUrl: "https://api.beds24.com/v2", id: "999777",
+      fetchImpl: async () => new Response(weird, { status: 200, headers: { "Content-Type": "application/json" } }),
+    });
+    assert.equal(bad.ok, false);
+    assert.equal(bad.category, "bad_response");
+    assert.equal(bad.raw?.body, weird, "the unexpected body rides on the failure, verbatim");
+    ok("properties: missing-from-200 reports HTTP 200 (never a fabricated 404); the unexpected body is kept");
+  }
+
+  // ============================================================
+  // 6. FABRICATED STATUS — booking reports: no HTTP call ⇒ no status printed
+  // ============================================================
+  {
+    let calls = 0;
+    const invalid = await reports.reportBeds24BookingStatus(
+      { fetchImpl: async () => { calls += 1; throw new Error("must not be called"); } },
+      { token: ACCESS_TOKEN, baseUrl: "https://api.beds24.com/v2", bookingId: "not-a-number", action: "invalid_card" },
+    );
+    assert.equal(calls, 0, "an invalid booking id never reaches the network");
+    assert.equal(invalid.ok, false);
+    assert.ok(!invalid.message.includes("422"),
+      `no HTTP happened — printing a status is fabrication: ${invalid.message}`);
+    assert.equal(invalid.raw?.httpStatus, null, "the evidence records that no response exists");
+
+    const html = "<html>502 from a proxy</html>";
+    const wireFail = await reports.reportBeds24BookingStatus(
+      { fetchImpl: async () => new Response(html, { status: 502, headers: { "Content-Type": "text/html" } }) },
+      { token: ACCESS_TOKEN, baseUrl: "https://api.beds24.com/v2", bookingId: "12345", action: "invalid_card" },
+    );
+    assert.equal(wireFail.ok, false);
+    assert.equal(wireFail.httpStatus, 502);
+    assert.ok(/HTTP 502/.test(wireFail.message), `the printed status is the wire's: ${wireFail.message}`);
+    assert.equal(wireFail.raw?.body, html, "the raw 502 page rides on the failure");
+    ok("booking reports: local rejection prints no status; a wire failure prints the wire's own");
+  }
+
+  // ============================================================
+  // 7. TOKEN EVIDENCE PERSISTED — the auth body that says WHY lands on the record
+  // ============================================================
+  {
+    await resetBreaker();
+    await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE tenant_id = ${tenantId}`;
+    await sql`UPDATE guesthub.channel_connections
+              SET access_token_expires_at = now() - interval '1 hour' WHERE id = ${connId}`;
+    reply = { mode: "success" }; // the mint 401s at the router before any calendar call
+    await markDirty(day(25), day(27));
+    await drain();
+    const [tokErr] = await sql`
+      SELECT error_code, error_message, http_status, response_body, response_received_at
+      FROM guesthub.channel_sync_errors
+      WHERE tenant_id = ${tenantId} AND error_code = 'credentials_unauthorized'
+      ORDER BY created_at DESC LIMIT 1`;
+    assert.ok(tokErr, "a credential failure writes an error record (it used to leave none)");
+    assert.equal(tokErr.http_status, 401, "the auth status is stored verbatim");
+    assert.ok(String(tokErr.response_body).includes("invalid refresh token"),
+      "the auth body that explains WHY the token was rejected is persisted");
+    assert.ok(/HTTP 401/.test(tokErr.error_message) ,
+      `the operator message names the wire status: ${tokErr.error_message}`);
+    assert.ok(tokErr.response_received_at, "the observation moment is stamped");
+    // restore the working credential state for the next scenario
+    await sql`UPDATE guesthub.channel_connections
+              SET access_token_expires_at = now() + interval '12 hours' WHERE id = ${connId}`;
+    await sql`UPDATE guesthub.channel_sync_errors SET resolved_at = now()
+              WHERE tenant_id = ${tenantId} AND error_code = 'credentials_unauthorized'`;
+    await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE tenant_id = ${tenantId}`;
+    ok("token failure: 401 + the provider's own reason persisted on the error record via the drain");
+  }
+
+  // ============================================================
+  // 8. INBOUND PULL EVIDENCE PERSISTED — a broken /bookings poll leaves a record
+  // ============================================================
+  {
+    const [row] = await sql`
+      SELECT id, tenant_id, api_key_ciphertext, access_token_ciphertext,
+             access_token_expires_at, last_inbound_import_at
+      FROM guesthub.channel_connections WHERE id = ${connId}`;
+    const proxyPage = "<html>503 upstream unavailable</html>";
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const u = new URL(String(url));
+      assert.ok(u.pathname.startsWith("/v2/bookings"), `unexpected pull call: ${u.pathname}`);
+      return new Response(proxyPage, { status: 503, headers: { "Content-Type": "text/html" } });
+    };
+    try {
+      await inbound.runBeds24InboundPull(sql, row);
+      await inbound.runBeds24InboundPull(sql, row); // dedup: still ONE unresolved row
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+    const pullErrs = await sql`
+      SELECT http_status, response_body FROM guesthub.channel_sync_errors
+      WHERE tenant_id = ${tenantId} AND error_code = 'inbound_pull_server_error'
+        AND resolved_at IS NULL`;
+    assert.equal(pullErrs.length, 1,
+      `one unresolved record per code — repeated polls must not bury the list (got ${pullErrs.length})`);
+    assert.equal(pullErrs[0].http_status, 503, "the poll's 503 is stored verbatim");
+    assert.equal(pullErrs[0].response_body, proxyPage, "the raw proxy page is persisted");
+    ok("inbound pull: HTTP failure persists status + raw body, deduplicated per code");
+  }
 
   console.log(`\ncheck-beds24-failure-evidence: all ${n} assertions passed`);
 } finally {

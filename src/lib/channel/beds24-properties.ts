@@ -124,9 +124,9 @@ export async function listBeds24Properties(
       path: `/properties?includeAllRooms=true&page=${page}`,
     });
     if ("ok" in r) return r;
-    if (r.status !== 200) return beds24Fail(mapErrorStatus(r.status), r.status);
+    if (r.status !== 200) return beds24Fail(mapErrorStatus(r.status), r.status, r.raw);
     const { ok, properties, nextPageExists } = extractBeds24PropertyList(r.body);
-    if (!ok) return beds24Fail("bad_response", r.status);
+    if (!ok) return beds24Fail("bad_response", r.status, r.raw);
     all.push(...properties);
     if (!nextPageExists || properties.length === 0) break;
   }
@@ -145,10 +145,19 @@ export async function getBeds24Property(
     path: `/properties?id=${encodeURIComponent(opts.id)}&includeAllRooms=true`,
   });
   if ("ok" in r) return r;
-  if (r.status !== 200) return beds24Fail(mapErrorStatus(r.status), r.status);
+  if (r.status !== 200) return beds24Fail(mapErrorStatus(r.status), r.status, r.raw);
   const { ok, properties } = extractBeds24PropertyList(r.body);
-  if (!ok) return beds24Fail("bad_response", r.status);
+  if (!ok) return beds24Fail("bad_response", r.status, r.raw);
   const property = properties.find((p) => p.id === opts.id);
-  if (!property) return beds24Fail("not_found", 404);
+  if (!property) {
+    // D112/C2 — this used to fabricate a 404. What actually happened: Beds24
+    // answered (usually 200) and the requested property was simply absent from
+    // the list. Say that, with the status that really arrived; the category
+    // stays not_found as DERIVED data, httpStatus stays the wire's.
+    return {
+      ...beds24Fail("not_found", r.status, r.raw),
+      message: `הנכס ${opts.id} לא הופיע בתשובת Beds24 (HTTP ${r.status}) — ייתכן שאינו נגיש לטוקן זה`,
+    };
+  }
   return { ok: true, property };
 }

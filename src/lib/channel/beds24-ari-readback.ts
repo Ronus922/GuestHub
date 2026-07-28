@@ -3,7 +3,7 @@ import type { Sql } from "postgres";
 import { addDays, todayInTz, type DateOnly } from "@/lib/dates";
 import { beds24BaseUrl } from "./config";
 import { getBeds24AccessToken } from "./beds24-token";
-import { beds24Request, beds24Fail, mapErrorStatus } from "./beds24-http";
+import { beds24Request, beds24Fail, mapErrorStatus, type RawResponseEvidence } from "./beds24-http";
 import { asObj, asInt } from "./channel-http";
 import { projectBeds24Ari } from "./beds24-ari-projection";
 import {
@@ -306,7 +306,11 @@ const emptySummary = (): Beds24ReadbackSummary => ({
 async function alertOnce(
   db: Sql,
   conn: Beds24AriConnection,
-  e: { code: string; message: string; dateFrom: DateOnly; dateTo: DateOnly; context: unknown },
+  e: {
+    code: string; message: string; dateFrom: DateOnly; dateTo: DateOnly; context: unknown;
+    /** D112 — the response that failed the read-back, verbatim, when one exists */
+    raw?: RawResponseEvidence | null;
+  },
 ): Promise<void> {
   const [existing] = await db<{ x: number }[]>`
     SELECT 1 AS x FROM guesthub.channel_sync_errors
@@ -318,6 +322,10 @@ async function alertOnce(
     tenantId: conn.tenant_id, connectionId: conn.id,
     dateFrom: e.dateFrom, dateTo: e.dateTo,
     code: e.code, message: e.message, context: e.context,
+    httpStatus: e.raw?.httpStatus ?? null,
+    responseBody: e.raw?.body ?? null,
+    responseTruncated: e.raw?.truncated ?? false,
+    responseReceivedAt: e.raw?.receivedAt ?? null,
   });
 }
 
@@ -325,7 +333,10 @@ async function alertOnce(
 async function fetchCalendarPage(
   creds: { token: string; baseUrl: string },
   args: { beds24RoomIds: number[]; from: DateOnly; toInclusive: DateOnly; page: number },
-): Promise<{ ok: true; entries: RawRoomEntry[]; nextPageExists: boolean } | { ok: false; message: string }> {
+): Promise<
+  | { ok: true; entries: RawRoomEntry[]; nextPageExists: boolean }
+  | { ok: false; message: string; raw: RawResponseEvidence | null }
+> {
   // repeated `roomId` params — the verified wire form (a CSV value is not the
   // accepted shape for Beds24 list filters; proven live for `status`, and the
   // repeated form was proven live for `roomId` on 2026-07-24).
@@ -344,10 +355,16 @@ async function fetchCalendarPage(
     method: "GET", // READ-ONLY — this module never issues another method
     path: `${READBACK_PATH}?${qs}`,
   });
-  if ("ok" in r) return { ok: false, message: r.message };
-  if (r.status !== 200) return { ok: false, message: beds24Fail(mapErrorStatus(r.status), r.status).message };
+  // D112 — this helper used to keep only a fixed message and drop status+body.
+  // The failure now carries the verbatim response for the alert to persist.
+  if ("ok" in r) return { ok: false, message: r.message, raw: r.raw ?? null };
+  if (r.status !== 200) {
+    return { ok: false, message: beds24Fail(mapErrorStatus(r.status), r.status, r.raw).message, raw: r.raw };
+  }
   const root = asObj(r.body);
-  if (root?.success === false) return { ok: false, message: beds24Fail("bad_response", r.status).message };
+  if (root?.success === false) {
+    return { ok: false, message: beds24Fail("bad_response", r.status, r.raw).message, raw: r.raw };
+  }
   const parsed = parseBeds24CalendarBody(r.body);
   return { ok: true, entries: parsed.entries, nextPageExists: parsed.nextPageExists };
 }
@@ -400,11 +417,13 @@ export async function runBeds24AriReadback(
   )].sort((a, b) => a - b);
 
   const remoteEntries: RawRoomEntry[] = [];
+  let failureRaw: RawResponseEvidence | null = null;
   for (let page = 1; page <= BEDS24_READBACK_MAX_REQUESTS; page++) {
     const res = await fetchCalendarPage(creds, { beds24RoomIds, from, toInclusive, page });
     summary.requests += 1;
     if (!res.ok) {
       summary.errors.push(res.message);
+      failureRaw = res.raw;
       break;
     }
     remoteEntries.push(...res.entries);
@@ -418,6 +437,7 @@ export async function runBeds24AriReadback(
       message: "בדיקת ההשוואה מול Beds24 נכשלה — לא ניתן לאמת שהמלאי המפורסם מעודכן",
       dateFrom: from, dateTo: toInclusive,
       context: { rooms: summary.rooms, requests: summary.requests },
+      raw: failureRaw,
     });
     await recordReadbackEvidence(db, conn, jobId ?? null, summary, from, toInclusive, "failed");
     return summary;

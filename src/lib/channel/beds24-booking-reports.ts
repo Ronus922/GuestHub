@@ -29,7 +29,7 @@
 // ============================================================
 
 import {
-  beds24Request, beds24Fail, mapErrorStatus,
+  beds24Request, beds24Fail, mapErrorStatus, rawEvidenceOf,
   type Beds24ApiFailure,
 } from "./beds24-http";
 import { asObj, asInt, asStr } from "./channel-http";
@@ -135,7 +135,15 @@ export async function reportBeds24BookingStatus(
   // Beds24 booking ids are integers; the local column is text, so this is the
   // one place the conversion is proven rather than assumed.
   const numericId = Number(args.bookingId);
-  if (!Number.isSafeInteger(numericId) || numericId <= 0) return beds24Fail("validation");
+  if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+    // D112/C2 — nothing was sent, so no HTTP status may be printed: the old
+    // fixed message said "(422)" for a request that never left the process.
+    const f = beds24Fail("validation", undefined, rawEvidenceOf(null, null));
+    return {
+      ...f,
+      message: `מזהה ההזמנה "${args.bookingId}" אינו מספר שלם חיובי — הדיווח לא נשלח ל-Beds24`,
+    };
+  }
 
   const r = await beds24Request({
     token: args.token,
@@ -154,7 +162,7 @@ export async function reportBeds24BookingStatus(
 
   if (r.status !== 200 && r.status !== 201 && r.status !== 204) {
     const f: BookingReportResult = {
-      ...beds24Fail(mapErrorStatus(r.status), r.status),
+      ...beds24Fail(mapErrorStatus(r.status), r.status, r.raw),
       envelope,
       ...(creditsRemaining !== null ? { creditsRemaining } : {}),
       ...(r.retryAfterMs !== undefined ? { retryAfterMs: r.retryAfterMs } : {}),
@@ -172,8 +180,9 @@ export async function reportBeds24BookingStatus(
     return {
       ok: false,
       category: "validation",
-      message: REJECTED_MESSAGE,
+      message: `${REJECTED_MESSAGE} (HTTP ${r.status})`,
       httpStatus: r.status,
+      raw: r.raw,
       envelope,
       ...(creditsRemaining !== null ? { creditsRemaining } : {}),
     };
