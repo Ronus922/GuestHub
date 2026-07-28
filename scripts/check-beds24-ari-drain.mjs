@@ -387,7 +387,7 @@ try {
     SELECT status, attempts, last_error_code, next_attempt_at
     FROM guesthub.channel_dirty_ranges WHERE id = ${id}`)[0];
   const lastEvidence = async () => (await sql`
-    SELECT scenario_key, outcome, error_code, warnings, context, firing_function
+    SELECT scenario_key, outcome, error_code, error_message, warnings, context, firing_function
     FROM guesthub.channel_evidence_ledger
     WHERE tenant_id = ${tenantId} ORDER BY created_at DESC, id DESC LIMIT 1`)[0];
   /** breaker reset between scenarios — fixture management, never an assertion */
@@ -450,6 +450,17 @@ try {
   assert.ok(after2.next_attempt_at > new Date(), "the retry is pushed out with backoff");
   ev = await lastEvidence();
   assert.equal(ev.outcome, "failed", "the evidence ledger records the rejection");
+  // The rejection must SAY WHAT WAS REJECTED. inspectEnvelope already extracts
+  // the field names; the failure path used to drop them and hand back the fixed
+  // category string, which is why a live 28-range failure could not be diagnosed
+  // at all. And this response carried HTTP 200 — printing "(422)" told the
+  // operator to fix required fields on a payload that had none missing.
+  assert.match(ev.error_message ?? "", /price1/,
+    "the rejection must name the field Beds24 objected to — it is extracted, it must not be discarded");
+  assert.equal(/\(422\)/.test(ev.error_message ?? ""), false,
+    "a 200-with-success:false must never print a status code that was not on the response");
+  assert.match(ev.error_message ?? "", /HTTP 200/,
+    "the message must report the status that actually came back");
 
   // the same trap with a BARE success:false — no errors[] to fall back on.
   // Only the success:false rule itself stands between this body and a range
@@ -463,6 +474,16 @@ try {
   const after2b = await rangeRow(r2b);
   assert.equal(after2b.status, "pending", "the bare-rejected range stays retryable");
   assert.equal(after2b.last_error_code, "validation");
+  // …and with NO errors[] there is nothing to name, so the message must say
+  // less rather than something false: summarizeBeds24Warnings has no empty
+  // guard and would report a rejection of "0 ערכים" if called unconditionally.
+  const bareMsg = (await lastEvidence()).error_message ?? "";
+  assert.equal(/0 ערכים/.test(bareMsg), false,
+    "an empty warning set must never be summarised as a rejection of 0 values");
+  assert.equal(/\(422\)/.test(bareMsg), false,
+    "a bare success:false on a 200 must not print 422 either");
+  assert.match(bareMsg, /success:false/,
+    "the operator must be told the shape of the rejection, not a generic category string");
   ok("200-with-errors trap: success:false inside a 2xx body — with or without errors[] — keeps every claimed range retryable");
   await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id IN (${r2}, ${r2b})`;
 
