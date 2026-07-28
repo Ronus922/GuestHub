@@ -1,5 +1,7 @@
 -- ============================================================
---  060 · D112 — failures must carry their own evidence
+--  062 · D112 — failures must carry their own evidence
+--  (renumbered from 060 — PR #123 owns 060_template_content_kinds and
+--   061_communication_triggers; independent of both, safe in any order)
 --
 --  2026-07-28: reconstructing what Beds24 actually said took hours, because
 --  the failure path mapped the response to a category string and DISCARDED the

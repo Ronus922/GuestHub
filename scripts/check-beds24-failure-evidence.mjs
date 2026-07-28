@@ -80,7 +80,7 @@ for (const f of readdirSync(join(ROOT, "db/migrations")).filter((x) => x.endsWit
   execSync(`psql "${TEST_URL}" -q -v ON_ERROR_STOP=1 -f "db/migrations/${f}"`,
     { cwd: ROOT, stdio: ["pipe", "ignore", "inherit"] });
 }
-ok("FIXTURE: full migration chain applied from scratch (includes 060_channel_failure_evidence)");
+ok("FIXTURE: full migration chain applied from scratch (includes 062_channel_failure_evidence)");
 
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit", cwd: ROOT });
