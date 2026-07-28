@@ -1,8 +1,9 @@
 import "server-only";
 import type { TransactionSql } from "postgres";
 import type { DateOnly } from "@/lib/dates";
-import { addDays } from "@/lib/dates";
+import { addDays, todayInTz } from "@/lib/dates";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { ARI_HORIZON_DAYS } from "@/lib/channel/ranges";
 
 // ============================================================
 // Canonical commercial-write service (§0.2/§0.4). The ONE path through which
@@ -106,11 +107,13 @@ export async function writeRateCells(
 
   const planIds = [...new Set(cells.map((c) => c.pricingPlanId))];
   const plans = await tx<
-    { id: string; sellable_unit_id: string; room_type_id: string | null; room_id: string | null }[]
+    { id: string; sellable_unit_id: string; room_type_id: string | null; room_id: string | null;
+      timezone: string | null }[]
   >`
-    SELECT p.id, p.sellable_unit_id, su.room_type_id, sur.room_id
+    SELECT p.id, p.sellable_unit_id, su.room_type_id, sur.room_id, t.timezone
     FROM guesthub.pricing_plans p
     JOIN guesthub.sellable_units su ON su.id = p.sellable_unit_id
+    JOIN guesthub.tenants t ON t.id = p.tenant_id
     LEFT JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = su.id
     WHERE p.tenant_id = ${tenantId} AND p.id = ANY(${planIds}::uuid[])`;
   const planMeta = new Map(plans.map((p) => [p.id, p]));
@@ -189,17 +192,33 @@ export async function writeRateCells(
   // this room"), not one plan. Availability is untouched: a price or restriction
   // never changes physical inventory (§7).
   // markAriDirty is a no-op unless an active outbound connection exists.
+  //
+  // THE CHANNEL WORK IS CLIPPED TO THE HORIZON — THE STORED ROWS ARE NOT.
+  // Everything above this line has already written every date the operator
+  // entered, and it stays written: those rows price the direct website, which
+  // never speaks to a channel. What gets clipped is only the outbound claim.
+  // Beds24 refuses a range that crosses its 24-month limit WHOLESALE (measured —
+  // see ARI_HORIZON_DAYS), so a Group Update reaching 2029 did not merely fail to
+  // publish its far end: it queued 28 ranges that could never succeed, burned
+  // their ten attempts, and left the /rates chip red over dates that were
+  // published perfectly well. An edit lying entirely beyond the horizon now
+  // enqueues nothing at all rather than something guaranteed to fail.
   const dates = cells.map((c) => c.date).sort();
   const dateFrom = dates[0];
   const dateTo = addDays(dates[dates.length - 1], 1); // exclusive
+  const today = todayInTz(plans[0]?.timezone || "Asia/Jerusalem");
+  const horizonEnd = addDays(today, ARI_HORIZON_DAYS); // exclusive
+  const publishTo = dateTo < horizonEnd ? dateTo : horizonEnd;
   const roomIds = [...new Set(plans.map((p) => p.room_id))];
-  await markAriDirty(tx, {
-    tenantId,
-    roomIds,
-    dateFrom,
-    dateTo,
-    kinds: ["rates", "restrictions"],
-  });
+  if (publishTo > dateFrom) {
+    await markAriDirty(tx, {
+      tenantId,
+      roomIds,
+      dateFrom,
+      dateTo: publishTo,
+      kinds: ["rates", "restrictions"],
+    });
+  }
 
   return changes;
 }

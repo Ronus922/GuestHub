@@ -27,7 +27,6 @@ import {
   createBeds24CreditGate, beds24CreditPauseMessage,
   type Beds24CreditGate, type Beds24CreditPause, type Beds24CreditSnapshot,
 } from "./beds24-credits";
-import { ARI_HORIZON_DAYS } from "./ranges";
 import { dispatchExternalChangeEmails } from "./external-changes";
 
 // ============================================================
@@ -49,7 +48,7 @@ import { dispatchExternalChangeEmails } from "./external-changes";
 // fallback loop covers latency): the incremental key is `modifiedFrom`
 // (now − 7 days, generous overlap). A connection that has NEVER imported
 // (last_inbound_import_at NULL) additionally walks a full arrival window
-// (today−30d → today+ARI_HORIZON_DAYS) so the backlog lands on first run.
+// (today−30d → today+BEDS24_INBOUND_FORWARD_DAYS) so the backlog lands on first run.
 // Both pulls are idempotent by the synthetic-id UNIQUE above.
 //
 // Convergence: newly-inserted rows import immediately; a bounded sweep then
@@ -102,10 +101,28 @@ export const BEDS24_STATUS_FILTER = ["confirmed", "new", "request", "cancelled",
 // incremental pull key: bookings MODIFIED in the last 7 days (generous
 // overlap over the 5-minute poll loop — absorbs downtime and clock skew)
 const LOOKBACK_DAYS = 7;
-// first-run backfill window: arrivals from a month back out to the one
-// forward horizon the channel layer speaks (ranges.ts)
+// first-run backfill window: arrivals from a month back out to this module's
+// OWN forward window (below) — not the publishing horizon
 const BACKFILL_PAST_DAYS = 30;
-const FORWARD_DAYS = ARI_HORIZON_DAYS;
+/**
+ * First-run backfill: how far forward arrivals are pulled IN.
+ *
+ * DELIBERATELY INDEPENDENT of ARI_HORIZON_DAYS. The two were the same constant
+ * because they happened to hold the same number, not because they are the same
+ * concern: one is how far we PUBLISH to a channel (bounded by what Beds24
+ * accepts on a write), the other is how far we PULL bookings IN (bounded by
+ * what we are prepared to reason about on the way in). Raising the publishing
+ * horizon to 720 must not silently widen the inbound pull.
+ *
+ * WHY THAT MATTERS HERE SPECIFICALLY — D94: a change to inbound pull filtering
+ * is not a change in coverage, it is a MOVE OF RISK BETWEEN PATHS. A pull that
+ * starts returning a new class of record changes which code actually runs, and
+ * invalidates the assumptions of every status-dependent gate — including gates
+ * whose own guards still pass. D94 requires a pass over every such gate to
+ * confirm it still sits on the path the new pull activates. That pass has NOT
+ * been done for 720. Until it has, this number does not move.
+ */
+export const BEDS24_INBOUND_FORWARD_DAYS = 500;
 const SWEEP_LIMIT = 200;
 const MAX_ERRORS = 20;
 
@@ -537,7 +554,7 @@ export async function runBeds24InboundPull(
         creds,
         `${propertyFilter}&${BEDS24_STATUS_FILTER}` +
           `&arrivalFrom=${isoDate(-BACKFILL_PAST_DAYS * 86_400_000)}` +
-          `&arrivalTo=${isoDate(FORWARD_DAYS * 86_400_000)}`,
+          `&arrivalTo=${isoDate(BEDS24_INBOUND_FORWARD_DAYS * 86_400_000)}`,
         resolveRoom,
         mappings,
         summary,
