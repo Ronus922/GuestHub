@@ -342,7 +342,9 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
 function uniqueIssues(issues: RenderIssue[]): RenderIssue[] {
   const seen = new Set<string>();
   return issues.filter((issue) => {
-    const signature = `${issue.kind}:${issue.key}`;
+    // detail joins the signature so two different bad links are two findings,
+    // not one — it is undefined everywhere else, so nothing else changes.
+    const signature = `${issue.kind}:${issue.key}:${issue.detail ?? ""}`;
     if (seen.has(signature)) return false;
     seen.add(signature);
     return true;
@@ -516,6 +518,20 @@ function guardUrlValue(key: string, value: string, issues: RenderIssue[]): strin
 const URL_ATTRIBUTE = /(?:^|[\s/])((?:xlink:)?(?:href|src|action|formaction))\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]*))/gi;
 /** The only schemes an email body may resolve. `cid:` addresses an inline attachment. */
 const ALLOWED_DOCUMENT_SCHEME = /^(?:https?|mailto|tel|cid):/i;
+/**
+ * Inline RASTER images, and only those, are also legal in a `src` — pasted
+ * newsletters carry them by the dozen. The media type is matched WHOLE and must
+ * end at the `;` or `,` that closes it: a `data:image/` prefix test would wave
+ * through `data:image/svg+xml`, and an SVG is a document that can carry
+ * <script>. `data:text/html` and every other media type stay refused, and no
+ * data: URI is legal in href/action/formaction — there is nothing to navigate to.
+ */
+const ALLOWED_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp)[;,]/i;
+
+/** What the author must go and fix, short enough to read in one line. */
+function urlIssueDetail(attribute: string, probe: string): string {
+  return `${attribute}="${probe.length > 60 ? `${probe.slice(0, 60)}…` : probe}"`;
+}
 
 /**
  * Belt and braces over guardUrlValue, which judges each {{variable}} on its
@@ -532,11 +548,13 @@ const ALLOWED_DOCUMENT_SCHEME = /^(?:https?|mailto|tel|cid):/i;
  */
 function scanDocumentUrls(html: string, issues: RenderIssue[]): void {
   for (const match of html.matchAll(URL_ATTRIBUTE)) {
+    const attribute = (match[1] ?? "").toLowerCase();
     const probe = urlProbe(match[2] ?? match[3] ?? match[4] ?? "");
     // empty, scheme-relative (//cdn/…) or plain relative (/x, #a, ?q): no scheme to abuse
     if (!probe || probe.startsWith("//") || !SCHEME_PREFIX.test(probe)) continue;
     if (ALLOWED_DOCUMENT_SCHEME.test(probe)) continue;
-    issues.push({ key: `html.${(match[1] ?? "").toLowerCase()}`, kind: "invalid_url" });
+    if (attribute === "src" && ALLOWED_DATA_IMAGE.test(probe)) continue;
+    issues.push({ key: `html.${attribute}`, kind: "invalid_url", detail: urlIssueDetail(attribute, probe) });
   }
 }
 

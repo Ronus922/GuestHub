@@ -409,10 +409,13 @@ export function HtmlTemplateEditor({
               <div className="card-bd flex flex-col gap-2">
                 {invalid && <p className="field-msg" role="alert">{invalid}</p>}
                 {rendered.issues.map((issue) => (
-                  <p key={`${issue.kind}:${issue.key}`}
+                  <p key={`${issue.kind}:${issue.key}:${issue.detail ?? ""}`}
                     className={issue.kind === "missing_optional" ? "gc-hint" : "field-msg"}
                     role={issue.kind === "missing_optional" ? undefined : "alert"}>
-                    <code className="ltr-num">{`{{${issue.key}}}`}</code>
+                    {/* a document-scan finding points at an ATTRIBUTE, not a variable —
+                        showing it as {{html.href}} would send the author hunting for a
+                        token that does not exist. detail names the attribute and value. */}
+                    <code className="ltr-num">{issue.detail ?? `{{${issue.key}}}`}</code>
                     {" — "}
                     {getVariableDefinition(issue.key)?.label ?? ""} {ISSUE_LABELS[issue.kind]}
                   </p>

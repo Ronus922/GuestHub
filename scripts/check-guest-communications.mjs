@@ -395,11 +395,10 @@ ok("obfuscated schemes (leading/embedded control chars, NUL, case) are detected 
   ]) {
     const out = split(a, b);
     assert.equal(out.canSend, false, `${name}: a scheme split across two variables must block the send`);
-    assert.deepEqual(
-      out.issues.find((issue) => issue.kind === "invalid_url"),
-      { key: "html.href", kind: "invalid_url" },
-      `${name}: the document scan must record invalid_url`,
-    );
+    const issue = out.issues.find((entry) => entry.kind === "invalid_url");
+    assert.equal(issue.key, "html.href", `${name}: the document scan must record invalid_url on the attribute`);
+    assert.equal(typeof issue.detail === "string" && issue.detail.startsWith(`href="${name}:`), true,
+      `${name}: the finding must name the attribute and the value`);
   }
   // …and with no quotes around the attribute at all
   const bare = split("javascript", ":alert(1)", "<a href={{guest.first_name}}{{guest.last_name}}>x</a>");
@@ -435,6 +434,78 @@ ok("obfuscated schemes (leading/embedded control chars, NUL, case) are detected 
   );
 }
 ok("a scheme split across two variables is caught by the document scan, and normal documents render byte-identically");
+
+// ---- GAP 3a: inline images — RASTER only, and only in a src ----
+// Pasted newsletters carry base64 images by the dozen, so refusing every data:
+// URI blocks real templates. svg+xml is NOT one of them: an SVG is a document
+// and can carry <script>. Reverting ALLOWED_DATA_IMAGE fails the raster cases;
+// loosening it to a `data:image/` prefix fails the svg+xml case.
+{
+  const doc = (markup) => renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: markup }, context);
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAACklEQVR4nGNiAAAABgADNjd8qAAAAABJRU5ErkJggg==";
+
+  for (const [name, uri] of [
+    ["png", png],
+    ["jpeg", "data:image/jpeg;base64,/9j/4AAQSkZJRg=="],
+    ["jpg", "data:image/jpg;base64,/9j/4AAQSkZJRg=="],
+    ["gif", "data:image/gif;base64,R0lGODlhAQABAAAAACw="],
+    ["webp", "data:image/webp;base64,UklGRhIAAABXRUJQ"],
+    ["png, not base64", "data:image/png,rawbytes"],
+  ]) {
+    const out = doc(`<img src="${uri}" alt="">`);
+    assert.equal(out.canSend, true, `an inline ${name} image must pass in a src`);
+    assert.equal(out.issues.some((issue) => issue.kind === "invalid_url"), false, `${name} must raise no issue`);
+  }
+
+  for (const [name, uri] of [
+    ["svg+xml base64", "data:image/svg+xml;base64,PHN2Zz48c2NyaXB0PmFsZXJ0KDEpPC9zY3JpcHQ+PC9zdmc+"],
+    ["svg+xml plain", "data:image/svg+xml,<svg onload=alert(1)></svg>"],
+    ["text/html", "data:text/html,<script>alert(1)</script>"],
+    ["bmp — outside the allowlist", "data:image/bmp;base64,Qk0="],
+    ["image/pngx — the media type is matched WHOLE", "data:image/pngx;base64,AAAA"],
+  ]) {
+    const out = doc(`<img src="${uri}" alt="">`);
+    assert.equal(out.canSend, false, `${name} must stay blocked in a src`);
+    assert.equal(out.issues.find((issue) => issue.kind === "invalid_url").key, "html.src");
+  }
+
+  // …and a data: URI is never navigable: the raster allowance is src-only
+  for (const attr of ["href", "action", "formaction"]) {
+    const out = doc(`<a ${attr}="${png}">x</a>`);
+    assert.equal(out.canSend, false, `an inline image in ${attr} has nothing to navigate to and must be refused`);
+  }
+}
+ok("inline raster images pass in a src while svg+xml, text/html and any data: in href stay refused");
+
+// ---- GAP 3b: a refused URL must say WHICH attribute and WHICH value ----
+// "html.href" alone sends the author hunting through the document. Reverting
+// the detail field fails here and nowhere else.
+{
+  const doc = (markup) => renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: markup }, context);
+  const dead = doc('<a href="javascript:void(0)">x</a>');
+  assert.equal(dead.canSend, false, "javascript:void(0) stays blocked");
+  assert.deepEqual(
+    dead.issues.find((issue) => issue.kind === "invalid_url"),
+    { key: "html.href", kind: "invalid_url", detail: 'href="javascript:void(0)"' },
+    "the finding must carry the attribute name and the offending value",
+  );
+  // a long value is truncated so the message stays one readable line
+  const long = doc(`<a href="ftp://gh.test/${"x".repeat(200)}">x</a>`);
+  const detail = long.issues.find((issue) => issue.kind === "invalid_url").detail;
+  assert.match(detail, /^href="ftp:\/\/gh\.test\/x+…"$/, "a long value is truncated with an ellipsis");
+  assert.equal(detail.length, 68, "attribute + 60 chars + ellipsis + quotes");
+  // two DIFFERENT bad links are two findings — dedupe keys on the value too
+  const two = doc('<a href="ftp://gh.test/1">x</a><a href="ftp://gh.test/2">y</a>');
+  assert.equal(two.issues.filter((issue) => issue.kind === "invalid_url").length, 2,
+    "two different bad links must not collapse into one finding");
+  // …while the SAME bad link twice is still one finding
+  const same = doc('<a href="ftp://gh.test/1">x</a><a href="ftp://gh.test/1">y</a>');
+  assert.equal(same.issues.filter((issue) => issue.kind === "invalid_url").length, 1);
+  // a variable issue carries no detail — nothing else in the render changed
+  const unknownVar = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "{{not.real}}" }, context);
+  assert.deepEqual(unknownVar.issues, [{ key: "not.real", kind: "unknown_variable" }]);
+}
+ok("a document-scan rejection names its attribute and value, truncated, without changing kind or canSend");
 
 // ---- whatsapp rendering: plain text, NO escaping — "&amp;" must never reach a guest ----
 {
@@ -662,6 +733,8 @@ assert.equal(/dangerouslySetInnerHTML=/.test(htmlEditor), false,
   "operator HTML must never be injected into the dashboard DOM");
 assert.match(htmlEditor, /renderHtmlCommunication/, "preview must render the REAL send bytes");
 assert.match(htmlEditor, /application\/x-gh-variable/, "the HTML editor must accept variable drops");
+assert.match(htmlEditor, /issue\.detail \?\? `\{\{\$\{issue\.key\}\}\}`/,
+  "a refused URL must show its attribute and value, not a {{token}} that does not exist");
 ok("the HTML editor previews only through a sandboxed iframe of the real bytes");
 
 // ---- whatsapp editor: text-only, no email concepts, text-node preview ----

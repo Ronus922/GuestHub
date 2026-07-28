@@ -120,6 +120,12 @@ export type CommunicationRenderContext = {
 export type RenderIssue = {
   key: string;
   kind: "missing_required" | "missing_optional" | "unknown_variable" | "invalid_url";
+  /**
+   * Set only where the key is NOT a {{variable}} the author can search for —
+   * a URL refused by the document scan names its attribute and its value here,
+   * because `html.href` alone does not say WHICH link to go and fix.
+   */
+  detail?: string;
 };
 
 export type RenderedCommunication = {
