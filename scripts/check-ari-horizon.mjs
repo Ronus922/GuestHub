@@ -230,6 +230,45 @@ try {
   }
   ok(`no edit of any shape enqueues a claim past today+${ARI_HORIZON_DAYS}, and none loses a stored row`);
 
+  // ---- 5. the inbound pull window is NOT derived from the publishing horizon ----
+  // They held the same number and were therefore written as one constant, so
+  // raising the publishing horizon to 720 silently widened the inbound booking
+  // pull too. D94: widening a pull is not widening coverage, it MOVES RISK
+  // BETWEEN PATHS — a pull that returns a new class of record changes which code
+  // actually runs and invalidates every status-dependent gate's assumptions,
+  // including gates whose own guards still pass. That walk has not been done for
+  // 720. Re-coupling them fails here.
+  {
+    // comments are blanked (line structure preserved) — the constants document
+    // their independence by NAMING each other, and that must not trip the rule
+    const stripComments = (s) => s
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/^([ \t]*)\/\/.*$/gm, "$1");
+    const importSrc = readFileSync(join(ROOT, "src/lib/channel/beds24-booking-import.ts"), "utf8");
+    const code = stripComments(importSrc);
+
+    assert.equal(/ARI_HORIZON_DAYS/.test(code), false,
+      "the inbound booking pull must not reference the outbound publishing horizon in executable code");
+    assert.match(code, /export const BEDS24_INBOUND_FORWARD_DAYS = (\d+)/,
+      "the inbound pull must declare its own forward window");
+    const declared = Number(code.match(/export const BEDS24_INBOUND_FORWARD_DAYS = (\d+)/)[1]);
+    assert.equal(declared, 500,
+      "the inbound window stays at its pre-decoupling value until the D94 gate walk is done");
+    assert.notEqual(declared, ARI_HORIZON_DAYS,
+      "inbound and outbound windows must not be silently reunified by holding the same number");
+    // …and the arrival filter is built from THAT constant, not from a literal
+    // that would drift away from it unnoticed
+    assert.match(code, /arrivalTo=\$\{isoDate\(BEDS24_INBOUND_FORWARD_DAYS \* 86_400_000\)\}/,
+      "the first-run arrival window must be built from the inbound constant");
+
+    // the complement: publishing IS one concern, and must stay derived
+    const syncSrc = stripComments(
+      readFileSync(join(ROOT, "src/lib/channel/beds24-ari-sync.ts"), "utf8"));
+    assert.match(syncSrc, /BEDS24_FULL_SYNC_DAYS = ARI_HORIZON_DAYS/,
+      "the full-sync horizon must stay derived from ARI_HORIZON_DAYS — it is the same concern");
+  }
+  ok("the inbound pull window is independent of the publishing horizon, and full sync stays derived from it");
+
   console.log(`\nARI HORIZON: ${n} PASSED`);
 } finally {
   await sql.end();
