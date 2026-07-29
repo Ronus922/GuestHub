@@ -85,6 +85,30 @@ export type StructuredTemplateContent = {
   blocks: TemplateBlock[];
 };
 
+/** A full HTML email document (or fragment) pasted by the operator. {{...}}
+ *  variables interpolate; the author's markup is sent as-is. */
+export type HtmlTemplateContent = {
+  schemaVersion: 1;
+  kind: "html";
+  html: string;
+};
+
+/** A plain-text WhatsApp message with {{...}} variables. Never HTML. */
+export type WhatsAppTemplateContent = {
+  schemaVersion: 1;
+  kind: "whatsapp_text";
+  text: string;
+};
+
+/** Discriminated on `kind`; a missing `kind` means a legacy block tree, so every
+ *  version row published before kinds existed keeps parsing forever. */
+export type TemplateContent =
+  | StructuredTemplateContent
+  | HtmlTemplateContent
+  | WhatsAppTemplateContent;
+
+export type TemplateContentKind = "blocks" | "html" | "whatsapp_text";
+
 export type TemplateVersionPolicy = "latest_published" | "locked";
 export type AutomationStatus = "draft" | "active" | "disabled" | "needs_attention" | "archived";
 
@@ -96,6 +120,12 @@ export type CommunicationRenderContext = {
 export type RenderIssue = {
   key: string;
   kind: "missing_required" | "missing_optional" | "unknown_variable" | "invalid_url";
+  /**
+   * Set only where the key is NOT a {{variable}} the author can search for —
+   * a URL refused by the document scan names its attribute and its value here,
+   * because `html.href` alone does not say WHICH link to go and fix.
+   */
+  detail?: string;
 };
 
 export type RenderedCommunication = {
@@ -115,5 +145,5 @@ export type PublishedTemplateVersion = {
   replyToAddress: string | null;
   subject: string;
   preheader: string | null;
-  content: StructuredTemplateContent;
+  content: TemplateContent;
 };

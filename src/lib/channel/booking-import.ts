@@ -11,6 +11,7 @@ import {
   type NormalizedRoom,
 } from "./booking-normalize";
 import { markAriDirty } from "./outbox";
+import { enqueueReservationCancelled } from "@/lib/communications/outbox";
 import {
   dispatchExternalChangeEmails,
   recordExternalDateChange,
@@ -722,6 +723,15 @@ async function applyCancellation(
       roomIds: oldRoomIds,
       dateFrom: existing.check_in,
       dateTo: existing.check_out,
+    });
+    // guest-communications outbox — the event records the FACT; whether a
+    // message actually sends is each automation's exclusions.ota decision
+    // (default true → truthful ota_excluded skip, nothing reaches the guest).
+    await enqueueReservationCancelled(tx, {
+      tenantId: conn.tenant_id,
+      reservationId: existing.id,
+      bookingOrigin: "ota",
+      cancellationOrigin: origin,
     });
   } else {
     await tx`

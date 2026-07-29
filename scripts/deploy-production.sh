@@ -55,6 +55,16 @@ NEW_BUILD_ID="$(cat .next/BUILD_ID)"
 [ -n "$NEW_BUILD_ID" ] || fail "no BUILD_ID produced"
 [ -f "dist/worker/lib/channel/worker.js" ] || fail "channel worker was not built (dist/worker missing)"
 
+# 9b. migrations — BEFORE any restart. A release is code + schema, atomically:
+# on the ca11f15 deploy this script restarted new code against a schema missing
+# migration 062's columns and still printed success. Never again — a migration
+# failure aborts the deploy right here: no restart, no success line, exit
+# non-zero with the runner's verbatim output. "No pending migrations" is said
+# explicitly, never silently skipped. Same canonical DB route as db:migrate
+# (docker exec supabase-db, supabase_admin).
+echo "→ applying pending migrations before restart ..."
+node scripts/apply-pending-migrations.mjs || fail "migrations failed — deploy ABORTED before restart (old processes keep running; cleanly-applied files are recorded, the failed one stays pending)"
+
 # 10. restart ONLY the two guesthub processes (unrelated PM2 services untouched)
 pm2 restart "$PM2_APP" --update-env || fail "pm2 restart failed"
 # the worker is declared in ecosystem.config.cjs; startOrRestart registers it on

@@ -435,6 +435,12 @@ try {
     for (const t of [
       "channel_sync_errors", "channel_dirty_ranges", "channel_booking_revisions",
       "channel_sync_jobs", "channel_beds24_room_mappings", "channel_connections",
+      // the branch's inbound-cancellation seam legitimately writes
+      // communication_events rows for these reservations, and their FK is
+      // ON DELETE RESTRICT by design (036: the events are evidence of what
+      // was sent to a guest) — teardown must clear them (messages first:
+      // outbound_messages RESTRICTs on events) before the reservations.
+      "outbound_messages", "communication_events",
       "audit_logs", "reservation_rooms", "reservations", "guests", "rooms",
       "room_types", "tenants",
     ]) {

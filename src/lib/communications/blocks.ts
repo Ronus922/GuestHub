@@ -1,5 +1,5 @@
 import type { IconName } from "@/components/shared/Icon";
-import type { BlockCondition, StructuredTemplateContent, TemplateBlock, TemplateBlockType } from "./types";
+import type { BlockCondition, TemplateBlock, TemplateBlockType } from "./types";
 
 // The block catalog — ONE source of truth for the palette, the canvas tag, the
 // property panel title and the seeded template. Adding a block type here is the
@@ -151,30 +151,4 @@ function defaultCondition(type: TemplateBlockType): BlockCondition {
 
 export function makeBlock(type: TemplateBlockType, id: string): TemplateBlock {
   return { id, type, enabled: true, condition: defaultCondition(type), data: defaultBlockData(type) };
-}
-
-/** The 13-block template a new draft is seeded with (reference order). */
-export function defaultTemplateContent(): StructuredTemplateContent {
-  const seed: [TemplateBlockType, TemplateBlock["data"]?][] = [
-    ["logo_header"],
-    ["heading", { text: "תודה שהזמנתם אצלנו", align: "center" }],
-    ["text", { text: "שלום {{guest.first_name}},\nשמחנו לקבל את הזמנתכם ב{{property.name}} — ההזמנה אושרה וכל הפרטים שמורים אצלנו. ריכזנו כאן את כל מה שחשוב לדעת לקראת ההגעה." }],
-    ["reservation_details"],
-    ["room_details"],
-    ["payment_summary"],
-    ["balance"],
-    ["action_button"],
-    ["property_address"],
-    ["divider"],
-    ["cancellation_policy"],
-    ["signature", { text: "נתראה בקרוב,\nצוות {{property.name}}" }],
-    ["contact"],
-  ];
-  return {
-    schemaVersion: 1,
-    blocks: seed.map(([type, data], index) => ({
-      ...makeBlock(type, `${type}-${index + 1}`),
-      ...(data ? { data } : {}),
-    })),
-  };
 }

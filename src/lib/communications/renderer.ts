@@ -3,16 +3,19 @@ import {
   BG_COLOR, BLOCK_PADDING, BUTTON_BG, BUTTON_TEXT,
   FONT_SIZE, FONT_WEIGHT, LINE_HEIGHT, TEXT_COLOR, cssAlign,
 } from "./styles";
-import { structuredTemplateContentSchema } from "./schemas";
+import { structuredTemplateContentSchema, templateContentKind } from "./schemas";
 import type {
   BlockCondition,
   CommunicationRenderContext,
+  HtmlTemplateContent,
   RenderIssue,
   RenderedCommunication,
   StructuredTemplateContent,
   TemplateBlock,
+  TemplateContent,
+  WhatsAppTemplateContent,
 } from "./types";
-import { hasValue, interpolateVariables, resolveVariable } from "./variables";
+import { getVariableDefinition, hasValue, interpolateVariables, resolveVariable } from "./variables";
 
 // ============================================================
 // The ONE renderer. It produces the bytes the guest receives — and the editor
@@ -29,13 +32,24 @@ import { hasValue, interpolateVariables, resolveVariable } from "./variables";
 // Upgrade path if they are ever wanted: inline data-URI SVGs, not a font.
 // ============================================================
 
+/**
+ * `=` and the backtick are escaped alongside the five classic entities so a
+ * value landing inside an UNQUOTED attribute (`<img alt={{guest.first_name}}>`)
+ * cannot introduce a new one: without a literal `=` there is no way to attach a
+ * handler body, and the backtick closes the legacy IE attribute-delimiter quirk.
+ * Whitespace is deliberately NOT escaped — a space must still render as a space.
+ * `&#61;` is decoded back to `=` by every HTML parser before a URL or an
+ * attribute value is read, so normal values (query strings, prose) are unchanged.
+ */
 export function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
+    .replaceAll("'", "&#39;")
+    .replaceAll("=", "&#61;")
+    .replaceAll("`", "&#96;");
 }
 
 type Ctx = CommunicationRenderContext;
@@ -328,7 +342,9 @@ function renderBlock(block: TemplateBlock, context: Ctx, opts: Opts): BlockRende
 function uniqueIssues(issues: RenderIssue[]): RenderIssue[] {
   const seen = new Set<string>();
   return issues.filter((issue) => {
-    const signature = `${issue.kind}:${issue.key}`;
+    // detail joins the signature so two different bad links are two findings,
+    // not one — it is undefined everywhere else, so nothing else changes.
+    const signature = `${issue.kind}:${issue.key}:${issue.detail ?? ""}`;
     if (seen.has(signature)) return false;
     seen.add(signature);
     return true;
@@ -424,4 +440,206 @@ export function renderTemplateString(
     ...rendered,
     canSend: !rendered.issues.some((issue) => issue.kind !== "missing_optional"),
   };
+}
+
+// ============================================================
+// html-kind templates: the operator's own document. Interpolated VALUES are
+// escaped (a guest named "<script>" stays text — same invariant as blocks);
+// the author's markup is the markup and is sent untouched. No sanitizer:
+// authoring requires communications.templates.edit, mail goes out through the
+// tenant's own account, and the only in-app surface is a sandbox="" iframe.
+// ============================================================
+
+/** Best-effort text part for the multipart email — never shown in the app. */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<(style|script|title)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&#61;", "=")
+    .replaceAll("&#96;", "`")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+}
+
+/** A scheme-looking prefix: letter, then letters/digits/+/-/. up to a colon. */
+const SCHEME_PREFIX = /^[a-z][a-z0-9+.-]*:/i;
+/** Schemes that carry no script and are legitimate in an email href. */
+const SAFE_NON_HTTP_SCHEME = /^(mailto|tel):/i;
+
+/**
+ * Detection must see the string the CLIENT will resolve, not the one we were
+ * handed. Before resolving a URL every browser and mail client strips leading
+ * and trailing C0 controls, and removes ASCII tab/CR/LF from ANYWHERE in it —
+ * so `java\tscript:` and `\0javascript:` resolve as `javascript:` while sailing
+ * past a naive `^[a-z]…:` test. Whole C0 range + DEL, not just \t\r\n\0: every
+ * one of them is stripped or rejected by the URL parser the same way, and this
+ * probe is used for DETECTION only — a value that turns out not to be a URL is
+ * still emitted with its own bytes intact (a guest note keeps its newlines).
+ */
+function urlProbe(value: string): string {
+  return value.replace(/[\u0000-\u001F\u007F]/g, "").trim();
+}
+
+/**
+ * Gate a value that IS a URL (a url-kind variable) or merely looks like one
+ * (any scheme-prefixed string) before it reaches the author's markup — the
+ * html path has no `href="…"` of its own to guard, so the guard travels with
+ * the value. http/https go through the SAME safeHttpUrl the blocks renderer
+ * uses; mailto/tel pass; everything else (javascript:, data:, vbscript:, file:)
+ * is rejected exactly as the blocks path rejects one: an invalid_url issue and
+ * an EMPTY value, never the raw string. invalid_url also forces canSend=false.
+ */
+function guardUrlValue(key: string, value: string, issues: RenderIssue[]): string {
+  const probe = urlProbe(value);
+  if (!probe) return value;
+  const isUrlVariable = getVariableDefinition(key)?.kind === "url";
+  if (!isUrlVariable && !SCHEME_PREFIX.test(probe)) return value;
+  if (SAFE_NON_HTTP_SCHEME.test(probe)) return probe;
+  const safe = safeHttpUrl(probe);
+  if (safe) return safe;
+  issues.push({ key, kind: "invalid_url" });
+  return "";
+}
+
+/**
+ * Attributes a client resolves as a URL, in all three value forms (double
+ * quoted, single quoted, bare). The leading `^|[\s/]` keeps `data-href` and
+ * friends out — only a real attribute boundary counts.
+ */
+const URL_ATTRIBUTE = /(?:^|[\s/])((?:xlink:)?(?:href|src|action|formaction))\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]*))/gi;
+/** The only schemes an email body may resolve. `cid:` addresses an inline attachment. */
+const ALLOWED_DOCUMENT_SCHEME = /^(?:https?|mailto|tel|cid):/i;
+/**
+ * Inline RASTER images, and only those, are also legal in a `src` — pasted
+ * newsletters carry them by the dozen. The media type is matched WHOLE and must
+ * end at the `;` or `,` that closes it: a `data:image/` prefix test would wave
+ * through `data:image/svg+xml`, and an SVG is a document that can carry
+ * <script>. `data:text/html` and every other media type stay refused, and no
+ * data: URI is legal in href/action/formaction — there is nothing to navigate to.
+ */
+const ALLOWED_DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp)[;,]/i;
+
+/** What the author must go and fix, short enough to read in one line. */
+function urlIssueDetail(attribute: string, probe: string): string {
+  return `${attribute}="${probe.length > 60 ? `${probe.slice(0, 60)}…` : probe}"`;
+}
+
+/**
+ * Belt and braces over guardUrlValue, which judges each {{variable}} on its
+ * own — but URL safety is a property of the WHOLE attribute value. Split the
+ * scheme across two variables (`href="{{a}}{{b}}"` with a=`javascript` and
+ * b=`:alert(1)`) and neither token looks like a URL: the first carries no
+ * colon, the second does not start with a letter. Joined, the attribute is a
+ * live javascript: URL. No per-token check can see that, so the FINISHED
+ * document is read once more, exactly as a client would read it.
+ *
+ * The document is never rewritten or sanitized — a rejected URL raises
+ * invalid_url, which forces canSend=false and stops the send whole. Blocking,
+ * not patching: a half-repaired document is a document nobody proofread.
+ */
+function scanDocumentUrls(html: string, issues: RenderIssue[]): void {
+  for (const match of html.matchAll(URL_ATTRIBUTE)) {
+    const attribute = (match[1] ?? "").toLowerCase();
+    const probe = urlProbe(match[2] ?? match[3] ?? match[4] ?? "");
+    // empty, scheme-relative (//cdn/…) or plain relative (/x, #a, ?q): no scheme to abuse
+    if (!probe || probe.startsWith("//") || !SCHEME_PREFIX.test(probe)) continue;
+    if (ALLOWED_DOCUMENT_SCHEME.test(probe)) continue;
+    if (attribute === "src" && ALLOWED_DATA_IMAGE.test(probe)) continue;
+    issues.push({ key: `html.${attribute}`, kind: "invalid_url", detail: urlIssueDetail(attribute, probe) });
+  }
+}
+
+export function renderHtmlCommunication(
+  content: HtmlTemplateContent,
+  context: Ctx,
+  options: Opts & { preheader?: string } = {},
+): RenderedCommunication {
+  const issues: RenderIssue[] = [];
+  const interpolated = content.html.replace(
+    /{{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\s*}}/gi,
+    (_token, key: string) => {
+      const resolved = resolveVariable(key, context);
+      if (resolved.issue) issues.push(resolved.issue);
+      const guarded = guardUrlValue(key, resolved.value, issues);
+      return mark(escapeHtml(guarded), Boolean(options.highlight));
+    },
+  );
+
+  const preheader = options.preheader
+    ? interpolateVariables(options.preheader, context)
+    : { value: "", issues: [] };
+  issues.push(...preheader.issues);
+
+  // A pasted fragment gets a minimal RTL document shell (charset + viewport,
+  // no styling). A full document passes through untouched — its own <head>
+  // wins, so the preheader div is only injectable in the fragment case.
+  const isFullDocument = /<html[\s>]/i.test(interpolated);
+  const html = isFullDocument
+    ? interpolated
+    : `<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">`
+      + `<meta name="viewport" content="width=device-width,initial-scale=1"></head>`
+      + `<body style="margin:0;padding:0">`
+      + `<div style="display:none;max-height:0;overflow:hidden;opacity:0">${escapeHtml(preheader.value)}</div>`
+      + `${interpolated}</body></html>`;
+
+  scanDocumentUrls(html, issues);
+
+  const allIssues = uniqueIssues(issues);
+  return {
+    html,
+    plainText: htmlToPlainText(interpolated),
+    issues: allIssues,
+    canSend: !allIssues.some(
+      (issue) => issue.kind === "missing_required" || issue.kind === "unknown_variable" || issue.kind === "invalid_url",
+    ),
+  };
+}
+
+/**
+ * whatsapp_text templates: plain interpolation, NO escaping — WhatsApp is a
+ * text medium and escaping would ship "&amp;" to guests. There is no injection
+ * surface: the result is never interpreted as markup anywhere (the editor
+ * preview renders it as a text node).
+ */
+export function renderWhatsAppCommunication(
+  content: WhatsAppTemplateContent,
+  context: Ctx,
+): { text: string; issues: RenderIssue[]; canSend: boolean } {
+  const rendered = interpolateVariables(content.text, context);
+  const issues = uniqueIssues(rendered.issues);
+  return {
+    text: rendered.value,
+    issues,
+    canSend: !issues.some((issue) => issue.kind !== "missing_optional"),
+  };
+}
+
+/**
+ * The ONE dispatch for anything holding a TemplateContent — editor preview,
+ * test send, and the automation pipeline. For whatsapp_text the message lives
+ * in plainText and html is empty (the email path must refuse it explicitly).
+ */
+export function renderTemplateContent(
+  content: TemplateContent,
+  context: Ctx,
+  options: Opts & { preheader?: string } = {},
+): RenderedCommunication {
+  const kind = templateContentKind(content);
+  if (kind === "html") {
+    return renderHtmlCommunication(content as HtmlTemplateContent, context, options);
+  }
+  if (kind === "whatsapp_text") {
+    const rendered = renderWhatsAppCommunication(content as WhatsAppTemplateContent, context);
+    return { html: "", plainText: rendered.text, issues: rendered.issues, canSend: rendered.canSend };
+  }
+  return renderStructuredCommunication(content as StructuredTemplateContent, context, options);
 }

@@ -132,6 +132,18 @@ function inspectEnvelope(body: unknown): EnvelopeVerdict {
   return verdict;
 }
 
+/**
+ * Append the names of the fields Beds24 objected to, in the SAME wording the
+ * partial path already uses — the failure path used to extract them and then
+ * drop them on the floor, leaving an operator with a fixed string that named
+ * nothing. An EMPTY set is appended as nothing at all: summarizeBeds24Warnings
+ * has no empty guard of its own and would state "Beds24 דחה 0 ערכים", which is
+ * a worse lie than saying less (a bare success:false carries no errors[]).
+ */
+function withFields(message: string, warnings: SafeBeds24Warning[]): string {
+  return warnings.length === 0 ? message : `${message} — ${summarizeBeds24Warnings(warnings)}`;
+}
+
 /** The distinct provider message texts across a warning set, bounded. */
 function providerTexts(warnings: SafeBeds24Warning[]): string[] {
   const out: string[] = [];
@@ -186,24 +198,38 @@ export async function pushBeds24Calendar(
   // failure already carries its raw evidence (null status/body) from the core
   if ("ok" in r) return { ...r, credits: EMPTY_BEDS24_CREDITS };
   const credits = r.credits;
+  // Inspected BEFORE the status check: a 4xx body carries the same
+  // errors[]/field shape a 200-with-success:false does, and it used never to be
+  // read at all — the operator got a fixed category string for a response that
+  // named the offending field.
+  const verdict = inspectEnvelope(r.body);
   if (r.status !== 200 && r.status !== 201 && r.status !== 204) {
+    // D112: the raw evidence (status + body, verbatim) rides on every failure.
+    const base = beds24Fail(mapErrorStatus(r.status), r.status, r.raw);
+    // The status code in CATEGORY_MESSAGE is truthful on THIS path by
+    // construction: mapErrorStatus is one-to-one onto the categories whose text
+    // carries a code (401/403/404/409/422/429), and every other status lands on
+    // bad_response/server_error, whose text carries none. The one path that
+    // could lie is the envelope branch below, which bypasses the mapping.
     const f: Beds24ApiFailure & { credits: Beds24CreditSnapshot } = {
-      ...beds24Fail(mapErrorStatus(r.status), r.status, r.raw), credits,
+      ...base, message: withFields(base.message, verdict.warnings), credits,
     };
     // §16 — carry the 429 cooldown forward so the circuit opens for the right span
     return r.retryAfterMs !== undefined ? { ...f, retryAfterMs: r.retryAfterMs } : f;
   }
 
-  const verdict = inspectEnvelope(r.body);
   if (verdict.anyFailure) {
     // success:false on a 2xx — Beds24 rejected (some of) the write. Treated as
     // a full failure so the caller keeps every claimed range retryable.
-    // D112: the message states the status ACTUALLY received (this is the path
-    // that once printed "(422)" for an HTTP 201) and the provider's own words.
-    const texts = providerTexts(verdict.warnings);
+    // The category stays `validation` (the backoff/circuit machinery keys on
+    // the CODE), but the message is composed here rather than taken from
+    // CATEGORY_MESSAGE, whose "(422)" is baked into the string. D112: it states
+    // the status ACTUALLY received (this is the path that once printed "(422)"
+    // for an HTTP 201) plus the fields and the provider's own words, and the
+    // raw evidence rides on the failure verbatim.
     return {
       ...beds24Fail("validation", r.status, r.raw),
-      message: `Beds24 דחה את העדכון (HTTP ${r.status})${texts.length ? `: ${texts.join(" | ")}` : ""}`,
+      message: withFields(`Beds24 דחה את העדכון (HTTP ${r.status}, success:false)`, verdict.warnings),
       credits,
     };
   }
