@@ -5,9 +5,16 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { TemplateEditor, type EditorSeed } from "./TemplateEditor";
-import { defaultTemplateContent, STAGE_KEYS, STAGE_LABELS, usageLabel } from "@/lib/communications/blocks";
-import type { CommunicationRenderContext, StructuredTemplateContent } from "@/lib/communications/types";
+import { TemplateEditor } from "./TemplateEditor";
+import { HtmlTemplateEditor } from "./HtmlTemplateEditor";
+import { WhatsAppTemplateEditor } from "./WhatsAppTemplateEditor";
+import type { EditorSeed } from "./editorShared";
+import { STAGE_KEYS, STAGE_LABELS, usageLabel } from "@/lib/communications/blocks";
+import { TEMPLATE_GALLERY, emptyContentFor } from "@/lib/communications/gallery";
+import {
+  TRIGGERS, TRIGGER_IDS, TRIGGER_LIST, describeTiming, type TriggerId,
+} from "@/lib/communications/triggers";
+import type { CommunicationChannel, CommunicationRenderContext } from "@/lib/communications/types";
 import type {
   AutomationRow, CommunicationsData, CommunicationTemplateRow, DeliveryRow,
 } from "@/app/(dashboard)/communications/data";
@@ -55,6 +62,21 @@ function chipClass(state: string): string {
   if (["failed", "undelivered", "needs_attention", "provider_not_configured", "validation_failed"].includes(state)) return "chip chip-failed";
   if (["draft", "queued", "submitting", "submitted"].includes(state)) return "chip chip-approval";
   return "chip chip-cancelled";
+}
+
+/** Which editor a template (or a creation seed) opens in. */
+function editorKindOf(target: CommunicationTemplateRow | { seed: EditorSeed }): "blocks" | "html" | "whatsapp" {
+  const content = "seed" in target ? target.seed.content : target.draftContent;
+  const kind = (content as { kind?: string } | null)?.kind;
+  if ("seed" in target ? kind === "whatsapp_text" : target.channel === "whatsapp") return "whatsapp";
+  if (kind === "html") return "html";
+  return "blocks";
+}
+
+function channelChip(channel: string) {
+  return channel === "whatsapp"
+    ? <span className="chip chip-brand"><Icon name="whatsapp" size={13.5} /> WhatsApp</span>
+    : <span className="chip chip-brand"><Icon name="mail" size={13.5} /> אימייל</span>;
 }
 
 function dateLine(value: string | null): string {
@@ -208,7 +230,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
               </span>
               <div className="gc-ph-f">
                 <div className="gc-seg">
-                  {[["all", "כל הערוצים"], ["email", "אימייל"], ["whatsapp", "WhatsApp"], ["sms", "SMS"]].map(([value, label]) => (
+                  {[["all", "כל הערוצים"], ["email", "אימייל"], ["whatsapp", "WhatsApp"]].map(([value, label]) => (
                     <button key={value} type="button" className="gc-segb"
                       aria-pressed={channel === value} onClick={() => setChannel(value)}>
                       {label}
@@ -256,9 +278,9 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                     }}
                     aria-label={`פתיחת ${template.name}`}
                   >
-                    <span className="gc-row-ic"><Icon name="mail" size={20} /></span>
+                    <span className="gc-row-ic"><Icon name={template.channel === "whatsapp" ? "whatsapp" : "mail"} size={20} /></span>
                     <span className="gc-row-n">{template.name}</span>
-                    <span><span className="chip chip-brand"><Icon name="mail" size={13.5} /> אימייל</span></span>
+                    <span>{channelChip(template.channel)}</span>
                     <span>{STAGE_LABELS[template.category] ?? template.category}</span>
                     <span>{template.language === "en" ? "English" : "עברית"}</span>
                     <span><span className={chipClass(template.state)}>{STATE_LABEL[template.state]}</span></span>
@@ -319,9 +341,9 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
               </div>
               {archived.map((template) => (
                 <div key={template.id} className="gc-row" style={{ gridTemplateColumns: "44px minmax(190px,1.5fr) 100px 112px 1fr 168px", minWidth: 760, cursor: "default" }}>
-                  <span className="gc-row-ic"><Icon name="mail" size={20} /></span>
+                  <span className="gc-row-ic"><Icon name={template.channel === "whatsapp" ? "whatsapp" : "mail"} size={20} /></span>
                   <span className="gc-row-n">{template.name}</span>
-                  <span><span className="chip chip-brand"><Icon name="mail" size={13.5} /> אימייל</span></span>
+                  <span>{channelChip(template.channel)}</span>
                   <span>{STAGE_LABELS[template.category] ?? template.category}</span>
                   <span className="gc-row-m">{dateLine(template.updatedAt)}</span>
                   <span className="gc-acts">
@@ -365,20 +387,27 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
         />
       )}
 
-      {editing && (
-        <TemplateEditor
-          key={"seed" in editing ? "new" : editing.id}
-          template={"seed" in editing ? null : editing}
-          seed={"seed" in editing ? editing.seed : undefined}
-          datasets={datasets}
-          fallbackContext={fallbackContext}
-          senderAddress={data.channel.email.sender}
-          canEdit={permissions.editTemplates}
-          canPublish={permissions.publishTemplates}
-          canTest={permissions.testSend}
-          onClose={() => setEditing(null)}
-        />
-      )}
+      {editing && (() => {
+        const editorKind = editorKindOf(editing);
+        const shared = {
+          key: "seed" in editing ? "new" : editing.id,
+          template: "seed" in editing ? null : editing,
+          seed: "seed" in editing ? editing.seed : undefined,
+          datasets,
+          fallbackContext,
+          canEdit: permissions.editTemplates,
+          canPublish: permissions.publishTemplates,
+          canTest: permissions.testSend,
+          onClose: () => setEditing(null),
+        };
+        if (editorKind === "whatsapp") {
+          return <WhatsAppTemplateEditor {...shared} whatsappReady={data.channel.whatsappAvailable} />;
+        }
+        if (editorKind === "html") {
+          return <HtmlTemplateEditor {...shared} senderAddress={data.channel.email.sender} />;
+        }
+        return <TemplateEditor {...shared} senderAddress={data.channel.email.sender} />;
+      })()}
 
       {delivery && <DeliveryPanel row={delivery} onClose={() => setDelivery(null)} />}
 
@@ -386,6 +415,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
         <AutomationPanel
           value={automation}
           templates={live.filter((t) => t.state === "published")}
+          whatsappAvailable={data.channel.whatsappAvailable}
           canActivate={permissions.activateAutomations}
           pending={pending}
           onClose={() => setAutomation(null)}
@@ -438,7 +468,7 @@ function AutomationsPanel({
                 </div>
                 <p className="t-secondary">{row.description || "ללא תיאור"}</p>
                 <p className="t-label mt-1">
-                  עם אישור הזמנה · שליחה מיידית · {row.templateName}
+                  {describeTiming(row.triggerType, row.timing)} · {row.channel === "whatsapp" ? "WhatsApp" : "אימייל"} · {row.templateName}
                 </p>
                 {row.attentionReason && (
                   <p className="field-msg mt-1"><Icon name="warning" size={13.5} /> {row.attentionReason}</p>
@@ -613,16 +643,34 @@ function ChannelsPanel({
             </span>
             <Link className="btn btn-secondary btn-sm" href="/settings?section=messaging">ניהול חיבור</Link>
           </article>
-          {([["WhatsApp", "whatsapp"], ["SMS", "phone"]] as const).map(([label, icon]) => (
-            <article key={label} className="flex items-center gap-4 rounded-xl border border-line p-4 opacity-70">
-              <span className="gc-row-ic"><Icon name={icon} size={20} /></span>
-              <div className="min-w-0 flex-1">
-                <b className="h4">{label}</b>
-                <p className="t-label">אין ספק פעיל — לא מתבצעת שליחה בערוץ הזה, ואף הודעה לא תוצג כנשלחה.</p>
-              </div>
-              <span className="chip chip-cancelled">לא זמין</span>
-            </article>
-          ))}
+          <article className={`flex items-center gap-4 rounded-xl border border-line p-4${data.channel.whatsappAvailable ? "" : " opacity-70"}`}>
+            <span className="gc-row-ic"><Icon name="whatsapp" size={20} /></span>
+            <div className="min-w-0 flex-1">
+              <b className="h4">WhatsApp</b>
+              <p className="t-secondary ltr-num">
+                {data.channel.whatsapp.provider === "green_api" ? "GREEN-API"
+                  : data.channel.whatsapp.provider === "twilio" ? "Twilio" : "—"}
+              </p>
+              <p className="t-label">
+                {data.channel.whatsapp.detail
+                  ?? (data.channel.whatsappAvailable
+                    ? "החיבור פעיל — אוטומציות WhatsApp זמינות"
+                    : "אין ספק מחובר — לא מתבצעת שליחה בערוץ הזה, ואף הודעה לא תוצג כנשלחה.")}
+              </p>
+            </div>
+            <span className={chipClass(data.channel.whatsappAvailable ? "active" : "needs_attention")}>
+              {data.channel.whatsappAvailable ? "מחובר" : "דורש הגדרה"}
+            </span>
+            <Link className="btn btn-secondary btn-sm" href="/settings?section=messaging">ניהול חיבור</Link>
+          </article>
+          <article className="flex items-center gap-4 rounded-xl border border-line p-4 opacity-70">
+            <span className="gc-row-ic"><Icon name="phone" size={20} /></span>
+            <div className="min-w-0 flex-1">
+              <b className="h4">SMS</b>
+              <p className="t-label">אין ספק פעיל — לא מתבצעת שליחה בערוץ הזה, ואף הודעה לא תוצג כנשלחה.</p>
+            </div>
+            <span className="chip chip-cancelled">לא זמין</span>
+          </article>
         </div>
       </section>
 
@@ -656,15 +704,32 @@ function ChannelsPanel({
 }
 
 function AutomationPanel({
-  value, templates, canActivate, pending, onClose, onSave,
+  value, templates, whatsappAvailable, canActivate, pending, onClose, onSave,
 }: {
-  value: AutomationRow | "new"; templates: CommunicationTemplateRow[]; canActivate: boolean;
-  pending: boolean; onClose: () => void; onSave: (input: unknown) => void;
+  value: AutomationRow | "new"; templates: CommunicationTemplateRow[]; whatsappAvailable: boolean;
+  canActivate: boolean; pending: boolean; onClose: () => void; onSave: (input: unknown) => void;
 }) {
   const fresh = value === "new";
   const [name, setName] = useState(fresh ? "" : value.name);
   const [description, setDescription] = useState(fresh ? "" : value.description ?? "");
-  const [templateId, setTemplateId] = useState(fresh ? templates[0]?.id ?? "" : value.templateId);
+  const [triggerType, setTriggerType] = useState<TriggerId>(
+    fresh ? "reservation.confirmed"
+      : (TRIGGER_IDS.includes(value.triggerType as TriggerId) ? value.triggerType as TriggerId : "reservation.confirmed"),
+  );
+  const [channel, setChannel] = useState<"email" | "whatsapp">(
+    fresh ? "email" : (value.channel === "whatsapp" ? "whatsapp" : "email"),
+  );
+  const trigger = TRIGGERS[triggerType];
+  const [offsetDays, setOffsetDays] = useState<number>(() => {
+    const stored = fresh ? undefined : Number((value.timing as { offsetDays?: number }).offsetDays);
+    return Number.isFinite(stored) ? stored as number : TRIGGERS[fresh ? "reservation.confirmed" : triggerType].offsetDays?.default ?? 0;
+  });
+  const [sendTime, setSendTime] = useState<string>(() => {
+    const stored = fresh ? undefined : (value.timing as { sendTime?: string }).sendTime;
+    return stored ?? TRIGGERS[fresh ? "reservation.confirmed" : triggerType].defaultSendTime ?? "10:00";
+  });
+  const channelTemplates = templates.filter((t) => t.channel === channel);
+  const [templateId, setTemplateId] = useState(fresh ? "" : value.templateId);
   const [sources, setSources] = useState<string[]>(
     fresh ? ["back_office", "direct_website"]
       : ((value.sources.include as string[] | undefined) ?? ["back_office", "direct_website"]),
@@ -672,7 +737,22 @@ function AutomationPanel({
   const [activate, setActivate] = useState(false);
   const toggle = (source: string) =>
     setSources((current) => current.includes(source) ? current.filter((s) => s !== source) : [...current, source]);
-  const valid = name.trim().length >= 2 && sources.length > 0 && Boolean(templateId);
+
+  const pickTrigger = (next: TriggerId) => {
+    setTriggerType(next);
+    const def = TRIGGERS[next];
+    if (def.kind === "scheduled") {
+      setOffsetDays(def.offsetDays?.default ?? 0);
+      setSendTime(def.defaultSendTime ?? "10:00");
+    }
+  };
+  const pickChannel = (next: "email" | "whatsapp") => {
+    setChannel(next);
+    setTemplateId("");
+  };
+
+  const selectedTemplateValid = channelTemplates.some((t) => t.id === templateId);
+  const valid = name.trim().length >= 2 && sources.length > 0 && selectedTemplateValid;
 
   return (
     <SidePanel
@@ -686,7 +766,8 @@ function AutomationPanel({
           <button type="button" className="btn btn-primary" disabled={!valid || pending}
             onClick={() => onSave({
               id: fresh ? undefined : value.id, name, description,
-              triggerType: "reservation.confirmed", templateId, sources, activate,
+              triggerType, channel, templateId, sources, activate,
+              ...(trigger.kind === "scheduled" ? { offsetDays, sendTime } : {}),
             })}>
             {activate ? "שמירה והפעלה" : "שמירה כטיוטה"}
           </button>
@@ -698,10 +779,40 @@ function AutomationPanel({
         <section className="card">
           <div className="card-hd">מתי</div>
           <div className="card-bd flex flex-col gap-3">
-            <p className="t-body">כאשר <b>הזמנה מאושרת</b> — האירוע נכנס לתור מיד.</p>
-            <p className="t-secondary">
-              הזמנות מ־Booking.com, Airbnb וכל ערוץ OTA מוחרגות תמיד: ה-OTA כבר שולח אישור משלו.
-            </p>
+            <label className="field">
+              <span className="field-label">טריגר</span>
+              <select className="field-input" value={triggerType}
+                onChange={(e) => pickTrigger(e.target.value as TriggerId)}>
+                {TRIGGER_LIST.map((def) => (
+                  <option key={def.id} value={def.id}>{def.label}</option>
+                ))}
+              </select>
+              <span className="field-hint">{trigger.description}</span>
+            </label>
+            {trigger.kind === "scheduled" && (
+              <div className="gc-meta-grid">
+                {trigger.direction !== "on" && trigger.offsetDays && (
+                  <label className="field">
+                    <span className="field-label">
+                      {trigger.direction === "before" ? "ימים לפני" : "ימים אחרי"}
+                    </span>
+                    <input className="field-input ltr-num" type="number"
+                      min={trigger.offsetDays.min} max={trigger.offsetDays.max} value={offsetDays}
+                      onChange={(e) => setOffsetDays(Number(e.target.value))} />
+                  </label>
+                )}
+                <label className="field">
+                  <span className="field-label">שעת שליחה</span>
+                  <input className="field-input ltr-num" type="time" value={sendTime}
+                    onChange={(e) => setSendTime(e.target.value)} />
+                </label>
+              </div>
+            )}
+            {(trigger.otaHardSkip || trigger.defaultExclusions.ota) && (
+              <p className="t-secondary">
+                הזמנות מ־Booking.com, Airbnb וכל ערוץ OTA מוחרגות: ה-OTA מתקשר עם האורח בעצמו.
+              </p>
+            )}
           </div>
         </section>
 
@@ -735,13 +846,32 @@ function AutomationPanel({
         </section>
 
         <section className="card">
-          <div className="card-hd">תבנית</div>
+          <div className="card-hd">ערוץ ותבנית</div>
           <div className="card-bd flex flex-col gap-3">
+            <div className="field">
+              <span className="field-label">ערוץ שליחה</span>
+              <div className="gc-seg">
+                <button type="button" className="gc-segb" aria-pressed={channel === "email"}
+                  onClick={() => pickChannel("email")}>
+                  <Icon name="mail" size={17} /> אימייל
+                </button>
+                <button type="button" className="gc-segb" aria-pressed={channel === "whatsapp"}
+                  disabled={!whatsappAvailable && channel !== "whatsapp"}
+                  title={whatsappAvailable ? undefined : "אין ספק WhatsApp מחובר — חברו ספק בהגדרות ההודעות"}
+                  onClick={() => pickChannel("whatsapp")}>
+                  <Icon name="whatsapp" size={17} /> WhatsApp
+                </button>
+              </div>
+              {!whatsappAvailable && (
+                <span className="field-hint">שליחת WhatsApp דורשת ספק מחובר ובדוק (הגדרות ← הודעות).</span>
+              )}
+            </div>
             <label className="field">
               <span className="field-label">תבנית מפורסמת</span>
-              <select className="field-input" value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+              <select className="field-input" value={selectedTemplateValid ? templateId : ""}
+                onChange={(e) => setTemplateId(e.target.value)}>
                 <option value="">בחירת תבנית</option>
-                {templates.map((template) => (
+                {channelTemplates.map((template) => (
                   <option key={template.id} value={template.id}>
                     {template.name}{template.version ? ` (v${template.version})` : ""}
                   </option>
@@ -751,8 +881,12 @@ function AutomationPanel({
                 בכל משלוח נשמר snapshot של הגרסה שנשלחה — עדכון התבנית לא משנה היסטוריה.
               </span>
             </label>
-            {templates.length === 0 && (
-              <p className="field-msg">אין תבנית אימייל מפורסמת. יש לפרסם תבנית לפני הפעלה.</p>
+            {channelTemplates.length === 0 && (
+              <p className="field-msg">
+                {channel === "whatsapp"
+                  ? "אין תבנית WhatsApp מפורסמת. יש לפרסם תבנית לפני הפעלה."
+                  : "אין תבנית אימייל מפורסמת. יש לפרסם תבנית לפני הפעלה."}
+              </p>
             )}
             <span className="gc-toggle">
               <button type="button" className="gc-sw" role="switch" aria-checked={activate}
@@ -768,9 +902,11 @@ function AutomationPanel({
 }
 
 /** The creation window (§1) — ref/screens/CreateGuestCommunicationWindowes.png.
- *  Captures a real, editable name + category + channel, and whether to start from
- *  a blank template or duplicate an existing one, then hands an EditorSeed to the
- *  canonical editor. Nothing is published and no automation is created. */
+ *  Captures a real, editable name + category + channel and a STARTING POINT:
+ *  truly blank (blocks or raw HTML for email, plain text for WhatsApp), a
+ *  gallery example, or a duplicate of an existing same-channel template. The
+ *  content kind is fixed here and never changes on the template afterwards.
+ *  Nothing is published and no automation is created. */
 function NewTemplateDialog({
   templates, onCancel, onCreate,
 }: {
@@ -780,31 +916,71 @@ function NewTemplateDialog({
 }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("reservation");
-  const [channel, setChannel] = useState("email");
-  const [mode, setMode] = useState<"blank" | "duplicate">("blank");
-  const [sourceId, setSourceId] = useState(templates[0]?.id ?? "");
+  const [channel, setChannel] = useState<CommunicationChannel>("email");
+  const [mode, setMode] = useState<"blank" | "blank_html" | "gallery" | "duplicate">("blank");
+  const [exampleId, setExampleId] = useState("");
+  const [sourceId, setSourceId] = useState("");
+
+  const channelTemplates = templates.filter((t) => t.channel === channel);
+  const gallery = TEMPLATE_GALLERY.filter((example) => example.channel === channel);
+
+  const pickChannel = (next: CommunicationChannel) => {
+    setChannel(next);
+    setMode("blank");
+    setExampleId("");
+    setSourceId("");
+  };
 
   const trimmed = name.trim();
   const valid = trimmed.length >= 2 && trimmed.length <= 120
-    && (mode === "blank" || Boolean(sourceId));
+    && (mode === "blank" || mode === "blank_html"
+      || (mode === "gallery" && Boolean(exampleId))
+      || (mode === "duplicate" && Boolean(sourceId)));
 
   const submit = () => {
     if (!valid) return;
-    let content: StructuredTemplateContent = defaultTemplateContent();
-    if (mode === "duplicate") {
-      const source = templates.find((t) => t.id === sourceId);
-      const draft = source?.draftContent as StructuredTemplateContent | undefined;
-      if (draft && draft.schemaVersion === 1 && Array.isArray(draft.blocks)) content = draft;
+    if (mode === "gallery") {
+      const example = gallery.find((item) => item.id === exampleId);
+      if (!example) return;
+      onCreate({
+        name: trimmed, category: example.category,
+        subject: example.subject, preheader: example.preheader, content: example.content,
+      });
+      return;
     }
-    onCreate({ name: trimmed, category, content });
+    if (mode === "duplicate") {
+      const source = channelTemplates.find((t) => t.id === sourceId);
+      const draft = source?.draftContent ?? null;
+      onCreate({
+        name: trimmed, category,
+        subject: source?.subject ?? undefined, preheader: source?.preheader || undefined,
+        content: draft ? (draft as EditorSeed["content"]) : emptyContentFor(channel),
+      });
+      return;
+    }
+    // Blank is BLANK: zero blocks / empty HTML / empty text.
+    onCreate({ name: trimmed, category, content: emptyContentFor(channel, mode === "blank_html" ? "html" : "blocks") });
   };
+
+  const startingPoints: [typeof mode, string, string][] = channel === "email"
+    ? [
+      ["blank", "תבנית ריקה — עורך בלוקים", "קנבס ריק לחלוטין, בונים בלוק-בלוק"],
+      ["blank_html", "תבנית ריקה — קוד HTML", "מדביקים מסמך HTML מוכן; משתני {{...}} עובדים"],
+      ["gallery", "התחלה מדוגמה", "דוגמה מוכנה שנפתחת לעריכה מלאה"],
+      ["duplicate", "שכפול תבנית קיימת", "מעתיקים תבנית ומתאימים"],
+    ]
+    : [
+      ["blank", "תבנית ריקה", "הודעת טקסט ריקה — כותבים מאפס"],
+      ["gallery", "התחלה מדוגמה", "דוגמה מוכנה שנפתחת לעריכה מלאה"],
+      ["duplicate", "שכפול תבנית קיימת", "מעתיקים תבנית ומתאימים"],
+    ];
 
   return (
     <SidePanel
       open
       onClose={onCancel}
       title="תבנית חדשה"
-      subtitle="בחרו שם, שלב וערוץ — התוכן נערך בעורך התבנית. אין פרסום ואין יצירת אוטומציה בשלב זה."
+      subtitle="בחרו שם, ערוץ ונקודת התחלה — התוכן נערך בעורך התבנית. אין פרסום ואין יצירת אוטומציה בשלב זה."
       icon="documents"
       footer={
         <>
@@ -845,12 +1021,13 @@ function NewTemplateDialog({
             </label>
             <label className="field">
               <span className="field-label">ערוץ</span>
-              <select className="field-input" value={channel} onChange={(e) => setChannel(e.target.value)}>
+              <select className="field-input" value={channel}
+                onChange={(e) => pickChannel(e.target.value as CommunicationChannel)}>
                 <option value="email">אימייל</option>
-                <option value="whatsapp" disabled>WhatsApp (בקרוב)</option>
+                <option value="whatsapp">WhatsApp</option>
                 <option value="sms" disabled>SMS (בקרוב)</option>
               </select>
-              <span className="field-hint">כרגע פעיל ערוץ האימייל בלבד.</span>
+              <span className="field-hint">הערוץ קובע את סוג העורך ואינו ניתן לשינוי אחרי היצירה.</span>
             </label>
           </div>
         </section>
@@ -858,7 +1035,7 @@ function NewTemplateDialog({
         <section className="card">
           <div className="card-hd">נקודת התחלה</div>
           <div className="card-bd flex flex-col gap-3">
-            {([["blank", "תבנית ריקה", "מתחילים ממבנה בסיסי"], ["duplicate", "שכפול תבנית קיימת", "מעתיקים תבנית ומתאימים"]] as const).map(([key, label, hint]) => (
+            {startingPoints.map(([key, label, hint]) => (
               <label key={key} className="gc-radio">
                 <input type="radio" name="create-mode" checked={mode === key} onChange={() => setMode(key)} />
                 <span>
@@ -867,12 +1044,24 @@ function NewTemplateDialog({
                 </span>
               </label>
             ))}
+            {mode === "gallery" && (
+              <label className="field">
+                <span className="field-label">דוגמה</span>
+                <select className="field-input" value={exampleId} onChange={(e) => setExampleId(e.target.value)}>
+                  <option value="">בחירת דוגמה</option>
+                  {gallery.map((example) => (
+                    <option key={example.id} value={example.id}>{example.name} — {example.description}</option>
+                  ))}
+                </select>
+                <span className="field-hint">הדוגמה נטענת לעורך וניתנת לשינוי מלא — כלום לא נשלח בלי פרסום.</span>
+              </label>
+            )}
             {mode === "duplicate" && (
               <label className="field">
                 <span className="field-label">תבנית מקור</span>
                 <select className="field-input" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-                  {templates.length === 0 && <option value="">אין תבניות לשכפול</option>}
-                  {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  <option value="">{channelTemplates.length === 0 ? "אין תבניות לשכפול בערוץ הזה" : "בחירת תבנית"}</option>
+                  {channelTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </label>
             )}

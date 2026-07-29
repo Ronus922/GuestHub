@@ -121,6 +121,7 @@ const ICONS = {
   printer: "print",
   download: "download",
   whatsapp: "chat",
+  code: "code",
   send: "send",
   save: "save",
   "list-alt": "list_alt",

@@ -5,9 +5,11 @@ import {
   failCommunicationEvent,
 } from "./outbox";
 import { prepareDeliveriesForEvent } from "./automation";
+import { runScheduledTriggerScan } from "./scheduler";
 import { drainDeliveries, type DeliveryTickResult } from "./delivery";
 
 export type CommunicationTickSummary = DeliveryTickResult & {
+  scheduledEmitted: number;
   eventsClaimed: number;
   eventsProcessed: number;
   eventsFailed: number;
@@ -21,6 +23,7 @@ export async function runCommunicationTick(
   log: (message: string) => void = () => {},
 ): Promise<CommunicationTickSummary> {
   const summary: CommunicationTickSummary = {
+    scheduledEmitted: 0,
     eventsClaimed: 0,
     eventsProcessed: 0,
     eventsFailed: 0,
@@ -34,6 +37,15 @@ export async function runCommunicationTick(
     ambiguous: 0,
     cancelled: 0,
   };
+
+  // Time-based triggers emit BEFORE the claim so their events ride this tick.
+  // A scan failure must not stop event processing — next tick retries the scan
+  // (emission is idempotent on the occurrence key).
+  try {
+    summary.scheduledEmitted = (await runScheduledTriggerScan(log)).emitted;
+  } catch (error) {
+    log(`communications scheduler scan failed (${error instanceof Error ? error.name : "error"})`);
+  }
 
   const events = await claimCommunicationEvents(workerId, 10);
   summary.eventsClaimed = events.length;

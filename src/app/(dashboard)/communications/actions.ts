@@ -6,10 +6,21 @@ import { z } from "zod";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
 import { writeAudit } from "@/lib/audit";
-import { structuredTemplateContentSchema } from "@/lib/communications/schemas";
-import { loadPreviewDatasets, propertyOnlyContext } from "@/lib/communications/automation";
-import { claimDeliveryById, deliverClaimedEmail } from "@/lib/communications/delivery";
-import { renderStructuredCommunication, renderTemplateString } from "@/lib/communications/renderer";
+import {
+  htmlTemplateContentSchema,
+  structuredTemplateContentSchema,
+  templateContentKind,
+  whatsappTemplateContentSchema,
+} from "@/lib/communications/schemas";
+import {
+  loadPreviewDatasets, propertyOnlyContext, resolveConnectedWhatsAppChannel,
+} from "@/lib/communications/automation";
+import { claimDeliveryById, deliverClaimedEmail, deliverClaimedWhatsApp } from "@/lib/communications/delivery";
+import {
+  renderTemplateContent, renderTemplateString, renderWhatsAppCommunication,
+} from "@/lib/communications/renderer";
+import { normalizePhone } from "@/lib/phone";
+import { TRIGGERS, TRIGGER_IDS } from "@/lib/communications/triggers";
 
 export type CommunicationActionResult = { success: true; id?: string; message?: string } | { success: false; error: string };
 
@@ -30,17 +41,54 @@ const STAGES = [
   "check_out", "post_stay", "cancellation", "payment", "other",
 ] as const;
 
-const templateInputSchema = z.object({
+// A DRAFT may be truly empty (blank name is still rejected, but subject and
+// content are not) — publish is where per-kind completeness is enforced.
+const emailTemplateInputSchema = z.object({
   id: z.string().uuid().optional(),
+  channel: z.literal("email"),
   name: z.string().trim().min(2).max(120),
-  subject: z.string().trim().min(2).max(240),
+  subject: z.string().trim().max(240),
   senderDisplayName: z.string().trim().max(120).optional(),
   replyTo: z.string().trim().email().or(z.literal("")).optional(),
   preheader: z.string().trim().max(240).optional(),
   category: z.enum(STAGES).default("reservation"),
   language: z.enum(["he", "en"]).default("he"),
-  content: structuredTemplateContentSchema,
+  content: z.union([structuredTemplateContentSchema, htmlTemplateContentSchema]),
 });
+
+const whatsappTemplateInputSchema = z.object({
+  id: z.string().uuid().optional(),
+  channel: z.literal("whatsapp"),
+  name: z.string().trim().min(2).max(120),
+  category: z.enum(STAGES).default("reservation"),
+  language: z.enum(["he", "en"]).default("he"),
+  content: whatsappTemplateContentSchema,
+});
+
+const templateInputSchema = z.discriminatedUnion("channel", [
+  emailTemplateInputSchema,
+  whatsappTemplateInputSchema,
+]);
+type TemplateInput = z.infer<typeof templateInputSchema>;
+
+/** The legacy `body` column is NOT NULL — fill it honestly per channel. */
+function legacyBodyFor(input: TemplateInput): string {
+  if (input.channel === "whatsapp") return input.content.text || input.name;
+  return input.subject || input.name;
+}
+
+/** Per-kind publish gate. Returns a Hebrew error, or null when publishable. */
+function publishBlocker(input: TemplateInput): string | null {
+  if (input.channel === "whatsapp") {
+    return input.content.text.trim() ? null : "התבנית ריקה — הוסיפו תוכן לפני פרסום";
+  }
+  if (input.subject.trim().length < 2) return "נדרש נושא לפרסום";
+  const kind = templateContentKind(input.content);
+  const empty = kind === "html"
+    ? !("html" in input.content && input.content.html.trim())
+    : !("blocks" in input.content && input.content.blocks.length);
+  return empty ? "התבנית ריקה — הוסיפו תוכן לפני פרסום" : null;
+}
 
 export async function saveTemplateDraftAction(raw: unknown): Promise<CommunicationActionResult> {
   try {
@@ -48,18 +96,27 @@ export async function saveTemplateDraftAction(raw: unknown): Promise<Communicati
     requirePermission(actor, "communications.templates.edit");
     const input = templateInputSchema.parse(raw);
     const id = input.id ?? randomUUID();
+    const isEmail = input.channel === "email";
+    const subject = isEmail ? input.subject || null : null;
+    // Channel AND content-kind are fixed at creation. The WHERE below makes a
+    // kind/channel swap look like "not found" instead of silently mutating —
+    // legacy block trees carry no `kind`, so NULL matches NULL.
+    const contentKind = "kind" in input.content ? input.content.kind : null;
     await sql.begin(async (tx) => {
       if (input.id) {
         const rows = await tx<{ id: string }[]>`
-          UPDATE guesthub.message_templates SET name = ${input.name}, subject = ${input.subject},
-            body = ${input.subject}, draft_content = ${sql.json(input.content as never)},
-            draft_sender_display_name = ${input.senderDisplayName || null},
-            draft_reply_to = ${input.replyTo || null},
-            draft_preheader = ${input.preheader || null},
+          UPDATE guesthub.message_templates SET name = ${input.name}, subject = ${subject},
+            body = ${legacyBodyFor(input)}, draft_content = ${sql.json(input.content as never)},
+            draft_sender_display_name = ${isEmail ? input.senderDisplayName || null : null},
+            draft_reply_to = ${isEmail ? input.replyTo || null : null},
+            draft_preheader = ${isEmail ? input.preheader || null : null},
             category = ${input.category}, language = ${input.language},
             lifecycle_state = CASE WHEN lifecycle_state = 'archived' THEN 'draft' ELSE lifecycle_state END,
             updated_by = ${actor.userId}, archived_at = NULL
-          WHERE id = ${input.id} AND tenant_id = ${actor.tenantId} RETURNING id`;
+          WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
+            AND channel = ${input.channel}
+            AND (draft_content->>'kind' IS NOT DISTINCT FROM ${contentKind})
+          RETURNING id`;
         if (!rows[0]) throw new AuthorizationError("התבנית לא נמצאה");
       } else {
         await tx`
@@ -67,15 +124,15 @@ export async function saveTemplateDraftAction(raw: unknown): Promise<Communicati
             (id, tenant_id, channel, slug, name, subject, body, category, language,
              lifecycle_state, draft_content, draft_sender_display_name, draft_reply_to,
              draft_preheader, is_active, is_system, created_by, updated_by)
-          VALUES (${id}, ${actor.tenantId}, 'email', ${`custom_${id}`}, ${input.name}, ${input.subject},
-            ${input.subject}, ${input.category}, ${input.language}, 'draft',
-            ${sql.json(input.content as never)}, ${input.senderDisplayName || null},
-            ${input.replyTo || null}, ${input.preheader || null},
+          VALUES (${id}, ${actor.tenantId}, ${input.channel}, ${`custom_${id}`}, ${input.name}, ${subject},
+            ${legacyBodyFor(input)}, ${input.category}, ${input.language}, 'draft',
+            ${sql.json(input.content as never)}, ${isEmail ? input.senderDisplayName || null : null},
+            ${isEmail ? input.replyTo || null : null}, ${isEmail ? input.preheader || null : null},
             true, false, ${actor.userId}, ${actor.userId})`;
       }
       await writeAudit(actor, { entityType: "message_template", entityId: id,
         action: input.id ? "template_draft_updated" : "template_created",
-        after: { name: input.name, channel: "email" } }, tx);
+        after: { name: input.name, channel: input.channel } }, tx);
     });
     refresh();
     return { success: true, id, message: "הטיוטה נשמרה" };
@@ -139,34 +196,50 @@ export async function restoreTemplateVersionAction(versionId: string): Promise<C
   } catch (error) { return fail(error); }
 }
 
+const publishInputSchema = z.discriminatedUnion("channel", [
+  emailTemplateInputSchema.extend({ id: z.string().uuid() }),
+  whatsappTemplateInputSchema.extend({ id: z.string().uuid() }),
+]);
+
 export async function publishTemplateAction(raw: unknown): Promise<CommunicationActionResult> {
   try {
     const actor = await getActor();
     requirePermission(actor, "communications.templates.publish");
-    const input = templateInputSchema.extend({ id: z.string().uuid() }).parse(raw);
+    const input = publishInputSchema.parse(raw);
+    const blocker = publishBlocker(input);
+    if (blocker) return { success: false, error: blocker };
+    const isEmail = input.channel === "email";
     let version = 1;
     await sql.begin(async (tx) => {
       const [locked] = await tx<{ id: string }[]>`
         SELECT id FROM guesthub.message_templates
-        WHERE id = ${input.id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+        WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
+          AND channel = ${input.channel} FOR UPDATE`;
       if (!locked) throw new AuthorizationError("התבנית לא נמצאה");
       const [row] = await tx<{ next_version: number }[]>`
         SELECT COALESCE(MAX(version_number), 0)::int + 1 AS next_version
         FROM guesthub.message_template_versions WHERE template_id = ${input.id}`;
       version = row.next_version;
+      // version.subject is NOT NULL — a WhatsApp version stores '' (no subject
+      // exists on that channel; no migration for a nullable column).
       const [published] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.message_template_versions
           (tenant_id, template_id, version_number, sender_display_name, reply_to_behavior,
            reply_to_address, subject, preheader, content, published_by)
-        VALUES (${actor.tenantId}, ${input.id}, ${version}, ${input.senderDisplayName || null},
-          ${input.replyTo ? "custom" : "channel_default"}, ${input.replyTo || null}, ${input.subject},
-          ${input.preheader || null}, ${sql.json(input.content as never)}, ${actor.userId}) RETURNING id`;
+        VALUES (${actor.tenantId}, ${input.id}, ${version},
+          ${isEmail ? input.senderDisplayName || null : null},
+          ${isEmail ? (input.replyTo ? "custom" : "channel_default") : "none"},
+          ${isEmail ? input.replyTo || null : null},
+          ${isEmail ? input.subject : ""},
+          ${isEmail ? input.preheader || null : null},
+          ${sql.json(input.content as never)}, ${actor.userId}) RETURNING id`;
       await tx`
-        UPDATE guesthub.message_templates SET name = ${input.name}, subject = ${input.subject},
-          body = ${input.subject}, draft_content = ${sql.json(input.content as never)},
-          draft_sender_display_name = ${input.senderDisplayName || null},
-          draft_reply_to = ${input.replyTo || null},
-          draft_preheader = ${input.preheader || null},
+        UPDATE guesthub.message_templates SET name = ${input.name},
+          subject = ${isEmail ? input.subject : null},
+          body = ${legacyBodyFor(input)}, draft_content = ${sql.json(input.content as never)},
+          draft_sender_display_name = ${isEmail ? input.senderDisplayName || null : null},
+          draft_reply_to = ${isEmail ? input.replyTo || null : null},
+          draft_preheader = ${isEmail ? input.preheader || null : null},
           category = ${input.category}, language = ${input.language},
           current_published_version_id = ${published.id}, lifecycle_state = 'published',
           is_active = true, archived_at = NULL, updated_by = ${actor.userId}
@@ -208,7 +281,7 @@ export async function archiveTemplateAction(templateId: string, restore = false)
   } catch (error) { return fail(error); }
 }
 
-const testSendSchema = templateInputSchema.extend({
+const testSendSchema = emailTemplateInputSchema.extend({
   to: z.string().trim().email(),
   reservationId: z.string().uuid().nullable().optional(),
 });
@@ -233,7 +306,7 @@ export async function sendTestEmailAction(raw: unknown): Promise<CommunicationAc
         ?? await propertyOnlyContext(actor.tenantId)
       : await propertyOnlyContext(actor.tenantId);
 
-    const rendered = renderStructuredCommunication(input.content, context, { preheader: input.preheader });
+    const rendered = renderTemplateContent(input.content, context, { preheader: input.preheader });
     const subject = renderTemplateString(input.subject, context);
     if (!rendered.html.trim() || !subject.value.trim()) {
       return { success: false, error: "התבנית ריקה — אין מה לשלוח" };
@@ -267,12 +340,80 @@ export async function sendTestEmailAction(raw: unknown): Promise<CommunicationAc
   } catch (error) { return fail(error); }
 }
 
+const testWhatsAppSchema = whatsappTemplateInputSchema.extend({
+  to: z.string().trim().min(8).max(30),
+  reservationId: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * "שליחת בדיקה" ל-WhatsApp — a real send through the real provider and the
+ * SAME claim → deliver path as the worker (delivery_type='test'), so the
+ * operator learns the true outcome. Refuses honestly when no provider is
+ * connected — never a fake success.
+ */
+export async function sendTestWhatsAppAction(raw: unknown): Promise<CommunicationActionResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "communications.test.send");
+    const input = testWhatsAppSchema.parse(raw);
+
+    const phone = normalizePhone(input.to);
+    if (!phone.valid) return { success: false, error: "מספר הטלפון אינו תקין" };
+    const waChannel = await resolveConnectedWhatsAppChannel(actor.tenantId);
+    if (!waChannel) return { success: false, error: "ערוץ WhatsApp טרם חובר — חברו ספק בהגדרות ההודעות" };
+
+    const context = input.reservationId
+      ? (await loadPreviewDatasets(actor.tenantId, 25)).find((d) => d.id === input.reservationId)?.context
+        ?? await propertyOnlyContext(actor.tenantId)
+      : await propertyOnlyContext(actor.tenantId);
+
+    const rendered = renderWhatsAppCommunication(input.content, context);
+    if (!rendered.text.trim()) return { success: false, error: "התבנית ריקה — אין מה לשלוח" };
+
+    const [row] = await sql<{ id: string }[]>`
+      INSERT INTO guesthub.outbound_messages
+        (tenant_id, channel, provider, template_id, to_address, subject, body,
+         status, rendered_html, rendered_plain_text, delivery_type, scheduled_at,
+         max_attempts, created_by)
+      VALUES (${actor.tenantId}, 'whatsapp', ${waChannel.provider}, ${input.id ?? null},
+        ${phone.e164}, NULL, ${rendered.text}, 'queued', '', ${rendered.text},
+        'test', now(), 1, ${actor.userId})
+      RETURNING id`;
+
+    const workerId = `test:${actor.userId}`;
+    const claimed = await claimDeliveryById(row.id, actor.tenantId, workerId);
+    if (!claimed) return { success: false, error: "לא ניתן להתחיל את שליחת הבדיקה" };
+    const outcome = await deliverClaimedWhatsApp(claimed, workerId);
+
+    await writeAudit(actor, { entityType: "message_template", entityId: input.id ?? null,
+      action: "template_test_sent", after: { outcome, deliveryId: row.id, channel: "whatsapp" } });
+
+    if (outcome === "sent") return { success: true, message: `הודעת הבדיקה נשלחה אל ${phone.e164}` };
+    const [failure] = await sql<{ error_detail: string | null }[]>`
+      SELECT error_detail FROM guesthub.outbound_messages WHERE id = ${row.id}`;
+    return { success: false, error: failure?.error_detail || "שליחת הבדיקה נכשלה" };
+  } catch (error) { return fail(error); }
+}
+
 const automationInputSchema = z.object({
   id: z.string().uuid().optional(), name: z.string().trim().min(2).max(120),
-  description: z.string().trim().max(500).optional(), triggerType: z.literal("reservation.confirmed"),
+  description: z.string().trim().max(500).optional(), triggerType: z.enum(TRIGGER_IDS),
+  channel: z.enum(["email", "whatsapp"]).default("email"),
   templateId: z.string().uuid(), sources: z.array(z.enum(["back_office", "direct_website"])).min(1),
+  offsetDays: z.number().int().min(0).max(60).optional(),
+  sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   activate: z.boolean().default(false),
 });
+
+/** Is the channel's provider connected + tested + holding a secret? */
+async function providerReady(tenantId: string, channel: "email" | "whatsapp"): Promise<boolean> {
+  if (channel === "whatsapp") return Boolean(await resolveConnectedWhatsAppChannel(tenantId));
+  const [row] = await sql<{ ready: boolean }[]>`
+    SELECT EXISTS(SELECT 1 FROM guesthub.messaging_provider_connections
+      WHERE tenant_id = ${tenantId} AND provider IN ('gmail','gmail_smtp')
+        AND status = 'connected' AND last_tested_at IS NOT NULL AND secret_ciphertext IS NOT NULL) AS ready`;
+  return Boolean(row?.ready);
+}
 
 export async function saveAutomationAction(raw: unknown): Promise<CommunicationActionResult> {
   try {
@@ -280,22 +421,42 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
     requirePermission(actor, "communications.automations.manage");
     const input = automationInputSchema.parse(raw);
     if (input.activate) requirePermission(actor, "communications.automations.activate");
+    const trigger = TRIGGERS[input.triggerType];
+    // The trigger's registry defaults own timing/conditions/exclusions — and the
+    // UPDATE rewrites them too, so switching confirmed→cancelled can never leave
+    // stale status=confirmed conditions behind.
+    const timing = trigger.kind === "scheduled"
+      ? {
+        mode: "scheduled" as const,
+        offsetDays: trigger.direction === "on" ? 0
+          : Math.min(trigger.offsetDays?.max ?? 60,
+            Math.max(trigger.offsetDays?.min ?? 0, input.offsetDays ?? trigger.offsetDays?.default ?? 0)),
+        sendTime: input.sendTime ?? trigger.defaultSendTime ?? "09:00",
+        quietHours: "bypass" as const,
+      }
+      : { mode: "immediate" as const, quietHours: "bypass" as const };
+    const conditions = trigger.defaultConditions;
+    const exclusions = trigger.defaultExclusions;
     const [template] = await sql<{ current_published_version_id: string | null }[]>`
       SELECT current_published_version_id FROM guesthub.message_templates
-      WHERE tenant_id = ${actor.tenantId} AND id = ${input.templateId} AND channel = 'email'`;
-    if (!template) return { success: false, error: "התבנית שנבחרה אינה זמינה" };
-    const [provider] = await sql<{ ready: boolean }[]>`
-      SELECT EXISTS(SELECT 1 FROM guesthub.messaging_provider_connections
-        WHERE tenant_id = ${actor.tenantId} AND provider IN ('gmail','gmail_smtp')
-          AND status = 'connected' AND last_tested_at IS NOT NULL AND secret_ciphertext IS NOT NULL) AS ready`;
-    const requestedActive = input.activate && Boolean(template.current_published_version_id) && Boolean(provider?.ready);
+      WHERE tenant_id = ${actor.tenantId} AND id = ${input.templateId} AND channel = ${input.channel}`;
+    if (!template) return { success: false, error: "התבנית שנבחרה אינה זמינה לערוץ הזה" };
+    const ready = await providerReady(actor.tenantId, input.channel);
+    const requestedActive = input.activate && Boolean(template.current_published_version_id) && ready;
     const status = input.activate ? (requestedActive ? "active" : "needs_attention") : "draft";
     const attention = input.activate && !requestedActive
-      ? (!template.current_published_version_id ? "נדרשת תבנית מפורסמת" : "ערוץ האימייל אינו מחובר או לא עבר בדיקה") : null;
+      ? (!template.current_published_version_id
+        ? "נדרשת תבנית מפורסמת"
+        : input.channel === "whatsapp" ? "ספק ה-WhatsApp אינו מחובר או לא נבדק" : "ערוץ האימייל אינו מחובר או לא עבר בדיקה")
+      : null;
     const id = input.id ?? randomUUID();
     const rows = input.id ? await sql<{ id: string }[]>`
       UPDATE guesthub.communication_automations SET name = ${input.name}, description = ${input.description || null},
-        trigger_type = ${input.triggerType}, source_filters = ${sql.json({ include: input.sources } as never)},
+        trigger_type = ${input.triggerType}, channel = ${input.channel},
+        timing_config = ${sql.json(timing as never)},
+        conditions = ${sql.json(conditions as never)},
+        exclusion_rules = ${sql.json(exclusions as never)},
+        source_filters = ${sql.json({ include: input.sources } as never)},
         template_id = ${input.templateId}, status = ${status}, attention_reason = ${attention}, updated_by = ${actor.userId}
       WHERE tenant_id = ${actor.tenantId} AND id = ${input.id} RETURNING id`
       : await sql<{ id: string }[]>`
@@ -305,19 +466,15 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
          channel, template_id, template_version_policy, duplicate_policy, manual_activation_enabled,
          created_by, updated_by)
       VALUES (${id}, ${actor.tenantId}, ${input.name}, ${input.description || null}, 'reservation', ${status}, ${attention},
-        ${input.triggerType}, ${sql.json({ mode: "immediate", quietHours: "bypass" } as never)},
+        ${input.triggerType}, ${sql.json(timing as never)},
         ${sql.json({ include: input.sources } as never)},
-        ${sql.json({ logic: "all", items: [
-          { field: "reservation.status", operator: "equals", value: "confirmed" },
-          { field: "guest.email", operator: "exists" },
-          { field: "reservation.is_test", operator: "equals", value: false },
-          { field: "reservation.is_cancelled", operator: "equals", value: false },
-        ] } as never)}, ${sql.json({ guestCommunicationOptOut: true, ota: true } as never)},
-        ${sql.json({ type: "primary_guest" } as never)}, 'email', ${input.templateId}, 'latest_published',
+        ${sql.json(conditions as never)}, ${sql.json(exclusions as never)},
+        ${sql.json({ type: "primary_guest" } as never)}, ${input.channel}, ${input.templateId}, 'latest_published',
         'once_per_event', true, ${actor.userId}, ${actor.userId}) RETURNING id`;
     if (!rows[0]) return { success: false, error: "האוטומציה לא נמצאה" };
     await writeAudit(actor, { entityType: "communication_automation", entityId: id,
-      action: input.id ? "automation_updated" : "automation_created", after: { status, triggerType: input.triggerType } });
+      action: input.id ? "automation_updated" : "automation_created",
+      after: { status, triggerType: input.triggerType, channel: input.channel } });
     refresh();
     return { success: true, id, message: requestedActive ? "האוטומציה הופעלה לאירועים חדשים בלבד" : attention ?? "האוטומציה נשמרה כטיוטה" };
   } catch (error) { return fail(error); }
@@ -329,21 +486,21 @@ export async function setAutomationStatusAction(idRaw: string, operation: "activ
     requirePermission(actor, operation === "delete" ? "communications.automations.manage" : "communications.automations.activate");
     const id = z.string().uuid().parse(idRaw);
     if (operation === "activate") {
-      const [ready] = await sql<{ template_ready: boolean; provider_ready: boolean }[]>`
-        SELECT (m.current_published_version_id IS NOT NULL
+      const [ready] = await sql<{ channel: "email" | "whatsapp"; template_ready: boolean }[]>`
+        SELECT a.channel,
+          (m.current_published_version_id IS NOT NULL
                 -- an archived template must not reach a guest through an automation
                 -- that was merely disabled and is now being switched back on
-                AND m.archived_at IS NULL AND m.lifecycle_state <> 'archived') AS template_ready,
-          EXISTS(SELECT 1 FROM guesthub.messaging_provider_connections p
-            WHERE p.tenant_id = a.tenant_id AND p.provider IN ('gmail','gmail_smtp')
-              AND p.status = 'connected' AND p.last_tested_at IS NOT NULL AND p.secret_ciphertext IS NOT NULL) AS provider_ready
+                AND m.archived_at IS NULL AND m.lifecycle_state <> 'archived') AS template_ready
         FROM guesthub.communication_automations a
         JOIN guesthub.message_templates m ON m.id = a.template_id AND m.tenant_id = a.tenant_id
         WHERE a.id = ${id} AND a.tenant_id = ${actor.tenantId}`;
       if (!ready) return { success: false, error: "האוטומציה לא נמצאה" };
-      if (!ready.template_ready || !ready.provider_ready)
-        return { success: false, error: !ready.template_ready
-          ? "יש לפרסם תבנית פעילה (לא בארכיון) לפני הפעלה"
+      if (!ready.template_ready)
+        return { success: false, error: "יש לפרסם תבנית פעילה (לא בארכיון) לפני הפעלה" };
+      if (!(await providerReady(actor.tenantId, ready.channel)))
+        return { success: false, error: ready.channel === "whatsapp"
+          ? "יש לחבר ולבדוק ספק WhatsApp לפני הפעלה"
           : "יש לחבר ולבדוק את ערוץ האימייל לפני הפעלה" };
     }
     let changed = false;

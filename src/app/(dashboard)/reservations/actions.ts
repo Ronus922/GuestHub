@@ -44,7 +44,8 @@ import { beds24BaseUrl } from "@/lib/channel/config";
 import { beds24BookingIdentity } from "@/lib/channel/beds24-normalize";
 import { asObj } from "@/lib/channel/channel-http";
 import { publishDomainEvent } from "@/lib/realtime/publish";
-import { enqueueReservationConfirmed } from "@/lib/communications/outbox";
+import { enqueueReservationCancelled, enqueueReservationConfirmed } from "@/lib/communications/outbox";
+import type { BookingOrigin } from "@/lib/communications/types";
 import {
   createReservationSchema,
   updateReservationSchema,
@@ -858,9 +859,10 @@ export async function cancelReservationAction(
     await sql.begin(async (tx) => {
       const [res] = await tx<
         { id: string; status: string; check_in: string; check_out: string;
-          channel_connection_id: string | null }[]
+          channel_connection_id: string | null; booking_origin: string }[]
       >`
-        SELECT id, status, check_in::text, check_out::text, channel_connection_id
+        SELECT id, status, check_in::text, check_out::text, channel_connection_id,
+               booking_origin
         FROM guesthub.reservations
         WHERE id = ${id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
       if (!res) throw new DomainError("הזמנה לא נמצאה");
@@ -897,6 +899,15 @@ export async function cancelReservationAction(
         before: { status: res.status },
         after: { status: "cancelled", reason },
       }, tx);
+
+      // guest-communications outbox — same transaction as the status change
+      await enqueueReservationCancelled(tx, {
+        tenantId: actor.tenantId,
+        reservationId: id,
+        bookingOrigin: res.booking_origin as BookingOrigin,
+        cancellationOrigin: "operator_direct_booking",
+        initiatedBy: actor.userId,
+      });
 
       // the cancelled stay releases its nights → republish those rooms/dates
       const rooms = await tx<{ room_id: string | null }[]>`

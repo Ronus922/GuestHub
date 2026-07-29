@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
-import { resolveEmailProvider } from "@/lib/messaging/providers";
+import { resolveEmailProvider, resolveWhatsAppProvider } from "@/lib/messaging/providers";
+import { normalizePhone } from "@/lib/phone";
 import type { SendResult } from "@/lib/messaging/types";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -8,6 +9,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export type ClaimedDelivery = {
   id: string;
   tenant_id: string;
+  channel: "email" | "whatsapp";
   to_address: string;
   subject: string | null;
   rendered_html: string | null;
@@ -37,6 +39,26 @@ export function classifyEmailFailure(result: SendResult): ErrorClass {
   }
   if (/gmail_429|rate|quota/.test(code)) return { category: "provider_rate_limit", permanent: false };
   if (/gmail_5\d\d|timeout|network|connection|socket|econn/.test(code)) {
+    return { category: "provider_transient", permanent: false };
+  }
+  return { category: "provider_unknown", permanent: false };
+}
+
+/**
+ * WhatsApp error taxonomy for the two live adapters. green-api emits
+ * `green_{httpStatus}` / `green_network`; Twilio emits `twilio_{errorCode}` /
+ * `twilio_network` (see src/lib/messaging/whatsapp/*).
+ * Permanent: auth/quota (green 401/403/466; twilio 20003/20005) and
+ * invalid/unsubscribed recipients (twilio 21211/21408/21610/21614/63016).
+ */
+export function classifyWhatsAppFailure(result: SendResult): ErrorClass {
+  const code = (result.errorCode ?? "unknown").toLowerCase();
+  if (/green_(401|403|466)/.test(code)) return { category: "provider_authentication", permanent: true };
+  if (/twilio_(20003|20005)/.test(code)) return { category: "provider_authentication", permanent: true };
+  if (/twilio_(21211|21408|21610|21614|63016)/.test(code)) return { category: "invalid_recipient", permanent: true };
+  if (/validation_failed/.test(code)) return { category: "invalid_recipient", permanent: true };
+  if (/green_429|twilio_20429|rate|quota/.test(code)) return { category: "provider_rate_limit", permanent: false };
+  if (/(green|twilio)_5\d\d|_network|timeout|connection|socket|econn/.test(code)) {
     return { category: "provider_transient", permanent: false };
   }
   return { category: "provider_unknown", permanent: false };
@@ -79,6 +101,9 @@ export async function recoverAmbiguousDeliveries(): Promise<number> {
  * Without this, a guest who phones to cancel still receives "ההזמנה שלכם אושרה".
  */
 export async function cancelIneligibleDeliveries(): Promise<number> {
+  // eligible_statuses is stamped per-trigger at preparation (default
+  // {confirmed} for legacy rows): a queued CANCELLATION message survives a
+  // status of 'cancelled', a pre-arrival reminder is killed by it.
   const rows = await sql<{ id: string }[]>`
     UPDATE guesthub.outbound_messages o
     SET status = 'cancelled', final_error_category = 'reservation_no_longer_eligible',
@@ -89,7 +114,7 @@ export async function cancelIneligibleDeliveries(): Promise<number> {
     WHERE o.status = 'queued' AND o.delivery_type = 'normal'
       AND o.reservation_id IS NOT NULL
       AND r.tenant_id = o.tenant_id AND r.id = o.reservation_id
-      AND (r.status <> 'confirmed' OR r.is_test OR r.guest_communication_opt_out)
+      AND (NOT (r.status = ANY(o.eligible_statuses)) OR r.is_test OR r.guest_communication_opt_out)
     RETURNING o.id`;
   return rows.length;
 }
@@ -101,7 +126,7 @@ export async function claimDeliveries(workerId: string, limit = 10): Promise<Cla
       WITH candidates AS (
         SELECT id
         FROM guesthub.outbound_messages
-        WHERE channel = 'email' AND status = 'queued'
+        WHERE channel IN ('email', 'whatsapp') AND status = 'queued'
           -- a test send is owned by the action that made it: it reports the real
           -- outcome to the operator inline, and must not be stolen mid-flight
           AND delivery_type <> 'test'
@@ -117,7 +142,7 @@ export async function claimDeliveries(workerId: string, limit = 10): Promise<Cla
           updated_at = now()
       FROM candidates c
       WHERE d.id = c.id
-      RETURNING d.id, d.tenant_id, d.to_address, d.subject,
+      RETURNING d.id, d.tenant_id, d.channel, d.to_address, d.subject,
                 d.rendered_html, d.rendered_plain_text, d.rendered_sender_name,
                 d.rendered_reply_to, d.attempt_count, d.max_attempts`;
     for (const row of rows) {
@@ -149,9 +174,9 @@ export async function claimDeliveryById(
           lease_owner = ${workerId}, lease_expires_at = now() + interval '5 minutes',
           updated_at = now()
       WHERE d.id = ${deliveryId} AND d.tenant_id = ${tenantId}
-        AND d.channel = 'email' AND d.status = 'queued'
+        AND d.channel IN ('email', 'whatsapp') AND d.status = 'queued'
         AND d.lease_owner IS NULL AND d.attempt_count < d.max_attempts
-      RETURNING d.id, d.tenant_id, d.to_address, d.subject,
+      RETURNING d.id, d.tenant_id, d.channel, d.to_address, d.subject,
                 d.rendered_html, d.rendered_plain_text, d.rendered_sender_name,
                 d.rendered_reply_to, d.attempt_count, d.max_attempts`;
     if (!row) return null;
@@ -168,7 +193,7 @@ async function markSent(
   delivery: ClaimedDelivery,
   workerId: string,
   result: SendResult,
-  providerId: "gmail" | "gmail_smtp",
+  providerId: "gmail" | "gmail_smtp" | "green_api" | "twilio",
 ): Promise<void> {
   await sql.begin(async (tx) => {
     await tx`
@@ -283,6 +308,83 @@ export async function deliverClaimedEmail(
   );
 }
 
+/**
+ * WhatsApp mirror of deliverClaimedEmail. Deliberately NOT the legacy
+ * sendWhatsAppMessage (service.ts): that path requires an Actor and writes its
+ * own outbound row + audit — this row already exists and carries the full
+ * render snapshot. The provider adapter is used directly; green-api returns
+ * status 'submitted' and the existing webhook upgrades it to delivered.
+ */
+export async function deliverClaimedWhatsApp(
+  delivery: ClaimedDelivery,
+  workerId: string,
+): Promise<"sent" | "retried" | "failed"> {
+  if (!normalizePhone(delivery.to_address).valid) {
+    return markFailed(delivery, workerId, { category: "invalid_recipient", permanent: true }, "מספר הטלפון אינו תקין", "invalid_recipient");
+  }
+  if (!delivery.rendered_plain_text?.trim()) {
+    return markFailed(delivery, workerId, { category: "invalid_render_snapshot", permanent: true }, "תמונת התוכן למשלוח אינה שלמה", "invalid_render_snapshot");
+  }
+  let resolved;
+  try {
+    resolved = await resolveWhatsAppProvider(delivery.tenant_id);
+  } catch {
+    return markFailed(
+      delivery,
+      workerId,
+      { category: "provider_configuration_invalid", permanent: true },
+      "לא ניתן לקרוא את הגדרת ספק ה-WhatsApp",
+      "provider_configuration_invalid",
+    );
+  }
+  if (!resolved) {
+    return markFailed(delivery, workerId, { category: "provider_not_configured", permanent: true }, "ספק ה-WhatsApp אינו מחובר", "provider_not_configured");
+  }
+  let result: SendResult;
+  try {
+    result = await resolved.provider.sendMessage({
+      to: delivery.to_address.trim(),
+      body: delivery.rendered_plain_text,
+    });
+  } catch {
+    return markFailed(
+      delivery,
+      workerId,
+      { category: "provider_transient", permanent: false },
+      "שירות ה-WhatsApp לא הגיב",
+      "provider_exception",
+    );
+  }
+  // green-api reports an invalid number as status 'validation_failed' (not
+  // 'failed') — it must never be recorded as a success.
+  if (result.status === "validation_failed") {
+    return markFailed(delivery, workerId, { category: "invalid_recipient", permanent: true },
+      result.errorDetail ?? "מספר הטלפון אינו תקין", "validation_failed");
+  }
+  if (result.status !== "failed") {
+    await markSent(delivery, workerId, result, resolved.id);
+    return "sent";
+  }
+  const classification = classifyWhatsAppFailure(result);
+  return markFailed(
+    delivery,
+    workerId,
+    classification,
+    result.errorDetail ?? "שליחת ה-WhatsApp נכשלה",
+    result.errorCode ?? null,
+  );
+}
+
+/** Route a claimed delivery to its channel's sender. */
+export function deliverClaimed(
+  delivery: ClaimedDelivery,
+  workerId: string,
+): Promise<"sent" | "retried" | "failed"> {
+  return delivery.channel === "whatsapp"
+    ? deliverClaimedWhatsApp(delivery, workerId)
+    : deliverClaimedEmail(delivery, workerId);
+}
+
 export async function drainDeliveries(workerId: string, limit = 10): Promise<DeliveryTickResult> {
   const summary: DeliveryTickResult = { claimed: 0, sent: 0, retried: 0, failed: 0, ambiguous: 0, cancelled: 0 };
   summary.ambiguous = await recoverAmbiguousDeliveries();
@@ -292,7 +394,7 @@ export async function drainDeliveries(workerId: string, limit = 10): Promise<Del
   const deliveries = await claimDeliveries(workerId, limit);
   summary.claimed = deliveries.length;
   for (const delivery of deliveries) {
-    const result = await deliverClaimedEmail(delivery, workerId);
+    const result = await deliverClaimed(delivery, workerId);
     summary[result] += 1;
   }
   return summary;
