@@ -12,7 +12,6 @@ import { calculateReservationPrice } from "@/lib/pricing/engine";
 import type { PricingQuoteResult } from "@/lib/pricing/types";
 import { getRatePlanDetail, listPlanOverrides, type PlanOverrideRow, type RatePlanDetail } from "@/lib/rate-plans/service";
 import {
-  losDiscountDeleteSchema, losDiscountSaveSchema,
   ratePlanArchiveSchema, ratePlanDeleteSchema, ratePlanDuplicateSchema,
   ratePlanOverridesSchema, ratePlanSaveSchema, simulateQuoteSchema,
 } from "@/lib/validation/rate-plans";
@@ -572,95 +571,3 @@ export async function simulateQuoteAction(
 }
 
 // ---- length-of-stay discount tiers (D104) ----
-// The commercial rule the ENGINE reads: a tier saved here changes what every
-// surface quotes (manual reservations, website, channels) from the next quote
-// on. Committed reservations are untouched — their snapshot stores the tier
-// that was applied at the time.
-export async function saveLosDiscountAction(raw: unknown): Promise<ActionResult> {
-  try {
-    const actor = await getActor();
-    requirePermission(actor, "rate_plans.edit");
-    const parsed = losDiscountSaveSchema.safeParse(raw);
-    if (!parsed.success)
-      return { success: false, error: parsed.error.issues[0]?.message ?? "קלט לא תקין" };
-    const t = parsed.data;
-
-    await sql.begin(async (tx) => {
-      // a plan-scoped tier must belong to THIS tenant's tenant-level plan
-      if (t.pricingPlanId) {
-        const [plan] = await tx<{ id: string }[]>`
-          SELECT id FROM guesthub.pricing_plans
-          WHERE id = ${t.pricingPlanId} AND tenant_id = ${actor!.tenantId}
-            AND sellable_unit_id IS NULL`;
-        if (!plan) fail("תוכנית התעריף לא נמצאה");
-      }
-      const before = t.id
-        ? (await tx`
-            SELECT * FROM guesthub.length_of_stay_discounts
-            WHERE id = ${t.id} AND tenant_id = ${actor!.tenantId} FOR UPDATE`)[0]
-        : null;
-      if (t.id && !before) fail("ההנחה לא נמצאה");
-
-      const row = {
-        tenant_id: actor!.tenantId,
-        pricing_plan_id: t.pricingPlanId,
-        name: t.name,
-        min_nights: t.minNights,
-        max_nights: t.maxNights,
-        discount_kind: t.kind,
-        discount_value: t.value,
-        is_active: t.isActive,
-      };
-      if (t.id) {
-        await tx`
-          UPDATE guesthub.length_of_stay_discounts SET ${tx(row)}, updated_at = now()
-          WHERE id = ${t.id} AND tenant_id = ${actor!.tenantId}`;
-      } else {
-        await tx`INSERT INTO guesthub.length_of_stay_discounts ${tx(row)}`;
-      }
-      await writeAudit(actor!, {
-        entityType: "length_of_stay_discount",
-        entityId: t.id ?? t.pricingPlanId ?? actor!.tenantId,
-        action: t.id ? "update" : "create",
-        before, after: row,
-      }, tx);
-
-      // the tier changes what the channels should be selling
-      if (t.pricingPlanId) await markPlansDirty(tx, actor!.tenantId, [t.pricingPlanId]);
-    });
-
-    revalidatePath("/rate-plans");
-    return { success: true };
-  } catch (e) {
-    return errorResult(e, "los-discount-save");
-  }
-}
-
-export async function deleteLosDiscountAction(raw: unknown): Promise<ActionResult> {
-  try {
-    const actor = await getActor();
-    requirePermission(actor, "rate_plans.edit");
-    const parsed = losDiscountDeleteSchema.safeParse(raw);
-    if (!parsed.success) return { success: false, error: "קלט לא תקין" };
-
-    await sql.begin(async (tx) => {
-      const [before] = await tx<{ id: string; pricing_plan_id: string | null }[]>`
-        SELECT id, pricing_plan_id FROM guesthub.length_of_stay_discounts
-        WHERE id = ${parsed.data.id} AND tenant_id = ${actor!.tenantId} FOR UPDATE`;
-      if (!before) fail("ההנחה לא נמצאה");
-      await tx`
-        DELETE FROM guesthub.length_of_stay_discounts
-        WHERE id = ${parsed.data.id} AND tenant_id = ${actor!.tenantId}`;
-      await writeAudit(actor!, {
-        entityType: "length_of_stay_discount", entityId: parsed.data.id,
-        action: "delete", before,
-      }, tx);
-      if (before!.pricing_plan_id) await markPlansDirty(tx, actor!.tenantId, [before!.pricing_plan_id]);
-    });
-
-    revalidatePath("/rate-plans");
-    return { success: true };
-  } catch (e) {
-    return errorResult(e, "los-discount-delete");
-  }
-}

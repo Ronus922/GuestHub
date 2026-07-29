@@ -73,6 +73,10 @@ export type PricingQuoteRequest = {
   // reservation edit/move: the stay's own reservation_rooms ids, excluded from
   // the availability conflict check exactly like the legacy path.
   excludeReservationRoomIds?: string[];
+  // Internal: the auto-selection pre-pass sets this on its recursive calls so
+  // a candidate evaluation prices exactly what it was told. Callers keep the
+  // default (selection ON for entries with no explicit ratePlanId).
+  disablePlanAutoSelect?: boolean;
 };
 
 // ---- stable machine-readable error codes (§15) ----
@@ -133,34 +137,22 @@ export type PriceSource =
 
 export type AdjustmentSource = "assignment_adjustment" | "plan_adjustment";
 
-// ---- length-of-stay discounts (D104) ----
-export type LosDiscountKind = "percent" | "amount_per_night" | "amount_per_stay";
-
-/** a configured tier (length_of_stay_discounts row), plan-scoped or tenant-default */
-export type LosDiscountTier = {
-  id: string;
-  pricingPlanId: string | null; // null = tenant default
-  name: string;
-  minNights: number;
-  maxNights: number | null;
-  kind: LosDiscountKind;
-  value: number;
-  isActive: boolean;
-};
-
-/** the tier a stay actually won, with the arithmetic that produced the amount */
-export type LosDiscountQuote = {
-  id: string;
-  name: string;
-  kind: LosDiscountKind;
-  value: number;
-  minNights: number;
-  maxNights: number | null;
-  scope: "rate_plan" | "tenant_default";
-  nights: number;
-  basis: number;  // accommodation subtotal the discount was computed on
-  amount: number; // money taken off (positive)
-  explanation: string; // the exact sentence every surface shows
+// ---- automatic plan selection by stay length ----
+// When a room entry names NO ratePlanId, the engine tries every active
+// tenant-level plan for the stay and keeps the eligible one with the lowest
+// total for the guest (base pricing competes too). An explicitly supplied
+// ratePlanId always wins — an operator's choice is never overridden. This is
+// SELECTION ONLY: no new discount arithmetic, no new tables.
+export type PlanAutoSelection = {
+  mode: "stay_length_auto";
+  /** the winning plan; null = base pricing stayed the best (or only) choice */
+  selectedPlanId: string | null;
+  candidatesConsidered: number;
+  /** totals compared, VAT-inclusive; null when that side had no valid price */
+  baseSubtotal: number | null;
+  selectedSubtotal: number | null;
+  /** the exact sentence operator surfaces show */
+  reason: string;
 };
 
 export type NightQuote = {
@@ -198,15 +190,16 @@ export type RoomQuote = {
   extraGuestPerStay: number; // one-time extra charge (0 when per_night)
   extraGuestTotal: number;
   nights: NightQuote[];
-  accommodationSubtotal: number; // resolved nightly prices only — the discount basis
-  losDiscount: LosDiscountQuote | null; // the length-of-stay tier this stay won
-  roomSubtotal: number; // gross (VAT-inclusive): night totals + per-stay extras − LOS discount
+  accommodationSubtotal: number; // resolved nightly prices only
+  roomSubtotal: number; // gross (VAT-inclusive): night totals + per-stay extras
   available: boolean; // physical availability verdict for this room
   valid: boolean;
   errors: PricingError[];
   warnings: PricingWarning[];
   priceSourcesUsed: PriceSource[];
   restrictionsEvaluated: string[]; // rule groups that actually ran
+  /** set when the engine picked the plan for this room (no explicit ratePlanId) */
+  planSelection: PlanAutoSelection | null;
 };
 
 export type PricingQuoteResult = {
@@ -222,7 +215,6 @@ export type PricingQuoteResult = {
   subtotalNet: number;
   vatRate: number;
   vatAmount: number;
-  losDiscountTotal: number; // sum of the per-room length-of-stay discounts (D104)
   totalGross: number;
   priceIncludesVat: true; // project canonical: totals are VAT-inclusive (D41)
   roundingPolicy: string;

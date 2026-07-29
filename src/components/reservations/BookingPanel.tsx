@@ -6,7 +6,6 @@ import { SidePanel } from "@/components/ui/SidePanel";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, type PaymentState } from "@/lib/inventory-rules";
-import type { LosDiscountQuote } from "@/lib/pricing/types";
 import { computeReservationTotals, type DiscountMode, type PriceMode } from "@/lib/pricing/totals";
 import {
   BalanceBoxes, CurrencySelector, DiscountControls, StayPriceModeControls, VatToggleRow,
@@ -121,7 +120,7 @@ export function BookingPanel({
   const [sourceId, setSourceId] = useState<string>("");
   const [stays, setStays] = useState<StayDraft[]>([]);
   const [quotes, setQuotes] = useState<
-    Record<string, { total: number; restriction: string | null; losDiscount: LosDiscountQuote | null }>
+    Record<string, { total: number; restriction: string | null; planSelection: import("@/lib/pricing/types").PlanAutoSelection | null }>
   >({});
   const [discountMode, setDiscountMode] = useState<DiscountMode>("none");
   const [discountValue, setDiscountValue] = useState(0);
@@ -242,7 +241,7 @@ export function BookingPanel({
         if (res.success && res.data) {
           setQuotes((q) => ({
             ...q,
-            [s.key]: { total: res.data!.total, restriction: res.data!.restriction, losDiscount: res.data!.losDiscount },
+            [s.key]: { total: res.data!.total, restriction: res.data!.restriction, planSelection: res.data!.planSelection },
           }));
         }
       });
@@ -265,10 +264,6 @@ export function BookingPanel({
   // length-of-stay discounts already sit INSIDE each line total (the engine
   // applies them); this is the summary figure, shown so the operator sees what
   // the stay length gave away (D104). A manual override is never auto-discounted.
-  const losDiscountTotal = stays.reduce(
-    (sum, s) => sum + (s.isManualRate ? 0 : quotes[s.key]?.losDiscount?.amount ?? 0),
-    0,
-  );
   // THE single totals source (D106) — the same pure module the server persists
   // with; the client only feeds it state and displays the result
   const totals = computeReservationTotals(
@@ -843,19 +838,11 @@ export function BookingPanel({
                             }
                             canPriceOverride={canPriceOverride}
                           />
-                          {/* which length-of-stay discount was chosen and how it
-                              was computed — the engine's own sentence (D104) */}
-                          {q?.losDiscount && mode === "auto" && (
+                          {/* which plan the engine picked for the stay length —
+                              its own sentence, only when the operator named none */}
+                          {q?.planSelection?.selectedPlanId && !s.ratePlanId && mode === "auto" && (
                             <p className="text-sm font-semibold text-status-success">
-                              {q.losDiscount.explanation}
-                            </p>
-                          )}
-                          {/* why there is NO tier on a weekly/monthly plan (D105) —
-                              silence here would read as a bug */}
-                          {!q?.losDiscount && mode === "auto" &&
-                            ratePlans.find((p) => p.id === s.ratePlanId)?.plan_kind === "derived_percentage" && (
-                            <p className="text-xs text-muted">
-                              תוכנית זו מגלמת הנחת שהייה — מדרגות הנחת LOS אינן נערמות עליה
+                              {q.planSelection.reason}
                             </p>
                           )}
                         </div>
@@ -864,12 +851,6 @@ export function BookingPanel({
                     </div>
                   );
                 })}
-                {losDiscountTotal > 0 && (
-                  <div className="bw-price-line">
-                    <span className="bw-plr">הנחת שהייה ארוכה</span>
-                    <b className="ltr-num text-status-success">−₪{losDiscountTotal.toLocaleString()}</b>
-                  </div>
-                )}
                 <div className="mt-4 border-t border-line pt-4">
                   <div className="mb-2 flex items-center gap-2 text-sm font-bold">
                     <Icon name="tags" size={16} />

@@ -580,81 +580,99 @@ try {
       });
       ok("engine: fingerprint stable for identical inputs, changes when a price source changes");
     }
-    // 28b. length-of-stay discounts (D104) — the commercial rule every surface
-    // inherits by pricing through this engine
+    // 28b. automatic plan selection by stay length — the LOS discount layer is
+    // GONE (migration 063): a stay's "discount" is the PLAN it is eligible
+    // for, chosen by the engine when the caller names none. B2: reverting the
+    // selection (null → always base) or resurrecting a second discount layer
+    // turns this red.
     {
-      const mkTier = (sp, planId, t) => sp`
-        INSERT INTO guesthub.length_of_stay_discounts
-          (tenant_id, pricing_plan_id, name, min_nights, max_nights, discount_kind, discount_value)
-        VALUES (${f.T}, ${planId}, ${t.name}, ${t.min}, ${t.max ?? null}, ${t.kind}, ${t.value})`;
-      const room = [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests }];
-      // the fixture stay is 2 nights: 500 + 520 = 1020 accommodation
+      const auto = [{ roomId: f.R1.roomId, ratePlanId: null, ...guests }];
+      // (a) the engine picks the cheapest ELIGIBLE assigned plan: NR (−10% →
+      // 918) beats base 1020, FLEX (tie loses), FIX50 (+50/night) and INDY
+      // (600/night). The total is the PLAN price — no second discount anywhere.
       await scenario(tx, async (sp) => {
-        await mkTier(sp, null, { name: "שבועי", min: 2, kind: "percent", value: 10 });
-        const r = (await quoteFor(sp, f, room)).rooms[0];
-        assert.equal(r.accommodationSubtotal, 1020);
-        assert.equal(r.losDiscount.amount, 102);
-        assert.equal(r.losDiscount.scope, "tenant_default");
-        assert.equal(r.roomSubtotal, 918);
-        // a stay SHORTER than the threshold wins nothing
-        const short = await calculateQuote(sp, {
-          tenantId: f.T, checkIn: IN, checkOut: "2027-03-11", rooms: room, source: "internal",
-        });
-        assert.equal(short.rooms[0].losDiscount, null);
-        assert.equal(short.rooms[0].roomSubtotal, 500);
+        const r = (await quoteFor(sp, f, auto)).rooms[0];
+        assert.equal(r.ratePlanId, f.NR, "the cheapest eligible plan is selected");
+        assert.equal(r.roomSubtotal, 918, "the total IS the plan price — nothing stacked on top");
+        assert.equal(r.planSelection.mode, "stay_length_auto");
+        assert.equal(r.planSelection.selectedPlanId, f.NR);
+        assert.equal(r.planSelection.baseSubtotal, 1020);
+        assert.equal(r.planSelection.selectedSubtotal, 918);
+        assert.ok(r.planSelection.reason.includes("נבחרה אוטומטית"));
+        assert.equal("losDiscount" in r, false, "no LOS field survives on a room quote");
       });
-      // most specific wins: 3+ beats 2+ …and a plan's own tiers replace the defaults
+      // (b) a plan whose defaultMinStay exceeds the stay is NOT selected
       await scenario(tx, async (sp) => {
-        await mkTier(sp, null, { name: "מ-2", min: 2, kind: "percent", value: 10 });
-        await mkTier(sp, null, { name: "מ-3", min: 3, kind: "percent", value: 25 });
-        assert.equal((await quoteFor(sp, f, room)).rooms[0].losDiscount.name, "מ-2");
-        await mkTier(sp, f.FLEX, { name: "תוכנית", min: 2, kind: "amount_per_night", value: 50 });
-        const r = (await quoteFor(sp, f, room)).rooms[0];
-        assert.equal(r.losDiscount.name, "תוכנית");
-        assert.equal(r.losDiscount.scope, "rate_plan");
-        assert.equal(r.losDiscount.amount, 100); // 50 × 2 nights
-        assert.equal(r.roomSubtotal, 920);
+        await sp`UPDATE guesthub.pricing_plans SET default_min_stay = 7 WHERE id = ${f.NR}`;
+        const r = (await quoteFor(sp, f, auto)).rooms[0];
+        assert.equal(r.ratePlanId, null, "a 2-night stay must not select a min-7 plan");
+        assert.equal(r.roomSubtotal, 1020, "base price stands");
+        assert.equal(r.planSelection.selectedPlanId, null);
       });
-      // the basis is ACCOMMODATION only — extra-guest money is never discounted
+      // (c) an explicitly supplied ratePlanId is never overridden — even when
+      // a cheaper plan exists for the same stay
       await scenario(tx, async (sp) => {
-        await mkTier(sp, null, { name: "עשרה", min: 2, kind: "percent", value: 10 });
-        const r = (await quoteFor(sp, f, [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, adults: 3, children: 0, infants: 0 }])).rooms[0];
-        assert.equal(r.extraGuestTotal, 200);
-        assert.equal(r.accommodationSubtotal, 1020);
-        assert.equal(r.losDiscount.amount, 102); // 10% of 1020, NOT of 1220
-        assert.equal(r.roomSubtotal, 1118);
+        const r = (await quoteFor(sp, f, [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests }])).rooms[0];
+        assert.equal(r.ratePlanId, f.FLEX, "the operator's plan choice stands (NR is cheaper and assigned)");
+        assert.equal(r.roomSubtotal, 1020);
+        assert.equal(r.planSelection, null, "no selection ran for an explicit plan");
       });
-      // an authorized manual override (§13) is the operator's final price
+      // (d) a manual rate is the operator's final word — no selection either
       await scenario(tx, async (sp) => {
-        await mkTier(sp, null, { name: "עשרה", min: 2, kind: "percent", value: 10 });
-        const r = (await quoteFor(sp, f, [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, ...guests, manualRatePerNight: 300 }])).rooms[0];
-        assert.equal(r.losDiscount, null);
+        const r = (await quoteFor(sp, f, [{ roomId: f.R1.roomId, ratePlanId: null, ...guests, manualRatePerNight: 300 }])).rooms[0];
+        assert.equal(r.ratePlanId, null);
         assert.equal(r.roomSubtotal, 600);
+        assert.equal(r.planSelection, null);
       });
-      // a discount can never exceed what it discounts
+      // (e) an ineligible-because-inactive plan never wins
       await scenario(tx, async (sp) => {
-        await mkTier(sp, null, { name: "ענק", min: 1, kind: "amount_per_stay", value: 99999 });
-        const r = (await quoteFor(sp, f, room)).rooms[0];
-        assert.equal(r.losDiscount.amount, 1020);
-        assert.equal(r.roomSubtotal, 0);
+        await sp`UPDATE guesthub.pricing_plans SET is_active = false WHERE id = ${f.NR}`;
+        const r = (await quoteFor(sp, f, auto)).rooms[0];
+        assert.equal(r.ratePlanId, null);
+        assert.equal(r.roomSubtotal, 1020);
       });
-      // D105: a derived_percentage plan IS length-of-stay pricing — tenant
-      // default tiers never stack on it; only its own explicit tier applies
+      ok("engine: stay-length plan selection — cheapest eligible wins, min-stay/inactive excluded, explicit plan and manual rate never overridden, no second discount");
+    }
+    // 28c. the 30-night monthly scenario, end to end: a monthly plan
+    // (defaultMinStay 28, −30%) assigned to the room is selected for a
+    // 30-night stay and PRICES it — one plan price, no second discount layer.
+    {
       await scenario(tx, async (sp) => {
-        await mkTier(sp, null, { name: "דיפולט", min: 2, kind: "percent", value: 10 });
-        const nrRoom = [{ roomId: f.R1.roomId, ratePlanId: f.NR, ...guests }];
-        const blocked = (await quoteFor(sp, f, nrRoom)).rooms[0];
-        assert.equal(blocked.losDiscount, null, "default tier must NOT stack on derived_percentage");
-        assert.equal(blocked.roomSubtotal, 918); // −10% plan price, nothing more
-        await mkTier(sp, f.NR, { name: "מדרגת התוכנית", min: 2, kind: "percent", value: 5 });
-        const own = (await quoteFor(sp, f, nrRoom)).rooms[0];
-        assert.equal(own.losDiscount.name, "מדרגת התוכנית");
-        assert.equal(own.losDiscount.scope, "rate_plan");
-        // …and the base layer / base-kind plans still inherit the default
-        const flexAgain = (await quoteFor(sp, f, room)).rooms[0];
-        assert.equal(flexAgain.losDiscount.name, "דיפולט");
+        const [monthly] = await sp`
+          INSERT INTO guesthub.pricing_plans
+            (tenant_id, sellable_unit_id, code, name, plan_kind, parent_plan_id,
+             adjustment_value, default_min_stay, is_active)
+          VALUES (${f.T}, NULL, 'monthly', 'חודשי', 'derived_percentage', ${f.FLEX}, -30, 28, true)
+          RETURNING id`;
+        await sp`
+          INSERT INTO guesthub.pricing_plan_units (tenant_id, pricing_plan_id, sellable_unit_id, is_active)
+          VALUES (${f.T}, ${monthly.id}, ${f.R1.suId}, true)`;
+        // 30 nights of base rates at 500 (03-10 and 03-11 already exist)
+        for (let i = 2; i < 30; i++) {
+          const d = new Date(Date.UTC(2027, 2, 10 + i)).toISOString().slice(0, 10);
+          await sp`
+            INSERT INTO guesthub.pricing_plan_rates (tenant_id, sellable_unit_id, pricing_plan_id, date, price)
+            VALUES (${f.T}, ${f.R1.suId}, ${f.R1.basePlanId}, ${d}, 500)`;
+        }
+        const q = await calculateQuote(sp, {
+          tenantId: f.T, checkIn: IN, checkOut: "2027-04-09",
+          rooms: [{ roomId: f.R1.roomId, ratePlanId: null, ...guests }], source: "internal",
+        });
+        const r = q.rooms[0];
+        // base 29×500 + 520 = 15,020 → NR −10% = 13,518 → monthly −30% = 10,514
+        assert.equal(r.ratePlanId, monthly.id, "the monthly plan is selected for 30 nights");
+        assert.equal(r.roomSubtotal, 10514, "the total is the MONTHLY PLAN price exactly — no extra discount");
+        assert.equal(r.planSelection.selectedPlanId, monthly.id);
+        // …and a 3-night stay never selects the min-28 plan
+        await sp`UPDATE guesthub.pricing_plans SET default_min_stay = 7 WHERE id = ${monthly.id}`;
+        const short = await calculateQuote(sp, {
+          tenantId: f.T, checkIn: IN, checkOut: "2027-03-13",
+          rooms: [{ roomId: f.R1.roomId, ratePlanId: null, ...guests }], source: "internal",
+        });
+        assert.notEqual(short.rooms[0].ratePlanId, monthly.id,
+          "a 3-night stay must not select a plan whose minimum is 7");
       });
-      ok("engine: length-of-stay discount — most specific tier, plan over default, accommodation-only basis, manual override exempt, capped, derived_percentage never inherits defaults (D105)");
+      ok("engine: 30 nights select the monthly plan and price FROM it; 3 nights never select a min-7 plan");
     }
     // 29. tenant isolation
     {
@@ -713,6 +731,24 @@ try {
   if (!(e instanceof Rollback)) throw e;
 } finally {
   await sql.end();
+}
+
+// ---- the LOS mechanism must stay dead (migration 063) ----
+// B2: resurrecting any LOS code path in src/ turns this red. Committed
+// reservations keep whatever their stored snapshots say — that is data, not a
+// code path, and it is deliberately not matched here.
+{
+  const { execSync: sh } = await import("node:child_process");
+  let hits = "";
+  try {
+    hits = sh(
+      "grep -rn 'length_of_stay\\|losDiscount\\|LosDiscount\\|resolveLosDiscount' src/",
+      { cwd: ROOT, encoding: "utf8" },
+    );
+  } catch { /* grep exit 1 = no matches = exactly what we want */ }
+  assert.equal(hits.trim(), "",
+    `LOS code paths survive in src/ — the mechanism was removed by migration 063:\n${hits}`);
+  ok("no length-of-stay code path survives anywhere under src/");
 }
 
 console.log(`\nALL ${n} PRICING-ENGINE CHECKS PASSED (nothing committed)`);

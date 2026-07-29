@@ -316,12 +316,6 @@ function RoomCard({ room, fmt }: { room: RoomQuote; fmt: Intl.NumberFormat }) {
 
       {room.nights.length > 0 ? <NightsTable nights={room.nights} fmt={fmt} /> : null}
 
-      {/* which length-of-stay tier won and how it was computed (D104) — the
-          engine's own sentence, identical on every surface */}
-      {room.losDiscount ? (
-        <p className="text-[14px] font-semibold text-status-success">{room.losDiscount.explanation}</p>
-      ) : null}
-
       <p className="text-[14px] font-semibold text-ink">
         סה&quot;כ לחדר: <Money fmt={fmt} v={room.roomSubtotal} />
       </p>

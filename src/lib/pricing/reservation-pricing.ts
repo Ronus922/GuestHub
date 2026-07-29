@@ -5,7 +5,7 @@ import { resolveStayPrice } from "@/lib/rates/rules";
 import { calculateReservationPrice } from "./engine";
 import { computeReservationTotals, type PriceMode } from "./totals";
 import type {
-  LosDiscountQuote, PricingError, PricingErrorCode, PricingQuoteResult, QuoteSource, RoomQuote,
+  PlanAutoSelection, PricingError, PricingErrorCode, PricingQuoteResult, QuoteSource, RoomQuote,
 } from "./types";
 
 // ============================================================
@@ -101,10 +101,11 @@ export type StayPricingSnapshot = {
     nightTotal: number | null;
   }>;
   accommodationSubtotal: number;
+  /** how the plan was chosen when the caller named none (selection provenance) */
+  planSelection: PlanAutoSelection | null;
   // the length-of-stay tier this stay won, with the arithmetic that produced it
   // (D104) — stored, never recomputed: a tier edited next month must not change
   // how a committed reservation explains its own price
-  losDiscount: LosDiscountQuote | null;
   roomSubtotal: number;
   priceSourcesUsed: string[];
   // pre-058 rows: { ratePerNight, appliedBy } — mode/total absent means a
@@ -225,7 +226,7 @@ export function buildStaySnapshot(
       nightTotal: n.nightTotal,
     })),
     accommodationSubtotal: rq.accommodationSubtotal,
-    losDiscount: rq.losDiscount,
+    planSelection: rq.planSelection,
     roomSubtotal: rq.roomSubtotal,
     priceSourcesUsed: rq.priceSourcesUsed,
     manualOverride:

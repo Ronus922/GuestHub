@@ -68,4 +68,5 @@
 060_template_content_kinds.sql
 061_communication_triggers.sql
 062_channel_failure_evidence.sql
+063_drop_length_of_stay_discounts.sql
 064_schema_migrations.sql
