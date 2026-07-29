@@ -8,7 +8,8 @@ import { beds24BaseUrl } from "./config";
 import { enqueueChannelJob } from "./queue";
 import { encryptSecret, decryptSecret, secretHint, channelSecretsConfigured } from "./crypto";
 import { beds24Request, beds24AuthRequest, beds24Fail, mapErrorStatus } from "./beds24-http";
-import type { Beds24ApiErrorCategory, Beds24ApiFailure } from "./beds24-http";
+import type { Beds24ApiErrorCategory, Beds24ApiFailure, RawResponseEvidence } from "./beds24-http";
+import { logChannelError } from "./queue";
 import { asObj, asStr, asInt } from "./channel-http";
 import {
   listBeds24Properties,
@@ -122,6 +123,8 @@ type AccessTokenResult =
       ok: false;
       error: string;
       category: Beds24ApiErrorCategory | "not_configured" | "undecryptable";
+      /** D112 — the auth response as received; absent when no HTTP happened */
+      raw?: RawResponseEvidence;
     };
 
 async function getBeds24AccessToken(row: Beds24Row): Promise<AccessTokenResult> {
@@ -162,16 +165,17 @@ async function getBeds24AccessToken(row: Beds24Row): Promise<AccessTokenResult> 
     path: "/authentication/token",
     authHeader: { name: "refreshToken", value: refreshToken },
   });
-  if ("ok" in r) return { ok: false, error: r.message, category: r.category };
+  // D112 — the auth body explains WHY the mint was rejected; it rides on `raw`
+  if ("ok" in r) return { ok: false, error: r.message, category: r.category, ...(r.raw ? { raw: r.raw } : {}) };
   if (r.status !== 200) {
-    const f = beds24Fail(mapErrorStatus(r.status), r.status);
-    return { ok: false, error: f.message, category: f.category };
+    const f = beds24Fail(mapErrorStatus(r.status), r.status, r.raw);
+    return { ok: false, error: f.message, category: f.category, raw: r.raw };
   }
   const body = asObj(r.body);
   const token = asStr(body?.token);
   if (!token) {
-    const f = beds24Fail("bad_response", r.status);
-    return { ok: false, error: f.message, category: f.category };
+    const f = beds24Fail("bad_response", r.status, r.raw);
+    return { ok: false, error: f.message, category: f.category, raw: r.raw };
   }
   const expiresInS = asInt(body?.expiresIn) ?? TOKEN_DEFAULT_TTL_S;
   const expiresAt = new Date(Date.now() + expiresInS * 1000 - TOKEN_EXPIRY_SAFETY_MS);
@@ -345,12 +349,27 @@ export async function setupBeds24Action(input: { inviteCode: string }): Promise<
       path: "/authentication/setup",
       authHeader: { name: "code", value: inviteCode },
     });
-    if ("ok" in r) return apiFail(r);
-    if (r.status !== 200) return apiFail(beds24Fail(mapErrorStatus(r.status), r.status));
+    // D112 — a failed invite-code exchange persists its evidence: the setup
+    // response says WHY (expired code, already-used code) and diagnosing it
+    // must never require re-running the exchange.
+    const setupFail = async (f: Beds24ApiFailure) => {
+      await logChannelError(sql, {
+        tenantId: actor.tenantId,
+        code: "setup_failed",
+        message: f.message,
+        httpStatus: f.raw?.httpStatus ?? null,
+        responseBody: f.raw?.body ?? null,
+        responseTruncated: f.raw?.truncated ?? false,
+        responseReceivedAt: f.raw?.receivedAt ?? null,
+      });
+      return apiFail(f);
+    };
+    if ("ok" in r) return setupFail(r);
+    if (r.status !== 200) return setupFail(beds24Fail(mapErrorStatus(r.status), r.status, r.raw));
     const body = asObj(r.body);
     const token = asStr(body?.token);
     const refreshToken = asStr(body?.refreshToken);
-    if (!token || !refreshToken) return apiFail(beds24Fail("bad_response", r.status));
+    if (!token || !refreshToken) return setupFail(beds24Fail("bad_response", r.status, r.raw));
     const expiresInS = asInt(body?.expiresIn) ?? TOKEN_DEFAULT_TTL_S;
     const accessExpiresAt = new Date(Date.now() + expiresInS * 1000 - TOKEN_EXPIRY_SAFETY_MS);
 
@@ -406,6 +425,8 @@ type ProbeResult =
       ok: false;
       error: string;
       category: Beds24ApiErrorCategory | "not_configured" | "undecryptable";
+      /** D112 — the response that failed the probe, verbatim */
+      raw?: RawResponseEvidence;
     };
 
 async function recordProbeVerdict(tenantId: string, r: ProbeResult): Promise<void> {
@@ -425,6 +446,26 @@ async function recordProbeVerdict(tenantId: string, r: ProbeResult): Promise<voi
         last_test_failed_at = now(), last_test_error_code = ${r.category},
         last_error = ${r.error}, updated_at = now()
     WHERE tenant_id = ${tenantId} AND provider = 'beds24' AND environment = ${BEDS24_ENV}`;
+  // D112 — the probe's raw evidence lands on the error record too (last_error
+  // is a bare message). One unresolved row per code, like the read-back alert:
+  // repeated "בדוק חיבור" clicks against the same broken credential must not
+  // bury the /channels error list.
+  const [existing] = await sql<{ x: number }[]>`
+    SELECT 1 AS x FROM guesthub.channel_sync_errors
+    WHERE tenant_id = ${tenantId} AND error_code = ${`probe_${r.category}`}
+      AND resolved_at IS NULL
+    LIMIT 1`;
+  if (!existing) {
+    await logChannelError(sql, {
+      tenantId,
+      code: `probe_${r.category}`,
+      message: r.error,
+      httpStatus: r.raw?.httpStatus ?? null,
+      responseBody: r.raw?.body ?? null,
+      responseTruncated: r.raw?.truncated ?? false,
+      responseReceivedAt: r.raw?.receivedAt ?? null,
+    });
+  }
 }
 
 async function probeStoredBeds24Credential(tenantId: string): Promise<ProbeResult> {
@@ -440,7 +481,10 @@ async function probeStoredBeds24Credential(tenantId: string): Promise<ProbeResul
 
   const access = await getBeds24AccessToken(row);
   if (!access.ok) {
-    const r: ProbeResult = { ok: false, error: access.error, category: access.category };
+    const r: ProbeResult = {
+      ok: false, error: access.error, category: access.category,
+      ...(access.raw ? { raw: access.raw } : {}),
+    };
     await recordProbeVerdict(tenantId, r);
     return r;
   }
@@ -450,6 +494,7 @@ async function probeStoredBeds24Credential(tenantId: string): Promise<ProbeResul
     ok: false,
     error: f.message,
     category: f.category,
+    ...(f.raw ? { raw: f.raw } : {}),
   });
 
   // 1) token validity/scopes — proves the credential authenticates at all
@@ -465,7 +510,7 @@ async function probeStoredBeds24Credential(tenantId: string): Promise<ProbeResul
     return r;
   }
   if (details.status !== 200) {
-    const r = fromFailure(beds24Fail(mapErrorStatus(details.status), details.status));
+    const r = fromFailure(beds24Fail(mapErrorStatus(details.status), details.status, details.raw));
     await recordProbeVerdict(tenantId, r);
     return r;
   }
@@ -483,14 +528,14 @@ async function probeStoredBeds24Credential(tenantId: string): Promise<ProbeResul
     return r;
   }
   if (props.status !== 200) {
-    const r = fromFailure(beds24Fail(mapErrorStatus(props.status), props.status));
+    const r = fromFailure(beds24Fail(mapErrorStatus(props.status), props.status, props.raw));
     await recordProbeVerdict(tenantId, r);
     return r;
   }
 
   const { ok, properties } = extractBeds24PropertyList(props.body);
   if (!ok) {
-    const r = fromFailure(beds24Fail("bad_response", props.status));
+    const r = fromFailure(beds24Fail("bad_response", props.status, props.raw));
     await recordProbeVerdict(tenantId, r);
     return r;
   }

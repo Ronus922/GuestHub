@@ -54,9 +54,12 @@ export async function getChannelStatusAction(): Promise<Result<unknown>> {
           WHERE tenant_id = ${actor.tenantId} AND status = 'pending') AS dirty_ranges,
         (SELECT COUNT(*)::int FROM guesthub.channel_booking_revisions
           WHERE tenant_id = ${actor.tenantId} AND import_status = 'quarantined') AS quarantined_revisions`;
+    // D112 — the raw provider evidence (verbatim status + body) is part of the
+    // operator's error surface, not just the mapped category.
     const errors = await sql`
       SELECT id, connection_id, room_type_id, date_from, date_to,
-             error_code, error_message, created_at
+             error_code, error_message, http_status, response_body,
+             response_truncated, created_at
       FROM guesthub.channel_sync_errors
       WHERE tenant_id = ${actor.tenantId} AND resolved_at IS NULL
       ORDER BY created_at DESC LIMIT 10`;

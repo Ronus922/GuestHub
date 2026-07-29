@@ -15,10 +15,12 @@
 //   · any warnings/errors-shaped array on an otherwise-successful 2xx body ⇒
 //     `partial`, never clean.
 //
-// LEAK POLICY. Only
-// whitelisted, structural fields ever leave this module: the numeric roomId a
-// warning concerns and the NAMES of the fields Beds24 objected to. No token,
-// no headers, no raw upstream body, no rejected values.
+// LEAK POLICY (revised by D112). The token and headers still never leave this
+// module. The response BODY does: a failure must carry its own evidence — the
+// verbatim HTTP status and raw body ride along on `raw` and are persisted on
+// the error record, and the provider's own message text (e.g. "invalid dates")
+// is surfaced to internal operator screens. Before D112 the body was mapped to
+// a category and discarded, and diagnosis required re-running the failure.
 //
 // CREDITS: Beds24 bills per request by credits. The whole 5-minute credit
 // meter (remaining + resets-in + this call's cost — bare header numbers
@@ -28,8 +30,8 @@
 // ============================================================
 
 import {
-  beds24Request, beds24Fail, mapErrorStatus,
-  type Beds24ApiFailure,
+  beds24Request, beds24Fail, mapErrorStatus, rawEvidenceOf,
+  type Beds24ApiFailure, type RawResponseEvidence,
 } from "./beds24-http";
 import { EMPTY_BEDS24_CREDITS, type Beds24CreditSnapshot } from "./beds24-credits";
 import { asObj, asStr, asInt } from "./channel-http";
@@ -38,18 +40,27 @@ import {
   type Beds24CalendarRequest,
 } from "./beds24-ari-payloads";
 
-/** A structurally-extracted warning. Carries no upstream text and no values. */
+/** A structurally-extracted warning: the room it concerns, the NAMES of the
+ *  rejected fields, and (D112) the provider's own message text — shown on
+ *  internal operator screens, never on guest-facing surfaces. */
 export type SafeBeds24Warning = {
   roomId: number | null;
   /** the names of the rejected fields, e.g. ["price1","minStay"] */
   fields: string[];
+  /** the provider's own message texts, e.g. ["invalid dates"] (bounded) */
+  messages: string[];
 };
 
 // No task system exists at Beds24, so a clean success carries
 // no ids — the evidence trail records request counts + bytes + credits instead.
 export type Beds24CalendarPushResult =
   | { ok: true; partial: false; credits: Beds24CreditSnapshot }
-  | { ok: true; partial: true; warnings: SafeBeds24Warning[]; credits: Beds24CreditSnapshot }
+  | {
+      ok: true; partial: true; warnings: SafeBeds24Warning[];
+      credits: Beds24CreditSnapshot;
+      /** D112 — the verbatim response that carried the warnings */
+      raw: RawResponseEvidence;
+    }
   | (Beds24ApiFailure & { credits: Beds24CreditSnapshot });
 
 export type Beds24PushDeps = {
@@ -57,14 +68,17 @@ export type Beds24PushDeps = {
   timeoutMs?: number;
 };
 
-// Defensive structural extraction over the per-item envelope. Keeps ONLY the
-// numeric roomId and the field names; upstream text and every echoed value is
-// discarded here and never persisted.
+// Defensive structural extraction over the per-item envelope: the numeric
+// roomId, the field names, and (D112) the provider's own `message` texts —
+// bounded, because the whole verbatim body already survives on `raw`.
 type EnvelopeVerdict = {
   /** true when ANY item (or the root) says success:false */
   anyFailure: boolean;
   warnings: SafeBeds24Warning[];
 };
+
+const MAX_PROVIDER_MESSAGES = 5;
+const MAX_PROVIDER_MESSAGE_CHARS = 200;
 
 function extractFieldNames(v: unknown): string[] {
   if (Array.isArray(v)) {
@@ -80,6 +94,22 @@ function extractFieldNames(v: unknown): string[] {
   return o ? Object.keys(o).sort() : [];
 }
 
+// D112 — the provider's own words. In today's incident the word that mattered
+// ("invalid dates") sat exactly here while the operator saw only the action
+// name. Distinct, order-preserving, bounded.
+function extractMessages(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    const msg = asStr(asObj(item)?.message);
+    if (!msg) continue;
+    const capped = msg.slice(0, MAX_PROVIDER_MESSAGE_CHARS);
+    if (!out.includes(capped)) out.push(capped);
+    if (out.length >= MAX_PROVIDER_MESSAGES) break;
+  }
+  return out;
+}
+
 function inspectEnvelope(body: unknown): EnvelopeVerdict {
   const verdict: EnvelopeVerdict = { anyFailure: false, warnings: [] };
   const items: unknown[] = Array.isArray(body) ? body : body !== undefined ? [body] : [];
@@ -91,10 +121,11 @@ function inspectEnvelope(body: unknown): EnvelopeVerdict {
       const arr = o[key];
       if (!Array.isArray(arr) || arr.length === 0) continue;
       // errors alongside success:false are covered by anyFailure; anything
-      // else still marks the push partial — with no leak.
+      // else still marks the push partial.
       verdict.warnings.push({
         roomId: asInt(o.roomId),
         fields: extractFieldNames(arr),
+        messages: extractMessages(arr),
       });
     }
   }
@@ -111,6 +142,18 @@ function inspectEnvelope(body: unknown): EnvelopeVerdict {
  */
 function withFields(message: string, warnings: SafeBeds24Warning[]): string {
   return warnings.length === 0 ? message : `${message} — ${summarizeBeds24Warnings(warnings)}`;
+}
+
+/** The distinct provider message texts across a warning set, bounded. */
+function providerTexts(warnings: SafeBeds24Warning[]): string[] {
+  const out: string[] = [];
+  for (const w of warnings) {
+    for (const m of w.messages) {
+      if (!out.includes(m)) out.push(m);
+      if (out.length >= MAX_PROVIDER_MESSAGES) return out;
+    }
+  }
+  return out;
 }
 
 export async function pushBeds24Calendar(
@@ -131,10 +174,13 @@ export async function pushBeds24Calendar(
     // the payload never left the process, so there is no meter to report — but
     // the REASON must survive (#114): without it the operator sees only
     // "הנתונים נדחו" for a request that has no provider-side trace either.
-    const f = beds24Fail("validation");
+    // D112: no response exists, and the evidence says exactly that (null
+    // status, null body) — never a stand-in value. The message names no HTTP
+    // status either, because none was received.
+    const f = beds24Fail("validation", undefined, rawEvidenceOf(null, null));
     return {
       ...f,
-      message: `${f.message} — מטען לא תקין: ${invalid}`,
+      message: `המטען נפסל לפני שליחה — מטען לא תקין: ${invalid}`,
       credits: EMPTY_BEDS24_CREDITS,
     };
   }
@@ -148,7 +194,8 @@ export async function pushBeds24Calendar(
     ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   });
-  // a transport-level failure never reached Beds24 — no meter to report
+  // a transport-level failure never reached Beds24 — no meter to report; the
+  // failure already carries its raw evidence (null status/body) from the core
   if ("ok" in r) return { ...r, credits: EMPTY_BEDS24_CREDITS };
   const credits = r.credits;
   // Inspected BEFORE the status check: a 4xx body carries the same
@@ -157,7 +204,8 @@ export async function pushBeds24Calendar(
   // named the offending field.
   const verdict = inspectEnvelope(r.body);
   if (r.status !== 200 && r.status !== 201 && r.status !== 204) {
-    const base = beds24Fail(mapErrorStatus(r.status), r.status);
+    // D112: the raw evidence (status + body, verbatim) rides on every failure.
+    const base = beds24Fail(mapErrorStatus(r.status), r.status, r.raw);
     // The status code in CATEGORY_MESSAGE is truthful on THIS path by
     // construction: mapErrorStatus is one-to-one onto the categories whose text
     // carries a code (401/403/404/409/422/429), and every other status lands on
@@ -171,29 +219,33 @@ export async function pushBeds24Calendar(
   }
 
   if (verdict.anyFailure) {
-    // success:false on a 200 — Beds24 rejected (some of) the write. Treated as
+    // success:false on a 2xx — Beds24 rejected (some of) the write. Treated as
     // a full failure so the caller keeps every claimed range retryable.
-    // The category stays `validation` (the backoff/circuit machinery keys on the
-    // CODE), but the message is composed here rather than taken from
-    // CATEGORY_MESSAGE, whose "(422)" is baked into the string: this response
-    // carried 2xx, and printing a status code that was never on the wire sent
-    // an operator hunting for missing required fields that do not exist.
+    // The category stays `validation` (the backoff/circuit machinery keys on
+    // the CODE), but the message is composed here rather than taken from
+    // CATEGORY_MESSAGE, whose "(422)" is baked into the string. D112: it states
+    // the status ACTUALLY received (this is the path that once printed "(422)"
+    // for an HTTP 201) plus the fields and the provider's own words, and the
+    // raw evidence rides on the failure verbatim.
     return {
-      ...beds24Fail("validation", r.status),
+      ...beds24Fail("validation", r.status, r.raw),
       message: withFields(`Beds24 דחה את העדכון (HTTP ${r.status}, success:false)`, verdict.warnings),
       credits,
     };
   }
   if (verdict.warnings.length > 0)
-    return { ok: true, partial: true, warnings: verdict.warnings, credits };
+    return { ok: true, partial: true, warnings: verdict.warnings, credits, raw: r.raw };
   return { ok: true, partial: false, credits };
 }
 
-/** Human-safe, fixed-vocabulary summary of a warning set. Never an upstream body. */
+/** Operator-facing summary of a warning set. D112: includes the provider's own
+ *  message texts — every value here comes off the response, never a stand-in. */
 export function summarizeBeds24Warnings(warnings: SafeBeds24Warning[]): string {
   const fields = [...new Set(warnings.flatMap((w) => w.fields))].sort();
   const rooms = [...new Set(warnings.map((w) => w.roomId).filter((r): r is number => r !== null))];
   const span = rooms.length ? ` (${rooms.length} חדרים)` : "";
   const list = fields.length ? `: ${fields.join(", ")}` : "";
-  return `Beds24 דחה ${warnings.length} ערכים${span}${list}`;
+  const texts = providerTexts(warnings);
+  const quoted = texts.length ? ` — ${texts.map((t) => `"${t}"`).join(" | ")}` : "";
+  return `Beds24 דחה ${warnings.length} ערכים${span}${list}${quoted}`;
 }

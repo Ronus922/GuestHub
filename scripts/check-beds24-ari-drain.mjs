@@ -499,17 +499,26 @@ try {
   assert.equal(after3.status, "pending", "the partially-applied range stays retryable");
   assert.equal(after3.last_error_code, "partial_warnings");
   const [warnErr] = await sql`
-    SELECT error_message, context FROM guesthub.channel_sync_errors
+    SELECT error_message, context, http_status, response_body
+    FROM guesthub.channel_sync_errors
     WHERE tenant_id = ${tenantId} AND error_code = 'partial_warnings'
     ORDER BY created_at DESC LIMIT 1`;
   assert.ok(warnErr, "the partial write is loudly recorded (partial_warnings)");
+  // D112 REVERSED the old suppress-the-text policy: a failure/partial must
+  // carry its own evidence. The provider's own message text is persisted and
+  // shown on internal operator screens; the raw body rides on the error record.
+  // (The token still never leaks — that invariant is asserted on the wire above.)
   const recorded = JSON.stringify(warnErr) + JSON.stringify(await lastEvidence());
-  assert.ok(!recorded.includes("SECRET-UPSTREAM-TEXT"),
-    "the upstream warning TEXT never leaves the client — only roomId + field names");
-  assert.ok(recorded.includes("minStay"), "the rejected FIELD NAME is what gets recorded");
+  assert.ok(recorded.includes("SECRET-UPSTREAM-TEXT"),
+    "D112: the provider's own message text IS persisted — suppressing it is the defect now");
+  assert.ok(recorded.includes("minStay"), "the rejected FIELD NAME is recorded too");
+  assert.equal(warnErr.http_status, 201,
+    "the status ACTUALLY received rides on the error record, verbatim");
+  assert.ok(String(warnErr.response_body).includes("SECRET-UPSTREAM-TEXT"),
+    "the raw response body is stored on the error record");
   ev = await lastEvidence();
   assert.equal(ev.outcome, "partial", "the evidence ledger records a partial, not a success");
-  ok("partial write: warnings keep the range retryable, record field names only, never upstream text");
+  ok("partial write: warnings keep the range retryable; provider text + raw body + verbatim status are persisted (D112)");
   await sql`UPDATE guesthub.channel_dirty_ranges SET status = 'synced' WHERE id = ${r3}`;
 
   // ============================================================

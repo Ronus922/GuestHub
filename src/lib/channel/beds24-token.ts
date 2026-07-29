@@ -2,7 +2,7 @@ import type { Sql } from "postgres";
 import { beds24BaseUrl } from "./config";
 import { encryptSecret, decryptSecret, channelSecretsConfigured } from "./crypto";
 import { beds24AuthRequest, beds24Fail, mapErrorStatus } from "./beds24-http";
-import type { Beds24ApiErrorCategory } from "./beds24-http";
+import type { Beds24ApiErrorCategory, RawResponseEvidence } from "./beds24-http";
 import { asObj, asStr, asInt } from "./channel-http";
 
 // ============================================================
@@ -64,6 +64,9 @@ export type Beds24AccessTokenResult =
       ok: false;
       error: string;
       category: Beds24ApiErrorCategory | "not_configured" | "undecryptable";
+      /** D112 — what the auth endpoint actually said (Beds24 explains WHY a
+       *  token was rejected). Absent only when no HTTP call was involved. */
+      raw?: RawResponseEvidence;
     };
 
 export type Beds24TokenDeps = {
@@ -146,16 +149,18 @@ async function resolveToken(
     authHeader: { name: "refreshToken", value: refreshToken },
     ...(deps?.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   });
-  if ("ok" in r) return { ok: false, error: r.message, category: r.category };
+  // D112 — the auth body says WHY a token was rejected; it rides on `raw` so
+  // the caller can persist it instead of a bare category.
+  if ("ok" in r) return { ok: false, error: r.message, category: r.category, ...(r.raw ? { raw: r.raw } : {}) };
   if (r.status !== 200) {
-    const f = beds24Fail(mapErrorStatus(r.status), r.status);
-    return { ok: false, error: f.message, category: f.category };
+    const f = beds24Fail(mapErrorStatus(r.status), r.status, r.raw);
+    return { ok: false, error: f.message, category: f.category, raw: r.raw };
   }
   const body = asObj(r.body);
   const token = asStr(body?.token);
   if (!token) {
-    const f = beds24Fail("bad_response", r.status);
-    return { ok: false, error: f.message, category: f.category };
+    const f = beds24Fail("bad_response", r.status, r.raw);
+    return { ok: false, error: f.message, category: f.category, raw: r.raw };
   }
   const expiresInS = asInt(body?.expiresIn) ?? TOKEN_DEFAULT_TTL_S;
   const expiresAt = new Date(now() + expiresInS * 1000 - TOKEN_EXPIRY_SAFETY_MS);
