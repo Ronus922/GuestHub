@@ -646,7 +646,8 @@ assert.match(automation, /trigger\.eligibleStatuses\.includes\(reservation\.stat
 assert.match(automation, /trigger\.otaHardSkip/);
 assert.match(automation, /reservation\.is_test/);
 assert.match(automation, /guest_communication_opt_out/);
-assert.match(automation, /!reservation\.guest_email \|\| !EMAIL_RE/);
+assert.match(automation, /reservation\.guest_email && EMAIL_RE\.test/);
+assert.match(automation, /missing_guest_email/);
 assert.match(automation, /missing_guest_phone/);
 assert.match(bookingImport, /booking_origin/);
 assert.match(bookingImport, /'ota'/);

@@ -56,6 +56,7 @@ export const nightsBetween = () => 2;
 writeFileSync(join(out, "communications/test-db.js"), `
 export const state = {
   reservation: null, automations: [], version: null, channel: null, waChannel: null, siblingByLang: null,
+  settings: null,
   deliveryKeys: new Set(), insertions: [], attention: [],
 };
 const queryText = (strings) => strings.join("?");
@@ -63,6 +64,9 @@ export const sql = (strings, ...values) => {
   const text = queryText(strings);
   if (text.includes("FROM guesthub.reservations r")) return Promise.resolve(state.reservation ? [state.reservation] : []);
   if (text.includes("FROM guesthub.tenants t")) return Promise.resolve(state.waChannel ? [state.waChannel] : []);
+  // the quiet-hours/owner-recipients settings SELECT — matched by its column list
+  // because the outbound INSERT also mentions communication_settings (max_attempts)
+  if (text.includes("SELECT quiet_hours")) return Promise.resolve(state.settings ? [state.settings] : []);
   if (text.includes("FROM guesthub.communication_automations")) return Promise.resolve(state.automations);
   // guest-language sibling lookup (FROM message_templates cfg JOIN … language = $target)
   if (text.includes("guesthub.message_templates cfg")) {
@@ -89,7 +93,7 @@ export const sql = (strings, ...values) => {
 sql.json = (value) => value;
 export const reset = () => {
   state.deliveryKeys.clear(); state.insertions.length = 0; state.attention.length = 0;
-  state.siblingByLang = null; state.waChannel = null;
+  state.siblingByLang = null; state.waChannel = null; state.settings = null;
 };
 `);
 
@@ -300,5 +304,62 @@ assert.deepEqual(await prepareDeliveriesForEvent({ ...eventFor("back_office", "e
   { created: 0, duplicates: 0, skipped: 1 });
 assert.equal(db.state.insertions.length, 0, "an unknown trigger writes nothing");
 ok("an event type outside the registry is dropped without touching outbound_messages");
+
+// ---- v3 (065): owner recipients — fan-out, per-recipient dedupe, honest skips ----
+const ownerSettings = {
+  quiet_hours: null,
+  owner_notification_emails: ["owner@example.test", "second@example.test"],
+  owner_notification_phones: ["+972521111111"],
+};
+const configureOwner = (automation, settings = ownerSettings, reservation = baseReservation) => {
+  db.reset(); db.state.reservation = reservation; db.state.automations = [automation];
+  db.state.version = version; db.state.channel = { sender_name: "GuestHub Test", reply_to: "reply@example.test" };
+  db.state.settings = settings;
+};
+
+const ownerAllAutomation = { ...baseAutomation, id: "automation-owner",
+  recipient_config: { version: 2, guest: true, owner: { mode: "all" } } };
+configureOwner(ownerAllAutomation);
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-owner-all")), { created: 3, duplicates: 0, skipped: 0 });
+const ownerKeys = db.state.insertions.map((i) => i.key);
+assert.equal(ownerKeys.includes("automation:automation-owner:event:event-owner-all"), true,
+  "the guest row keeps the pre-065 key format — historical dedupe must survive");
+assert.equal(ownerKeys.filter((k) => k.includes(":owner:")).length, 2, "one row per configured owner email");
+assert.equal(db.state.insertions.every((i) => /'queued'/.test(i.text)), true, "all three are real queued deliveries");
+ok("guest+owner(all) fans out to one row per recipient; the guest keeps the legacy idempotency key");
+
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-owner-all")), { created: 0, duplicates: 3, skipped: 0 });
+assert.equal(db.state.insertions.length, 3);
+ok("re-firing the same event dedupes every recipient row independently");
+
+const ownerSelectedAutomation = { ...baseAutomation, id: "automation-sel",
+  recipient_config: { version: 2, guest: false,
+    owner: { mode: "selected", addresses: ["owner@example.test", "deleted@example.test"] } } };
+configureOwner(ownerSelectedAutomation);
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-owner-sel")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("owner@example.test"), true, "only the still-configured selection is sent");
+assert.equal(db.state.insertions.some((i) => i.values.includes("noa@example.test")), false, "guest=false really means no guest leg");
+ok("selected owner addresses intersect with the live settings list — deleted selections drop silently");
+
+configureOwner(ownerAllAutomation, { quiet_hours: null, owner_notification_emails: [], owner_notification_phones: [] });
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-owner-empty")), { created: 1, duplicates: 0, skipped: 1 });
+const emptySkip = db.state.insertions.find((i) => i.key.endsWith(":owner:none"));
+assert.notEqual(emptySkip, undefined, "an owner leg with no configured addresses records a truthful skip row");
+assert.match(emptySkip.text, /'skipped'/);
+ok("owner enabled but no addresses configured → guest still sends, owner leg records no_owner_recipients");
+
+// conditions without the guest.email-exists gate — otherwise conditions_not_met
+// would block the whole automation before recipients are even resolved
+const ownerNoEmailGate = { ...ownerAllAutomation, id: "automation-owner-ng",
+  conditions: { logic: "all", items: [
+    { field: "reservation.status", operator: "equals", value: "confirmed" },
+    { field: "reservation.is_test", operator: "equals", value: false },
+  ] } };
+configureOwner(ownerNoEmailGate, ownerSettings, { ...baseReservation, guest_email: null });
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-owner-noguest")), { created: 2, duplicates: 0, skipped: 1 });
+assert.equal(db.state.insertions.filter((i) => /'queued'/.test(i.text)).length, 2, "both owner emails still go out");
+assert.match(db.state.insertions.find((i) => !i.key.includes(":owner:")).text, /'skipped'/,
+  "the guest leg records its missing-email skip without blocking the owner legs");
+ok("a missing guest email skips only the guest leg — the owner legs still send");
 
 process.stdout.write(`\n✓ Guest Communications automation checks passed (${checks} groups)\n`);

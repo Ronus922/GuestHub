@@ -23,6 +23,8 @@ import {
   saveCommunicationSettingsAction, setAutomationStatusAction,
   type CommunicationActionResult,
 } from "@/app/(dashboard)/communications/actions";
+import { EMAIL_RE } from "@/lib/communications/schemas";
+import { normalizePhone } from "@/lib/phone";
 
 export type CommunicationSection = "automations" | "templates" | "history" | "channels" | "archive";
 
@@ -415,6 +417,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
         <AutomationPanel
           value={automation}
           templates={live.filter((t) => t.state === "published")}
+          ownerAddresses={{ email: data.settings.ownerEmails, whatsapp: data.settings.ownerPhones }}
           whatsappAvailable={data.channel.whatsappAvailable}
           canActivate={permissions.activateAutomations}
           pending={pending}
@@ -614,10 +617,60 @@ function DeliveryPanel({ row, onClose }: { row: DeliveryRow; onClose: () => void
   );
 }
 
+/** Chips over a comma-separated textarea: each address is validated the moment
+ *  it is committed (Enter / comma / blur), and removal is one click. */
+function AddressChipsInput({
+  label, hint, values, onChange, disabled, invalidMessage, normalize, max,
+}: {
+  label: string; hint: string; values: string[]; onChange: (next: string[]) => void;
+  disabled: boolean; invalidMessage: string;
+  /** Returns the normalized address, or null when invalid. */
+  normalize: (raw: string) => string | null; max: number;
+}) {
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const commit = () => {
+    const raw = draft.trim();
+    if (!raw) return;
+    const normalized = normalize(raw);
+    if (!normalized) { setError(invalidMessage); return; }
+    setError(null);
+    setDraft("");
+    if (!values.includes(normalized) && values.length < max) onChange([...values, normalized]);
+  };
+  return (
+    <div className="field">
+      <span className="field-label">{label}</span>
+      {values.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {values.map((value) => (
+            <span key={value} className="chip chip-onbrand ltr-num">
+              {value}
+              {!disabled && (
+                <button type="button" className="px-1" aria-label={`הסרת ${value}`}
+                  onClick={() => onChange(values.filter((v) => v !== value))}>×</button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      <input className="field-input ltr-num" dir="ltr" value={draft}
+        disabled={disabled || values.length >= max}
+        placeholder={values.length >= max ? `עד ${max} כתובות` : undefined}
+        onChange={(e) => { setDraft(e.target.value); setError(null); }}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commit(); } }} />
+      {error ? <span className="field-msg">{error}</span> : <span className="field-hint">{hint}</span>}
+    </div>
+  );
+}
+
 function ChannelsPanel({
   data, canManage, pending, onSave,
 }: { data: CommunicationsData; canManage: boolean; pending: boolean; onSave: (input: unknown) => void }) {
   const [attempts, setAttempts] = useState(data.settings.retryPolicy.maxAttempts ?? 5);
+  const [ownerEmails, setOwnerEmails] = useState<string[]>(data.settings.ownerEmails);
+  const [ownerPhones, setOwnerPhones] = useState<string[]>(data.settings.ownerPhones);
   const connected = data.channel.email.status === "connected";
 
   return (
@@ -676,6 +729,30 @@ function ChannelsPanel({
 
       <section className="card">
         <div className="gc-ph">
+          <Icon name="users-round" size={20} />
+          <h2 className="h4">נמעני בעל העסק</h2>
+          <span className="gc-ph-d">הכתובות שאליהן נשלחות הודעות כשאוטומציה מסמנת את בעל העסק כנמען.</span>
+        </div>
+        <div className="card-bd flex flex-col gap-4">
+          <AddressChipsInput
+            label="כתובות אימייל של בעל העסק"
+            hint="אוטומציות אימייל שנשלחות לבעל העסק יגיעו לכתובות אלו. Enter או פסיק להוספה."
+            values={ownerEmails} onChange={setOwnerEmails} disabled={!canManage} max={10}
+            invalidMessage="כתובת האימייל אינה תקינה"
+            normalize={(raw) => EMAIL_RE.test(raw.trim()) ? raw.trim().toLowerCase() : null}
+          />
+          <AddressChipsInput
+            label="מספרי WhatsApp של בעל העסק"
+            hint="אוטומציות WhatsApp שנשלחות לבעל העסק יגיעו למספרים אלו. Enter או פסיק להוספה."
+            values={ownerPhones} onChange={setOwnerPhones} disabled={!canManage} max={10}
+            invalidMessage="מספר הטלפון אינו תקין"
+            normalize={(raw) => { const n = normalizePhone(raw); return n.valid ? n.e164 : null; }}
+          />
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="gc-ph">
           <Icon name="settings" size={20} />
           <h2 className="h4">כללים כלליים</h2>
         </div>
@@ -693,7 +770,7 @@ function ChannelsPanel({
           </label>
           {canManage && (
             <button type="button" className="btn btn-primary self-start" disabled={pending}
-              onClick={() => onSave({ maxAttempts: attempts })}>
+              onClick={() => onSave({ maxAttempts: attempts, ownerEmails, ownerPhones })}>
               {pending ? "שומר…" : "שמירת כללים"}
             </button>
           )}
@@ -704,9 +781,10 @@ function ChannelsPanel({
 }
 
 function AutomationPanel({
-  value, templates, whatsappAvailable, canActivate, pending, onClose, onSave,
+  value, templates, ownerAddresses, whatsappAvailable, canActivate, pending, onClose, onSave,
 }: {
-  value: AutomationRow | "new"; templates: CommunicationTemplateRow[]; whatsappAvailable: boolean;
+  value: AutomationRow | "new"; templates: CommunicationTemplateRow[];
+  ownerAddresses: { email: string[]; whatsapp: string[] }; whatsappAvailable: boolean;
   canActivate: boolean; pending: boolean; onClose: () => void; onSave: (input: unknown) => void;
 }) {
   const fresh = value === "new";
@@ -735,6 +813,24 @@ function AutomationPanel({
       : ((value.sources.include as string[] | undefined) ?? ["back_office", "direct_website"]),
   );
   const [activate, setActivate] = useState(false);
+  // A pre-065 recipient_config has no `version` and means guest-only.
+  const storedRecipient = fresh || !value.recipient || !("version" in value.recipient)
+    ? null
+    : value.recipient as { guest?: boolean; owner?: { mode?: string; addresses?: string[] } | null };
+  const [toGuest, setToGuest] = useState(storedRecipient ? storedRecipient.guest !== false : true);
+  const [toOwner, setToOwner] = useState(Boolean(storedRecipient?.owner));
+  const [ownerMode, setOwnerMode] = useState<"all" | "selected">(
+    storedRecipient?.owner?.mode === "selected" ? "selected" : "all",
+  );
+  const availableOwnerAddresses = channel === "whatsapp" ? ownerAddresses.whatsapp : ownerAddresses.email;
+  const storedPicks = storedRecipient?.owner?.addresses ?? [];
+  const [ownerPicks, setOwnerPicks] = useState<string[]>(() =>
+    storedPicks.filter((a) => availableOwnerAddresses.includes(a)));
+  const staleDropped = storedPicks.some((a) => !availableOwnerAddresses.includes(a));
+  const toggleOwnerPick = (address: string) =>
+    setOwnerPicks((current) => current.includes(address)
+      ? current.filter((a) => a !== address)
+      : current.length < 3 ? [...current, address] : current);
   const toggle = (source: string) =>
     setSources((current) => current.includes(source) ? current.filter((s) => s !== source) : [...current, source]);
 
@@ -749,10 +845,16 @@ function AutomationPanel({
   const pickChannel = (next: "email" | "whatsapp") => {
     setChannel(next);
     setTemplateId("");
+    // Email addresses mean nothing to a whatsapp automation and vice versa.
+    setOwnerMode("all");
+    setOwnerPicks([]);
   };
 
   const selectedTemplateValid = channelTemplates.some((t) => t.id === templateId);
-  const valid = name.trim().length >= 2 && sources.length > 0 && selectedTemplateValid;
+  const recipientsValid = (toGuest || toOwner)
+    && (!toOwner || (availableOwnerAddresses.length > 0
+      && (ownerMode === "all" || ownerPicks.length > 0)));
+  const valid = name.trim().length >= 2 && sources.length > 0 && selectedTemplateValid && recipientsValid;
 
   return (
     <SidePanel
@@ -767,6 +869,12 @@ function AutomationPanel({
             onClick={() => onSave({
               id: fresh ? undefined : value.id, name, description,
               triggerType, channel, templateId, sources, activate,
+              recipient: {
+                guest: toGuest,
+                owner: toOwner
+                  ? (ownerMode === "all" ? { mode: "all" } : { mode: "selected", addresses: ownerPicks })
+                  : null,
+              },
               ...(trigger.kind === "scheduled" ? { offsetDays, sendTime } : {}),
             })}>
             {activate ? "שמירה והפעלה" : "שמירה כטיוטה"}
@@ -842,6 +950,68 @@ function AutomationPanel({
                 {label}
               </span>
             ))}
+          </div>
+        </section>
+
+        <section className="card">
+          <div className="card-hd">נמענים</div>
+          <div className="card-bd flex flex-col gap-3">
+            <p className="t-secondary">מי יקבל את ההודעה?</p>
+            <span className="gc-toggle">
+              <button type="button" className="gc-sw" role="switch" aria-checked={toGuest}
+                onClick={() => setToGuest(!toGuest)} aria-label="המזמין" />
+              המזמין
+            </span>
+            <span className="gc-toggle">
+              <button type="button" className="gc-sw" role="switch" aria-checked={toOwner}
+                onClick={() => setToOwner(!toOwner)} aria-label="בעל העסק" />
+              בעל העסק
+            </span>
+            {!toGuest && !toOwner && (
+              <p className="field-msg">יש לבחור לפחות נמען אחד</p>
+            )}
+            {toOwner && availableOwnerAddresses.length === 0 && (
+              <p className="field-msg">
+                {channel === "whatsapp"
+                  ? "לא הוגדרו מספרי WhatsApp של בעל העסק — ניתן להוסיף בלשונית ערוצי שליחה"
+                  : "לא הוגדרו כתובות אימייל של בעל העסק — ניתן להוסיף בלשונית ערוצי שליחה"}
+              </p>
+            )}
+            {toOwner && availableOwnerAddresses.length > 0 && (
+              <div className="field">
+                <div className="gc-seg">
+                  <button type="button" className="gc-segb" aria-pressed={ownerMode === "all"}
+                    onClick={() => setOwnerMode("all")}>
+                    כל הכתובות
+                  </button>
+                  <button type="button" className="gc-segb" aria-pressed={ownerMode === "selected"}
+                    onClick={() => setOwnerMode("selected")}>
+                    בחירת כתובות
+                  </button>
+                </div>
+                {ownerMode === "selected" && (
+                  <>
+                    <div className="flex flex-col gap-2 pt-2">
+                      {availableOwnerAddresses.map((address) => (
+                        <label key={address} className="flex items-center gap-2 p-1 t-body">
+                          <input type="checkbox" checked={ownerPicks.includes(address)}
+                            disabled={!ownerPicks.includes(address) && ownerPicks.length >= 3}
+                            onChange={() => toggleOwnerPick(address)} />
+                          <span className="ltr-num">{address}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <span className="field-hint">ניתן לבחור עד 3 כתובות</span>
+                    {staleDropped && (
+                      <span className="field-hint">כתובות שנמחקו מההגדרות הוסרו מהבחירה</span>
+                    )}
+                    {ownerPicks.length === 0 && (
+                      <p className="field-msg">יש לבחור לפחות כתובת אחת</p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </section>
 
