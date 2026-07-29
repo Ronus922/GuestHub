@@ -617,61 +617,53 @@ function DeliveryPanel({ row, onClose }: { row: DeliveryRow; onClose: () => void
   );
 }
 
-/** Chips over a comma-separated textarea: each address is validated the moment
- *  it is committed (Enter / comma / blur), and removal is one click. */
-function AddressChipsInput({
-  label, hint, values, onChange, disabled, invalidMessage, normalize, max,
+/** One plain comma-separated textarea: everything stays visible and is edited,
+ *  deleted, or fixed directly in the field. Validation happens on save. */
+function AddressListInput({
+  label, hint, value, onChange, disabled, error,
 }: {
-  label: string; hint: string; values: string[]; onChange: (next: string[]) => void;
-  disabled: boolean; invalidMessage: string;
-  /** Returns the normalized address, or null when invalid. */
-  normalize: (raw: string) => string | null; max: number;
+  label: string; hint: string; value: string; onChange: (next: string) => void;
+  disabled: boolean; error?: string;
 }) {
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const commit = () => {
-    const raw = draft.trim();
-    if (!raw) return;
-    const normalized = normalize(raw);
-    if (!normalized) { setError(invalidMessage); return; }
-    setError(null);
-    setDraft("");
-    if (!values.includes(normalized) && values.length < max) onChange([...values, normalized]);
-  };
   return (
-    <div className="field">
+    <label className="field">
       <span className="field-label">{label}</span>
-      {values.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {values.map((value) => (
-            <span key={value} className="chip chip-onbrand ltr-num">
-              {value}
-              {!disabled && (
-                <button type="button" className="px-1" aria-label={`הסרת ${value}`}
-                  onClick={() => onChange(values.filter((v) => v !== value))}>×</button>
-              )}
-            </span>
-          ))}
-        </div>
-      )}
-      <input className="field-input ltr-num" dir="ltr" value={draft}
-        disabled={disabled || values.length >= max}
-        placeholder={values.length >= max ? `עד ${max} כתובות` : undefined}
-        onChange={(e) => { setDraft(e.target.value); setError(null); }}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); commit(); } }} />
+      <textarea className="field-input ltr-num" dir="ltr" rows={2} value={value}
+        disabled={disabled} onChange={(e) => onChange(e.target.value)} />
       {error ? <span className="field-msg">{error}</span> : <span className="field-hint">{hint}</span>}
-    </div>
+    </label>
   );
 }
+
+/** "a@b.co, c@d.co" (commas or newlines) → trimmed non-empty entries. */
+const splitAddresses = (text: string): string[] =>
+  text.split(/[,\n]/).map((part) => part.trim()).filter(Boolean);
 
 function ChannelsPanel({
   data, canManage, pending, onSave,
 }: { data: CommunicationsData; canManage: boolean; pending: boolean; onSave: (input: unknown) => void }) {
   const [attempts, setAttempts] = useState(data.settings.retryPolicy.maxAttempts ?? 5);
-  const [ownerEmails, setOwnerEmails] = useState<string[]>(data.settings.ownerEmails);
-  const [ownerPhones, setOwnerPhones] = useState<string[]>(data.settings.ownerPhones);
+  const [ownerEmailsText, setOwnerEmailsText] = useState(data.settings.ownerEmails.join(", "));
+  const [ownerPhonesText, setOwnerPhonesText] = useState(data.settings.ownerPhones.join(", "));
+  const [ownerErrors, setOwnerErrors] = useState<{ emails?: string; phones?: string }>({});
   const connected = data.channel.email.status === "connected";
+
+  const save = () => {
+    const ownerEmails = splitAddresses(ownerEmailsText);
+    const ownerPhones = splitAddresses(ownerPhonesText);
+    const badEmails = ownerEmails.filter((a) => !EMAIL_RE.test(a));
+    const badPhones = ownerPhones.filter((p) => !normalizePhone(p).valid);
+    const emailsError = badEmails.length ? `כתובות לא תקינות: ${badEmails.join(", ")}`
+      : ownerEmails.length > 10 ? "עד 10 כתובות" : undefined;
+    const phonesError = badPhones.length ? `מספרים לא תקינים: ${badPhones.join(", ")}`
+      : ownerPhones.length > 10 ? "עד 10 מספרים" : undefined;
+    if (emailsError || phonesError) {
+      setOwnerErrors({ emails: emailsError, phones: phonesError });
+      return;
+    }
+    setOwnerErrors({});
+    onSave({ maxAttempts: attempts, ownerEmails, ownerPhones });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -734,19 +726,17 @@ function ChannelsPanel({
           <span className="gc-ph-d">הכתובות שאליהן נשלחות הודעות כשאוטומציה מסמנת את בעל העסק כנמען.</span>
         </div>
         <div className="card-bd flex flex-col gap-4">
-          <AddressChipsInput
+          <AddressListInput
             label="כתובות אימייל של בעל העסק"
-            hint="אוטומציות אימייל שנשלחות לבעל העסק יגיעו לכתובות אלו. Enter או פסיק להוספה."
-            values={ownerEmails} onChange={setOwnerEmails} disabled={!canManage} max={10}
-            invalidMessage="כתובת האימייל אינה תקינה"
-            normalize={(raw) => EMAIL_RE.test(raw.trim()) ? raw.trim().toLowerCase() : null}
+            hint="הפרדה בפסיקים. עריכה ומחיקה ישירות בשדה. אוטומציות אימייל לבעל העסק יגיעו לכתובות אלו."
+            value={ownerEmailsText} disabled={!canManage} error={ownerErrors.emails}
+            onChange={(next) => { setOwnerEmailsText(next); if (ownerErrors.emails) setOwnerErrors((e) => ({ ...e, emails: undefined })); }}
           />
-          <AddressChipsInput
+          <AddressListInput
             label="מספרי WhatsApp של בעל העסק"
-            hint="אוטומציות WhatsApp שנשלחות לבעל העסק יגיעו למספרים אלו. Enter או פסיק להוספה."
-            values={ownerPhones} onChange={setOwnerPhones} disabled={!canManage} max={10}
-            invalidMessage="מספר הטלפון אינו תקין"
-            normalize={(raw) => { const n = normalizePhone(raw); return n.valid ? n.e164 : null; }}
+            hint="הפרדה בפסיקים. עריכה ומחיקה ישירות בשדה. אוטומציות WhatsApp לבעל העסק יגיעו למספרים אלו."
+            value={ownerPhonesText} disabled={!canManage} error={ownerErrors.phones}
+            onChange={(next) => { setOwnerPhonesText(next); if (ownerErrors.phones) setOwnerErrors((e) => ({ ...e, phones: undefined })); }}
           />
         </div>
       </section>
@@ -770,7 +760,7 @@ function ChannelsPanel({
           </label>
           {canManage && (
             <button type="button" className="btn btn-primary self-start" disabled={pending}
-              onClick={() => onSave({ maxAttempts: attempts, ownerEmails, ownerPhones })}>
+              onClick={save}>
               {pending ? "שומר…" : "שמירת כללים"}
             </button>
           )}
