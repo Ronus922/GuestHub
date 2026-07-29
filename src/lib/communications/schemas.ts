@@ -10,6 +10,8 @@ import { TRIGGERS, TRIGGER_IDS } from "./triggers";
 
 const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export const templateBlockSchema = z.object({
   id: z.string().trim().min(1).max(80),
   type: z.enum(TEMPLATE_BLOCK_TYPES),
@@ -145,9 +147,36 @@ export const exclusionRulesSchema = z.object({
   ota: z.boolean().optional(),
 }).strict();
 
+const ownerRecipientSchema = z.union([
+  z.object({ mode: z.literal("all") }).strict(),
+  z.object({
+    mode: z.literal("selected"),
+    addresses: z.array(z.string().trim().min(3).max(320)).min(1).max(3),
+  }).strict(),
+]);
+
 export const recipientConfigSchema = z.object({
+  version: z.literal(2),
+  guest: z.boolean(),
+  owner: ownerRecipientSchema.nullable(),
+}).strict().refine((value) => value.guest || value.owner !== null, {
+  message: "יש לבחור לפחות נמען אחד",
+});
+
+// Rows written before 065 — kept forever so stored configs never stop parsing.
+const legacyRecipientConfigSchema = z.object({
   type: z.literal("primary_guest"),
 }).strict();
+
+export type RecipientConfig = z.infer<typeof recipientConfigSchema>;
+
+export function parseRecipientConfig(value: unknown): RecipientConfig {
+  if (value && typeof value === "object" && "version" in value) {
+    return recipientConfigSchema.parse(value);
+  }
+  legacyRecipientConfigSchema.parse(value);
+  return { version: 2, guest: true, owner: null };
+}
 
 export const quietHoursSchema = z.object({
   enabled: z.boolean(),
@@ -188,7 +217,7 @@ export const automationConfigSchema = z.object({
   sources: sourceFiltersSchema,
   conditions: automationConditionsSchema,
   exclusions: exclusionRulesSchema,
-  recipient: recipientConfigSchema,
+  recipient: z.union([recipientConfigSchema, legacyRecipientConfigSchema]),
   channel: z.enum(COMMUNICATION_CHANNELS),
 }).strict().superRefine((value, ctx) => {
   const scheduled = TRIGGERS[value.triggerType].kind === "scheduled";

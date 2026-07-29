@@ -6,7 +6,7 @@ import { resolveCommunicationStaySchedule } from "./schedule";
 import {
   automationConditionsSchema,
   exclusionRulesSchema,
-  recipientConfigSchema,
+  parseRecipientConfig,
   sourceFiltersSchema,
   timingConfigSchema,
 } from "./schemas";
@@ -340,6 +340,8 @@ async function recordSkippedDelivery(args: {
   reason: string;
   version?: VersionRow | null;
   provider?: string;
+  /** Omitted = the pre-065 guest-keyed skip row (byte-identical dedupe). */
+  recipient?: { key: string; recipientKey: string; address: string };
 }): Promise<"created" | "duplicate"> {
   const reasonLabels: Record<string, string> = {
     source_mismatch: "מקור האירוע אינו תואם להזמנה",
@@ -359,24 +361,25 @@ async function recordSkippedDelivery(args: {
     automation_config_invalid: "הגדרת האוטומציה אינה תקינה",
     invalid_reply_to: "כתובת המענה של התבנית אינה תקינה",
     template_channel_mismatch: "התבנית אינה תואמת לערוץ האוטומציה",
+    no_owner_recipients: "לא הוגדרו כתובות של בעל העסק לערוץ הזה",
   };
   const channel = args.automation.channel;
   const provider = args.provider ?? (channel === "whatsapp" ? "whatsapp" : "gmail");
-  const toAddress = channel === "whatsapp"
+  const toAddress = args.recipient?.address ?? (channel === "whatsapp"
     ? normalizePhone(args.reservation.guest_phone).e164
-    : args.reservation.guest_email?.trim() ?? "";
-  const idempotencyKey = `automation:${args.automation.id}:event:${args.event.id}`;
+    : args.reservation.guest_email?.trim() ?? "");
+  const idempotencyKey = args.recipient?.key ?? `automation:${args.automation.id}:event:${args.event.id}`;
   const rows = await sql<{ id: string }[]>`
     INSERT INTO guesthub.outbound_messages
       (tenant_id, reservation_id, guest_id, channel, provider, template_id,
-       automation_id, template_version_id, event_id, idempotency_key,
+       automation_id, template_version_id, event_id, idempotency_key, recipient_key,
        to_address, subject, body, status, rendered_html, rendered_plain_text,
        delivery_type, scheduled_at,
        final_error_category, error_code, error_detail, max_attempts)
     VALUES (
       ${args.event.tenant_id}, ${args.reservation.id}, ${args.reservation.guest_id},
       ${channel}, ${provider}, ${args.automation.template_id}, ${args.automation.id},
-      ${args.version?.id ?? null}, ${args.event.id}, ${idempotencyKey},
+      ${args.version?.id ?? null}, ${args.event.id}, ${idempotencyKey}, ${args.recipient?.recipientKey ?? "guest"},
       ${toAddress}, ${args.version?.subject ?? null},
       '', 'skipped', '', '', 'normal', now(), ${args.reason}, ${args.reason},
       ${reasonLabels[args.reason] ?? "המשלוח דולג"}, 0)
@@ -394,8 +397,9 @@ async function skipAutomation(
   reason: string,
   version?: VersionRow | null,
   provider?: string,
+  recipient?: { key: string; recipientKey: string; address: string },
 ): Promise<void> {
-  const result = await recordSkippedDelivery({ event, automation, reservation, reason, version, provider });
+  const result = await recordSkippedDelivery({ event, automation, reservation, reason, version, provider, recipient });
   if (result === "duplicate") summary.duplicates += 1;
   summary.skipped += 1;
 }
@@ -521,16 +525,23 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
   }
 
   // Quiet hours apply at delivery creation (scheduled_at), once per event.
-  const [settingsRow] = await sql<{ quiet_hours: unknown }[]>`
-    SELECT quiet_hours FROM guesthub.communication_settings
+  const [settingsRow] = await sql<{
+    quiet_hours: unknown;
+    owner_notification_emails: string[] | null;
+    owner_notification_phones: string[] | null;
+  }[]>`
+    SELECT quiet_hours, owner_notification_emails, owner_notification_phones
+    FROM guesthub.communication_settings
     WHERE tenant_id = ${event.tenant_id}`;
   const quietHours = (settingsRow?.quiet_hours ?? null) as { enabled?: boolean; start?: string; end?: string } | null;
+  const ownerEmails = settingsRow?.owner_notification_emails ?? [];
+  const ownerPhones = settingsRow?.owner_notification_phones ?? [];
 
   for (const automation of automations) {
     try {
       const sources = sourceFiltersSchema.parse(automation.source_filters);
       const exclusions = exclusionRulesSchema.parse(automation.exclusion_rules);
-      recipientConfigSchema.parse(automation.recipient_config);
+      const recipientConfig = parseRecipientConfig(automation.recipient_config);
       const timing = timingConfigSchema.parse(automation.timing_config);
       if (!sources.include.includes(reservation.booking_origin)) {
         await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolveVersion(automation, reservation.guest_language)); continue;
@@ -542,16 +553,50 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         await skipAutomation(summary, event, automation, reservation, "guest_opted_out", await resolveVersion(automation, reservation.guest_language)); continue;
       }
       const version = await resolveVersion(automation, reservation.guest_language);
-      const recipient = automation.channel === "whatsapp"
-        ? normalizePhone(reservation.guest_phone)
-        : null;
-      if (automation.channel === "whatsapp") {
-        if (!recipient?.valid) {
-          await skipAutomation(summary, event, automation, reservation, "missing_guest_phone", version); continue;
+      // One outbound row per resolved recipient. The guest keeps the pre-065
+      // key format — changing it would un-dedupe every historical event and
+      // re-send old messages; only owner rows carry a suffixed key.
+      const legacyKey = `automation:${automation.id}:event:${event.id}`;
+      const recipients: { key: string; recipientKey: string; address: string }[] = [];
+      const guestAddress = automation.channel === "whatsapp"
+        ? (normalizePhone(reservation.guest_phone).valid ? normalizePhone(reservation.guest_phone).e164 : null)
+        : reservation.guest_email && EMAIL_RE.test(reservation.guest_email.trim())
+          ? reservation.guest_email.trim() : null;
+      if (recipientConfig.guest) {
+        if (guestAddress) {
+          recipients.push({ key: legacyKey, recipientKey: "guest", address: guestAddress });
+        } else {
+          // The guest leg alone is unreachable — owner legs still go out.
+          await skipAutomation(summary, event, automation, reservation,
+            automation.channel === "whatsapp" ? "missing_guest_phone" : "missing_guest_email", version);
         }
-      } else if (!reservation.guest_email || !EMAIL_RE.test(reservation.guest_email.trim())) {
-        await skipAutomation(summary, event, automation, reservation, "missing_guest_email", version); continue;
       }
+      if (recipientConfig.owner) {
+        const configured = automation.channel === "whatsapp" ? ownerPhones : ownerEmails;
+        const normalize = (a: string) => automation.channel === "whatsapp"
+          ? (normalizePhone(a).valid ? normalizePhone(a).e164 : "")
+          : (EMAIL_RE.test(a.trim()) ? a.trim().toLowerCase() : "");
+        let pool = [...new Set(configured.map(normalize).filter(Boolean))];
+        if (recipientConfig.owner.mode === "selected") {
+          const picked = new Set(recipientConfig.owner.addresses.map(normalize));
+          // Selections deleted from settings since the automation was saved
+          // silently drop — the settings list is the live source of truth.
+          pool = pool.filter((a) => picked.has(a)).slice(0, 3);
+        }
+        if (pool.length === 0) {
+          await skipAutomation(summary, event, automation, reservation, "no_owner_recipients", version, undefined,
+            { key: `${legacyKey}:owner:none`, recipientKey: "owner:none", address: "" });
+        }
+        // An owner address identical to the guest's is already covered by the
+        // guest leg — one message, not two.
+        const guestNorm = guestAddress && recipientConfig.guest
+          ? (automation.channel === "whatsapp" ? guestAddress : guestAddress.toLowerCase()) : null;
+        pool = pool.filter((a) => a !== guestNorm);
+        for (const address of pool) {
+          recipients.push({ key: `${legacyKey}:owner:${address}`, recipientKey: `owner:${address}`, address });
+        }
+      }
+      if (recipients.length === 0) continue;
       if (!matchesConditions(automation.conditions, reservation)) {
         await skipAutomation(summary, event, automation, reservation, "conditions_not_met", version); continue;
       }
@@ -576,7 +621,6 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         ? new Date(Date.now() + (timing.delayMinutes ?? 0) * 60_000)
         : new Date();
       if (timing.quietHours === "respect") scheduledAt = applyQuietHours(scheduledAt, quietHours);
-      const idempotencyKey = `automation:${automation.id}:event:${event.id}`;
 
       if (automation.channel === "whatsapp") {
         const waChannel = await resolveConnectedWhatsAppChannel(event.tenant_id);
@@ -590,26 +634,28 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           await skipAutomation(summary, event, automation, reservation, "render_failed", version, waChannel.provider);
           continue;
         }
-        const rows = await sql<{ id: string }[]>`
-          INSERT INTO guesthub.outbound_messages
-            (tenant_id, reservation_id, guest_id, channel, provider, template_id,
-             automation_id, template_version_id, event_id, idempotency_key,
-             to_address, subject, body, status, rendered_html,
-             rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
-          SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
-                 'whatsapp', ${waChannel.provider}, ${automation.template_id}, ${automation.id},
-                 ${version.id}, ${event.id}, ${idempotencyKey},
-                 ${recipient?.e164 ?? ""}, NULL,
-                 ${rendered.text}, 'queued', '',
-                 ${rendered.text}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
-                 GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
-                                       FROM guesthub.communication_settings
-                                       WHERE tenant_id = ${event.tenant_id}), 5))
-          ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-            DO NOTHING
-          RETURNING id`;
-        if (rows[0]) summary.created += 1;
-        else summary.duplicates += 1;
+        for (const r of recipients) {
+          const rows = await sql<{ id: string }[]>`
+            INSERT INTO guesthub.outbound_messages
+              (tenant_id, reservation_id, guest_id, channel, provider, template_id,
+               automation_id, template_version_id, event_id, idempotency_key, recipient_key,
+               to_address, subject, body, status, rendered_html,
+               rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
+            SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
+                   'whatsapp', ${waChannel.provider}, ${automation.template_id}, ${automation.id},
+                   ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
+                   ${r.address}, NULL,
+                   ${rendered.text}, 'queued', '',
+                   ${rendered.text}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
+                   GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
+                                         FROM guesthub.communication_settings
+                                         WHERE tenant_id = ${event.tenant_id}), 5))
+            ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+              DO NOTHING
+            RETURNING id`;
+          if (rows[0]) summary.created += 1;
+          else summary.duplicates += 1;
+        }
         continue;
       }
 
@@ -645,28 +691,30 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         await skipAutomation(summary, event, automation, reservation, "invalid_reply_to", version);
         continue;
       }
-      const rows = await sql<{ id: string }[]>`
-        INSERT INTO guesthub.outbound_messages
-          (tenant_id, reservation_id, guest_id, channel, provider, template_id,
-           automation_id, template_version_id, event_id, idempotency_key,
-           to_address, subject, body, status, rendered_sender_name,
-           rendered_reply_to, rendered_preheader, rendered_html,
-           rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
-        SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
-               'email', 'gmail', ${automation.template_id}, ${automation.id},
-               ${version.id}, ${event.id}, ${idempotencyKey},
-               ${reservation.guest_email?.trim() ?? ""}, ${subject.value},
-               ${rendered.plainText}, 'queued', ${senderName}, ${replyTo},
-               ${preheader?.value ?? null}, ${rendered.html},
-               ${rendered.plainText}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
-               GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
-                                     FROM guesthub.communication_settings
-                                     WHERE tenant_id = ${event.tenant_id}), 5))
-        ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-          DO NOTHING
-        RETURNING id`;
-      if (rows[0]) summary.created += 1;
-      else summary.duplicates += 1;
+      for (const r of recipients) {
+        const rows = await sql<{ id: string }[]>`
+          INSERT INTO guesthub.outbound_messages
+            (tenant_id, reservation_id, guest_id, channel, provider, template_id,
+             automation_id, template_version_id, event_id, idempotency_key, recipient_key,
+             to_address, subject, body, status, rendered_sender_name,
+             rendered_reply_to, rendered_preheader, rendered_html,
+             rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
+          SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
+                 'email', 'gmail', ${automation.template_id}, ${automation.id},
+                 ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
+                 ${r.address}, ${subject.value},
+                 ${rendered.plainText}, 'queued', ${senderName}, ${replyTo},
+                 ${preheader?.value ?? null}, ${rendered.html},
+                 ${rendered.plainText}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
+                 GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
+                                       FROM guesthub.communication_settings
+                                       WHERE tenant_id = ${event.tenant_id}), 5))
+          ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+            DO NOTHING
+          RETURNING id`;
+        if (rows[0]) summary.created += 1;
+        else summary.duplicates += 1;
+      }
     } catch {
       await markNeedsAttention(automation.id, "הגדרת האוטומציה או התבנית אינה תקינה");
       await skipAutomation(summary, event, automation, reservation, "automation_config_invalid");

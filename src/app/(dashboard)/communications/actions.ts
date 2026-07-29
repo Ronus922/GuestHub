@@ -7,10 +7,12 @@ import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/acto
 import { sql } from "@/lib/db";
 import { writeAudit } from "@/lib/audit";
 import {
+  EMAIL_RE,
   htmlTemplateContentSchema,
   structuredTemplateContentSchema,
   templateContentKind,
   whatsappTemplateContentSchema,
+  type RecipientConfig,
 } from "@/lib/communications/schemas";
 import {
   loadPreviewDatasets, propertyOnlyContext, resolveConnectedWhatsAppChannel,
@@ -403,6 +405,14 @@ const automationInputSchema = z.object({
   offsetDays: z.number().int().min(0).max(60).optional(),
   sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   activate: z.boolean().default(false),
+  recipient: z.object({
+    guest: z.boolean(),
+    owner: z.union([
+      z.object({ mode: z.literal("all") }),
+      z.object({ mode: z.literal("selected"), addresses: z.array(z.string().trim().min(3).max(320)).min(1).max(3) }),
+    ]).nullable(),
+  }).refine((value) => value.guest || value.owner !== null, { message: "יש לבחור לפחות נמען אחד" })
+    .default({ guest: true, owner: null }),
 });
 
 /** Is the channel's provider connected + tested + holding a secret? */
@@ -441,6 +451,27 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
       SELECT current_published_version_id FROM guesthub.message_templates
       WHERE tenant_id = ${actor.tenantId} AND id = ${input.templateId} AND channel = ${input.channel}`;
     if (!template) return { success: false, error: "התבנית שנבחרה אינה זמינה לערוץ הזה" };
+    let owner: RecipientConfig["owner"] = null;
+    if (input.recipient.owner) {
+      const [ownerRow] = await sql<{ addresses: string[] }[]>`
+        SELECT ${input.channel === "whatsapp" ? sql`owner_notification_phones` : sql`owner_notification_emails`} AS addresses
+        FROM guesthub.communication_settings WHERE tenant_id = ${actor.tenantId}`;
+      const configured = ownerRow?.addresses ?? [];
+      if (configured.length === 0)
+        return { success: false, error: "יש להגדיר כתובות של בעל העסק בהגדרות התקשורת לפני בחירת נמען זה" };
+      if (input.recipient.owner.mode === "selected") {
+        const normalize = (a: string) => input.channel === "whatsapp" ? normalizePhone(a).e164 : a.trim().toLowerCase();
+        const configuredSet = new Set(configured.map(normalize));
+        const picked = [...new Set(input.recipient.owner.addresses.map(normalize))]
+          .filter((a) => a && configuredSet.has(a));
+        if (picked.length === 0)
+          return { success: false, error: "הכתובות שנבחרו אינן קיימות עוד בהגדרות — יש לבחור מחדש" };
+        owner = { mode: "selected", addresses: picked };
+      } else {
+        owner = { mode: "all" };
+      }
+    }
+    const recipientConfig: RecipientConfig = { version: 2, guest: input.recipient.guest, owner };
     const ready = await providerReady(actor.tenantId, input.channel);
     const requestedActive = input.activate && Boolean(template.current_published_version_id) && ready;
     const status = input.activate ? (requestedActive ? "active" : "needs_attention") : "draft";
@@ -457,6 +488,7 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
         conditions = ${sql.json(conditions as never)},
         exclusion_rules = ${sql.json(exclusions as never)},
         source_filters = ${sql.json({ include: input.sources } as never)},
+        recipient_config = ${sql.json(recipientConfig as never)},
         template_id = ${input.templateId}, status = ${status}, attention_reason = ${attention}, updated_by = ${actor.userId}
       WHERE tenant_id = ${actor.tenantId} AND id = ${input.id} RETURNING id`
       : await sql<{ id: string }[]>`
@@ -469,12 +501,13 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
         ${input.triggerType}, ${sql.json(timing as never)},
         ${sql.json({ include: input.sources } as never)},
         ${sql.json(conditions as never)}, ${sql.json(exclusions as never)},
-        ${sql.json({ type: "primary_guest" } as never)}, ${input.channel}, ${input.templateId}, 'latest_published',
+        ${sql.json(recipientConfig as never)}, ${input.channel}, ${input.templateId}, 'latest_published',
         'once_per_event', true, ${actor.userId}, ${actor.userId}) RETURNING id`;
     if (!rows[0]) return { success: false, error: "האוטומציה לא נמצאה" };
     await writeAudit(actor, { entityType: "communication_automation", entityId: id,
       action: input.id ? "automation_updated" : "automation_created",
-      after: { status, triggerType: input.triggerType, channel: input.channel } });
+      after: { status, triggerType: input.triggerType, channel: input.channel,
+        recipients: { guest: recipientConfig.guest, owner: owner?.mode ?? null } } });
     refresh();
     return { success: true, id, message: requestedActive ? "האוטומציה הופעלה לאירועים חדשים בלבד" : attention ?? "האוטומציה נשמרה כטיוטה" };
   } catch (error) { return fail(error); }
@@ -527,6 +560,8 @@ export async function setAutomationStatusAction(idRaw: string, operation: "activ
 // nothing is worse than no switch, so the UI does not offer them.
 const settingsSchema = z.object({
   maxAttempts: z.number().int().min(1).max(10),
+  ownerEmails: z.array(z.string().trim().toLowerCase().regex(EMAIL_RE)).max(10).default([]),
+  ownerPhones: z.array(z.string().trim().min(3).max(30)).max(10).default([]),
 });
 
 export async function saveCommunicationSettingsAction(raw: unknown): Promise<CommunicationActionResult> {
@@ -534,16 +569,26 @@ export async function saveCommunicationSettingsAction(raw: unknown): Promise<Com
     const actor = await getActor();
     requirePermission(actor, "communications.channels.manage");
     const input = settingsSchema.parse(raw);
+    const ownerEmails = [...new Set(input.ownerEmails)];
+    const normalizedPhones = input.ownerPhones.map((p) => normalizePhone(p));
+    if (normalizedPhones.some((p) => !p.valid))
+      return { success: false, error: "אחד ממספרי הטלפון של בעל העסק אינו תקין" };
+    const ownerPhones = [...new Set(normalizedPhones.map((p) => p.e164))];
     await sql.begin(async (tx) => {
       await tx`
-      INSERT INTO guesthub.communication_settings (tenant_id, retry_policy, created_by, updated_by)
+      INSERT INTO guesthub.communication_settings
+        (tenant_id, retry_policy, owner_notification_emails, owner_notification_phones, created_by, updated_by)
       VALUES (${actor.tenantId},
         ${sql.json({ maxAttempts: input.maxAttempts, baseDelaySeconds: 60, maxDelaySeconds: 3600 } as never)},
+        ${ownerEmails}::text[], ${ownerPhones}::text[],
         ${actor.userId}, ${actor.userId})
       ON CONFLICT (tenant_id) DO UPDATE SET retry_policy = EXCLUDED.retry_policy,
+        owner_notification_emails = EXCLUDED.owner_notification_emails,
+        owner_notification_phones = EXCLUDED.owner_notification_phones,
         updated_by = EXCLUDED.updated_by`;
       await writeAudit(actor, { entityType: "communication_settings", entityId: actor.tenantId,
-        action: "communication_settings_updated", after: { maxAttempts: input.maxAttempts } }, tx);
+        action: "communication_settings_updated",
+        after: { maxAttempts: input.maxAttempts, ownerEmails: ownerEmails.length, ownerPhones: ownerPhones.length } }, tx);
     });
     refresh();
     return { success: true, message: "כללי התקשורת נשמרו" };

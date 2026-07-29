@@ -20,6 +20,7 @@ export type AutomationRow = {
   attentionReason: string | null; triggerType: string; channel: string;
   templateId: string; templateName: string; timing: Record<string, unknown>;
   sources: Record<string, unknown>; conditions: Record<string, unknown>;
+  recipient: Record<string, unknown> | null;
   updatedAt: string; successCount: number; failureCount: number;
 };
 
@@ -50,6 +51,8 @@ export type CommunicationSettingsView = {
   failureNotification: { enabled?: boolean; email?: string };
   manualBookingRecipients: string[];
   directBookingRecipients: string[];
+  ownerEmails: string[];
+  ownerPhones: string[];
 };
 
 export type CommunicationsData = {
@@ -97,11 +100,12 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       attention_reason: string | null; trigger_type: string; channel: string;
       template_id: string; template_name: string; timing_config: Record<string, unknown>;
       source_filters: Record<string, unknown>; conditions: Record<string, unknown>;
+      recipient_config: Record<string, unknown> | null;
       updated_at: string; success_count: number; failure_count: number;
     }[]>`
       SELECT a.id, a.name, a.description, a.status, a.attention_reason, a.trigger_type,
              a.channel, a.template_id, m.name AS template_name, a.timing_config,
-             a.source_filters, a.conditions, a.updated_at::text AS updated_at,
+             a.source_filters, a.conditions, a.recipient_config, a.updated_at::text AS updated_at,
              COUNT(o.id) FILTER (WHERE o.status IN ('submitted','sent','delivered','read'))::int AS success_count,
              COUNT(o.id) FILTER (WHERE o.status IN ('failed','undelivered','provider_not_configured','validation_failed'))::int AS failure_count
       FROM guesthub.communication_automations a
@@ -158,9 +162,11 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       retry_policy: CommunicationSettingsView["retryPolicy"];
       failure_notification: CommunicationSettingsView["failureNotification"];
       manual_booking_recipients: string[]; direct_booking_recipients: string[];
+      owner_notification_emails: string[]; owner_notification_phones: string[];
     }[]>`
       SELECT quiet_hours, retry_policy, failure_notification,
-             manual_booking_recipients, direct_booking_recipients
+             manual_booking_recipients, direct_booking_recipients,
+             owner_notification_emails, owner_notification_phones
       FROM guesthub.communication_settings WHERE tenant_id = ${tenantId}` : Promise.resolve([]),
     access.channels ? sql<{
       provider: "green_api" | "twilio"; status: string; status_detail: string | null; last_tested_at: string | null;
@@ -195,7 +201,8 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       id: r.id, name: r.name, description: r.description, status: r.status,
       attentionReason: r.attention_reason, triggerType: r.trigger_type, channel: r.channel,
       templateId: r.template_id, templateName: r.template_name, timing: r.timing_config,
-      sources: r.source_filters, conditions: r.conditions, updatedAt: r.updated_at,
+      sources: r.source_filters, conditions: r.conditions, recipient: r.recipient_config,
+      updatedAt: r.updated_at,
       successCount: r.success_count, failureCount: r.failure_count,
     })),
     deliveries: deliveries.map((r) => ({
@@ -231,10 +238,13 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       failureNotification: settings[0].failure_notification ?? {},
       manualBookingRecipients: settings[0].manual_booking_recipients ?? [],
       directBookingRecipients: settings[0].direct_booking_recipients ?? [],
+      ownerEmails: settings[0].owner_notification_emails ?? [],
+      ownerPhones: settings[0].owner_notification_phones ?? [],
     } : {
       quietHours: { enabled: false, start: "22:00", end: "07:00" },
       retryPolicy: { maxAttempts: 5, baseDelaySeconds: 60, maxDelaySeconds: 3600 },
       failureNotification: { enabled: false }, manualBookingRecipients: [], directBookingRecipients: [],
+      ownerEmails: [], ownerPhones: [],
     },
   };
 }
