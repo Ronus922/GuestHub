@@ -13,10 +13,8 @@ import {
   type EngineAssignment, type EnginePlan, type PlanKind,
 } from "./resolve";
 import { PRICING_ERROR_MESSAGES } from "./messages";
-import { resolveLosDiscount } from "./los";
 import {
   resolveMaxQuoteNights, PRICING_ENGINE_VERSION,
-  type LosDiscountKind, type LosDiscountTier,
   type NightQuote, type PriceSource, type PricingError, type PricingErrorCode,
   type PricingQuoteRequest, type PricingQuoteResult, type PricingWarning, type RoomQuote,
 } from "./types";
@@ -81,12 +79,6 @@ type PlanDbRow = {
 
 type OverlayDbRow = PlanRateRow & { pricing_plan_id: string; sellable_unit_id: string };
 
-type LosDbRow = {
-  id: string; pricing_plan_id: string | null; name: string;
-  min_nights: number; max_nights: number | null;
-  discount_kind: LosDiscountKind; discount_value: number; is_active: boolean;
-};
-
 function toEnginePlan(r: PlanDbRow): EnginePlan {
   return {
     id: r.id, code: r.code, name: r.name, publicName: r.public_name,
@@ -111,7 +103,7 @@ function invalidResult(
     tenantId: req.tenantId, currency,
     checkIn: req.checkIn, checkOut: req.checkOut,
     numberOfNights: 0, valid: false, rooms: [],
-    subtotalNet: 0, vatRate, vatAmount: 0, losDiscountTotal: 0, totalGross: 0,
+    subtotalNet: 0, vatRate, vatAmount: 0, totalGross: 0,
     priceIncludesVat: true, roundingPolicy: ROUNDING_POLICY,
     warnings: [], errors,
   };
@@ -140,6 +132,31 @@ export async function calculateQuote(
   db: Sql | TransactionSql,
   req: PricingQuoteRequest,
 ): Promise<PricingQuoteResult> {
+  // ---- automatic plan selection by stay length ----
+  // A room entry with NO explicit ratePlanId (and no manual rate) does not
+  // simply fall to the base layer any more: the engine prices the stay under
+  // every active tenant-level plan and keeps the eligible one with the lowest
+  // total for the guest — a 30-night stay wins its monthly plan by BECOMING
+  // that plan's guest, never by a second discount layer. Eligibility is the
+  // full existing rule set (assignment, validity, booking window, DOW,
+  // defaultMinStay/defaultMaxStay, date-level restrictions): a candidate that
+  // violates any of them produces an invalid quote and simply loses.
+  // An explicitly supplied ratePlanId always wins — it never enters this path.
+  if (!req.disablePlanAutoSelect) {
+    const wantsSelection = req.rooms.some(
+      (r) => r.ratePlanId == null && r.manualRatePerNight == null,
+    );
+    if (wantsSelection) {
+      const candidates = await db<{ id: string; name: string; public_name: string | null }[]>`
+        SELECT id, name, public_name
+        FROM guesthub.pricing_plans
+        WHERE tenant_id = ${req.tenantId} AND sellable_unit_id IS NULL
+          AND is_active AND NOT is_archived
+        ORDER BY code`;
+      if (candidates.length > 0) return quoteWithPlanSelection(db, req, candidates);
+    }
+  }
+
   // ---- tenant context (one query; §28 loads tenant settings once) ----
   const [tenant] = await db<TenantRow[]>`
     SELECT currency, timezone,
@@ -250,20 +267,6 @@ export async function calculateQuote(
     m.set(row.date, row);
   }
   const EMPTY_OVERLAY = new Map<string, PlanRateRow>();
-
-  // Length-of-stay tiers — the whole (tiny) active set for the tenant in one
-  // query (§28), so plan-scoped and default tiers resolve without a roundtrip
-  // per room. The table is new; a tenant that configured none simply gets [].
-  const losRows = await db<LosDbRow[]>`
-    SELECT id, pricing_plan_id, name, min_nights, max_nights,
-           discount_kind, discount_value::float8 AS discount_value, is_active
-    FROM guesthub.length_of_stay_discounts
-    WHERE tenant_id = ${req.tenantId} AND is_active`;
-  const losTiers: LosDiscountTier[] = losRows.map((r) => ({
-    id: r.id, pricingPlanId: r.pricing_plan_id, name: r.name,
-    minNights: r.min_nights, maxNights: r.max_nights,
-    kind: r.discount_kind, value: r.discount_value, isActive: r.is_active,
-  }));
 
   // Physical availability for all rooms at once (same seam as reservations).
   // An edit/move excludes the stay's own rows exactly like the legacy path.
@@ -518,23 +521,10 @@ export async function calculateQuote(
       (frequency === "per_night" ? extraPerNight * nights.length : extraPerStay),
     );
 
-    // Length-of-stay discount (D104) — commercial rule, so it runs for every
-    // surface that prices through this engine. An authorized manual override
-    // (§13) is EXEMPT: that price is the operator's final word, and quietly
-    // discounting it further would contradict the override's whole meaning.
+    // The length-of-stay DISCOUNT layer (D104/D105) was removed: a stay's
+    // "discount" is now the PLAN it is eligible for (automatic plan selection
+    // below), never a second arithmetic layer stacked on the plan price.
     const accommodationSubtotal = priced ? round2(accommodationCents / 100) : 0;
-    const losDiscount =
-      priced && manualRate == null
-        ? resolveLosDiscount(losTiers, {
-            ratePlanId: plan?.id ?? null,
-            // derived_percentage IS length-of-stay pricing — default tiers do
-            // not stack on it; only its own explicit tiers apply (D105)
-            planKind: plan?.planKind ?? null,
-            nights: nights.length,
-            accommodationSubtotal,
-          })
-        : null;
-    if (losDiscount) subtotalCents -= cents(losDiscount.amount);
 
     roomQuotes.push({
       roomId: entry.roomId,
@@ -553,7 +543,6 @@ export async function calculateQuote(
       extraGuestTotal,
       nights: nightQuotes,
       accommodationSubtotal,
-      losDiscount,
       roomSubtotal: priced ? round2(Math.max(0, subtotalCents) / 100) : 0,
       available,
       valid: roomErrors.length === 0,
@@ -561,15 +550,13 @@ export async function calculateQuote(
       warnings: roomWarnings,
       priceSourcesUsed: [...sourcesUsed],
       restrictionsEvaluated,
+      planSelection: null,
     });
   }
 
   // ---- totals (§16): per-room subtotals + one combined total; never averaged ----
   const grossCents = roomQuotes.reduce((acc, r) => acc + cents(r.roomSubtotal), 0);
   const totalGross = round2(grossCents / 100);
-  const losDiscountTotal = round2(
-    roomQuotes.reduce((acc, r) => acc + cents(r.losDiscount?.amount ?? 0), 0) / 100,
-  );
   const vatAmount = includedVatAmount(totalGross, vatRate);
   const subtotalNet = round2(totalGross - vatAmount);
   const valid = roomQuotes.length > 0 && roomQuotes.every((r) => r.valid);
@@ -588,7 +575,6 @@ export async function calculateQuote(
         d: n.date, p: n.resolvedPlanPrice, s: n.priceSource, b: n.basePrice, a: n.adjustmentValue,
       })),
       egN: r.extraGuestPerNight, egS: r.extraGuestPerStay, egSrc: r.extraGuestSource,
-      los: r.losDiscount ? [r.losDiscount.id, r.losDiscount.amount] : null,
       subtotal: r.roomSubtotal, valid: r.valid,
       errs: r.errors.map((e) => e.code).sort(),
     })),
@@ -607,13 +593,100 @@ export async function calculateQuote(
     subtotalNet,
     vatRate,
     vatAmount,
-    losDiscountTotal,
     totalGross,
     priceIncludesVat: true,
     roundingPolicy: ROUNDING_POLICY,
     warnings: [],
     errors: [],
   };
+}
+
+// The selection pass: price the base layer and every candidate plan through
+// the SAME engine (recursive calls with selection disabled), pick the winner
+// per auto room, and return one final engine quote with the winners applied.
+// Selection only — every number is a normal engine total; nothing is invented.
+async function quoteWithPlanSelection(
+  db: Sql | TransactionSql,
+  req: PricingQuoteRequest,
+  candidates: { id: string; name: string; public_name: string | null }[],
+): Promise<PricingQuoteResult> {
+  const explicit: PricingQuoteRequest = { ...req, disablePlanAutoSelect: true };
+  const autoRoomIds = new Set(
+    req.rooms
+      .filter((r) => r.ratePlanId == null && r.manualRatePerNight == null)
+      .map((r) => r.roomId),
+  );
+  const withPlan = (planId: string): PricingQuoteRequest => ({
+    ...explicit,
+    rooms: req.rooms.map((r) =>
+      r.ratePlanId == null && r.manualRatePerNight == null && autoRoomIds.has(r.roomId)
+        ? { ...r, ratePlanId: planId }
+        : r,
+    ),
+  });
+
+  const base = await calculateQuote(db, explicit);
+  type Winner = {
+    planId: string | null; planName: string | null;
+    subtotal: number | null; baseSubtotal: number | null;
+  };
+  const winners = new Map<string, Winner>();
+  for (const roomId of autoRoomIds) {
+    const baseRq = base.rooms.find((r) => r.roomId === roomId);
+    const baseSubtotal = baseRq && baseRq.valid && baseRq.roomSubtotal > 0 ? baseRq.roomSubtotal : null;
+    winners.set(roomId, { planId: null, planName: null, subtotal: baseSubtotal, baseSubtotal });
+  }
+  for (const c of candidates) {
+    const quote = await calculateQuote(db, withPlan(c.id));
+    for (const roomId of autoRoomIds) {
+      const rq = quote.rooms.find((r) => r.roomId === roomId);
+      if (!rq || !rq.valid || rq.roomSubtotal <= 0) continue; // ineligible/unpriced
+      const w = winners.get(roomId)!;
+      // strictly cheaper wins; a tie keeps the earlier choice (base first,
+      // then candidate code order) — deterministic, and a plan never displaces
+      // the base price without actually saving the guest money.
+      if (w.subtotal == null || rq.roomSubtotal < w.subtotal) {
+        winners.set(roomId, {
+          planId: c.id, planName: c.public_name ?? c.name,
+          subtotal: rq.roomSubtotal, baseSubtotal: w.baseSubtotal,
+        });
+      }
+    }
+  }
+
+  const anyPlanWon = [...winners.values()].some((w) => w.planId != null);
+  const final = anyPlanWon
+    ? await calculateQuote(db, {
+        ...explicit,
+        rooms: req.rooms.map((r) => {
+          const w =
+            r.ratePlanId == null && r.manualRatePerNight == null
+              ? winners.get(r.roomId)
+              : undefined;
+          return w?.planId ? { ...r, ratePlanId: w.planId } : r;
+        }),
+      })
+    : base;
+
+  const nightsCount = final.numberOfNights;
+  for (const rq of final.rooms) {
+    const w = winners.get(rq.roomId);
+    if (!w) continue;
+    rq.planSelection = {
+      mode: "stay_length_auto",
+      selectedPlanId: w.planId,
+      candidatesConsidered: candidates.length,
+      baseSubtotal: w.baseSubtotal,
+      selectedSubtotal: w.subtotal,
+      reason: w.planId
+        ? `נבחרה אוטומטית לפי אורך השהות (${nightsCount} לילות): "${w.planName}"` +
+          (w.baseSubtotal != null && w.subtotal != null
+            ? ` — ₪${w.subtotal.toLocaleString("he-IL")} במקום ₪${w.baseSubtotal.toLocaleString("he-IL")} במחיר בסיס`
+            : "")
+        : `נבדקו ${candidates.length} תוכניות תעריף לאורך השהות — מחיר הבסיס נותר הזול ביותר`,
+    };
+  }
+  return final;
 }
 
 function emptyRoomQuote(
@@ -637,7 +710,6 @@ function emptyRoomQuote(
     extraGuestPerNight: 0, extraGuestPerStay: 0, extraGuestTotal: 0,
     nights: [],
     accommodationSubtotal: 0,
-    losDiscount: null,
     roomSubtotal: 0,
     available,
     valid: false,
@@ -645,5 +717,6 @@ function emptyRoomQuote(
     warnings: [],
     priceSourcesUsed: [],
     restrictionsEvaluated: [],
+    planSelection: null,
   };
 }

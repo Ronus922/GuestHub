@@ -112,34 +112,6 @@ export async function listBookableRatePlans(
     ORDER BY sort_order, name`;
 }
 
-// ---- length-of-stay discounts (D104) — the admin read; the engine loads the
-// same table itself so pricing never depends on this screen ----
-export type LosDiscountRow = {
-  id: string;
-  pricing_plan_id: string | null; // null = tenant default (base pricing + plans without tiers)
-  plan_name: string | null;
-  name: string;
-  min_nights: number;
-  max_nights: number | null;
-  discount_kind: "percent" | "amount_per_night" | "amount_per_stay";
-  discount_value: number;
-  is_active: boolean;
-};
-
-export async function listLosDiscounts(
-  tenantId: string,
-  db: Sql | TransactionSql = sql,
-): Promise<LosDiscountRow[]> {
-  return db<LosDiscountRow[]>`
-    SELECT d.id, d.pricing_plan_id, COALESCE(p.public_name, p.name) AS plan_name,
-           d.name, d.min_nights, d.max_nights,
-           d.discount_kind, d.discount_value::float8 AS discount_value, d.is_active
-    FROM guesthub.length_of_stay_discounts d
-    LEFT JOIN guesthub.pricing_plans p ON p.id = d.pricing_plan_id
-    WHERE d.tenant_id = ${tenantId}
-    ORDER BY d.pricing_plan_id NULLS FIRST, d.min_nights`;
-}
-
 export type PlanAssignmentRow = {
   sellable_unit_id: string;
   is_active: boolean;

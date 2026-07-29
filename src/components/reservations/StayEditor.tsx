@@ -14,7 +14,6 @@ import {
   getAvailableRoomsAction,
   getStayQuoteAction,
 } from "@/app/(dashboard)/reservations/actions";
-import type { LosDiscountQuote } from "@/lib/pricing/types";
 
 // One reservation-room editor block (locked per-room model §C): its own
 // dates, occupancy, physical room and optional per-room guest. Used by both
@@ -70,7 +69,6 @@ export type LiveQuote = {
   uniformNightly: boolean;
   /** accommodation before the length-of-stay discount (D104) */
   accommodationSubtotal: number;
-  losDiscount: LosDiscountQuote | null;
   restriction: string | null;
 };
 
@@ -82,7 +80,6 @@ export function toLiveQuote(d: {
   nights: number;
   ratePerNight: number;
   accommodationSubtotal: number;
-  losDiscount: LosDiscountQuote | null;
   restriction: string | null;
   nightly: { price: number | null }[];
 }): LiveQuote {
@@ -93,11 +90,8 @@ export function toLiveQuote(d: {
     uniformNightly:
       priced.length === d.nights &&
       priced.every((p) => p === priced[0]) &&
-      // a length-of-stay discount is a separate line: "nights × rate" describes
-      // the accommodation above it, not the discounted total
-      Math.abs(d.ratePerNight * d.nights - (d.total + (d.losDiscount?.amount ?? 0))) < 0.005,
+      Math.abs(d.ratePerNight * d.nights - d.total) < 0.005,
     accommodationSubtotal: d.accommodationSubtotal,
-    losDiscount: d.losDiscount,
     restriction: d.restriction,
   };
 }
@@ -180,7 +174,6 @@ export function StayEditor({
         nights: number;
         ratePerNight: number;
         accommodationSubtotal: number;
-        losDiscount: LosDiscountQuote | null;
         restriction: string | null;
         nightly: { price: number | null }[];
       }>,
@@ -326,15 +319,9 @@ export function StayEditor({
               {!quote.uniformNightly && <span className="text-xs text-muted"> (ממוצע)</span>}
             </span>
             <b className="ltr-num text-primary">
-              ₪{(quote.losDiscount ? quote.accommodationSubtotal : quote.total).toLocaleString()}
+              ₪{quote.total.toLocaleString()}
             </b>
           </div>
-          {quote.losDiscount && (
-            <div className="bw-price-line border-b-0">
-              <span className="bw-plr text-status-success">{quote.losDiscount.explanation}</span>
-              <b className="ltr-num text-primary">₪{quote.total.toLocaleString()}</b>
-            </div>
-          )}
         </>
       )}
       {quoteError && value.roomId && (

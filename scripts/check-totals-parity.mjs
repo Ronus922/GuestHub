@@ -86,6 +86,7 @@ let pre = null;
 if (copyMode && !has058) {
   pre = dumpMoney();
   applyMigration("057_length_of_stay_discounts.sql");
+  applyMigration("063_drop_length_of_stay_discounts.sql");
   applyMigration("058_reservation_totals_v2.sql");
   const post = dumpMoney();
   assert.equal(post, pre, "money columns byte-identical across 057+058");

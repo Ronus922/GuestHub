@@ -143,7 +143,7 @@ try {
       return { roomId: r.id, suId: su.id };
     };
     const cheap = await mkUnit("801", [[IN, 500], [MID, 520]]);   // 1020 accommodation
-    await mkUnit("802", [[IN, 700], [MID, 700]]);                 // 1400 — never the "from" price
+    const dear = await mkUnit("802", [[IN, 700], [MID, 700]]);    // 1400 — never the "from" price
 
     // ---- 1. the quoted number is the ENGINE's, not the ESS sum ----
     // included_occupancy=1 + 2 adults ⇒ the engine adds ₪100 × 2 nights that
@@ -173,23 +173,44 @@ try {
       "priceReservationStays (the booking write path) commits exactly the quoted price");
     ok("quote ≡ charge — the booking seam commits the quoted number");
 
-    // ---- 3. a tenant-default LOS tier flows into both, identically ----
-    await tx`
-      INSERT INTO guesthub.length_of_stay_discounts
-        (tenant_id, pricing_plan_id, name, min_nights, discount_kind, discount_value)
-      VALUES (${FIXED_TENANT}, NULL, 'שני לילות', 2, 'percent', 10)`;
-    const typesLos = await publicAvailability(tx, IN, OUT);
-    const engineLos = await calculateReservationPrice(tx, {
+    // ---- 3. automatic plan selection flows into both, identically ----
+    // The LOS tier layer is gone (migration 063). A cheaper eligible plan
+    // assigned to the unit is now what a long stay wins — and the public quote
+    // must surface exactly the engine's selection, or the site quotes one
+    // number and the booking charges another.
+    const [flexPlan] = await tx`
+      INSERT INTO guesthub.pricing_plans (tenant_id, sellable_unit_id, code, name, plan_kind, is_active)
+      VALUES (${FIXED_TENANT}, NULL, 'pq-flex', 'גמיש', 'base', true) RETURNING id`;
+    const [nrPlan] = await tx`
+      INSERT INTO guesthub.pricing_plans
+        (tenant_id, sellable_unit_id, code, name, plan_kind, parent_plan_id, adjustment_value, is_active)
+      VALUES (${FIXED_TENANT}, NULL, 'pq-nr', 'ללא החזר', 'derived_percentage', ${flexPlan.id}, -10, true)
+      RETURNING id`;
+    for (const u of [cheap, dear]) {
+      for (const plan of [flexPlan, nrPlan]) {
+        await tx`
+          INSERT INTO guesthub.pricing_plan_units (tenant_id, pricing_plan_id, sellable_unit_id, is_active)
+          VALUES (${FIXED_TENANT}, ${plan.id}, ${u.suId}, true)`;
+      }
+    }
+    const typesSel = await publicAvailability(tx, IN, OUT);
+    const engineSel = await calculateReservationPrice(tx, {
       tenantId: FIXED_TENANT, checkIn: IN, checkOut: OUT,
       rooms: [{ roomId: cheap.roomId, ratePlanId: null, adults: 2, children: 0, infants: 0, manualRatePerNight: null }],
       source: "website",
     });
-    assert.ok(engineLos.rooms[0].losDiscount, "engine applies the tier");
-    assert.equal(typesLos[0].totalPrice, engineLos.rooms[0].roomSubtotal,
-      "quote and engine agree with the LOS tier applied");
-    assert.equal(typesLos[0].losDiscount?.id, engineLos.rooms[0].losDiscount?.id,
-      "the quote surfaces the very tier the engine chose");
-    ok("length-of-stay tier: one tier, one amount, both surfaces");
+    assert.equal(engineSel.rooms[0].planSelection?.selectedPlanId, nrPlan.id,
+      "engine selects the cheaper eligible plan for the stay");
+    assert.ok(engineSel.rooms[0].roomSubtotal < 1220, "the selected plan actually saves the guest money");
+    assert.equal(typesSel[0].totalPrice, engineSel.rooms[0].roomSubtotal,
+      "quote and engine agree with plan selection applied");
+    const pricedSel = await seam.priceReservationStays(tx, FIXED_TENANT, [{
+      roomId: cheap.roomId, ratePlanId: null,
+      checkIn: IN, checkOut: OUT, adults: 2, children: 0, infants: 0,
+    }], { source: "website", enforceAvailability: true, enforceRestrictions: true });
+    assert.equal(pricedSel[0].priceTotal, typesSel[0].totalPrice,
+      "the booking seam commits exactly the selected-plan price");
+    ok("plan selection: one selection, one number — public quote, engine and booking seam agree");
 
     throw new Rollback();
   });

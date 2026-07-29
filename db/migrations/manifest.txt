@@ -66,3 +66,4 @@
 058_reservation_totals_v2.sql
 059_billing_notes_to_reservation_notes.sql
 062_channel_failure_evidence.sql
+063_drop_length_of_stay_discounts.sql
