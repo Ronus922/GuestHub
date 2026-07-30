@@ -231,31 +231,47 @@ function normalizeLanguage(raw: string | null): "he" | "en" | null {
   return null;
 }
 
-// §15/§21 — resolve the template version to send. Under the "latest_published"
-// policy, prefer a PUBLISHED sibling template in the guest's language (same tenant
-// + same category), falling back to the automation's configured template when no
-// such sibling exists. A "locked" policy is an explicit operator choice and is
-// NEVER language-overridden. Selection is honest: it only ever picks a real
+// §15/§21 + D117 — resolve the template version to send. Under the
+// "latest_published" policy, prefer a PUBLISHED sibling in the guest's language
+// — but a sibling is a template in the SAME LINEAGE (message_templates.
+// lineage_id, an explicit link between translations), never a template that
+// merely shares labels. Reservation 1060 is why: category+channel+language
+// matched a *different* template and its body went to a guest. NULL lineage_id
+// means "my own lineage is myself" — an unlinked template resolves only to its
+// own versions. A "locked" policy is an explicit operator choice and is NEVER
+// language-overridden. Selection is honest: it only ever picks a real
 // published version, and never fabricates a translation.
+type VersionResolution =
+  | { outcome: "resolved"; version: VersionRow }
+  | { outcome: "none" }
+  /** >1 candidate is a configuration DEFECT (two published same-language
+   *  templates in one lineage) — never resolved by luck (D117). */
+  | { outcome: "ambiguous"; candidateTemplateIds: string[] };
+
 async function resolveVersion(
   automation: AutomationRow,
   guestLanguage?: string | null,
-): Promise<VersionRow | null> {
+): Promise<VersionResolution> {
   const target = automation.template_version_policy === "locked" ? null : normalizeLanguage(guestLanguage ?? null);
   if (target) {
-    const [sibling] = await sql<VersionRow[]>`
+    const siblings = await sql<VersionRow[]>`
       SELECT v.id, v.template_id, t.language, v.sender_display_name, v.reply_to_behavior,
              v.reply_to_address, v.subject, v.preheader, v.content
       FROM guesthub.message_templates cfg
       JOIN guesthub.message_templates t
-        ON t.tenant_id = cfg.tenant_id AND t.category = cfg.category
+        ON t.tenant_id = cfg.tenant_id
+        AND COALESCE(t.lineage_id, t.id) = COALESCE(cfg.lineage_id, cfg.id)
         AND t.channel = cfg.channel AND t.language = ${target}
       JOIN guesthub.message_template_versions v
         ON v.id = t.current_published_version_id AND v.tenant_id = t.tenant_id
       WHERE cfg.id = ${automation.template_id} AND cfg.tenant_id = ${automation.tenant_id}
         AND t.archived_at IS NULL AND t.lifecycle_state <> 'archived'
-      LIMIT 1`;
-    if (sibling) return sibling;
+      ORDER BY (t.id = cfg.id) DESC, t.id
+      LIMIT 2`;
+    if (siblings.length > 1) {
+      return { outcome: "ambiguous", candidateTemplateIds: siblings.map((row) => row.template_id) };
+    }
+    if (siblings[0]) return { outcome: "resolved", version: siblings[0] };
     // no published sibling in the guest's language → fall through to configured
   }
 
@@ -274,7 +290,17 @@ async function resolveVersion(
         ? automation.locked_template_version_id
         : sql`t.current_published_version_id`}
     LIMIT 1`;
-  return version ?? null;
+  return version ? { outcome: "resolved", version } : { outcome: "none" };
+}
+
+/** The skip paths only need a version to stamp on the row — any non-resolved
+ *  outcome honestly stamps none. */
+async function resolvedVersion(
+  automation: AutomationRow,
+  guestLanguage?: string | null,
+): Promise<VersionRow | null> {
+  const resolution = await resolveVersion(automation, guestLanguage);
+  return resolution.outcome === "resolved" ? resolution.version : null;
 }
 
 async function resolveConnectedEmailChannel(tenantId: string): Promise<EmailChannelSnapshot | null> {
@@ -371,6 +397,7 @@ async function recordSkippedDelivery(args: {
     missing_guest_email: "כתובת האימייל של האורח חסרה או אינה תקינה",
     missing_guest_phone: "מספר הטלפון של האורח חסר או אינו תקין",
     template_version_missing: "לא נמצאה גרסה מפורסמת תואמת",
+    template_resolution_ambiguous: "יותר מתבנית מפורסמת אחת תואמת — לא נבחרה אף אחת",
     provider_not_ready: "הערוץ אינו מחובר או לא נבדק",
     render_failed: "נתון נדרש לתבנית חסר בהזמנה הזו",
     render_context_failed: "לא ניתן להרכיב את נתוני ההודעה",
@@ -392,7 +419,7 @@ async function recordSkippedDelivery(args: {
        final_error_category, error_code, error_detail, max_attempts)
     VALUES (
       ${args.event.tenant_id}, ${args.reservation.id}, ${args.reservation.guest_id},
-      ${channel}, ${provider}, ${args.automation.template_id}, ${args.automation.id},
+      ${channel}, ${provider}, ${args.version?.template_id ?? args.automation.template_id}, ${args.automation.id},
       ${args.version?.id ?? null}, ${args.event.id}, ${idempotencyKey}, ${args.recipient?.recipientKey ?? "guest"},
       ${toAddress}, ${args.version?.subject ?? null},
       '', 'skipped', '', '', 'normal', now(), ${args.reason}, ${args.reason},
@@ -518,7 +545,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
             : null;
   if (globalSkipReason) {
     for (const automation of automations) {
-      await skipAutomation(summary, event, automation, reservation, globalSkipReason, await resolveVersion(automation, reservation.guest_language));
+      await skipAutomation(summary, event, automation, reservation, globalSkipReason, await resolvedVersion(automation, reservation.guest_language));
     }
     return summary;
   }
@@ -534,7 +561,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
   } catch {
     for (const automation of automations) {
       await markNeedsAttention(automation.id, "לא ניתן להרכיב את נתוני ההודעה (פרופיל העסק או לוח השעות)");
-      await skipAutomation(summary, event, automation, reservation, "render_context_failed", await resolveVersion(automation, reservation.guest_language));
+      await skipAutomation(summary, event, automation, reservation, "render_context_failed", await resolvedVersion(automation, reservation.guest_language));
     }
     return summary;
   }
@@ -559,15 +586,26 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       const recipientConfig = parseRecipientConfig(automation.recipient_config);
       const timing = timingConfigSchema.parse(automation.timing_config);
       if (!sources.include.includes(reservation.booking_origin)) {
-        await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolveVersion(automation, reservation.guest_language)); continue;
+        await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.ota && OTA_ORIGINS.has(reservation.booking_origin)) {
-        await skipAutomation(summary, event, automation, reservation, "ota_excluded", await resolveVersion(automation, reservation.guest_language)); continue;
+        await skipAutomation(summary, event, automation, reservation, "ota_excluded", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.guestCommunicationOptOut && reservation.guest_communication_opt_out) {
-        await skipAutomation(summary, event, automation, reservation, "guest_opted_out", await resolveVersion(automation, reservation.guest_language)); continue;
+        await skipAutomation(summary, event, automation, reservation, "guest_opted_out", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
-      const version = await resolveVersion(automation, reservation.guest_language);
+      const resolution = await resolveVersion(automation, reservation.guest_language);
+      if (resolution.outcome === "ambiguous") {
+        // A configuration defect, not a per-reservation fact: two published
+        // same-language templates in one lineage. Never resolved by luck (D117)
+        // — the skip names the candidates (D112) and the automation is flagged.
+        await markNeedsAttention(automation.id, "יותר מתבנית מפורסמת אחת תואמת לשפה בשושלת התבנית");
+        await skipAutomation(summary, event, automation, reservation, "template_resolution_ambiguous",
+          undefined, undefined, undefined,
+          `יותר מתבנית מפורסמת אחת תואמת לשפה: ${resolution.candidateTemplateIds.join(", ")}`);
+        continue;
+      }
+      const version = resolution.outcome === "resolved" ? resolution.version : null;
       // One outbound row per resolved recipient. The guest keeps the pre-065
       // key format — changing it would un-dedupe every historical event and
       // re-send old messages; only owner rows carry a suffixed key.
@@ -673,7 +711,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
                to_address, subject, body, status, rendered_html,
                rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
             SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
-                   'whatsapp', ${waChannel.provider}, ${automation.template_id}, ${automation.id},
+                   'whatsapp', ${waChannel.provider}, ${version.template_id}, ${automation.id},
                    ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
                    ${r.address}, NULL,
                    ${rendered.text}, 'queued', '',
@@ -736,7 +774,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
              rendered_reply_to, rendered_preheader, rendered_html,
              rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
           SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
-                 'email', 'gmail', ${automation.template_id}, ${automation.id},
+                 'email', 'gmail', ${version.template_id}, ${automation.id},
                  ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
                  ${r.address}, ${subject.value},
                  ${rendered.plainText}, 'queued', ${senderName}, ${replyTo},
