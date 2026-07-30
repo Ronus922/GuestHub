@@ -60,6 +60,7 @@
     "check:messaging": "node scripts/check-messaging.mjs",
     "check:guest-communications": "node scripts/check-guest-communications.mjs && node scripts/check-guest-communications-automation.mjs && node scripts/check-guest-communications-worker.mjs",
     "check:guest-communications-db": "node scripts/check-guest-communications-db.mjs",
+    "check:wa-template-render": "node scripts/check-wa-template-render.mjs",
     "check:business-profile": "node scripts/check-business-profile.mjs",
     "check:maps-picker": "node scripts/check-maps-picker.mjs",
     "check-e2e-safety": "node scripts/check-e2e-safety.mjs",
