@@ -1,5 +1,5 @@
 import "server-only";
-import { getResolvedConnection, getActiveWhatsAppProvider, type ResolvedConnection } from "./store";
+import { getResolvedConnection, getActiveWhatsAppProvider, usableWhatsAppProvider, type ResolvedConnection } from "./store";
 import { GmailOAuthProvider, GmailSmtpProvider } from "./email/gmail";
 import { GreenApiWhatsAppProvider } from "./whatsapp/green-api";
 import { TwilioWhatsAppProvider } from "./whatsapp/twilio";
@@ -48,8 +48,8 @@ export async function resolveEmailProvider(tenantId: string): Promise<EmailProvi
 export async function resolveWhatsAppProvider(
   tenantId: string,
 ): Promise<{ provider: WhatsAppProvider; id: "green_api" | "twilio" } | null> {
-  const active = await getActiveWhatsAppProvider(tenantId);
-  if (active === "disabled") return null;
+  const active = usableWhatsAppProvider(await getActiveWhatsAppProvider(tenantId));
+  if (!active) return null;
   const conn = await getResolvedConnection(tenantId, active);
   if (!conn || Object.keys(conn.secrets).length === 0) return null;
   const provider = buildWhatsAppProvider(active, conn);

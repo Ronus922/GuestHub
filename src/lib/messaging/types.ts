@@ -131,4 +131,24 @@ export type TwilioSecrets = {
 export const PROVIDER_IDS = ["gmail", "gmail_smtp", "green_api", "twilio"] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
+// What may be WRITTEN to the active-provider pointer: the three values the
+// settings UI offers and setActiveWhatsAppProviderAction whitelists.
 export type WhatsAppProviderId = "green_api" | "twilio" | "disabled";
+
+/**
+ * What may be READ back from the pointer — a strictly wider set than what can
+ * be written, because the stored value can also be absent or corrupt.
+ *
+ * The old reader collapsed all four non-provider cases into "disabled", which
+ * is why a pointer that was never written looked exactly like a deliberate
+ * "מושבת" for two days (D113). A reader must not invent an operator decision
+ * that nobody made.
+ *
+ *  - "not_configured" — the key is absent: nobody has ever chosen.
+ *  - "disabled"       — someone explicitly chose to turn WhatsApp off.
+ *  - "invalid"        — a value is stored that is not one of the writable
+ *                       three. No code path produces this today; if it ever
+ *                       appears it is corruption, and it must be visible as
+ *                       corruption rather than silently read as a choice.
+ */
+export type ActiveWhatsAppPointer = WhatsAppProviderId | "not_configured" | "invalid";
