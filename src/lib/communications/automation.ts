@@ -264,10 +264,17 @@ async function resolveVersion(
         AND t.channel = cfg.channel AND t.language = ${target}
       JOIN guesthub.message_template_versions v
         ON v.id = t.current_published_version_id AND v.tenant_id = t.tenant_id
+        -- a pointer corrupted to ANOTHER template's version must fail closed
+        -- here exactly as the fallback query fails closed (same defect class
+        -- as 1060, one storage bug away)
+        AND v.template_id = t.id
       WHERE cfg.id = ${automation.template_id} AND cfg.tenant_id = ${automation.tenant_id}
+        -- an archived CONFIGURED template must not keep sending via a live
+        -- sibling — the fallback refuses archived, this path must too
+        AND cfg.archived_at IS NULL AND cfg.lifecycle_state <> 'archived'
         AND t.archived_at IS NULL AND t.lifecycle_state <> 'archived'
       ORDER BY (t.id = cfg.id) DESC, t.id
-      LIMIT 2`;
+      LIMIT 5`;
     if (siblings.length > 1) {
       return { outcome: "ambiguous", candidateTemplateIds: siblings.map((row) => row.template_id) };
     }
@@ -602,7 +609,8 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         await markNeedsAttention(automation.id, "יותר מתבנית מפורסמת אחת תואמת לשפה בשושלת התבנית");
         await skipAutomation(summary, event, automation, reservation, "template_resolution_ambiguous",
           undefined, undefined, undefined,
-          `יותר מתבנית מפורסמת אחת תואמת לשפה: ${resolution.candidateTemplateIds.join(", ")}`);
+          `יותר מתבנית מפורסמת אחת תואמת לשפה: ${resolution.candidateTemplateIds.join(", ")}`
+          + (resolution.candidateTemplateIds.length >= 5 ? " (רשימה חלקית)" : ""));
         continue;
       }
       const version = resolution.outcome === "resolved" ? resolution.version : null;
