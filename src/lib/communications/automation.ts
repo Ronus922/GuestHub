@@ -11,6 +11,7 @@ import {
 } from "./schemas";
 import { describeConditionFailures, evaluateConditions } from "./conditions";
 import { renderTemplateContent, renderTemplateString, renderWhatsAppCommunication } from "./renderer";
+import { describeRenderIssues } from "./variables";
 import { parseTemplateContent, templateContentKind } from "./schemas";
 import { applyQuietHours, triggerFor } from "./triggers";
 import { normalizePhone } from "@/lib/phone";
@@ -653,7 +654,11 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         }
         const rendered = renderWhatsAppCommunication(content as WhatsAppTemplateContent, context);
         if (!rendered.canSend || !rendered.text.trim()) {
-          await skipAutomation(summary, event, automation, reservation, "render_failed", version, waChannel.provider);
+          // D112/D115 — the skip names the variable that blocked it.
+          await skipAutomation(summary, event, automation, reservation, "render_failed", version,
+            waChannel.provider, undefined,
+            describeRenderIssues(rendered.issues)
+              ?? (rendered.text.trim() ? undefined : "ההודעה ריקה לאחר מילוי המשתנים"));
           continue;
         }
         for (const r of recipients) {
@@ -698,8 +703,13 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         // A missing variable is a fact about THIS reservation (a guest with no
         // first name, an unassigned room), not about the automation. Disabling
         // the automation here would silently stop every OTHER guest's
-        // confirmation too. Record the skip and carry on.
-        await skipAutomation(summary, event, automation, reservation, "render_failed", version);
+        // confirmation too. Record the skip — naming the variable that blocked
+        // it (D112/D115) — and carry on.
+        await skipAutomation(summary, event, automation, reservation, "render_failed", version,
+          undefined, undefined,
+          describeRenderIssues([
+            ...rendered.issues, ...subject.issues, ...(preheader?.issues ?? []),
+          ]) ?? undefined);
         continue;
       }
       const senderName = version.sender_display_name ?? emailChannel.sender_name;

@@ -21,6 +21,7 @@ import { claimDeliveryById, deliverClaimedEmail, deliverClaimedWhatsApp } from "
 import {
   renderTemplateContent, renderTemplateString, renderWhatsAppCommunication,
 } from "@/lib/communications/renderer";
+import { describeRenderIssues } from "@/lib/communications/variables";
 import { normalizePhone } from "@/lib/phone";
 import { TRIGGERS, TRIGGER_IDS } from "@/lib/communications/triggers";
 
@@ -371,6 +372,11 @@ export async function sendTestWhatsAppAction(raw: unknown): Promise<Communicatio
 
     const rendered = renderWhatsAppCommunication(input.content, context);
     if (!rendered.text.trim()) return { success: false, error: "התבנית ריקה — אין מה לשלוח" };
+    if (!rendered.canSend) {
+      // The automation would skip this reservation — a test that "succeeded"
+      // anyway would be a lie. Refuse with the same evidence the skip carries.
+      return { success: false, error: describeRenderIssues(rendered.issues) ?? "משתנה חובה חסר — שליחה תדולג" };
+    }
 
     const [row] = await sql<{ id: string }[]>`
       INSERT INTO guesthub.outbound_messages

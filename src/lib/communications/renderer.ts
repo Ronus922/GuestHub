@@ -15,7 +15,10 @@ import type {
   TemplateContent,
   WhatsAppTemplateContent,
 } from "./types";
-import { getVariableDefinition, hasValue, interpolateVariables, resolveVariable } from "./variables";
+import {
+  getVariableDefinition, hasValue, interpolateVariables, isBlockingIssue,
+  replaceVariableTokens, resolveVariable, splitVariableTokens,
+} from "./variables";
 
 // ============================================================
 // The ONE renderer. It produces the bytes the guest receives — and the editor
@@ -61,15 +64,19 @@ function mark(escaped: string, highlight: boolean): string {
   return `<span style="background:${C.brandLine};color:${C.brandDark};border-radius:7px;padding:0 4px;font-weight:700">${escaped}</span>`;
 }
 
-/** Escape FIRST, then substitute — a guest name containing "<" can never become markup. */
+/** Literals and values are each escaped exactly once, BEFORE any of them is
+ *  markup — a guest name containing "<" (or a token fallback containing "&")
+ *  can never become markup, and never arrives double-escaped either. */
 function interpolateHtml(input: string, context: Ctx, opts: Opts): { html: string; issues: RenderIssue[] } {
   const issues: RenderIssue[] = [];
-  const html = escapeHtml(input)
-    .replace(/{{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\s*}}/gi, (_token, key: string) => {
-      const resolved = resolveVariable(key, context);
+  const html = splitVariableTokens(input)
+    .map((part) => {
+      if (typeof part === "string") return escapeHtml(part);
+      const resolved = resolveVariable(part.key, context, part.opts);
       if (resolved.issue) issues.push(resolved.issue);
       return mark(escapeHtml(resolved.value), Boolean(opts.highlight));
     })
+    .join("")
     .replaceAll("\n", "<br>");
   return { html, issues };
 }
@@ -425,9 +432,7 @@ export function renderStructuredCommunication(
     html,
     plainText: visible.map((block) => block.text).filter(Boolean).join("\n\n"),
     issues,
-    canSend: !issues.some(
-      (issue) => issue.kind === "missing_required" || issue.kind === "unknown_variable" || issue.kind === "invalid_url",
-    ),
+    canSend: !issues.some(isBlockingIssue),
   };
 }
 
@@ -438,7 +443,7 @@ export function renderTemplateString(
   const rendered = interpolateVariables(input, context);
   return {
     ...rendered,
-    canSend: !rendered.issues.some((issue) => issue.kind !== "missing_optional"),
+    canSend: !rendered.issues.some(isBlockingIssue),
   };
 }
 
@@ -564,15 +569,12 @@ export function renderHtmlCommunication(
   options: Opts & { preheader?: string } = {},
 ): RenderedCommunication {
   const issues: RenderIssue[] = [];
-  const interpolated = content.html.replace(
-    /{{\s*([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)\s*}}/gi,
-    (_token, key: string) => {
-      const resolved = resolveVariable(key, context);
-      if (resolved.issue) issues.push(resolved.issue);
-      const guarded = guardUrlValue(key, resolved.value, issues);
-      return mark(escapeHtml(guarded), Boolean(options.highlight));
-    },
-  );
+  const interpolated = replaceVariableTokens(content.html, (key, opts) => {
+    const resolved = resolveVariable(key, context, opts);
+    if (resolved.issue) issues.push(resolved.issue);
+    const guarded = guardUrlValue(key, resolved.value, issues);
+    return mark(escapeHtml(guarded), Boolean(options.highlight));
+  });
 
   const preheader = options.preheader
     ? interpolateVariables(options.preheader, context)
@@ -598,9 +600,7 @@ export function renderHtmlCommunication(
     html,
     plainText: htmlToPlainText(interpolated),
     issues: allIssues,
-    canSend: !allIssues.some(
-      (issue) => issue.kind === "missing_required" || issue.kind === "unknown_variable" || issue.kind === "invalid_url",
-    ),
+    canSend: !allIssues.some(isBlockingIssue),
   };
 }
 
@@ -619,7 +619,7 @@ export function renderWhatsAppCommunication(
   return {
     text: rendered.value,
     issues,
-    canSend: !issues.some((issue) => issue.kind !== "missing_optional"),
+    canSend: !issues.some(isBlockingIssue),
   };
 }
 

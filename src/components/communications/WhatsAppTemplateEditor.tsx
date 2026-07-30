@@ -45,11 +45,13 @@ function isWhatsAppContent(value: unknown): value is WhatsAppTemplateContent {
     && typeof (value as WhatsAppTemplateContent).text === "string";
 }
 
+/** D115 — two different severities, never conflated: an empty value is
+ *  information (the send still happens), a skip is a warning. */
 const ISSUE_LABELS: Record<RenderIssue["kind"], string> = {
-  missing_required: "משתנה נדרש חסר בנתוני התצוגה",
-  missing_optional: "משתנה אופציונלי ריק בנתוני התצוגה",
-  unknown_variable: "משתנה לא מוכר",
-  invalid_url: "קישור לא תקין",
+  missing_required: "משתנה חובה חסר בנתוני התצוגה — השליחה תדולג להזמנות כאלה",
+  missing_optional: "ריק בנתוני התצוגה — ההודעה תישלח עם ערך ריק",
+  unknown_variable: "משתנה לא מוכר — השליחה תדולג",
+  invalid_url: "קישור לא תקין — השליחה תדולג",
 };
 
 export function WhatsAppTemplateEditor({
@@ -263,6 +265,10 @@ export function WhatsAppTemplateEditor({
             aria-label="חיפוש משתנה"
           />
           <p className="gc-hint">גררו משתנה להודעה, או לחצו כדי להוסיף במיקום הסמן.</p>
+          <p className="gc-hint">
+            משתנה חסר נשלח ריק. <code className="ltr-num">{"{{guest.first_name|אורח}}"}</code> קובע
+            ערך חלופי, <code className="ltr-num">{"{{guest.email!}}"}</code> מסמן חובה — הזמנה בלי ערך תדולג.
+          </p>
           {varHint && (
             <p className="gc-varhint" role="status">
               <Icon name="touch" size={17} />
@@ -353,7 +359,7 @@ export function WhatsAppTemplateEditor({
                   </p>
                 ))}
                 {!rendered.canSend && (
-                  <p className="field-msg" role="alert">משתנה נדרש חסר או לא מוכר — שליחה תדולג עבור הזמנות כאלה.</p>
+                  <p className="field-msg" role="alert">משתנה חובה (!) חסר או משתנה לא מוכר — השליחה תדולג עבור הזמנות כאלה.</p>
                 )}
               </div>
             </div>
