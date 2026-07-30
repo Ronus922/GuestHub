@@ -378,6 +378,9 @@
     line-height: 1.6;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    /* each line's direction from its own first strong character — WhatsApp's
+       exact bidi rule, so the preview shows the send truthfully (D116) */
+    unicode-bidi: plaintext;
   }
   .gc-cnt.is-over {
     color: var(--danger);

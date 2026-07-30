@@ -109,6 +109,9 @@ export type TemplateContent =
 
 export type TemplateContentKind = "blocks" | "html" | "whatsapp_text";
 
+/** message_templates.language — DB-constrained to these two values. */
+export type TemplateLanguage = "he" | "en";
+
 export type TemplateVersionPolicy = "latest_published" | "locked";
 export type AutomationStatus = "draft" | "active" | "disabled" | "needs_attention" | "archived";
 

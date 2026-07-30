@@ -17,7 +17,8 @@ import { applyQuietHours, triggerFor } from "./triggers";
 import { normalizePhone } from "@/lib/phone";
 import type { CommunicationEvent } from "./outbox";
 import type {
-  BookingOrigin, CommunicationChannel, CommunicationRenderContext, TemplateContent, WhatsAppTemplateContent,
+  BookingOrigin, CommunicationChannel, CommunicationRenderContext, TemplateContent, TemplateLanguage,
+  WhatsAppTemplateContent,
 } from "./types";
 
 type AutomationRow = {
@@ -37,6 +38,8 @@ type AutomationRow = {
 type VersionRow = {
   id: string;
   template_id: string;
+  /** The owning TEMPLATE's language — RTL-safe WhatsApp output keys off it (D116). */
+  language: TemplateLanguage;
   sender_display_name: string | null;
   reply_to_behavior: "channel_default" | "custom" | "none";
   reply_to_address: string | null;
@@ -241,7 +244,7 @@ async function resolveVersion(
   const target = automation.template_version_policy === "locked" ? null : normalizeLanguage(guestLanguage ?? null);
   if (target) {
     const [sibling] = await sql<VersionRow[]>`
-      SELECT v.id, v.template_id, v.sender_display_name, v.reply_to_behavior,
+      SELECT v.id, v.template_id, t.language, v.sender_display_name, v.reply_to_behavior,
              v.reply_to_address, v.subject, v.preheader, v.content
       FROM guesthub.message_templates cfg
       JOIN guesthub.message_templates t
@@ -257,7 +260,7 @@ async function resolveVersion(
   }
 
   const [version] = await sql<VersionRow[]>`
-    SELECT v.id, v.template_id, v.sender_display_name, v.reply_to_behavior,
+    SELECT v.id, v.template_id, t.language, v.sender_display_name, v.reply_to_behavior,
            v.reply_to_address, v.subject, v.preheader, v.content
     FROM guesthub.message_template_versions v
     JOIN guesthub.message_templates t
@@ -652,7 +655,8 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           await skipAutomation(summary, event, automation, reservation, "provider_not_ready", version);
           continue;
         }
-        const rendered = renderWhatsAppCommunication(content as WhatsAppTemplateContent, context);
+        const rendered = renderWhatsAppCommunication(
+          content as WhatsAppTemplateContent, context, { language: version.language });
         if (!rendered.canSend || !rendered.text.trim()) {
           // D112/D115 — the skip names the variable that blocked it.
           await skipAutomation(summary, event, automation, reservation, "render_failed", version,

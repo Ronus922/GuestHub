@@ -16,7 +16,9 @@ import {
   Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
-import type { CommunicationRenderContext, RenderIssue, WhatsAppTemplateContent } from "@/lib/communications/types";
+import type {
+  CommunicationRenderContext, RenderIssue, TemplateLanguage, WhatsAppTemplateContent,
+} from "@/lib/communications/types";
 
 // ============================================================
 // The WhatsApp template editor. A WhatsApp message is plain text + variables —
@@ -60,7 +62,8 @@ export function WhatsAppTemplateEditor({
   const router = useRouter();
   const [name, setName] = useState(template?.name ?? seed?.name ?? "");
   const [stage, setStage] = useState(template?.category ?? seed?.category ?? "reservation");
-  const [language, setLanguage] = useState(template?.language ?? "he");
+  // The row types language as free string (DB constrains to he/en) — narrow once here.
+  const [language, setLanguage] = useState<TemplateLanguage>(template?.language === "en" ? "en" : "he");
   const [text, setText] = useState(() => {
     if (isWhatsAppContent(template?.draftContent)) return template.draftContent.text;
     if (isWhatsAppContent(seed?.content)) return seed.content.text;
@@ -89,7 +92,12 @@ export function WhatsAppTemplateEditor({
     [text],
   );
 
-  const rendered = useMemo(() => renderWhatsAppCommunication(content, context), [content, context]);
+  // language flows into the render so the preview carries the SAME RLM bytes
+  // the guest receives (D116) — the bubble may never flatter the template.
+  const rendered = useMemo(
+    () => renderWhatsAppCommunication(content, context, { language }),
+    [content, context, language],
+  );
 
   const touch = () => setDirty(true);
 
@@ -336,8 +344,11 @@ export function WhatsAppTemplateEditor({
               )}
             </div>
             <div className="card-bd">
+              {/* unicode-bidi:plaintext (CSS) resolves direction PER LINE from its
+                  first strong character — the same rule WhatsApp applies. dir="auto"
+                  would pick ONE direction for the whole bubble and lie per-line. */}
               <div className="gc-wa-chat" dir="rtl">
-                <div className="gc-wa-bubble" dir="auto">
+                <div className="gc-wa-bubble">
                   {rendered.text || "ההודעה ריקה — התצוגה תתעדכן בזמן הכתיבה"}
                 </div>
               </div>

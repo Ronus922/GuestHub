@@ -13,6 +13,7 @@ import type {
   StructuredTemplateContent,
   TemplateBlock,
   TemplateContent,
+  TemplateLanguage,
   WhatsAppTemplateContent,
 } from "./types";
 import {
@@ -604,6 +605,28 @@ export function renderHtmlCommunication(
   };
 }
 
+/** U+200F RIGHT-TO-LEFT MARK — invisible, zero-width, bidi class R. Spelled as
+ *  an escape so no invisible byte hides inside this source file. */
+export const RLM = "\u200F";
+
+/**
+ * WhatsApp gives each LINE its direction from the line's first STRONG bidi
+ * character — there is no dir attribute in a chat bubble. A Hebrew message
+ * whose line opens with a digit, a date, an amount or Latin text flips to LTR.
+ * Prefixing every non-empty line with RLM pins paragraph direction to RTL
+ * (D116). FSI/PDI isolates around interpolated values were considered and NOT
+ * used: their rendering across older WhatsApp/Android builds could not be
+ * verified empirically from this environment, RLM is the safe baseline.
+ * RENDER output only — the stored template body, the editor's character
+ * counter and everything the operator typed stay byte-identical.
+ */
+export function rtlSafeWhatsAppText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line && !line.startsWith(RLM) ? `${RLM}${line}` : line))
+    .join("\n");
+}
+
 /**
  * whatsapp_text templates: plain interpolation, NO escaping — WhatsApp is a
  * text medium and escaping would ship "&amp;" to guests. There is no injection
@@ -613,11 +636,12 @@ export function renderHtmlCommunication(
 export function renderWhatsAppCommunication(
   content: WhatsAppTemplateContent,
   context: Ctx,
+  options: { language?: TemplateLanguage } = {},
 ): { text: string; issues: RenderIssue[]; canSend: boolean } {
   const rendered = interpolateVariables(content.text, context);
   const issues = uniqueIssues(rendered.issues);
   return {
-    text: rendered.value,
+    text: options.language === "he" ? rtlSafeWhatsAppText(rendered.value) : rendered.value,
     issues,
     canSend: !issues.some(isBlockingIssue),
   };
@@ -631,14 +655,15 @@ export function renderWhatsAppCommunication(
 export function renderTemplateContent(
   content: TemplateContent,
   context: Ctx,
-  options: Opts & { preheader?: string } = {},
+  options: Opts & { preheader?: string; language?: TemplateLanguage } = {},
 ): RenderedCommunication {
   const kind = templateContentKind(content);
   if (kind === "html") {
     return renderHtmlCommunication(content as HtmlTemplateContent, context, options);
   }
   if (kind === "whatsapp_text") {
-    const rendered = renderWhatsAppCommunication(content as WhatsAppTemplateContent, context);
+    const rendered = renderWhatsAppCommunication(
+      content as WhatsAppTemplateContent, context, { language: options.language });
     return { html: "", plainText: rendered.text, issues: rendered.issues, canSend: rendered.canSend };
   }
   return renderStructuredCommunication(content as StructuredTemplateContent, context, options);

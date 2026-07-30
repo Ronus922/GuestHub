@@ -370,7 +370,7 @@ export async function sendTestWhatsAppAction(raw: unknown): Promise<Communicatio
         ?? await propertyOnlyContext(actor.tenantId)
       : await propertyOnlyContext(actor.tenantId);
 
-    const rendered = renderWhatsAppCommunication(input.content, context);
+    const rendered = renderWhatsAppCommunication(input.content, context, { language: input.language });
     if (!rendered.text.trim()) return { success: false, error: "התבנית ריקה — אין מה לשלוח" };
     if (!rendered.canSend) {
       // The automation would skip this reservation — a test that "succeeded"
