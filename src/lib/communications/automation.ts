@@ -4,12 +4,12 @@ import { getBusinessProfile } from "@/lib/business/store";
 import { nightsBetween } from "@/lib/dates";
 import { resolveCommunicationStaySchedule } from "./schedule";
 import {
-  automationConditionsSchema,
   exclusionRulesSchema,
   parseRecipientConfig,
   sourceFiltersSchema,
   timingConfigSchema,
 } from "./schemas";
+import { describeConditionFailures, evaluateConditions } from "./conditions";
 import { renderTemplateContent, renderTemplateString, renderWhatsAppCommunication } from "./renderer";
 import { parseTemplateContent, templateContentKind } from "./schemas";
 import { applyQuietHours, triggerFor } from "./triggers";
@@ -208,32 +208,6 @@ async function buildRenderContext(row: ReservationSnapshot): Promise<Communicati
   };
 }
 
-function conditionValue(field: string, row: ReservationSnapshot): unknown {
-  switch (field) {
-    case "reservation.status": return row.status;
-    case "reservation.is_test": return row.is_test;
-    case "reservation.is_cancelled": return row.status === "cancelled";
-    case "guest.email": return row.guest_email;
-    case "payment.balance": return row.balance;
-    case "room.number": return row.room_numbers;
-    default: return undefined;
-  }
-}
-
-function matchesConditions(raw: unknown, row: ReservationSnapshot): boolean {
-  const config = automationConditionsSchema.parse(raw);
-  const decisions = config.items.map((item) => {
-    const actual = conditionValue(item.field, row);
-    switch (item.operator) {
-      case "equals": return actual === item.value;
-      case "not_equals": return actual !== item.value;
-      case "exists": return actual !== null && actual !== undefined && String(actual).trim() !== "";
-      case "greater_than": return typeof actual === "number" && typeof item.value === "number" && actual > item.value;
-    }
-  });
-  return config.logic === "all" ? decisions.every(Boolean) : decisions.some(Boolean);
-}
-
 async function markNeedsAttention(id: string, reason: string): Promise<void> {
   await sql`
     UPDATE guesthub.communication_automations
@@ -333,6 +307,42 @@ export async function resolveConnectedWhatsAppChannel(tenantId: string): Promise
   return row ? { provider: row.provider } : null;
 }
 
+/**
+ * The displayed address of an automation-wide skip row. The default row keeps
+ * the pre-065 dedupe identity (legacy idempotency_key + recipient_key 'guest' —
+ * BOTH participate in unique indexes and must stay byte-identical), but
+ * to_address sits in no unique index and is what the panel shows. An owner-only
+ * automation must not display the guest's address as if it were the intended
+ * recipient (the +972500000000 confusion behind D114).
+ */
+async function skippedDisplayAddress(args: {
+  automation: AutomationRow;
+  reservation: ReservationSnapshot;
+}): Promise<string> {
+  const channel = args.automation.channel;
+  const guestAddress = channel === "whatsapp"
+    ? normalizePhone(args.reservation.guest_phone).e164
+    : args.reservation.guest_email?.trim() ?? "";
+  try {
+    const config = parseRecipientConfig(args.automation.recipient_config);
+    if (config.guest || !config.owner) return guestAddress;
+    const display = (address: string) => channel === "whatsapp"
+      ? (normalizePhone(address).valid ? normalizePhone(address).e164 : address.trim())
+      : address.trim();
+    if (config.owner.mode === "selected") {
+      return config.owner.addresses.map(display).join(", ");
+    }
+    const [row] = await sql<{ addresses: string[] | null }[]>`
+      SELECT ${channel === "whatsapp" ? sql`owner_notification_phones` : sql`owner_notification_emails`} AS addresses
+      FROM guesthub.communication_settings
+      WHERE tenant_id = ${args.automation.tenant_id}`;
+    return (row?.addresses ?? []).map(display).filter(Boolean).join(", ");
+  } catch {
+    // Unparseable recipient_config — the guest default is the only honest guess.
+    return guestAddress;
+  }
+}
+
 async function recordSkippedDelivery(args: {
   event: CommunicationEvent;
   automation: AutomationRow;
@@ -342,6 +352,8 @@ async function recordSkippedDelivery(args: {
   provider?: string;
   /** Omitted = the pre-065 guest-keyed skip row (byte-identical dedupe). */
   recipient?: { key: string; recipientKey: string; address: string };
+  /** Overrides the generic reason label with specific evidence (D112). */
+  detail?: string;
 }): Promise<"created" | "duplicate"> {
   const reasonLabels: Record<string, string> = {
     source_mismatch: "מקור האירוע אינו תואם להזמנה",
@@ -365,9 +377,7 @@ async function recordSkippedDelivery(args: {
   };
   const channel = args.automation.channel;
   const provider = args.provider ?? (channel === "whatsapp" ? "whatsapp" : "gmail");
-  const toAddress = args.recipient?.address ?? (channel === "whatsapp"
-    ? normalizePhone(args.reservation.guest_phone).e164
-    : args.reservation.guest_email?.trim() ?? "");
+  const toAddress = args.recipient?.address ?? await skippedDisplayAddress(args);
   const idempotencyKey = args.recipient?.key ?? `automation:${args.automation.id}:event:${args.event.id}`;
   const rows = await sql<{ id: string }[]>`
     INSERT INTO guesthub.outbound_messages
@@ -382,7 +392,7 @@ async function recordSkippedDelivery(args: {
       ${args.version?.id ?? null}, ${args.event.id}, ${idempotencyKey}, ${args.recipient?.recipientKey ?? "guest"},
       ${toAddress}, ${args.version?.subject ?? null},
       '', 'skipped', '', '', 'normal', now(), ${args.reason}, ${args.reason},
-      ${reasonLabels[args.reason] ?? "המשלוח דולג"}, 0)
+      ${args.detail ?? reasonLabels[args.reason] ?? "המשלוח דולג"}, 0)
     ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
       DO NOTHING
     RETURNING id`;
@@ -398,8 +408,9 @@ async function skipAutomation(
   version?: VersionRow | null,
   provider?: string,
   recipient?: { key: string; recipientKey: string; address: string },
+  detail?: string,
 ): Promise<void> {
-  const result = await recordSkippedDelivery({ event, automation, reservation, reason, version, provider, recipient });
+  const result = await recordSkippedDelivery({ event, automation, reservation, reason, version, provider, recipient, detail });
   if (result === "duplicate") summary.duplicates += 1;
   summary.skipped += 1;
 }
@@ -597,8 +608,19 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         }
       }
       if (recipients.length === 0) continue;
-      if (!matchesConditions(automation.conditions, reservation)) {
-        await skipAutomation(summary, event, automation, reservation, "conditions_not_met", version); continue;
+      // D114 — conditions are recipient- and channel-scoped: a guest-contact
+      // condition follows the channel (email→guest.email, whatsapp→guest.phone)
+      // and is evaluated only when the guest leg is actually deliverable. A
+      // party who receives nothing (guest not selected, or their leg already
+      // skipped for a bad address) must never block the remaining recipients.
+      const verdict = evaluateConditions(automation.conditions, reservation, {
+        channel: automation.channel,
+        guestIsRecipient: recipientConfig.guest && guestAddress !== null,
+      });
+      if (!verdict.pass) {
+        await skipAutomation(summary, event, automation, reservation, "conditions_not_met", version,
+          undefined, undefined, describeConditionFailures(verdict.failed) ?? undefined);
+        continue;
       }
 
       if (!version) {

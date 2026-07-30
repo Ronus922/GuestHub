@@ -28,10 +28,11 @@ let source = readFileSync(automationPath, "utf8")
   .replaceAll('"./renderer"', '"./renderer.js"')
   .replaceAll('"./outbox"', '"./outbox.js"')
   .replaceAll('"./triggers"', '"./triggers.js"')
+  .replaceAll('"./conditions"', '"./conditions.js"')
   .replaceAll('"@/lib/phone"', '"../phone.js"')
   .replaceAll('"./types"', '"./types.js"');
 writeFileSync(automationPath, source);
-for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js", "triggers.js"]) {
+for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js", "triggers.js", "conditions.js"]) {
   const path = join(out, `communications/${file}`);
   if (!readFileSync(path, "utf8")) continue;
   let emitted = readFileSync(path, "utf8")
@@ -40,9 +41,18 @@ for (const file of ["schemas.js", "renderer.js", "variables.js", "styles.js", "t
     .replaceAll('"./variables"', '"./variables.js"')
     .replaceAll('"./styles"', '"./styles.js"')
     .replaceAll('"./triggers"', '"./triggers.js"')
+    .replaceAll('"@/lib/phone"', '"../phone.js"')
     .replaceAll('"@/lib/colors"', '"../colors.js"');
   writeFileSync(path, emitted);
 }
+
+// D114 call-site integrity — the semantic core must stay in place: conditions
+// are evaluated with a scope whose guest flag means "deliverable guest leg".
+// A revert to an unscoped matcher must fail loudly here, not only behaviorally.
+assert.match(source, /guestIsRecipient:\s*recipientConfig\.guest\s*&&\s*guestAddress\s*!==\s*null/,
+  "automation.ts must scope conditions by the deliverable guest leg (D114)");
+assert.doesNotMatch(source, /function matchesConditions/,
+  "the unscoped local matcher must not come back — conditions.ts owns evaluation (D114)");
 writeFileSync(join(out, "communications/test-support.js"), `
 export const getBusinessProfile = async () => ({
   publicPropertyName: "GuestHub Test", formattedAddress: "Test 1", phone: "03-0000000",
@@ -348,18 +358,63 @@ assert.notEqual(emptySkip, undefined, "an owner leg with no configured addresses
 assert.match(emptySkip.text, /'skipped'/);
 ok("owner enabled but no addresses configured → guest still sends, owner leg records no_owner_recipients");
 
-// conditions without the guest.email-exists gate — otherwise conditions_not_met
-// would block the whole automation before recipients are even resolved
-const ownerNoEmailGate = { ...ownerAllAutomation, id: "automation-owner-ng",
-  conditions: { logic: "all", items: [
-    { field: "reservation.status", operator: "equals", value: "confirmed" },
-    { field: "reservation.is_test", operator: "equals", value: false },
-  ] } };
+// D114 — the REAL registry defaults (incl. guest.email exists) must not block
+// the owner legs when the guest merely lacks an email: a guest-contact
+// condition may gate only the guest's own leg. Before D114 this fixture had to
+// strip the guest.email condition to pass — that workaround was the defect.
+const ownerNoEmailGate = { ...ownerAllAutomation, id: "automation-owner-ng" };
 configureOwner(ownerNoEmailGate, ownerSettings, { ...baseReservation, guest_email: null });
 assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-owner-noguest")), { created: 2, duplicates: 0, skipped: 1 });
 assert.equal(db.state.insertions.filter((i) => /'queued'/.test(i.text)).length, 2, "both owner emails still go out");
 assert.match(db.state.insertions.find((i) => !i.key.includes(":owner:")).text, /'skipped'/,
   "the guest leg records its missing-email skip without blocking the owner legs");
-ok("a missing guest email skips only the guest leg — the owner legs still send");
+ok("a missing guest email skips only the guest leg — the owner legs still send (with the default guest.email condition present)");
+
+// ---- D114: conditions are recipient- and channel-scoped ----
+// The reservation-1053 defect: a WhatsApp owner-only automation carried the
+// registry's guest.email-exists default and was skipped with conditions_not_met
+// because the GUEST — who receives nothing on it — had no email.
+const waOwnerOnly = { ...baseAutomation, id: "automation-wa-owner", channel: "whatsapp", template_id: "template-wa",
+  recipient_config: { version: 2, guest: false, owner: { mode: "selected", addresses: ["+972521111111"] } } };
+db.reset(); db.state.reservation = { ...baseReservation, guest_email: null };
+db.state.automations = [waOwnerOnly]; db.state.version = waVersion;
+db.state.waChannel = { provider: "green_api" }; db.state.settings = ownerSettings;
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-d114-owner")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("+972521111111"), true, "the owner leg must be queued");
+assert.match(db.state.insertions[0].text, /'queued'/,
+  "the guest.email default must never block an owner-only WhatsApp automation");
+ok("D114: a guest-contact condition is not evaluated when the guest is not a recipient — owner-only WhatsApp sends");
+
+// Channel-following: on WhatsApp the guest-contact condition means the PHONE.
+const waGuestDefault = { ...baseAutomation, id: "automation-wa-guest", channel: "whatsapp", template_id: "template-wa",
+  recipient_config: { version: 2, guest: true, owner: null } };
+db.reset(); db.state.reservation = { ...baseReservation, guest_email: null };
+db.state.automations = [waGuestDefault]; db.state.version = waVersion; db.state.waChannel = { provider: "green_api" };
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-d114-guest")), { created: 1, duplicates: 0, skipped: 0 });
+assert.equal(db.state.insertions[0].values.includes("+972500000000"), true, "the guest's E.164 phone is the recipient");
+ok("D114: the guest-contact condition follows the channel — a guest with a valid phone and no email still gets WhatsApp");
+
+// A conditions_not_met skip carries its own evidence (D112) and displays the
+// INTENDED recipient — while the dedupe identity (legacy idempotency_key +
+// recipient_key 'guest') stays byte-identical.
+const ownerOnlyBalance = { ...baseAutomation, id: "automation-owner-cond",
+  conditions: { logic: "all", items: [
+    { field: "reservation.status", operator: "equals", value: "confirmed" },
+    { field: "payment.balance", operator: "greater_than", value: 100000 },
+  ] },
+  recipient_config: { version: 2, guest: false, owner: { mode: "selected", addresses: ["owner@example.test"] } } };
+configureOwner(ownerOnlyBalance);
+assert.deepEqual(await prepareDeliveriesForEvent(eventFor("back_office", "event-d114-evidence")), { created: 0, duplicates: 0, skipped: 1 });
+const evidence = db.state.insertions[0];
+assert.match(evidence.text, /'skipped'/);
+assert.equal(evidence.key, "automation:automation-owner-cond:event:event-d114-evidence",
+  "the skip row keeps the pre-065 dedupe key byte-identical");
+assert.equal(evidence.values.includes("guest"), true, "recipient_key stays 'guest' — it participates in the 065 unique index");
+assert.equal(evidence.values.includes("owner@example.test"), true, "the DISPLAYED address is the intended owner recipient");
+assert.equal(evidence.values.includes("noa@example.test"), false, "the guest's address no longer masquerades as the recipient");
+const detail = evidence.values.find((v) => typeof v === "string" && v.includes("תנאי האוטומציה לא התקיימו"));
+assert.notEqual(detail, undefined, "the skip row carries the conditions_not_met label");
+assert.match(detail, /payment\.balance greater_than 100000/, "the failing predicate is named in the evidence (D112)");
+ok("D114/D112: conditions_not_met names the failing predicate and displays the intended recipient, dedupe identity untouched");
 
 process.stdout.write(`\n✓ Guest Communications automation checks passed (${checks} groups)\n`);
