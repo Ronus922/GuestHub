@@ -7,7 +7,7 @@ import {
   maskSecret,
   messagingSecretsConfigured,
 } from "./secrets";
-import type { ProviderId, WhatsAppProviderId } from "./types";
+import type { ActiveWhatsAppPointer, ProviderId, WhatsAppProviderId } from "./types";
 
 // Opaque webhook routing token: 192 bits of CSPRNG entropy, URL-safe. Generated
 // server-side per provider connection, derived from NOTHING predictable (not the
@@ -165,21 +165,69 @@ export async function clearConnectionSecret(tenantId: string, provider: Provider
 
 // ---- non-secret active-provider pointer (tenants.settings.messaging jsonb) ----
 
-export async function getActiveWhatsAppProvider(tenantId: string): Promise<WhatsAppProviderId> {
+/** A pointer write that did not land. Never swallowed — see D113. */
+export class ActiveWhatsAppProviderWriteError extends Error {
+  constructor(readonly requested: WhatsAppProviderId, readonly stored: string | null) {
+    super(`active WhatsApp provider not persisted (requested ${requested}, stored ${stored ?? "null"})`);
+    this.name = "ActiveWhatsAppProviderWriteError";
+  }
+}
+
+/**
+ * Reads the pointer WITHOUT inventing a decision — see ActiveWhatsAppPointer.
+ * Callers asking "is there a usable provider" should use usableWhatsAppProvider().
+ */
+export async function getActiveWhatsAppProvider(tenantId: string): Promise<ActiveWhatsAppPointer> {
   const [row] = await sql<{ v: string | null }[]>`
     SELECT settings->'messaging'->>'whatsappProvider' AS v
     FROM guesthub.tenants WHERE id = ${tenantId}`;
-  const v = row?.v;
-  return v === "green_api" || v === "twilio" ? v : "disabled";
+  const v = row?.v ?? null;
+  if (v === null) return "not_configured";
+  if (v === "green_api" || v === "twilio" || v === "disabled") return v;
+  return "invalid";
 }
 
+/**
+ * The single "can we send WhatsApp right now" reading of the pointer. Every
+ * non-provider state — never chosen, explicitly off, corrupt — means no, and
+ * they mean no for different reasons that only the operator-facing surfaces
+ * need to tell apart.
+ */
+export function usableWhatsAppProvider(pointer: ActiveWhatsAppPointer): "green_api" | "twilio" | null {
+  return pointer === "green_api" || pointer === "twilio" ? pointer : null;
+}
+
+/**
+ * Sets the pointer and PROVES it landed.
+ *
+ * The previous implementation used jsonb_set(settings, '{messaging,whatsappProvider}', …, true).
+ * create_missing only creates the LAST path element, so when the `messaging`
+ * parent was absent — as it was for every tenant, since no migration ever
+ * seeded it — PostgreSQL returned the document unchanged. The UPDATE matched
+ * its row, the driver reported success, the action wrote an audit row, and
+ * nothing was persisted. A connected, tested GREEN-API sat unusable for two
+ * days behind six such clicks (D113).
+ *
+ * Two changes make that unrepresentable: the parent is built in the same
+ * expression that sets the child, and the result is read back and compared.
+ * `||` merges rather than replaces, so unrelated keys under `messaging`
+ * survive; a write that does not land throws instead of returning.
+ */
 export async function setActiveWhatsAppProvider(tenantId: string, provider: WhatsAppProviderId): Promise<void> {
-  await sql`
+  const [row] = await sql<{ pointer: string | null }[]>`
     UPDATE guesthub.tenants
-    SET settings = jsonb_set(
-      COALESCE(settings, '{}'::jsonb), '{messaging,whatsappProvider}', to_jsonb(${provider}::text), true
-    )
-    WHERE id = ${tenantId}`;
+    SET settings = COALESCE(settings, '{}'::jsonb)
+                || jsonb_build_object('messaging',
+                     CASE WHEN jsonb_typeof(settings->'messaging') = 'object'
+                          THEN settings->'messaging' ELSE '{}'::jsonb END
+                     || jsonb_build_object('whatsappProvider', ${provider}::text)),
+        updated_at = now()
+    WHERE id = ${tenantId}
+    RETURNING settings->'messaging'->>'whatsappProvider' AS pointer`;
+  // No row = no such tenant; a mismatch = the write silently did not take.
+  if (!row || row.pointer !== provider) {
+    throw new ActiveWhatsAppProviderWriteError(provider, row?.pointer ?? null);
+  }
 }
 
 // Masked, client-safe view of one connection for the settings UI. NEVER returns

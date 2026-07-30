@@ -12,6 +12,8 @@ import {
   clearConnectionSecret,
   getActiveWhatsAppProvider,
   setActiveWhatsAppProvider,
+  usableWhatsAppProvider,
+  ActiveWhatsAppProviderWriteError,
   maskConnection,
   secretHintsFrom,
   messagingSecretsConfigured,
@@ -50,6 +52,11 @@ async function requireMessagingAdmin(): Promise<Actor> {
 function failFrom(e: unknown): { success: false; error: string } {
   if (e instanceof AuthorizationError) return { success: false, error: e.message };
   if (e instanceof Error && e.message.startsWith("ניהול")) return { success: false, error: e.message };
+  // A pointer write that did not land must say so. The generic message would
+  // be true but useless, and "success" would be the D113 bug all over again.
+  if (e instanceof ActiveWhatsAppProviderWriteError) {
+    return { success: false, error: "ספק ה-WhatsApp הפעיל לא נשמר — נסו שוב; אם התקלה חוזרת, פנו לתמיכה" };
+  }
   return { success: false, error: "אירעה שגיאה בלתי צפויה" };
 }
 
@@ -152,7 +159,12 @@ export async function getMessagingSettingsAction(): Promise<ActionResult<Messagi
         statusCallbackUrl: tc.statusCallbackUrl ?? "",
         webhookToken: tc.webhookToken ?? "",
       },
-      activeWhatsApp,
+      // The selector offers exactly the three writable values, so the two
+      // read-only pointer states collapse here — and ONLY here, at the UI
+      // boundary. Rendering is byte-identical to before: an unset pointer
+      // still shows "מושבת". Surfacing the difference to the operator is a
+      // separate change to MessagingSection (see D113's open items).
+      activeWhatsApp: usableWhatsAppProvider(activeWhatsApp) ?? "disabled",
       webhookBaseUrl: process.env.NEXT_PUBLIC_APP_URL ?? "",
     };
     return { success: true, data: view };
@@ -298,6 +310,10 @@ export async function setActiveWhatsAppProviderAction(provider: WhatsAppProvider
     if (provider !== "green_api" && provider !== "twilio" && provider !== "disabled") {
       return { success: false, error: "ספק WhatsApp לא תקין" };
     }
+    // Ordering is load-bearing: setActiveWhatsAppProvider reads the pointer
+    // back and throws unless it matches, so neither the audit row nor the
+    // success below can be reached by a write that did not land. Before D113
+    // this action logged six changes that were never persisted.
     await setActiveWhatsAppProvider(actor.tenantId, provider);
     await audit(actor, "messaging_active_provider_changed", { provider });
     return { success: true };
