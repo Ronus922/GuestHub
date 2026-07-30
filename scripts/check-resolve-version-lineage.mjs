@@ -12,17 +12,11 @@
 // string-matching the query text — the stub embodied the same wrong
 // assumption and could never catch a defect that lives IN the SQL.
 //
-// THE PINS:
-//   1. Reproduce 1060 exactly (two published templates, same category +
-//      channel + language, different lineages, guest language 'עברית') —
-//      the resolved version MUST belong to the automation's own template.
-//   2. Explicitly-linked lineage still serves translations (en sibling), and
-//      an unlinked language falls back to the configured template's version.
-//   3. Two published same-language templates in ONE lineage = configuration
-//      defect → outcome 'ambiguous', never a lucky pick.
-//   4. Migration 067's composite FK rejects a delivery row whose version
-//      belongs to a different template than its template_id.
-//   5. Call-site integrity: the outbound INSERTs stamp version.template_id.
+// Why it DROPS 067's objects before applying it: a guard that merely finds a
+// constraint in the test DB proves nothing about the migration in THIS tree —
+// the object may be left over from an earlier run. Every object 067 creates is
+// removed first, then the file is applied, then existence is asserted. Empty
+// the migration and this guard falls.
 //
 // Needs the local test DB (guesthub-testdb, port 5433) — never production.
 // ============================================================
@@ -36,21 +30,61 @@ import postgres from "postgres";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 console.log(`# tree under test: ${ROOT}`);
 
+// An ALLOW-list, not a deny-list: a deny-list of production markers passes
+// anything its author did not think of, and this guard writes and DELETES rows.
 const url = process.env.TEST_DATABASE_URL
   || "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
-for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
-  if (url.includes(marker)) throw new Error(`refusing production-like database marker: ${marker}`);
+{
+  const parsed = new URL(url);
+  const localHost = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+  if (!localHost || parsed.port !== "5433") {
+    throw new Error(`refusing ${parsed.hostname}:${parsed.port || "(default)"} — this guard only runs against the local test DB on 5433`);
+  }
 }
 const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
 
 let n = 0;
 const ok = (m) => { n++; console.log(`✓ ${n}. ${m}`); };
+const objectExists = async (kind, name) => {
+  const [row] = kind === "trigger"
+    ? await sql`SELECT 1 AS x FROM pg_trigger WHERE tgname = ${name} AND NOT tgisinternal`
+    : kind === "column"
+      ? await sql`SELECT 1 AS x FROM information_schema.columns
+                  WHERE table_schema = 'guesthub' AND table_name = 'message_templates' AND column_name = ${name}`
+      : await sql`SELECT 1 AS x FROM pg_constraint WHERE conname = ${name}`;
+  return Boolean(row);
+};
 
-// ---- migration 067: applied, and idempotently reapplied ----
+// ---- migration 067: dropped, applied from THIS tree, asserted, reapplied ----
 const migration = readFileSync(join(ROOT, "db/migrations/067_template_lineage.sql"), "utf8");
+const CREATED = [
+  ["column", "lineage_id"],
+  ["constraint", "message_templates_lineage_tenant_fkey"],
+  ["constraint", "message_template_versions_tenant_template_id_key"],
+  ["constraint", "outbound_messages_version_matches_template_fkey"],
+  ["constraint", "message_templates_current_version_owned_fkey"],
+  ["trigger", "trg_template_lineage_root"],
+];
+await sql.unsafe(`
+  SET search_path TO "guesthub", public;
+  ALTER TABLE outbound_messages DROP CONSTRAINT IF EXISTS outbound_messages_version_matches_template_fkey;
+  ALTER TABLE message_templates DROP CONSTRAINT IF EXISTS message_templates_current_version_owned_fkey;
+  ALTER TABLE message_template_versions DROP CONSTRAINT IF EXISTS message_template_versions_tenant_template_id_key;
+  DROP TRIGGER IF EXISTS trg_template_lineage_root ON message_templates;
+  DROP FUNCTION IF EXISTS guesthub.enforce_template_lineage_root();
+  ALTER TABLE message_templates DROP COLUMN IF EXISTS lineage_id;`);
+for (const [kind, name] of CREATED) {
+  assert.equal(await objectExists(kind, name), false, `${name} must be gone before the migration runs`);
+}
 await sql.unsafe(migration);
+for (const [kind, name] of CREATED) {
+  assert.equal(await objectExists(kind, name), true, `migration 067 must create ${kind} ${name}`);
+}
 await sql.unsafe(migration);
-ok("migration 067 applies and reapplies idempotently");
+for (const [kind, name] of CREATED) {
+  assert.equal(await objectExists(kind, name), true, `${kind} ${name} must survive a reapply`);
+}
+ok("migration 067 creates every object from scratch and reapplies idempotently");
 
 // ---- compile automation.ts from THIS tree, pointed at the test DB ----
 mkdirSync(join(ROOT, "node_modules/.cache"), { recursive: true });
@@ -117,6 +151,11 @@ async function cleanup(client) {
 }
 await cleanup(sql);
 
+const dbError = async (fn) => {
+  try { await fn(); } catch (error) { return error; }
+  return null;
+};
+
 try {
   const [tenant] = await sql`INSERT INTO guesthub.tenants (name, slug) VALUES ('Lineage Check', ${SLUG}) RETURNING id`;
   const tid = tenant.id;
@@ -142,11 +181,12 @@ try {
   const guestConfirm = await template("guest-confirm", "he", "שלום {{guest.first_name}}, ההזמנה אושרה");
   const internal = await template("internal-note", "he", "התקבלה הזמנה חדשה מאת {{guest.full_name}}");
 
-  const auto = {
+  const autoFor = (templateId) => ({
     id: "00000000-0000-0000-0000-000000000000", tenant_id: tid,
-    channel: "whatsapp", template_id: guestConfirm.id,
+    channel: "whatsapp", template_id: templateId,
     template_version_policy: "latest_published", locked_template_version_id: null,
-  };
+  });
+  const auto = autoFor(guestConfirm.id);
 
   // ---- PIN 1: the 1060 reproduction ----
   for (let round = 0; round < 3; round++) {
@@ -160,7 +200,7 @@ try {
 
   // ---- PIN 2a: explicit lineage still serves translations ----
   const english = await template("guest-confirm", "en", "Hi {{guest.first_name}}, your reservation is confirmed");
-  await sql`UPDATE guesthub.message_templates SET lineage_id = ${guestConfirm.id} WHERE id IN (${guestConfirm.id}, ${english.id})`;
+  await sql`UPDATE guesthub.message_templates SET lineage_id = ${guestConfirm.id} WHERE id = ${english.id}`;
   const en = await automation.resolveVersion(auto, "English");
   assert.equal(en.outcome, "resolved");
   assert.equal(en.version.template_id, english.id, "an explicitly-linked en sibling must serve English guests");
@@ -169,7 +209,16 @@ try {
   assert.equal(he.version.template_id, guestConfirm.id);
   ok("explicit lineage: en sibling serves English, he stays on the configured template");
 
-  // ---- PIN 2b: no sibling in the guest's language → own published version ----
+  // ---- PIN 2b: the cfg SIDE of the COALESCE — automation on a MEMBER ----
+  // The automation points at the en MEMBER (lineage_id set); a Hebrew guest must
+  // reach the ROOT's he version. Only the cfg-side COALESCE makes this work.
+  const fromMember = await automation.resolveVersion(autoFor(english.id), "עברית");
+  assert.equal(fromMember.outcome, "resolved");
+  assert.equal(fromMember.version.template_id, guestConfirm.id,
+    "an automation configured on a lineage MEMBER must resolve to the root's same-language sibling");
+  ok("cfg-side lineage: an automation on a member resolves across to the root's sibling");
+
+  // ---- PIN 2c: no sibling in the guest's language → own published version ----
   await sql`UPDATE guesthub.message_templates SET lineage_id = NULL WHERE id = ${english.id}`;
   const fallback = await automation.resolveVersion(auto, "English");
   assert.equal(fallback.outcome, "resolved");
@@ -177,16 +226,52 @@ try {
     "no in-lineage version for the language → the template's OWN published version, never another template's");
   ok("unlinked language falls back to the configured template's own version");
 
-  // ---- PIN 3: two published same-language templates in ONE lineage = defect ----
+  // ---- PIN 3: same-language duplication inside a lineage = named defect ----
   await sql`UPDATE guesthub.message_templates SET lineage_id = ${guestConfirm.id} WHERE id = ${internal.id}`;
   const ambiguous = await automation.resolveVersion(auto, "עברית");
   assert.equal(ambiguous.outcome, "ambiguous",
     ">1 candidate must be a NAMED defect, not a lucky pick");
   assert.deepEqual([...ambiguous.candidateTemplateIds].sort(), [guestConfirm.id, internal.id].sort());
-  await sql`UPDATE guesthub.message_templates SET lineage_id = NULL WHERE id = ${internal.id}`;
-  ok("same-language duplication inside a lineage resolves to 'ambiguous', naming both candidates");
+  // three duplicates: the evidence must name all three, not just the first two
+  const third = await template("third-he", "he", "שלישית");
+  await sql`UPDATE guesthub.message_templates SET lineage_id = ${guestConfirm.id} WHERE id = ${third.id}`;
+  const ambiguous3 = await automation.resolveVersion(auto, "עברית");
+  assert.equal(ambiguous3.outcome, "ambiguous");
+  assert.equal(ambiguous3.candidateTemplateIds.length, 3,
+    "the skip evidence must name every candidate it can, not silently stop at two");
+  await sql`UPDATE guesthub.message_templates SET lineage_id = NULL WHERE id IN (${internal.id}, ${third.id})`;
+  ok("same-language duplication inside a lineage → 'ambiguous', naming all candidates (2 and 3)");
 
-  // ---- PIN 4: the composite FK forbids the self-contradictory row ----
+  // ---- PIN 4: an ARCHIVED configured template never sends via a sibling ----
+  await sql`UPDATE guesthub.message_templates SET lineage_id = ${guestConfirm.id} WHERE id = ${english.id}`;
+  await sql`UPDATE guesthub.message_templates SET lifecycle_state = 'archived', archived_at = now() WHERE id = ${guestConfirm.id}`;
+  const archived = await automation.resolveVersion(auto, "English");
+  assert.equal(archived.outcome, "none",
+    "an archived configured template must not keep reaching guests through a live sibling");
+  await sql`UPDATE guesthub.message_templates SET lifecycle_state = 'published', archived_at = NULL WHERE id = ${guestConfirm.id}`;
+  await sql`UPDATE guesthub.message_templates SET lineage_id = NULL WHERE id = ${english.id}`;
+  ok("archived configured template: the sibling path refuses too (outcome 'none')");
+
+  // ---- PIN 5: lineage shape is enforced, not merely documented ----
+  const chain = await dbError(() =>
+    sql`UPDATE guesthub.message_templates SET lineage_id = ${english.id} WHERE id = ${internal.id}`
+      .then(() => sql`UPDATE guesthub.message_templates SET lineage_id = ${guestConfirm.id} WHERE id = ${english.id}`));
+  assert.ok(chain, "a lineage CHAIN must be rejected — it would split the family under single-level grouping");
+  await sql`UPDATE guesthub.message_templates SET lineage_id = NULL WHERE id IN (${internal.id}, ${english.id})`;
+  const self = await dbError(() =>
+    sql`UPDATE guesthub.message_templates SET lineage_id = ${english.id} WHERE id = ${english.id}`);
+  assert.ok(self, "self-reference must be rejected — NULL already means 'my own lineage'");
+  ok("lineage shape: chains and self-references are rejected by the DB");
+
+  // ---- PIN 6: the pointer itself cannot address another template's version ----
+  const stolen = await dbError(() =>
+    sql`UPDATE guesthub.message_templates
+        SET current_published_version_id = ${internal.versionId} WHERE id = ${guestConfirm.id}`);
+  assert.equal(stolen?.code, "23503",
+    "a published pointer at ANOTHER template's version must be unwritable — that is the 1060 defect class one storage bug away");
+  ok("current_published_version_id can only address a version the template owns");
+
+  // ---- PIN 7: the composite FK forbids the self-contradictory delivery row ----
   const insertDelivery = (templateId, versionId) => sql`
     INSERT INTO guesthub.outbound_messages
       (tenant_id, channel, provider, template_id, template_version_id, to_address,
@@ -195,25 +280,46 @@ try {
     VALUES (${tid}, 'whatsapp', 'green_api', ${templateId}, ${versionId}, '+972500000000',
        NULL, 'x', 'queued', '', 'x', 'test', now(), 1)
     RETURNING id`;
-  let fkError = null;
-  try { await insertDelivery(guestConfirm.id, internal.versionId); } catch (error) { fkError = error; }
-  assert.equal(fkError?.code, "23503",
+  const crossed = await dbError(() => insertDelivery(guestConfirm.id, internal.versionId));
+  assert.equal(crossed?.code, "23503",
     "a delivery whose version belongs to ANOTHER template must be impossible to write");
   const [good] = await insertDelivery(guestConfirm.id, guestConfirm.versionId);
   assert.ok(good?.id, "a consistent delivery row still inserts");
-  ok("outbound_messages composite FK: version-of-another-template is rejected, consistent row accepted");
+  const [noVersion] = await insertDelivery(guestConfirm.id, null);
+  assert.ok(noVersion?.id, "a manual/test row without a version is untouched by the FK (MATCH SIMPLE)");
+  ok("outbound_messages composite FK: crossed row rejected, consistent and version-less rows accepted");
 
-  // ---- PIN 5: call-site integrity ----
+  // ---- PIN 8: call-site integrity ----
   const source = readFileSync(join(ROOT, "src/lib/communications/automation.ts"), "utf8");
   assert.ok((source.match(/\$\{version\.template_id\}/g) ?? []).length >= 2,
     "both send INSERTs must stamp the template the version actually belongs to");
+  assert.match(source, /\$\{args\.version\?\.template_id \?\? args\.automation\.template_id\}/,
+    "skip rows must stamp the resolved version's template when there is one");
   assert.match(source, /ORDER BY \(t\.id = cfg\.id\) DESC, t\.id/,
     "the sibling lookup must be deterministically ordered — never execution-plan luck");
   assert.match(source, /COALESCE\(t\.lineage_id, t\.id\) = COALESCE\(cfg\.lineage_id, cfg\.id\)/,
     "the sibling lookup must be lineage-scoped");
+  assert.match(source, /AND v\.template_id = t\.id/,
+    "the sibling lookup must fail closed on a corrupted published pointer");
   assert.ok(!/t\.category = cfg\.category/.test(source),
     "label-matching (category) must not be the sibling identity — that was the 1060 defect");
   ok("call sites: lineage-scoped ordered lookup; INSERTs stamp version.template_id");
+
+  // ---- PIN 9: the engine must ACT on 'ambiguous' ----
+  assert.match(source, /resolution\.outcome === "ambiguous"/,
+    "the engine must branch on the ambiguous outcome");
+  const ambiguousBlock = source.slice(source.indexOf('resolution.outcome === "ambiguous"'),
+    source.indexOf('resolution.outcome === "ambiguous"') + 700);
+  assert.match(ambiguousBlock, /markNeedsAttention/,
+    "an ambiguous lineage is a configuration defect — the automation must be flagged");
+  assert.match(ambiguousBlock, /template_resolution_ambiguous/);
+  assert.match(ambiguousBlock, /candidateTemplateIds\.join/,
+    "the skip must NAME the candidates (D112)");
+  assert.match(source, /template_resolution_ambiguous: "/,
+    "the skip reason must have a Hebrew label for the operator");
+  assert.ok(!/\bconst version = await resolveVersion\(/.test(source),
+    "no call site may treat the resolution object as a version row");
+  ok("engine: ambiguous outcome flags the automation and writes named evidence");
 } finally {
   await cleanup(sql);
   await db.sql.end({ timeout: 3 });
