@@ -155,7 +155,14 @@ ok("automation schemas enforce explicit origins, per-kind timing, and the closed
 
 // ---- trigger registry invariants the pipeline relies on ----
 assert.deepEqual(triggers.TRIGGERS["reservation.confirmed"].eligibleStatuses, ["confirmed"]);
-assert.equal(triggers.TRIGGERS["reservation.confirmed"].otaHardSkip, true, "the OTA hard-skip on confirmations must never be dropped");
+// D119 — the hard skip is GONE for confirmations: the import emits the event,
+// so the OTA source is the operator's switch. What must never be dropped is the
+// default: the switch starts OFF (defaultExclusions.ota, asserted for every
+// trigger below), so nothing reaches an OTA guest until Ronen turns it on.
+assert.equal(triggers.TRIGGERS["reservation.confirmed"].otaHardSkip, false,
+  "confirmations are emitted for OTA bookings since D119 — a hard skip here would make the source chip control nothing");
+assert.equal(triggers.TRIGGERS["reservation.confirmed"].defaultExclusions.ota, true,
+  "the OTA source must stay OFF by default — turning it on is a deliberate operator act");
 assert.deepEqual(triggers.TRIGGERS["reservation.cancelled"].eligibleStatuses, ["cancelled"]);
 assert.equal(
   triggers.TRIGGERS["reservation.cancelled"].defaultConditions.items.some(
@@ -785,8 +792,14 @@ for (const id of triggers.TRIGGER_IDS) {
     `${id}: the panel's OTA availability must track otaHardSkip — the flag the engine skips on`,
   );
 }
-assert.notEqual(triggers.otaSourceBlockReason("reservation.confirmed"), null,
-  "no confirmation event is emitted for an OTA booking — that chip must stay blocked");
+// D119 — the confirmation chip is OPEN now, because the capability behind it
+// exists: the import emits reservation.confirmed when it creates a reservation.
+// The D118 rule is unchanged; the fact underneath it changed. Pin BOTH halves —
+// the chip is available, and it is available BECAUSE something emits.
+assert.equal(triggers.otaSourceBlockReason("reservation.confirmed"), null,
+  "the import emits reservation.confirmed for OTA bookings (D119) — that chip must not be blocked");
+assert.match(bookingImport, /enqueueReservationConfirmed\(tx/,
+  "the OTA confirmation chip is only honest while the import actually emits the event");
 // the binding the chip reads must come FROM the registry — matching the bare
 // identifier would be satisfied by the unrelated call in pickTrigger
 assert.match(panelCode, /const otaBlockReason = otaSourceBlockReason\(triggerType\)/,
@@ -795,6 +808,13 @@ assert.match(panelCode, /disabled=\{Boolean\(blocked\)\}/,
   "a capability-blocked source chip must be disabled, not merely styled");
 assert.match(panelCode, /\{otaBlockReason && \(/,
   "the blocked chip's REASON must render as visible text, not a title-only whisper");
+// D119 — an OTA source switched ON for confirmations means the guest gets a
+// SECOND confirmation. That consequence must be stated where the operator
+// decides, in amber, as text — the chip's colour alone is not a sentence.
+assert.match(panelCode, /sources\.includes\("ota"\) && triggerType === "reservation\.confirmed" && \(/,
+  "selecting the OTA source on the confirmation trigger must render a visible duplicate-confirmation warning");
+assert.match(panelCode, /gc-auto-note is-warn/,
+  "the duplicate-confirmation warning must be the amber note, matching the amber chip");
 
 // ---- source: the server refuses what the panel must not offer (fail-closed),
 // and the chip actually CONTROLS the exclusion instead of decorating it

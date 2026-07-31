@@ -1060,6 +1060,20 @@ function AutomationPanel({
                   <span>{`ערוצי OTA אינם זמינים לטריגר הזה — ${otaBlockReason}`}</span>
                 </p>
               )}
+              {/* D119 — the OTA source is switchable now, so the warning that
+                  used to be a BLOCK becomes an amber consequence the operator
+                  reads before saving: the channel already confirmed this
+                  booking, so the guest receives a second confirmation. Shown
+                  only for a trigger where that is actually true. */}
+              {!otaBlockReason && sources.includes("ota") && triggerType === "reservation.confirmed" && (
+                <p className="gc-auto-note is-warn">
+                  <Icon name="warning" size={17} />
+                  <span>
+                    ה-OTA שולח לאורח אישור הזמנה משלו — האורח יקבל אישור נוסף מכם.
+                    זו הודעה כפולה במכוון; כבו את המקור הזה אם אינכם רוצים בה.
+                  </span>
+                </p>
+              )}
               {sources.length === 0 && <p className="field-msg">יש לבחור לפחות מקור אחד</p>}
             </div>
           </section>
