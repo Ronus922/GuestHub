@@ -72,3 +72,4 @@
 064_schema_migrations.sql
 065_owner_recipients.sql
 066_messaging_settings_parent.sql
+067_template_lineage.sql
