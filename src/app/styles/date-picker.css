@@ -53,6 +53,16 @@
   .dp-rot {
     transform: rotate(180deg);
   }
+  /* One date token ("9 באוגוסט") inside the RTL range string. It needs tabular
+     figures and bidi ISOLATION — not `direction: ltr`. Isolation alone already
+     guarantees a number never reorders internally (bidi never reverses digits
+     within a number); adding `direction: ltr`, as `.ltr-num` does, additionally
+     forces the day number to the LEFT of the month name, so "9 באוגוסט" renders
+     as "באוגוסט 9". Measured in Chrome: with .ltr-num the digit sits at x=621.9
+     and the month at x=639.9 — the digit on the wrong side. */
+  .dp-date {
+    font-variant-numeric: tabular-nums;
+  }
 
   /* ---------- header: nights summary + from/to box ---------- */
   .dp-hd {
@@ -115,10 +125,22 @@
   }
 
   /* ---------- the two months ----------
-     ≥700px container: side by side with a separator. Narrower: the next month
+     ≥626px container: side by side with a separator. Narrower: the next month
      STACKS BELOW the current one — both months are always visible; what may
-     never shrink is the 44px day cell (touch target), not the month count.
-     The nav arrows float at the top corners, clear of both layouts. */
+     never shrink is the 44px day-cell HEIGHT (touch target), not the month
+     count. The nav arrows float at the top corners, clear of both layouts.
+
+     Why 626 and not the old 700: the booking panel's container is 637px at a
+     1280px viewport (768 panel − 48 body − 40 card − 43 panel border+padding),
+     so the pair never fitted there and always stacked. Trimming .dp-month's
+     side padding 8px → 4px buys 16px, which puts the cell back over 44px wide
+     at that width — the cell did not have to give.
+
+     Why exactly 626 and not a rounder number: measured in Chrome on this CSS,
+     a 621px content width yields a 43.71px cell and 626px yields 44.07px. 626
+     is the LOWEST width at which the pair engages while the cell stays ≥44px,
+     so going side-by-side can never itself shrink a touch target below iron
+     rule #6. Re-measure before moving this number. */
   .dp-months {
     position: relative;
     display: flex;
@@ -129,7 +151,7 @@
   .dp-month {
     flex: 1 1 100%;
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 4px;
   }
   .dp-m2 {
     flex: 1 1 100%;
@@ -149,7 +171,7 @@
   .dp-nav-next {
     inset-inline-end: 4px;
   }
-  @container (min-width: 700px) {
+  @container (min-width: 626px) {
     .dp-month,
     .dp-m2 {
       flex: 1 1 0;

@@ -128,8 +128,23 @@ export function DateRangeField({
           onClick={toggle}
         >
           <Icon name="calendar" size={20} className="text-primary" />
-          <span className="dp-trigger-v ltr-num">
-            {applied ? `${hebDay(from)} – ${hebDay(to)} ${to.slice(0, 4)}` : "בחירת תאריכים"}
+          {/* The composed string flows RTL — check-IN on the right, check-OUT on
+              the left. `.ltr-num` used to sit on this whole span, which forced
+              one LTR run over Hebrew text and let bidi reorder the sentence.
+              Each DATE is now its own <bdi> — isolated, so its number can never
+              reorder — while the sentence stays Hebrew: check-in right, check-out
+              left. `.dp-date` deliberately does NOT set `direction: ltr`; that
+              would push the day number to the wrong side of the month name.
+              Nothing is reversed in JS. */}
+          <span className="dp-trigger-v" dir="rtl">
+            {applied ? (
+              <>
+                <bdi className="dp-date">{hebDay(from)}</bdi> –{" "}
+                <bdi className="dp-date">{hebDay(to)}</bdi> {to.slice(0, 4)}
+              </>
+            ) : (
+              "בחירת תאריכים"
+            )}
           </span>
           <Icon name="chevron" size={20} className={open ? "dp-rot" : undefined} />
         </button>
@@ -147,8 +162,10 @@ export function DateRangeField({
                   {range.start && range.end ? `${draftNights} לילות` : "בחירת טווח"}
                 </p>
                 {range.start && range.end && (
-                  <p className="dp-sub ltr-num">
-                    {hebDay(range.start)} – {hebDay(range.end)} {range.end.slice(0, 4)}
+                  /* same bidi contract as the trigger (see there) */
+                  <p className="dp-sub" dir="rtl">
+                    <bdi className="dp-date">{hebDay(range.start)}</bdi> –{" "}
+                    <bdi className="dp-date">{hebDay(range.end)}</bdi> {range.end.slice(0, 4)}
                   </p>
                 )}
               </div>
