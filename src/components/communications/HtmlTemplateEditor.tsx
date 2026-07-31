@@ -45,11 +45,13 @@ function isHtmlContent(value: unknown): value is HtmlTemplateContent {
     && typeof (value as HtmlTemplateContent).html === "string";
 }
 
+/** D115 — two different severities, never conflated: an empty value is
+ *  information (the send still happens), a skip is a warning. */
 const ISSUE_LABELS: Record<RenderIssue["kind"], string> = {
-  missing_required: "משתנה נדרש חסר בנתוני התצוגה",
-  missing_optional: "משתנה אופציונלי ריק בנתוני התצוגה",
-  unknown_variable: "משתנה לא מוכר",
-  invalid_url: "קישור לא תקין",
+  missing_required: "משתנה חובה חסר בנתוני התצוגה — השליחה תדולג להזמנות כאלה",
+  missing_optional: "ריק בנתוני התצוגה — ההודעה תישלח עם ערך ריק",
+  unknown_variable: "משתנה לא מוכר — השליחה תדולג",
+  invalid_url: "קישור לא תקין — השליחה תדולג",
 };
 
 export function HtmlTemplateEditor({
@@ -421,7 +423,7 @@ export function HtmlTemplateEditor({
                   </p>
                 ))}
                 {!rendered.canSend && (
-                  <p className="field-msg" role="alert">משתנה נדרש חסר או לא מוכר — שליחה תדולג עבור הזמנות כאלה.</p>
+                  <p className="field-msg" role="alert">משתנה חובה (!) חסר, משתנה לא מוכר או קישור פסול — השליחה תדולג עבור הזמנות כאלה.</p>
                 )}
               </div>
             </div>

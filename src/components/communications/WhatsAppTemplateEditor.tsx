@@ -16,7 +16,9 @@ import {
   Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
-import type { CommunicationRenderContext, RenderIssue, WhatsAppTemplateContent } from "@/lib/communications/types";
+import type {
+  CommunicationRenderContext, RenderIssue, TemplateLanguage, WhatsAppTemplateContent,
+} from "@/lib/communications/types";
 
 // ============================================================
 // The WhatsApp template editor. A WhatsApp message is plain text + variables —
@@ -45,11 +47,13 @@ function isWhatsAppContent(value: unknown): value is WhatsAppTemplateContent {
     && typeof (value as WhatsAppTemplateContent).text === "string";
 }
 
+/** D115 — two different severities, never conflated: an empty value is
+ *  information (the send still happens), a skip is a warning. */
 const ISSUE_LABELS: Record<RenderIssue["kind"], string> = {
-  missing_required: "משתנה נדרש חסר בנתוני התצוגה",
-  missing_optional: "משתנה אופציונלי ריק בנתוני התצוגה",
-  unknown_variable: "משתנה לא מוכר",
-  invalid_url: "קישור לא תקין",
+  missing_required: "משתנה חובה חסר בנתוני התצוגה — השליחה תדולג להזמנות כאלה",
+  missing_optional: "ריק בנתוני התצוגה — ההודעה תישלח עם ערך ריק",
+  unknown_variable: "משתנה לא מוכר — השליחה תדולג",
+  invalid_url: "קישור לא תקין — השליחה תדולג",
 };
 
 export function WhatsAppTemplateEditor({
@@ -58,7 +62,8 @@ export function WhatsAppTemplateEditor({
   const router = useRouter();
   const [name, setName] = useState(template?.name ?? seed?.name ?? "");
   const [stage, setStage] = useState(template?.category ?? seed?.category ?? "reservation");
-  const [language, setLanguage] = useState(template?.language ?? "he");
+  // The row types language as free string (DB constrains to he/en) — narrow once here.
+  const [language, setLanguage] = useState<TemplateLanguage>(template?.language === "en" ? "en" : "he");
   const [text, setText] = useState(() => {
     if (isWhatsAppContent(template?.draftContent)) return template.draftContent.text;
     if (isWhatsAppContent(seed?.content)) return seed.content.text;
@@ -87,7 +92,12 @@ export function WhatsAppTemplateEditor({
     [text],
   );
 
-  const rendered = useMemo(() => renderWhatsAppCommunication(content, context), [content, context]);
+  // language flows into the render so the preview carries the SAME RLM bytes
+  // the guest receives (D116) — the bubble may never flatter the template.
+  const rendered = useMemo(
+    () => renderWhatsAppCommunication(content, context, { language }),
+    [content, context, language],
+  );
 
   const touch = () => setDirty(true);
 
@@ -263,6 +273,10 @@ export function WhatsAppTemplateEditor({
             aria-label="חיפוש משתנה"
           />
           <p className="gc-hint">גררו משתנה להודעה, או לחצו כדי להוסיף במיקום הסמן.</p>
+          <p className="gc-hint">
+            משתנה חסר נשלח ריק. <code className="ltr-num">{"{{guest.first_name|אורח}}"}</code> קובע
+            ערך חלופי, <code className="ltr-num">{"{{guest.email!}}"}</code> מסמן חובה — הזמנה בלי ערך תדולג.
+          </p>
           {varHint && (
             <p className="gc-varhint" role="status">
               <Icon name="touch" size={17} />
@@ -330,8 +344,11 @@ export function WhatsAppTemplateEditor({
               )}
             </div>
             <div className="card-bd">
+              {/* unicode-bidi:plaintext (CSS) resolves direction PER LINE from its
+                  first strong character — the same rule WhatsApp applies. dir="auto"
+                  would pick ONE direction for the whole bubble and lie per-line. */}
               <div className="gc-wa-chat" dir="rtl">
-                <div className="gc-wa-bubble" dir="auto">
+                <div className="gc-wa-bubble">
                   {rendered.text || "ההודעה ריקה — התצוגה תתעדכן בזמן הכתיבה"}
                 </div>
               </div>
@@ -353,7 +370,7 @@ export function WhatsAppTemplateEditor({
                   </p>
                 ))}
                 {!rendered.canSend && (
-                  <p className="field-msg" role="alert">משתנה נדרש חסר או לא מוכר — שליחה תדולג עבור הזמנות כאלה.</p>
+                  <p className="field-msg" role="alert">משתנה חובה (!) חסר או משתנה לא מוכר — השליחה תדולג עבור הזמנות כאלה.</p>
                 )}
               </div>
             </div>

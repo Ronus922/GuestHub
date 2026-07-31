@@ -11,12 +11,14 @@ import {
 } from "./schemas";
 import { describeConditionFailures, evaluateConditions } from "./conditions";
 import { renderTemplateContent, renderTemplateString, renderWhatsAppCommunication } from "./renderer";
+import { describeRenderIssues } from "./variables";
 import { parseTemplateContent, templateContentKind } from "./schemas";
 import { applyQuietHours, triggerFor } from "./triggers";
 import { normalizePhone } from "@/lib/phone";
 import type { CommunicationEvent } from "./outbox";
 import type {
-  BookingOrigin, CommunicationChannel, CommunicationRenderContext, TemplateContent, WhatsAppTemplateContent,
+  BookingOrigin, CommunicationChannel, CommunicationRenderContext, TemplateContent, TemplateLanguage,
+  WhatsAppTemplateContent,
 } from "./types";
 
 type AutomationRow = {
@@ -36,6 +38,8 @@ type AutomationRow = {
 type VersionRow = {
   id: string;
   template_id: string;
+  /** The owning TEMPLATE's language — RTL-safe WhatsApp output keys off it (D116). */
+  language: TemplateLanguage;
   sender_display_name: string | null;
   reply_to_behavior: "channel_default" | "custom" | "none";
   reply_to_address: string | null;
@@ -240,7 +244,7 @@ async function resolveVersion(
   const target = automation.template_version_policy === "locked" ? null : normalizeLanguage(guestLanguage ?? null);
   if (target) {
     const [sibling] = await sql<VersionRow[]>`
-      SELECT v.id, v.template_id, v.sender_display_name, v.reply_to_behavior,
+      SELECT v.id, v.template_id, t.language, v.sender_display_name, v.reply_to_behavior,
              v.reply_to_address, v.subject, v.preheader, v.content
       FROM guesthub.message_templates cfg
       JOIN guesthub.message_templates t
@@ -256,7 +260,7 @@ async function resolveVersion(
   }
 
   const [version] = await sql<VersionRow[]>`
-    SELECT v.id, v.template_id, v.sender_display_name, v.reply_to_behavior,
+    SELECT v.id, v.template_id, t.language, v.sender_display_name, v.reply_to_behavior,
            v.reply_to_address, v.subject, v.preheader, v.content
     FROM guesthub.message_template_versions v
     JOIN guesthub.message_templates t
@@ -651,9 +655,14 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           await skipAutomation(summary, event, automation, reservation, "provider_not_ready", version);
           continue;
         }
-        const rendered = renderWhatsAppCommunication(content as WhatsAppTemplateContent, context);
+        const rendered = renderWhatsAppCommunication(
+          content as WhatsAppTemplateContent, context, { language: version.language });
         if (!rendered.canSend || !rendered.text.trim()) {
-          await skipAutomation(summary, event, automation, reservation, "render_failed", version, waChannel.provider);
+          // D112/D115 — the skip names the variable that blocked it.
+          await skipAutomation(summary, event, automation, reservation, "render_failed", version,
+            waChannel.provider, undefined,
+            describeRenderIssues(rendered.issues)
+              ?? (rendered.text.trim() ? undefined : "ההודעה ריקה לאחר מילוי המשתנים"));
           continue;
         }
         for (const r of recipients) {
@@ -698,8 +707,13 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         // A missing variable is a fact about THIS reservation (a guest with no
         // first name, an unassigned room), not about the automation. Disabling
         // the automation here would silently stop every OTHER guest's
-        // confirmation too. Record the skip and carry on.
-        await skipAutomation(summary, event, automation, reservation, "render_failed", version);
+        // confirmation too. Record the skip — naming the variable that blocked
+        // it (D112/D115) — and carry on.
+        await skipAutomation(summary, event, automation, reservation, "render_failed", version,
+          undefined, undefined,
+          describeRenderIssues([
+            ...rendered.issues, ...subject.issues, ...(preheader?.issues ?? []),
+          ]) ?? undefined);
         continue;
       }
       const senderName = version.sender_display_name ?? emailChannel.sender_name;

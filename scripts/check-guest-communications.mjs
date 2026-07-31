@@ -90,7 +90,10 @@ assert.deepEqual(
   variables.extractVariableKeys("{{ guest.first_name }} / {{reservation.number}} / {{guest.first_name}}"),
   ["guest.first_name", "reservation.number", "guest.first_name"],
 );
-assert.equal(variables.getVariableDefinition("guest.first_name")?.required, true);
+// D115: required-ness is the TEMPLATE's statement ({{key!}}), never registry fiat.
+assert.ok(variables.getVariableDefinition("guest.first_name"));
+assert.equal("required" in variables.getVariableDefinition("guest.first_name"), false,
+  "the registry must not know 'required' — that is what made a missing guest.email cost a WhatsApp send (D115)");
 assert.equal(variables.getVariableDefinition("reservation.fake"), undefined);
 ok("typed variable registry extracts canonical keys and rejects unknown definitions");
 
@@ -235,7 +238,9 @@ ok("parseTemplateContent dispatches on kind, keeps legacy trees parsing, and rej
   const unknown = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "{{not.real}}" }, context);
   assert.equal(unknown.canSend, false);
   const missing = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "{{payment.total}}" }, { ...context, values: {} });
-  assert.equal(missing.canSend, false, "a missing required variable must block the send");
+  assert.equal(missing.canSend, true, "D115: a missing variable renders empty and the send proceeds");
+  const missingRequired = renderer.renderHtmlCommunication({ schemaVersion: 1, kind: "html", html: "{{payment.total!}}" }, { ...context, values: {} });
+  assert.equal(missingRequired.canSend, false, "only an explicit {{key!}} may block the send");
 }
 ok("html templates interpolate with escaped values, wrap fragments RTL, and fail closed on bad variables");
 
