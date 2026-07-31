@@ -60,6 +60,7 @@
     "check:messaging": "node scripts/check-messaging.mjs",
     "check:guest-communications": "node scripts/check-guest-communications.mjs && node scripts/check-guest-communications-automation.mjs && node scripts/check-guest-communications-worker.mjs",
     "check:guest-communications-db": "node scripts/check-guest-communications-db.mjs",
+    "check:ota-confirm-once": "node scripts/check-ota-confirm-once.mjs",
     "check:wa-template-render": "node scripts/check-wa-template-render.mjs",
     "check:automation-design": "node scripts/check-automation-design.mjs",
     "check:resolve-version-lineage": "node scripts/check-resolve-version-lineage.mjs",
