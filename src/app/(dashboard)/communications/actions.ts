@@ -23,7 +23,7 @@ import {
 } from "@/lib/communications/renderer";
 import { describeRenderIssues } from "@/lib/communications/variables";
 import { normalizePhone } from "@/lib/phone";
-import { TRIGGERS, TRIGGER_IDS } from "@/lib/communications/triggers";
+import { TRIGGERS, TRIGGER_IDS, SOURCE_GROUP_IDS, otaSourceBlockReason } from "@/lib/communications/triggers";
 
 export type CommunicationActionResult = { success: true; id?: string; message?: string } | { success: false; error: string };
 
@@ -407,7 +407,7 @@ const automationInputSchema = z.object({
   id: z.string().uuid().optional(), name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(500).optional(), triggerType: z.enum(TRIGGER_IDS),
   channel: z.enum(["email", "whatsapp"]).default("email"),
-  templateId: z.string().uuid(), sources: z.array(z.enum(["back_office", "direct_website"])).min(1),
+  templateId: z.string().uuid(), sources: z.array(z.enum(SOURCE_GROUP_IDS as unknown as [string, ...string[]])).min(1),
   offsetDays: z.number().int().min(0).max(60).optional(),
   sendTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   activate: z.boolean().default(false),
@@ -452,7 +452,17 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
       }
       : { mode: "immediate" as const, quietHours: "bypass" as const };
     const conditions = trigger.defaultConditions;
-    const exclusions = trigger.defaultExclusions;
+    // D118 — the OTA group is a real operator decision now, so exclusions.ota is
+    // DERIVED from the chosen sources instead of pinned to the registry default.
+    // The engine already reads exclusions.ota and skips truthfully on it; this
+    // is the switch that was missing, not new engine behaviour.
+    // Fail-closed: a trigger the registry marks otaHardSkip can never carry the
+    // OTA source, and the save is REFUSED rather than silently stripped — a
+    // clamp the operator cannot see is exactly the defect D118 forbids.
+    const wantsOta = input.sources.includes("ota");
+    const otaBlocked = otaSourceBlockReason(input.triggerType);
+    if (wantsOta && otaBlocked) return { success: false, error: otaBlocked };
+    const exclusions = { ...trigger.defaultExclusions, ota: !wantsOta };
     const [template] = await sql<{ current_published_version_id: string | null }[]>`
       SELECT current_published_version_id FROM guesthub.message_templates
       WHERE tenant_id = ${actor.tenantId} AND id = ${input.templateId} AND channel = ${input.channel}`;

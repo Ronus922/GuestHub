@@ -918,6 +918,124 @@
     cursor: grabbing;
   }
 
+  /* ---- automation panel (D118) — form column + sticky preview column ---- */
+  .gc-auto {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .gc-auto-main {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+    flex: 1 1 420px;
+  }
+  .gc-auto-side {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+    flex: 1 1 300px;
+    max-width: 348px;
+  }
+  /* the card-header trailing meta: the live value of the card, per the design */
+  .gc-hd-meta {
+    margin-inline-start: auto;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .gc-hd-chip {
+    margin-inline-start: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: var(--field-bg);
+    color: var(--muted);
+    font-size: 13.5px;
+    font-weight: 700;
+  }
+  .gc-hd-chip.is-ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  .gc-hd-select {
+    margin-inline-start: auto;
+    width: auto;
+    max-width: 190px;
+  }
+  /* booking-source chips */
+  .gc-srcs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .gc-src {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 8px 16px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .gc-src:hover:not(:disabled) {
+    border-color: var(--brand-line);
+    color: var(--ink);
+  }
+  .gc-src.is-on {
+    background: var(--brand-soft);
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  /* an OTA group that IS switched on stays visually flagged: the operator
+     opted into messaging guests the channel also talks to */
+  .gc-src.is-on.is-warn {
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    border-color: var(--warn);
+    color: var(--warn);
+  }
+  .gc-src:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+  }
+  /* the reason a control is unavailable — always VISIBLE text, never a
+     title-only whisper on a disabled chip */
+  .gc-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--field-bg);
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .gc-sum {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--brand);
+  }
+  .gc-sum .t-body {
+    color: var(--ink);
+  }
+
   @media (max-width: 1100px) {
     .gc-b3,
     .gc-b2 {
@@ -931,6 +1049,12 @@
     .gc-col-end {
       border-inline: none;
       border-block-start: 1px solid var(--line);
+    }
+    /* mobile-first: the preview stops being a sidebar and stacks full width */
+    .gc-auto-side {
+      position: static;
+      max-width: none;
+      flex-basis: 100%;
     }
   }
 }

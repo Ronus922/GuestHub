@@ -12,9 +12,13 @@ import type { EditorSeed } from "./editorShared";
 import { STAGE_KEYS, STAGE_LABELS, usageLabel } from "@/lib/communications/blocks";
 import { TEMPLATE_GALLERY, emptyContentFor } from "@/lib/communications/gallery";
 import {
-  TRIGGERS, TRIGGER_IDS, TRIGGER_LIST, describeTiming, type TriggerId,
+  TRIGGERS, TRIGGER_IDS, TRIGGER_LIST, SOURCE_GROUPS, describeTiming,
+  otaSourceBlockReason, type TriggerId,
 } from "@/lib/communications/triggers";
-import type { CommunicationChannel, CommunicationRenderContext } from "@/lib/communications/types";
+import { renderTemplateContent } from "@/lib/communications/renderer";
+import type {
+  CommunicationChannel, CommunicationRenderContext, TemplateContent, TemplateLanguage,
+} from "@/lib/communications/types";
 import type {
   AutomationRow, CommunicationsData, CommunicationTemplateRow, DeliveryRow,
 } from "@/app/(dashboard)/communications/data";
@@ -421,6 +425,8 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
           whatsappAvailable={data.channel.whatsappAvailable}
           canActivate={permissions.activateAutomations}
           pending={pending}
+          datasets={datasets}
+          fallbackContext={fallbackContext}
           onClose={() => setAutomation(null)}
           onSave={(input) => run(() => saveAutomationAction(input))}
         />
@@ -770,12 +776,32 @@ function ChannelsPanel({
   );
 }
 
+// ============================================================
+// The automation panel (D118 reskin — design-ref/whatsapp-automation.html).
+//
+// Two columns inside the canonical §7 drawer: the form on the reading side, a
+// STICKY preview + summary beside it. Everything the design promised that this
+// stack cannot deliver was dropped rather than faked:
+//   · no Meta approval chip or save gate — GREEN-API has no template approval,
+//     so the chip would have no data source. The real lifecycle state shows.
+//   · no reply buttons, no verified-business badge, no blue ticks — a
+//     GreenApiWhatsAppProvider.sendMessage carries ONE plain string.
+//   · no per-OTA chips — see AutomationSources.
+// The preview renders the PUBLISHED version through the SAME renderer the send
+// path uses, so the bubble carries the guest's exact bytes, RLM marks and all
+// (D116). There is no second renderer.
+// ============================================================
+
 function AutomationPanel({
-  value, templates, ownerAddresses, whatsappAvailable, canActivate, pending, onClose, onSave,
+  value, templates, ownerAddresses, whatsappAvailable, canActivate, pending,
+  datasets, fallbackContext, onClose, onSave,
 }: {
   value: AutomationRow | "new"; templates: CommunicationTemplateRow[];
   ownerAddresses: { email: string[]; whatsapp: string[] }; whatsappAvailable: boolean;
-  canActivate: boolean; pending: boolean; onClose: () => void; onSave: (input: unknown) => void;
+  canActivate: boolean; pending: boolean;
+  datasets: { id: string; label: string; context: CommunicationRenderContext }[];
+  fallbackContext: CommunicationRenderContext;
+  onClose: () => void; onSave: (input: unknown) => void;
 }) {
   const fresh = value === "new";
   const [name, setName] = useState(fresh ? "" : value.name);
@@ -831,6 +857,10 @@ function AutomationPanel({
       setOffsetDays(def.offsetDays?.default ?? 0);
       setSendTime(def.defaultSendTime ?? "10:00");
     }
+    // Switching TO a trigger that cannot carry OTA drops the selection here, so
+    // the operator never faces a save the server refuses over a chip that is
+    // now disabled and unreachable.
+    if (otaSourceBlockReason(next)) setSources((current) => current.filter((s) => s !== "ota"));
   };
   const pickChannel = (next: "email" | "whatsapp") => {
     setChannel(next);
@@ -844,7 +874,62 @@ function AutomationPanel({
   const recipientsValid = (toGuest || toOwner)
     && (!toOwner || (availableOwnerAddresses.length > 0
       && (ownerMode === "all" || ownerPicks.length > 0)));
-  const valid = name.trim().length >= 2 && sources.length > 0 && selectedTemplateValid && recipientsValid;
+  const otaBlockReason = otaSourceBlockReason(triggerType);
+  // Mirrors the server's fail-closed refusal: a stored automation whose trigger
+  // was later marked otaHardSkip must not look saveable.
+  const sourcesValid = sources.length > 0 && !(sources.includes("ota") && otaBlockReason);
+  const valid = name.trim().length >= 2 && sourcesValid && selectedTemplateValid && recipientsValid;
+
+  // ---- the honest preview: the PUBLISHED bytes, through the send path's own
+  // renderer. A template with no published version has nothing to preview, and
+  // says so rather than showing an unpublished draft the guest will never get.
+  const selectedTemplate = channelTemplates.find((t) => t.id === templateId) ?? null;
+  const [datasetId, setDatasetId] = useState(datasets[0]?.id ?? "");
+  const previewContext = datasets.find((d) => d.id === datasetId)?.context ?? fallbackContext;
+  const preview = useMemo(() => {
+    const content = selectedTemplate?.publishedContent as TemplateContent | null | undefined;
+    if (!content) return null;
+    return renderTemplateContent(content, previewContext, {
+      language: (selectedTemplate?.language ?? "he") as TemplateLanguage,
+      preheader: selectedTemplate?.preheader || undefined,
+    });
+  }, [selectedTemplate, previewContext]);
+
+  // The server clamps an out-of-range offset SILENTLY (actions.ts). Say so here
+  // instead, so 99 days never becomes 30 behind the operator's back.
+  const offsetOutOfRange = trigger.kind === "scheduled" && Boolean(trigger.offsetDays)
+    && (offsetDays < trigger.offsetDays!.min || offsetDays > trigger.offsetDays!.max);
+
+  // The published lifecycle state — the honest replacement for the design's
+  // Meta-approval chip. GREEN-API has no template approval to report.
+  const templateStateLabel = selectedTemplate
+    ? `מפורסמת${selectedTemplate.version ? ` · גרסה ${selectedTemplate.version}` : ""}`
+    : "לא נבחרה תבנית";
+
+  const ownerCount = toOwner
+    ? (ownerMode === "all" ? availableOwnerAddresses.length : ownerPicks.length)
+    : 0;
+  const recipientsLabel = [
+    toGuest ? "המזמין" : null,
+    ownerCount ? `${ownerCount}${channel === "whatsapp" ? " מספרים בעסק" : " כתובות בעסק"}` : null,
+  ].filter(Boolean).join(" · ") || "לא נבחר נמען";
+
+  const summaryRows: { icon: IconName; label: string; value: string }[] = [
+    {
+      icon: "automations", label: "טריגר",
+      value: describeTiming(triggerType, trigger.kind === "scheduled" ? { offsetDays, sendTime } : null),
+    },
+    {
+      icon: "filter", label: "מקורות",
+      value: SOURCE_GROUPS.filter((g) => sources.includes(g.id)).map((g) => g.label).join(" · ")
+        || "לא נבחר מקור",
+    },
+    { icon: "guests", label: "נמענים", value: recipientsLabel },
+    {
+      icon: channel === "whatsapp" ? "whatsapp" : "mail", label: "ערוץ ותבנית",
+      value: `${channel === "whatsapp" ? "WhatsApp" : "אימייל"} · ${selectedTemplate?.name ?? "לא נבחרה תבנית"}`,
+    },
+  ];
 
   return (
     <SidePanel
@@ -873,189 +958,310 @@ function AutomationPanel({
         </>
       }
     >
-      <div className="flex flex-col gap-4">
-        <section className="card">
-          <div className="card-hd">מתי</div>
-          <div className="card-bd flex flex-col gap-3">
-            <label className="field">
-              <span className="field-label">טריגר</span>
-              <select className="field-input" value={triggerType}
-                onChange={(e) => pickTrigger(e.target.value as TriggerId)}>
-                {TRIGGER_LIST.map((def) => (
-                  <option key={def.id} value={def.id}>{def.label}</option>
-                ))}
-              </select>
-              <span className="field-hint">{trigger.description}</span>
-            </label>
-            {trigger.kind === "scheduled" && (
-              <div className="gc-meta-grid">
-                {trigger.direction !== "on" && trigger.offsetDays && (
+      <div className="gc-auto">
+        <div className="gc-auto-main">
+
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="edit" size={20} /> פרטים
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              <label className="field">
+                <span className="field-label">שם האוטומציה</span>
+                <input className="field-input" value={name} maxLength={120}
+                  onChange={(e) => setName(e.target.value)} placeholder="לדוגמה: אישור הזמנה לאורח" />
+              </label>
+              <label className="field">
+                <span className="field-label">תיאור פנימי</span>
+                <textarea className="field-input" rows={2} value={description} maxLength={500}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="למה האוטומציה הזאת קיימת ומי אחראי עליה" />
+              </label>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="automations" size={20} /> מתי
+              <span className="gc-hd-meta">{trigger.label}</span>
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              <label className="field">
+                <span className="field-label">טריגר</span>
+                <select className="field-input" value={triggerType}
+                  onChange={(e) => pickTrigger(e.target.value as TriggerId)}>
+                  {TRIGGER_LIST.map((def) => (
+                    <option key={def.id} value={def.id}>{def.label}</option>
+                  ))}
+                </select>
+                <span className="field-hint">{trigger.description}</span>
+              </label>
+              {trigger.kind === "scheduled" && (
+                <div className="gc-meta-grid">
+                  {trigger.direction !== "on" && trigger.offsetDays && (
+                    <label className="field">
+                      <span className="field-label">
+                        {trigger.direction === "before" ? "ימים לפני" : "ימים אחרי"}
+                      </span>
+                      <input className="field-input ltr-num" type="number"
+                        min={trigger.offsetDays.min} max={trigger.offsetDays.max} value={offsetDays}
+                        onChange={(e) => setOffsetDays(Number(e.target.value))} />
+                      {offsetOutOfRange && (
+                        <span className="field-msg">
+                          {`הטווח המותר לטריגר הזה הוא ${trigger.offsetDays.min}–${trigger.offsetDays.max} ימים`}
+                        </span>
+                      )}
+                    </label>
+                  )}
                   <label className="field">
-                    <span className="field-label">
-                      {trigger.direction === "before" ? "ימים לפני" : "ימים אחרי"}
-                    </span>
-                    <input className="field-input ltr-num" type="number"
-                      min={trigger.offsetDays.min} max={trigger.offsetDays.max} value={offsetDays}
-                      onChange={(e) => setOffsetDays(Number(e.target.value))} />
+                    <span className="field-label">שעת שליחה</span>
+                    <input className="field-input ltr-num" type="time" value={sendTime}
+                      onChange={(e) => setSendTime(e.target.value)} />
                   </label>
-                )}
-                <label className="field">
-                  <span className="field-label">שעת שליחה</span>
-                  <input className="field-input ltr-num" type="time" value={sendTime}
-                    onChange={(e) => setSendTime(e.target.value)} />
-                </label>
-              </div>
-            )}
-            {(trigger.otaHardSkip || trigger.defaultExclusions.ota) && (
-              <p className="t-secondary">
-                הזמנות מ־Booking.com, Airbnb וכל ערוץ OTA מוחרגות: ה-OTA מתקשר עם האורח בעצמו.
-              </p>
-            )}
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="card-hd">פרטים</div>
-          <div className="card-bd flex flex-col gap-3">
-            <label className="field">
-              <span className="field-label">שם האוטומציה</span>
-              <input className="field-input" value={name} maxLength={120}
-                onChange={(e) => setName(e.target.value)} placeholder="לדוגמה: אישור הזמנה לאורח" />
-            </label>
-            <label className="field">
-              <span className="field-label">תיאור</span>
-              <textarea className="field-input" rows={3} value={description} maxLength={500}
-                onChange={(e) => setDescription(e.target.value)} />
-            </label>
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="card-hd">מקורות הזמנה</div>
-          <div className="card-bd flex flex-col gap-3">
-            {([["back_office", "הזמנה ידנית (Back-office)"], ["direct_website", "אתר הזמנות ישיר"]] as const).map(([key, label]) => (
-              <span key={key} className="gc-toggle">
-                <button type="button" className="gc-sw" role="switch" aria-checked={sources.includes(key)}
-                  onClick={() => toggle(key)} aria-label={label} />
-                {label}
-              </span>
-            ))}
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="card-hd">נמענים</div>
-          <div className="card-bd flex flex-col gap-3">
-            <p className="t-secondary">מי יקבל את ההודעה?</p>
-            <span className="gc-toggle">
-              <button type="button" className="gc-sw" role="switch" aria-checked={toGuest}
-                onClick={() => setToGuest(!toGuest)} aria-label="המזמין" />
-              המזמין
-            </span>
-            <span className="gc-toggle">
-              <button type="button" className="gc-sw" role="switch" aria-checked={toOwner}
-                onClick={() => setToOwner(!toOwner)} aria-label="בעל העסק" />
-              בעל העסק
-            </span>
-            {!toGuest && !toOwner && (
-              <p className="field-msg">יש לבחור לפחות נמען אחד</p>
-            )}
-            {toOwner && availableOwnerAddresses.length === 0 && (
-              <p className="field-msg">
-                {channel === "whatsapp"
-                  ? "לא הוגדרו מספרי WhatsApp של בעל העסק — ניתן להוסיף בלשונית ערוצי שליחה"
-                  : "לא הוגדרו כתובות אימייל של בעל העסק — ניתן להוסיף בלשונית ערוצי שליחה"}
-              </p>
-            )}
-            {toOwner && availableOwnerAddresses.length > 0 && (
-              <div className="field">
-                <div className="gc-seg">
-                  <button type="button" className="gc-segb" aria-pressed={ownerMode === "all"}
-                    onClick={() => setOwnerMode("all")}>
-                    כל הכתובות
-                  </button>
-                  <button type="button" className="gc-segb" aria-pressed={ownerMode === "selected"}
-                    onClick={() => setOwnerMode("selected")}>
-                    בחירת כתובות
-                  </button>
                 </div>
-                {ownerMode === "selected" && (
-                  <>
-                    <div className="flex flex-col gap-2 pt-2">
-                      {availableOwnerAddresses.map((address) => (
-                        <label key={address} className="flex items-center gap-2 p-1 t-body">
-                          <input type="checkbox" checked={ownerPicks.includes(address)}
-                            disabled={!ownerPicks.includes(address) && ownerPicks.length >= 3}
-                            onChange={() => toggleOwnerPick(address)} />
-                          <span className="ltr-num">{address}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <span className="field-hint">ניתן לבחור עד 3 כתובות</span>
-                    {staleDropped && (
-                      <span className="field-hint">כתובות שנמחקו מההגדרות הוסרו מהבחירה</span>
-                    )}
-                    {ownerPicks.length === 0 && (
-                      <p className="field-msg">יש לבחור לפחות כתובת אחת</p>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="card-hd">ערוץ ותבנית</div>
-          <div className="card-bd flex flex-col gap-3">
-            <div className="field">
-              <span className="field-label">ערוץ שליחה</span>
-              <div className="gc-seg">
-                <button type="button" className="gc-segb" aria-pressed={channel === "email"}
-                  onClick={() => pickChannel("email")}>
-                  <Icon name="mail" size={17} /> אימייל
-                </button>
-                <button type="button" className="gc-segb" aria-pressed={channel === "whatsapp"}
-                  disabled={!whatsappAvailable && channel !== "whatsapp"}
-                  title={whatsappAvailable ? undefined : "אין ספק WhatsApp מחובר — חברו ספק בהגדרות ההודעות"}
-                  onClick={() => pickChannel("whatsapp")}>
-                  <Icon name="whatsapp" size={17} /> WhatsApp
-                </button>
-              </div>
-              {!whatsappAvailable && (
-                <span className="field-hint">שליחת WhatsApp דורשת ספק מחובר ובדוק (הגדרות ← הודעות).</span>
               )}
             </div>
-            <label className="field">
-              <span className="field-label">תבנית מפורסמת</span>
-              <select className="field-input" value={selectedTemplateValid ? templateId : ""}
-                onChange={(e) => setTemplateId(e.target.value)}>
-                <option value="">בחירת תבנית</option>
-                {channelTemplates.map((template) => (
-                  <option key={template.id} value={template.id}>
-                    {template.name}{template.version ? ` (v${template.version})` : ""}
-                  </option>
-                ))}
-              </select>
-              <span className="field-hint">
-                בכל משלוח נשמר snapshot של הגרסה שנשלחה — עדכון התבנית לא משנה היסטוריה.
+          </section>
+
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="filter" size={20} /> על אילו הזמנות
+              <span className="gc-hd-meta">
+                {sources.length ? `${sources.length} מקורות נבחרו` : "לא נבחר מקור"}
               </span>
-            </label>
-            {channelTemplates.length === 0 && (
-              <p className="field-msg">
-                {channel === "whatsapp"
-                  ? "אין תבנית WhatsApp מפורסמת. יש לפרסם תבנית לפני הפעלה."
-                  : "אין תבנית אימייל מפורסמת. יש לפרסם תבנית לפני הפעלה."}
-              </p>
-            )}
-            <span className="gc-toggle">
-              <button type="button" className="gc-sw" role="switch" aria-checked={activate}
-                disabled={!canActivate} onClick={() => setActivate(!activate)}
-                aria-label="הפעלה מיד לאחר שמירה" />
-              הפעלה מיד לאחר שמירה (אירועים חדשים בלבד)
-            </span>
-          </div>
-        </section>
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              <div className="gc-srcs">
+                {SOURCE_GROUPS.map((group) => {
+                  const on = sources.includes(group.id);
+                  // The OTA group is the ONLY one that can be capability-blocked,
+                  // and when it is, it is DISABLED with the reason spelled out
+                  // below — never an enabled control that sends nothing (D118).
+                  const blocked = group.id === "ota" ? otaBlockReason : null;
+                  return (
+                    <button
+                      key={group.id}
+                      type="button"
+                      className={`gc-src${on ? " is-on" : ""}${on && group.id === "ota" ? " is-warn" : ""}`}
+                      aria-pressed={on}
+                      disabled={Boolean(blocked)}
+                      title={blocked ?? group.hint}
+                      onClick={() => toggle(group.id)}
+                    >
+                      <Icon name={on ? "check" : "circle"} size={17} />
+                      {group.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {otaBlockReason && (
+                <p className="gc-note">
+                  <Icon name="info" size={17} />
+                  <span>{`ערוצי OTA אינם זמינים לטריגר הזה — ${otaBlockReason}`}</span>
+                </p>
+              )}
+              {sources.length === 0 && <p className="field-msg">יש לבחור לפחות מקור אחד</p>}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="send" size={20} /> ערוץ ותבנית
+              <span className={`gc-hd-chip${selectedTemplate ? " is-ok" : ""}`}>
+                {templateStateLabel}
+              </span>
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              <div className="field">
+                <span className="field-label">ערוץ שליחה</span>
+                <div className="gc-seg">
+                  <button type="button" className="gc-segb" aria-pressed={channel === "email"}
+                    onClick={() => pickChannel("email")}>
+                    <Icon name="mail" size={17} /> אימייל
+                  </button>
+                  <button type="button" className="gc-segb" aria-pressed={channel === "whatsapp"}
+                    disabled={!whatsappAvailable && channel !== "whatsapp"}
+                    title={whatsappAvailable ? undefined : "אין ספק WhatsApp מחובר — חברו ספק בהגדרות ההודעות"}
+                    onClick={() => pickChannel("whatsapp")}>
+                    <Icon name="whatsapp" size={17} /> WhatsApp
+                  </button>
+                </div>
+                {!whatsappAvailable && (
+                  <span className="field-hint">שליחת WhatsApp דורשת ספק מחובר ובדוק (הגדרות ← הודעות).</span>
+                )}
+              </div>
+              <label className="field">
+                <span className="field-label">תבנית מפורסמת</span>
+                <select className="field-input" value={selectedTemplateValid ? templateId : ""}
+                  onChange={(e) => setTemplateId(e.target.value)}>
+                  <option value="">בחירת תבנית</option>
+                  {channelTemplates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}{template.version ? ` (v${template.version})` : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="field-hint">
+                  בכל משלוח נשמר snapshot של הגרסה שנשלחה — עדכון התבנית לא משנה היסטוריה.
+                </span>
+              </label>
+              {channelTemplates.length === 0 && (
+                <p className="field-msg">
+                  {channel === "whatsapp"
+                    ? "אין תבנית WhatsApp מפורסמת. יש לפרסם תבנית לפני הפעלה."
+                    : "אין תבנית אימייל מפורסמת. יש לפרסם תבנית לפני הפעלה."}
+                </p>
+              )}
+              <span className="gc-toggle">
+                <button type="button" className="gc-sw" role="switch" aria-checked={activate}
+                  disabled={!canActivate} onClick={() => setActivate(!activate)}
+                  aria-label="הפעלה מיד לאחר שמירה" />
+                הפעלה מיד לאחר שמירה (אירועים חדשים בלבד)
+              </span>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="guests" size={20} /> נמענים
+              <span className="gc-hd-meta">{recipientsLabel}</span>
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              <span className="gc-toggle">
+                <button type="button" className="gc-sw" role="switch" aria-checked={toGuest}
+                  onClick={() => setToGuest(!toGuest)} aria-label="המזמין" />
+                <span className="flex flex-col">
+                  המזמין
+                  <span className="gc-hint">
+                    {channel === "whatsapp"
+                      ? "למספר הוואטסאפ שנשמר בהזמנה"
+                      : "לכתובת המייל שנשמרה בהזמנה"}
+                  </span>
+                </span>
+              </span>
+              <span className="gc-toggle">
+                <button type="button" className="gc-sw" role="switch" aria-checked={toOwner}
+                  onClick={() => setToOwner(!toOwner)} aria-label="בעל העסק" />
+                <span className="flex flex-col">
+                  בעל העסק
+                  <span className="gc-hint">עותק פנימי לצוות — האורח אינו רואה אותו.</span>
+                </span>
+              </span>
+              {!toGuest && !toOwner && (
+                <p className="field-msg">יש לבחור לפחות נמען אחד</p>
+              )}
+              {toOwner && availableOwnerAddresses.length === 0 && (
+                <p className="field-msg">
+                  {channel === "whatsapp"
+                    ? "לא הוגדרו מספרי WhatsApp של בעל העסק — ניתן להוסיף בלשונית ערוצי שליחה"
+                    : "לא הוגדרו כתובות אימייל של בעל העסק — ניתן להוסיף בלשונית ערוצי שליחה"}
+                </p>
+              )}
+              {toOwner && availableOwnerAddresses.length > 0 && (
+                <div className="field">
+                  <div className="gc-seg">
+                    <button type="button" className="gc-segb" aria-pressed={ownerMode === "all"}
+                      onClick={() => setOwnerMode("all")}>
+                      {channel === "whatsapp" ? "כל המספרים" : "כל הכתובות"}
+                    </button>
+                    <button type="button" className="gc-segb" aria-pressed={ownerMode === "selected"}
+                      onClick={() => setOwnerMode("selected")}>
+                      בחירה ידנית
+                    </button>
+                  </div>
+                  {ownerMode === "selected" && (
+                    <>
+                      <div className="flex flex-col gap-2 pt-2">
+                        {availableOwnerAddresses.map((address) => (
+                          <label key={address} className="flex items-center gap-2 p-1 t-body">
+                            <input type="checkbox" checked={ownerPicks.includes(address)}
+                              disabled={!ownerPicks.includes(address) && ownerPicks.length >= 3}
+                              onChange={() => toggleOwnerPick(address)} />
+                            <span className="ltr-num">{address}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <span className="field-hint">ניתן לבחור עד 3 כתובות</span>
+                      {staleDropped && (
+                        <span className="field-hint">כתובות שנמחקו מההגדרות הוסרו מהבחירה</span>
+                      )}
+                      {ownerPicks.length === 0 && (
+                        <p className="field-msg">יש לבחור לפחות כתובת אחת</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <aside className="gc-auto-side">
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="eye" size={20} /> מה האורח יראה
+              {datasets.length > 0 && (
+                <select className="field-input gc-select gc-hd-select" value={datasetId}
+                  onChange={(e) => setDatasetId(e.target.value)} aria-label="הזמנה לתצוגה">
+                  {datasets.map((dataset) => (
+                    <option key={dataset.id} value={dataset.id}>{dataset.label}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              {!selectedTemplate ? (
+                <p className="gc-hint">בחרו תבנית כדי לראות את ההודעה שתישלח.</p>
+              ) : !preview ? (
+                <p className="field-msg">
+                  לתבנית הזו אין עדיין גרסה מפורסמת — אין מה להציג, ואין מה לשלוח.
+                </p>
+              ) : channel === "whatsapp" ? (
+                // The SAME bytes the guest receives, RLM marks included (D116).
+                // A text node, never innerHTML — and no reply buttons, verified
+                // badge or read ticks: GREEN-API sends one plain string.
+                <div className="gc-wa-chat" dir="rtl">
+                  <div className="gc-wa-bubble">
+                    {preview.plainText || "ההודעה ריקה"}
+                  </div>
+                </div>
+              ) : (
+                <iframe className="block w-full border-0" style={{ height: 420 }} sandbox=""
+                  srcDoc={preview.html} title="תצוגה מקדימה של האימייל" />
+              )}
+              {preview && (
+                <p className="gc-hint">
+                  <Icon name="variables" size={17} /> המשתנים מוצגים בערכי ההזמנה שנבחרה
+                </p>
+              )}
+              {preview?.issues.map((issue) => (
+                <p key={`${issue.kind}:${issue.key}`}
+                  className={issue.kind === "missing_optional" ? "gc-hint" : "field-msg"}>
+                  {issue.kind === "missing_optional"
+                    ? `${issue.key} — אין ערך בהזמנה הזו; השורה תישלח בלי הערך`
+                    : `${issue.key} — חסר ערך חובה; ההודעה לא תישלח`}
+                </p>
+              ))}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-hd flex items-center gap-2">
+              <Icon name="list" size={20} /> סיכום
+            </div>
+            <div className="card-bd flex flex-col gap-3">
+              {summaryRows.map((row) => (
+                <div key={row.label} className="gc-sum">
+                  <Icon name={row.icon} size={17} />
+                  <span className="flex flex-col">
+                    <span className="field-label">{row.label}</span>
+                    <span className="t-body">{row.value}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </aside>
       </div>
     </SidePanel>
   );

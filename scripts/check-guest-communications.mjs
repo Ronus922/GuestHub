@@ -52,6 +52,7 @@ const schemas = await import(join(out, "communications/schemas.js"));
 const variables = await import(join(out, "communications/variables.js"));
 const renderer = await import(join(out, "communications/renderer.js"));
 const triggers = await import(join(out, "communications/triggers.js"));
+const commTypes = await import(join(out, "communications/types.js"));
 const permissions = await import(join(out, "auth/permission-check.js"));
 const gmail = await import(join(out, "messaging/email/gmail.js"));
 
@@ -752,6 +753,76 @@ assert.match(waEditor, /gc-wa-bubble/, "the preview is a chat bubble");
 assert.match(waEditor, /4096/, "the WhatsApp length cap must be enforced in the editor");
 assert.match(waEditor, /sendTestWhatsAppAction/);
 ok("the WhatsApp editor is plain text + variables with a bubble preview, not an email form");
+
+// ============================================================
+// D118 — the automation panel may NEVER present a channel, a template or a
+// booking source as available when the capability behind it is absent.
+// Each control is pinned to the thing that actually backs it; a control that
+// is offered is one the send path can honour.
+// ============================================================
+const automationPanel = (() => {
+  const from = shell.indexOf("function AutomationPanel(");
+  const to = shell.indexOf("/** The creation window");
+  assert.equal(from > 0 && to > from, true, "AutomationPanel must remain locatable in the shell");
+  return shell.slice(from, to);
+})();
+// comments EXPLAIN why a fake affordance is absent; they must not satisfy or
+// trip the checks below, which are about rendered controls
+const panelCode = automationPanel.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+// ---- source: every chip is a booking_origin the engine can actually filter on
+const originSet = new Set(commTypes.BOOKING_ORIGINS);
+for (const group of triggers.SOURCE_GROUPS) {
+  assert.equal(originSet.has(group.id), true,
+    `source chip "${group.id}" is not a booking_origin — the engine could never match it`);
+}
+// ---- source: the OTA chip's availability is DERIVED from the engine's own
+// hard-skip flag, so panel and send path can never drift apart
+for (const id of triggers.TRIGGER_IDS) {
+  assert.equal(
+    triggers.otaSourceBlockReason(id) === null,
+    triggers.TRIGGERS[id].otaHardSkip === false,
+    `${id}: the panel's OTA availability must track otaHardSkip — the flag the engine skips on`,
+  );
+}
+assert.notEqual(triggers.otaSourceBlockReason("reservation.confirmed"), null,
+  "no confirmation event is emitted for an OTA booking — that chip must stay blocked");
+// the binding the chip reads must come FROM the registry — matching the bare
+// identifier would be satisfied by the unrelated call in pickTrigger
+assert.match(panelCode, /const otaBlockReason = otaSourceBlockReason\(triggerType\)/,
+  "the panel must ASK the registry whether OTA is available, never hardcode the answer");
+assert.match(panelCode, /disabled=\{Boolean\(blocked\)\}/,
+  "a capability-blocked source chip must be disabled, not merely styled");
+assert.match(panelCode, /\{otaBlockReason && \(/,
+  "the blocked chip's REASON must render as visible text, not a title-only whisper");
+
+// ---- source: the server refuses what the panel must not offer (fail-closed),
+// and the chip actually CONTROLS the exclusion instead of decorating it
+assert.match(uiActions, /if \(wantsOta && otaBlocked\) return \{ success: false/,
+  "the save path must REFUSE an OTA source on a hard-skip trigger, never strip it silently");
+assert.match(uiActions, /ota: !wantsOta/,
+  "exclusions.ota must be DERIVED from the chosen sources — otherwise the chip controls nothing");
+
+// ---- template: the preview is the PUBLISHED bytes, through the send path's
+// own renderer. An unpublished draft is not what reaches the guest.
+assert.match(panelCode, /publishedContent/,
+  "the automation preview must render the published version — what actually sends");
+assert.equal(/draftContent/.test(panelCode), false,
+  "the automation panel must never preview a draft the guest will never receive");
+assert.match(panelCode, /renderTemplateContent/,
+  "the preview must reuse the send path's renderer, never a second implementation");
+
+// ---- channel: WhatsApp stays gated on a live, tested provider
+assert.match(panelCode, /disabled=\{!whatsappAvailable && channel !== "whatsapp"\}/,
+  "the WhatsApp channel button must be disabled when no provider is connected");
+
+// ---- no WABA affordances GREEN-API cannot deliver (approval chip, verified
+// badge, read ticks, reply buttons) — the design drew them; the wire cannot.
+for (const fiction of ["Meta", "מאושרת", "עסק מאומת", "done_all", "verified"]) {
+  assert.equal(panelCode.includes(fiction), false,
+    `the panel must not promise "${fiction}" — sendMessage carries one plain string`);
+}
+ok("the automation panel cannot present a channel, template or source whose capability is absent");
 
 // ---- blank means BLANK: the forced 13-block seed is gone ----
 assert.equal(/defaultTemplateContent/.test(blocksLib), false,

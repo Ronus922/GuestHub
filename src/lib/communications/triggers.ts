@@ -159,6 +159,56 @@ export const TRIGGERS: Record<TriggerId, TriggerDef> = {
 
 export const TRIGGER_LIST: TriggerDef[] = TRIGGER_IDS.map((id) => TRIGGERS[id]);
 
+// ============================================================
+// Booking-source groups (D118). Three groups, matching how the business
+// actually sells: OTA · direct (back-office + app) · website. The ids ARE the
+// booking_origin values the engine filters on (source_filters.include), so a
+// chip can never offer a source the send path cannot evaluate.
+//
+// ONE catalog for the chips AND for the server's Zod enum — a control that
+// offers a source the save path would reject is the defect class D118 forbids.
+// ============================================================
+
+export const SOURCE_GROUPS = [
+  {
+    id: "back_office",
+    label: "ישיר — בק-אופיס",
+    hint: "הזמנות שהצוות יצר במערכת, כולל הזמנות טלפוניות",
+  },
+  {
+    id: "direct_website",
+    label: "אתר ההזמנות",
+    hint: "הזמנות שהאורח ביצע באתר שלכם",
+  },
+  {
+    id: "ota",
+    label: "ערוצי OTA",
+    hint: "הזמנות שיובאו מערוץ מכירה (Booking.com וכיוצא בו)",
+  },
+] as const;
+export type SourceGroupId = (typeof SOURCE_GROUPS)[number]["id"];
+export const SOURCE_GROUP_IDS = SOURCE_GROUPS.map((g) => g.id) as readonly SourceGroupId[];
+
+/**
+ * D118 — why the OTA group cannot be switched on for this trigger, or null when
+ * it CAN. Derived from `otaHardSkip`, the very flag the engine's global skip
+ * reads (automation.ts), so the control and the send path can never drift: if
+ * the panel offers OTA, the engine will evaluate it.
+ *
+ * Today this returns a reason only for reservation.confirmed, and the reason is
+ * not a policy preference — it is a capability fact in two independent layers:
+ *   · NO confirmation event is ever emitted for an OTA reservation. The Beds24
+ *     import emits only `cancelled` (booking-import.ts); the status-transition
+ *     emitter is guarded by `booking_origin !== 'ota'` (reservations/actions.ts).
+ *   · Even if one were emitted, `otaHardSkip` skips it (automation.ts).
+ * An enabled toggle here would control nothing at all.
+ */
+export function otaSourceBlockReason(triggerId: TriggerId): string | null {
+  return TRIGGERS[triggerId].otaHardSkip
+    ? "לא נפלט אירוע אישור עבור הזמנות OTA — הייבוא מהערוץ אינו יוצר אירוע אישור, וה-OTA שולח לאורח אישור משלו. הפעלה כאן לא הייתה שולחת דבר."
+    : null;
+}
+
 export function triggerFor(triggerType: string): TriggerDef | null {
   return (TRIGGERS as Record<string, TriggerDef>)[triggerType] ?? null;
 }

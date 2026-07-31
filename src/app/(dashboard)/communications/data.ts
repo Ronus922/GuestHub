@@ -12,6 +12,10 @@ export type CommunicationTemplateRow = {
   updatedAt: string; updatedBy: string | null; isSystem: boolean;
   senderDisplayName: string; replyTo: string; preheader: string;
   draftContent: Record<string, unknown> | null;
+  /** The CURRENTLY PUBLISHED version's content — what an automation actually
+   *  sends. The automation panel previews this, never draftContent: an
+   *  unpublished draft is not what reaches the guest. null until first publish. */
+  publishedContent: Record<string, unknown> | null;
   versions: TemplateVersionRow[];
 };
 
@@ -71,10 +75,11 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       updated_at: string; updated_by_name: string | null;
       is_system: boolean; draft_sender_display_name: string | null; draft_reply_to: string | null;
       draft_preheader: string | null; draft_content: Record<string, unknown> | null;
+      published_content: Record<string, unknown> | null;
       versions: TemplateVersionRow[];
     }[]>`
       SELECT m.id, m.name, m.subject, m.channel, m.category, m.language,
-             m.lifecycle_state, v.version_number,
+             m.lifecycle_state, v.version_number, v.content AS published_content,
              (SELECT COUNT(*)::int FROM guesthub.communication_automations a
                WHERE a.tenant_id = m.tenant_id AND a.template_id = m.id
                  AND a.archived_at IS NULL) AS used_by,
@@ -195,6 +200,7 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       replyTo: r.draft_reply_to ?? "",
       preheader: r.draft_preheader ?? "",
       draftContent: r.draft_content,
+      publishedContent: r.published_content,
       versions: r.versions ?? [],
     })),
     automations: automations.map((r) => ({
