@@ -918,7 +918,21 @@
     cursor: grabbing;
   }
 
-  /* ---- automation panel (D118) — form column + sticky preview column ---- */
+  /* ---- automation panel (D118) — form column + sticky preview column ----
+     Values here are MEASURED from design-ref/whatsapp-automation.html, not
+     estimated from the screenshot; `check:automation-design` re-measures both
+     sides and fails on a 1px drift. Where the design's literal collides with a
+     closed set (GUIDELINES §1/§2/§5/§6/§7/§10) the DESIGN SYSTEM wins and the
+     line below says so — every such case is listed in the guard's exception
+     table with both values, so a divergence can never be silent.
+
+     Everything panel-local is named `.gc-auto-*` or scoped under `.gc-auto`.
+     The shared `.gc-seg` / `.gc-segb` / `.gc-sw` / `.gc-toggle` / `.gc-note` /
+     `.gc-sum` families belong to the template editors too — the D118 reskin
+     re-declared `.gc-note` and `.gc-sum` at the bottom of this file and
+     silently restyled them there (measured: two extra rules reached
+     TemplateEditor / HtmlTemplateEditor / WhatsAppTemplateEditor). Never widen
+     a shared name to dress one screen. */
   .gc-auto {
     display: flex;
     flex-wrap: wrap;
@@ -928,18 +942,18 @@
   .gc-auto-main {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
     min-width: 0;
-    flex: 1 1 420px;
+    flex: 1 1 460px;
   }
   .gc-auto-side {
     position: sticky;
     top: 0;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     min-width: 0;
-    flex: 1 1 300px;
+    flex: 1 1 320px;
     max-width: 348px;
   }
   /* the card-header trailing meta: the live value of the card, per the design */
@@ -953,8 +967,9 @@
     margin-inline-start: auto;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 4px 12px;
+    gap: 6px;
+    height: 28px;
+    padding: 0 11px;
     border-radius: 999px;
     background: var(--field-bg);
     color: var(--muted);
@@ -976,17 +991,20 @@
     flex-wrap: wrap;
     gap: 8px;
   }
+  /* design: height 36px. The design system wins — iron rule #6 puts the floor
+     at a 44px touch target, so the height becomes a min-height and the inline
+     padding stays the design's 14px. */
   .gc-src {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 7px;
     min-height: 44px;
-    padding: 8px 16px;
-    border: 1px solid var(--line);
+    padding: 8px 14px;
+    border: 1.5px solid var(--line);
     border-radius: 999px;
     background: var(--surface);
     color: var(--muted);
-    font-size: 14px;
+    font-size: 13.5px;
     font-weight: 700;
     cursor: pointer;
     transition: background .15s ease, border-color .15s ease, color .15s ease;
@@ -1012,12 +1030,14 @@
     opacity: .55;
   }
   /* the reason a control is unavailable — always VISIBLE text, never a
-     title-only whisper on a disabled chip */
-  .gc-note {
+     title-only whisper on a disabled chip.
+     NOT `.gc-note`: that name is the shared brand-soft callout above (:675),
+     rendered by all three template editors. Declaring it twice restyled them. */
+  .gc-auto-note {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 12px;
+    gap: 9px;
+    padding: 11px 13px;
     border: 1px solid var(--line);
     border-radius: var(--r-md);
     background: var(--field-bg);
@@ -1026,14 +1046,78 @@
     font-weight: 600;
     line-height: 1.5;
   }
-  .gc-sum {
+  /* one line of the preview column's summary.
+     NOT `.gc-sum`: that name is the KPI stat card at the top of this file
+     (:89) — the second declaration overrode its 3px gap and painted it brand. */
+  .gc-auto-row {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 9px;
     color: var(--brand);
   }
-  .gc-sum .t-body {
+  .gc-auto-row > .ms-icon {
+    margin-top: 2px;
+  }
+  .gc-auto-rowv {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
     color: var(--ink);
+  }
+
+  /* ---- panel-scoped forms of the shared families ----
+     The design's segmented control, toggle and toggle-row differ from the
+     communications-wide ones. Scoping under `.gc-auto` keeps the template
+     editors byte-for-byte identical (proved, not asserted) while the panel
+     carries the measured values. */
+  .gc-auto .gc-seg {
+    background: var(--bg);
+  }
+  .gc-auto .gc-segb {
+    /* design: 38px / radius 9px. Design system wins: 38 is a forbidden control
+       height (§5) and 9 is outside the §1 radii — 36px / --r-sm stay. */
+    flex: 1;
+    gap: 7px;
+    font-size: 14px;
+    transition: background-color .15s ease, color .15s ease;
+  }
+  .gc-auto .gc-toggle {
+    align-items: center;
+    gap: 12px;
+    font-size: 15px;
+  }
+  /* the design puts the LABEL first and the switch at the end — in RTL that is
+     text on the right, switch hugging the left edge (design line 419) */
+  .gc-auto-tt {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1;
+  }
+  /* the summary card's body: the design's 11px, not the shared .card-bd gap-3 */
+  .gc-auto-sum {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+  }
+  .gc-auto .gc-toggle .gc-hint {
+    margin-top: 2px;
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .gc-auto .gc-sw {
+    width: 46px;
+    height: 27px;
+    transition: background-color .18s ease;
+  }
+  .gc-auto .gc-sw::after {
+    width: 21px;
+    height: 21px;
+    transition: translate .18s ease;
+  }
+  /* travel = track 46 − knob 21 − inset 3×2 = 19px */
+  .gc-auto .gc-sw[aria-checked="true"]::after {
+    translate: -19px 0;
   }
 
   @media (max-width: 1100px) {

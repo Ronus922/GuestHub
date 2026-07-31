@@ -1055,7 +1055,7 @@ function AutomationPanel({
                 })}
               </div>
               {otaBlockReason && (
-                <p className="gc-note">
+                <p className="gc-auto-note">
                   <Icon name="info" size={17} />
                   <span>{`ערוצי OTA אינם זמינים לטריגר הזה — ${otaBlockReason}`}</span>
                 </p>
@@ -1074,16 +1074,18 @@ function AutomationPanel({
             <div className="card-bd flex flex-col gap-3">
               <div className="field">
                 <span className="field-label">ערוץ שליחה</span>
+                {/* WhatsApp FIRST in the DOM — RTL puts the first child on the
+                    right, which is where the design seats it (design line 394). */}
                 <div className="gc-seg">
-                  <button type="button" className="gc-segb" aria-pressed={channel === "email"}
-                    onClick={() => pickChannel("email")}>
-                    <Icon name="mail" size={17} /> אימייל
-                  </button>
                   <button type="button" className="gc-segb" aria-pressed={channel === "whatsapp"}
                     disabled={!whatsappAvailable && channel !== "whatsapp"}
                     title={whatsappAvailable ? undefined : "אין ספק WhatsApp מחובר — חברו ספק בהגדרות ההודעות"}
                     onClick={() => pickChannel("whatsapp")}>
                     <Icon name="whatsapp" size={17} /> WhatsApp
+                  </button>
+                  <button type="button" className="gc-segb" aria-pressed={channel === "email"}
+                    onClick={() => pickChannel("email")}>
+                    <Icon name="mail" size={17} /> אימייל
                   </button>
                 </div>
                 {!whatsappAvailable && (
@@ -1113,10 +1115,17 @@ function AutomationPanel({
                 </p>
               )}
               <span className="gc-toggle">
+                <span className="gc-auto-tt">
+                  הפעלה מיד לאחר שמירה
+                  <span className="gc-hint">
+                    {activate
+                      ? "תחול על אירועים חדשים בלבד — הזמנות קיימות לא ייקבלו הודעה."
+                      : "תישמר כטיוטה ולא תישלח עד שתופעל."}
+                  </span>
+                </span>
                 <button type="button" className="gc-sw" role="switch" aria-checked={activate}
                   disabled={!canActivate} onClick={() => setActivate(!activate)}
                   aria-label="הפעלה מיד לאחר שמירה" />
-                הפעלה מיד לאחר שמירה (אירועים חדשים בלבד)
               </span>
             </div>
           </section>
@@ -1128,9 +1137,7 @@ function AutomationPanel({
             </div>
             <div className="card-bd flex flex-col gap-3">
               <span className="gc-toggle">
-                <button type="button" className="gc-sw" role="switch" aria-checked={toGuest}
-                  onClick={() => setToGuest(!toGuest)} aria-label="המזמין" />
-                <span className="flex flex-col">
+                <span className="gc-auto-tt">
                   המזמין
                   <span className="gc-hint">
                     {channel === "whatsapp"
@@ -1138,14 +1145,16 @@ function AutomationPanel({
                       : "לכתובת המייל שנשמרה בהזמנה"}
                   </span>
                 </span>
+                <button type="button" className="gc-sw" role="switch" aria-checked={toGuest}
+                  onClick={() => setToGuest(!toGuest)} aria-label="המזמין" />
               </span>
               <span className="gc-toggle">
-                <button type="button" className="gc-sw" role="switch" aria-checked={toOwner}
-                  onClick={() => setToOwner(!toOwner)} aria-label="בעל העסק" />
-                <span className="flex flex-col">
+                <span className="gc-auto-tt">
                   בעל העסק
                   <span className="gc-hint">עותק פנימי לצוות — האורח אינו רואה אותו.</span>
                 </span>
+                <button type="button" className="gc-sw" role="switch" aria-checked={toOwner}
+                  onClick={() => setToOwner(!toOwner)} aria-label="בעל העסק" />
               </span>
               {!toGuest && !toOwner && (
                 <p className="field-msg">יש לבחור לפחות נמען אחד</p>
@@ -1249,13 +1258,13 @@ function AutomationPanel({
             <div className="card-hd flex items-center gap-2">
               <Icon name="list" size={20} /> סיכום
             </div>
-            <div className="card-bd flex flex-col gap-3">
+            <div className="card-bd gc-auto-sum">
               {summaryRows.map((row) => (
-                <div key={row.label} className="gc-sum">
+                <div key={row.label} className="gc-auto-row">
                   <Icon name={row.icon} size={17} />
                   <span className="flex flex-col">
                     <span className="field-label">{row.label}</span>
-                    <span className="t-body">{row.value}</span>
+                    <span className="gc-auto-rowv">{row.value}</span>
                   </span>
                 </div>
               ))}
