@@ -250,29 +250,28 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-
-/* a computed, never-editable value (לילות) */
-.bw-readonly {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 44px;
-  background: var(--field-bg);
-  border: 1.5px dashed var(--line);
-  border-radius: var(--r-md);
-  padding: 0 14px;
-  font-size: 15px;
-  font-weight: 800;
+/* the typed form of .bw-qty-v (nights). It sits INSIDE the .bw-qty shell, so it
+   brings no border, no background and no height of its own — only the text box
+   it needs, centred between the two buttons. */
+.bw-qty-i {
+  min-width: 0;
+  flex: 1;
+  border: none;
+  background: transparent;
   color: var(--ink);
+  font-family: inherit;
+  text-align: center;
+  outline: none;
+  padding: 0 4px;
 }
-.bw-readonly .bw-rn {
-  color: var(--muted);
-  font-weight: 600;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.bw-qty-i:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
 }
+
+/* `.bw-readonly` / `.bw-rn` lived here for the computed-nights readout only.
+   That control is now a real input (.bw-qty + .bw-qty-i), so both rules were
+   deleted rather than left orphaned. */
 
 /* ============================================================
    room block inside a card
