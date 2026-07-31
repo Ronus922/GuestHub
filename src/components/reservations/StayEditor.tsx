@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { DateRangeField } from "@/components/shared/DateRangeField";
 import { Icon } from "@/components/shared/Icon";
-import { nightsBetween } from "@/lib/dates";
+import { addDays, nightsBetween } from "@/lib/dates";
 import {
   roomsFromResult,
   quoteFromResult,
@@ -59,6 +59,14 @@ export type RoomOption = {
 export function newStayKey(): string {
   return Math.random().toString(36).slice(2, 10);
 }
+
+// A ceiling for the nights field that is NOT a pricing rule: it only stops a
+// slipped keystroke ("300" typed as "3000") and a held-down + button from
+// walking the check-out date into the next century. The real bound is the
+// tenant's `max_quote_nights` (D100) and it is the server's to enforce — the
+// room and quote fetches already answer with that number by name, so this must
+// never be re-tuned to imitate it.
+const NIGHTS_TYPO_GUARD = 3650;
 
 /** what both booking surfaces render from one engine quote (D104) */
 export type LiveQuote = {
@@ -235,18 +243,28 @@ export function StayEditor({
           // on the server, under lock) — a real conflict is SAID, never guessed.
           onApply={(checkIn, checkOut) => onChange({ ...value, checkIn, checkOut })}
         />
-        <div className="field dp-after">
-          <span className="field-label">
-            לילות <span className="font-normal text-faint">(מחושב)</span>
-          </span>
-          <div className="bw-readonly">
-            <span className="ltr-num">{nights || "—"}</span>
-            <span className="bw-rn">
-              <Icon name="moon" size={17} />
-              אוטומטי
-            </span>
-          </div>
-        </div>
+        {/* Nights is an INPUT, not a readout: typing 5 (or stepping to it) moves
+            the CHECK-OUT date to check-in + 5 and leaves check-in alone. The
+            hint says so, because a control that silently rewrites a date the
+            operator picked would be worse than no control at all.
+            No client-side pricing-window cap lives here — that bound is the
+            tenant's `max_quote_nights` and belongs to the server (D100); the
+            room/quote fetches already answer with the real number. The max
+            below is a typo guard, not a pricing rule. */}
+        <Counter
+          // dp-after keeps this cell on the trigger's row when the date panel
+          // opens (.dp-panel is order:2 and takes the full row) — the nights
+          // control has to stay put while dates are being picked.
+          className="dp-after"
+          label="לילות"
+          hint={value.checkIn ? "שינוי מזיז את תאריך היציאה" : "בחרו תאריך כניסה תחילה"}
+          value={nights}
+          min={1}
+          max={NIGHTS_TYPO_GUARD}
+          editable
+          disabled={disabled || !value.checkIn}
+          onChange={(n) => onChange({ ...value, checkOut: addDays(value.checkIn, n) })}
+        />
       </div>
 
       <div className="bw-grid3 mt-4">
@@ -385,44 +403,93 @@ export function StayEditor({
   );
 }
 
-// +/- occupancy stepper (reference .qty: plus right, minus left in RTL)
+// +/- stepper (reference .qty: plus right, minus left in RTL). `editable` swaps
+// the readout for a typed field — used by nights, where the operator knows the
+// length of stay and should not have to click to it.
 function Counter({
   label,
   value,
   min,
+  max = 20,
   onChange,
   disabled = false,
+  editable = false,
+  hint,
+  className,
 }: {
   label: string;
   value: number;
   min: number;
+  max?: number;
   onChange: (n: number) => void;
   disabled?: boolean;
+  /** render the value as a typed field, not a readout */
+  editable?: boolean;
+  hint?: string;
+  /** extra classes on the field wrapper (e.g. the date-picker's `dp-after` order) */
+  className?: string;
 }) {
+  // While the field has focus the operator owns the text: committing on every
+  // keystroke would clamp "1" out of "12" before the 2 arrives, and would fire a
+  // rooms+quote round-trip per character. The draft commits on blur or Enter.
+  const [draft, setDraft] = useState<string | null>(null);
+  const clamp = (n: number) => Math.min(Math.max(n, min), max);
+  const step = (delta: number) => {
+    setDraft(null);
+    onChange(clamp(value + delta));
+  };
+  const commit = () => {
+    if (draft === null) return;
+    const n = Number.parseInt(draft, 10);
+    setDraft(null);
+    if (Number.isFinite(n) && clamp(n) !== value) onChange(clamp(n));
+  };
+
   return (
-    <div className="field">
+    <div className={`field${className ? ` ${className}` : ""}`}>
       <span className="field-label">{label}</span>
       <div className="bw-qty">
         <button
           type="button"
           aria-label={`הפחתת ${label}`}
-          onClick={() => onChange(Math.max(value - 1, min))}
+          onClick={() => step(-1)}
           className="icon-btn bw-qty-b"
           disabled={disabled || value <= min}
         >
           <Icon name="minus" size={20} />
         </button>
-        <span className="bw-qty-v">{value}</span>
+        {editable ? (
+          <input
+            className="bw-qty-v bw-qty-i ltr-num"
+            inputMode="numeric"
+            aria-label={label}
+            disabled={disabled}
+            value={draft ?? (value || "")}
+            onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ""))}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.currentTarget.blur();
+              } else if (e.key === "Escape") {
+                setDraft(null);
+              }
+            }}
+          />
+        ) : (
+          <span className="bw-qty-v">{value}</span>
+        )}
         <button
           type="button"
           aria-label={`הוספת ${label}`}
-          onClick={() => onChange(Math.min(value + 1, 20))}
+          onClick={() => step(1)}
           className="icon-btn bw-qty-b"
-          disabled={disabled}
+          disabled={disabled || value >= max}
         >
           <Icon name="plus" size={20} />
         </button>
       </div>
+      {hint && <span className="field-hint">{hint}</span>}
     </div>
   );
 }
