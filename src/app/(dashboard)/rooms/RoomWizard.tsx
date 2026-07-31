@@ -53,8 +53,9 @@ const SOURCE_LABEL: Record<PricingSource, string> = {
   unconfigured: "טרם הוגדר",
 };
 
-// reference counters: description 724, summary 140 (target 80–140), SEO 60/160
-const DESC_MAX = 724;
+// reference counters: summary 140 (target 80–140), SEO 60/160.
+// The description is deliberately UNCAPPED — the column is `text` and nothing
+// downstream truncates it; the counter below is informative only.
 const SUMMARY_MAX = 140;
 const SEO_TITLE_MAX = 60;
 const SEO_DESC_MAX = 160;
@@ -493,7 +494,6 @@ export function RoomWizard({
                 label="תיאור החדר"
                 placeholder="תיאור מפורט של החדר או האירוח…"
                 value={tr.description}
-                max={DESC_MAX}
                 onChange={(v) => setT("description", v)}
               />
               <F label="תקציר SEO / Meta Summary">
@@ -1218,13 +1218,11 @@ function RichTextArea({
   label,
   placeholder,
   value,
-  max,
   onChange,
 }: {
   label: string;
   placeholder: string;
   value: string;
-  max: number;
   onChange: (v: string) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -1288,14 +1286,13 @@ function RichTextArea({
       <textarea
         ref={ref}
         className="field-input rm-rtxt"
-        rows={5}
+        rows={10}
         dir="auto"
-        maxLength={max}
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
-      <span className="rm-cnt" dir="rtl">{value.length} / {max}</span>
+      <span className="rm-cnt" dir="rtl">{value.length} תווים</span>
     </div>
   );
 }
