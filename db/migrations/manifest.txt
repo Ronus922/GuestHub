@@ -73,3 +73,4 @@
 065_owner_recipients.sql
 066_messaging_settings_parent.sql
 067_template_lineage.sql
+068_ota_confirm_watermark.sql
