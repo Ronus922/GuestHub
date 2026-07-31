@@ -61,6 +61,7 @@
     "check:guest-communications": "node scripts/check-guest-communications.mjs && node scripts/check-guest-communications-automation.mjs && node scripts/check-guest-communications-worker.mjs",
     "check:guest-communications-db": "node scripts/check-guest-communications-db.mjs",
     "check:wa-template-render": "node scripts/check-wa-template-render.mjs",
+    "check:automation-design": "node scripts/check-automation-design.mjs",
     "check:resolve-version-lineage": "node scripts/check-resolve-version-lineage.mjs",
     "check:business-profile": "node scripts/check-business-profile.mjs",
     "check:maps-picker": "node scripts/check-maps-picker.mjs",
