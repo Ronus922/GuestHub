@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
-import { syncLocksAction, mapLockToRoomAction, unmapLockAction } from "./actions";
-import type { LocksScreenView, LockView, LockRoomView } from "./types";
+import {
+  syncLocksAction, syncPasscodesAction, mapLockToRoomAction, unmapLockAction,
+  rotateApartmentCodeAction,
+} from "./actions";
+import type { LocksScreenView, LockView, LockRoomView, PasscodeView } from "./types";
 
 // ============================================================
 // מנעולים וקודים (D123) — the lock board.
@@ -26,9 +29,18 @@ import type { LocksScreenView, LockView, LockRoomView } from "./types";
 // door — TTLock calls it "דירה 4 כניסה", not 402 — so the alias leads and the
 // room is the thing being chosen.
 //
-// SCOPE: mapping only. No passcodes, no code issuing, no rotation button — the
-// locks.rotate permission has existed since 069 and still has no screen behind
-// it, deliberately.
+// CODES (D124). Every mapped door shows the guest's current code, masked until
+// the operator asks for it. Three rules the cell obeys:
+//
+//  · MASKED BY DEFAULT. A door code on a screen is a door code over the
+//    shoulder of whoever walks past reception. Revealing is a deliberate act.
+//  · THE OLD CODE'S FATE IS VISIBLE. When a rotation's delete has not landed,
+//    the row says the previous code STILL OPENS THE DOOR, and keeps saying it
+//    until the worker's retry succeeds. Silence there would mean an operator
+//    believing a code was retired while it still works.
+//  · THE MANAGER CODE IS SHOWN AND NEVER TOUCHED. It has no rotate button —
+//    not a disabled one, none — because it is the code that gets a person in
+//    when everything else has failed.
 // ============================================================
 
 const dtFormatter = new Intl.DateTimeFormat("he-IL", {
@@ -51,10 +63,57 @@ function roomLabel(r: LockRoomView): string {
 // one are not the same fact, and showing 0 would send someone to a working door.
 const LOW_BATTERY = 20;
 
+// How long a freshly minted code stays on screen before it re-masks itself.
+// Long enough to write down or read out; short enough that a walk-away does not
+// leave a live door code facing the lobby.
+const REVEAL_MS = 10_000;
+
 export function LocksBoard({ initial }: { initial: LocksScreenView }) {
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncing, startSync] = useTransition();
+  // Which cells are currently showing their digits, keyed `${lockId}:${role}`.
+  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+  const [confirmRotate, setConfirmRotate] = useState<string | null>(null);
+  const [rotatingId, setRotatingId] = useState<string | null>(null);
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // A pending re-mask must not fire into an unmounted tree, and a navigation
+  // away is exactly when you least want a timer still holding a code visible.
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const t of pending.values()) clearTimeout(t);
+      pending.clear();
+    };
+  }, []);
+
+  function setReveal(key: string, on: boolean, autoHideMs?: number) {
+    const existing = timers.current.get(key);
+    if (existing) {
+      clearTimeout(existing);
+      timers.current.delete(key);
+    }
+    setRevealed((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+    if (on && autoHideMs) {
+      timers.current.set(
+        key,
+        setTimeout(() => {
+          timers.current.delete(key);
+          setRevealed((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+        }, autoHideMs),
+      );
+    }
+  }
   // Which mapped rows the operator has opened for editing. Unmapped locks are
   // always editing — same rule Beds24's table uses.
   const [editRows, setEditRows] = useState<Set<string>>(new Set());
@@ -80,19 +139,51 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
 
   function onSync() {
     startSync(async () => {
-      const res = await syncLocksAction();
-      if (!res.success) {
-        toast.error(res.error);
+      // Two reads, one button. The lock list needs locks.map and the code list
+      // needs only locks.view, so the second is attempted even when the first
+      // was refused — a view-only operator can still refresh the codes.
+      const locksRes = await syncLocksAction();
+      const codesRes = await syncPasscodesAction();
+
+      const parts: string[] = [];
+      if (locksRes.success) {
+        const s = locksRes.data!;
+        parts.push(`נמצאו ${s.total} מנעולים`);
+        if (s.added) parts.push(`${s.added} חדשים`);
+        if (s.missing) parts.push(`${s.missing} לא הופיעו בסנכרון`);
+      }
+      if (codesRes.success) {
+        const c = codesRes.data!;
+        parts.push(`${c.added + c.updated} קודים`);
+        if (c.missing) parts.push(`${c.missing} קודים נמחקו מחוץ למערכת`);
+      }
+
+      if (parts.length === 0) {
+        toast.error(locksRes.success ? "" : locksRes.error || "הסנכרון נכשל");
         return;
       }
-      const s = res.data!;
-      const parts = [`נמצאו ${s.total} מנעולים`];
-      if (s.added) parts.push(`${s.added} חדשים`);
-      if (s.updated) parts.push(`${s.updated} עודכנו`);
-      if (s.missing) parts.push(`${s.missing} לא הופיעו בסנכרון`);
       toast.success(parts.join(" · "));
       router.refresh();
     });
+  }
+
+  async function onRotate(lock: LockView) {
+    setConfirmRotate(null);
+    setRotatingId(lock.id);
+    const res = await rotateApartmentCodeAction(lock.id);
+    setRotatingId(null);
+    if (!res.success) {
+      toast.error(res.error);
+      return;
+    }
+    // Revealed on purpose, and only for as long as it takes to use it.
+    setReveal(`${lock.id}:apartment`, true, REVEAL_MS);
+    toast.success(
+      res.data!.oldStillActive
+        ? "נוצר קוד חדש — הקוד הישן עדיין פעיל על הדלת והמערכת תנסה למחוק אותו שוב"
+        : "הקוד הוחלף",
+    );
+    router.refresh();
   }
 
   async function onMap(lock: LockView) {
@@ -183,6 +274,12 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
               takenRoomIds={takenRoomIds}
               busy={busy}
               busyId={busyId}
+              revealed={revealed}
+              onToggleReveal={(key) => setReveal(key, !revealed.has(key))}
+              confirmRotate={confirmRotate}
+              onConfirmRotate={setConfirmRotate}
+              rotatingId={rotatingId}
+              onRotate={onRotate}
               editRows={editRows}
               draftOf={draftOf}
               onDraft={(id, v) => setDrafts((p) => ({ ...p, [id]: v }))}
@@ -255,12 +352,167 @@ function BatteryCell({ battery }: { battery: number | null }) {
   );
 }
 
+/**
+ * One code cell: masked digits, an eye to reveal, and a click-to-copy once
+ * revealed. Copying is only offered on the revealed form — a button that copies
+ * something you cannot see is a button that puts a door code on the clipboard
+ * by accident.
+ */
+function CodeCell({
+  passcode,
+  revealKey,
+  revealed,
+  onToggleReveal,
+  label,
+}: {
+  passcode: PasscodeView;
+  revealKey: string;
+  revealed: boolean;
+  onToggleReveal: (key: string) => void;
+  label: string;
+}) {
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(passcode.code);
+      toast.success("הקוד הועתק");
+    } catch {
+      // A clipboard the browser refused (permissions, insecure origin) is not
+      // an error worth a red toast — the digits are on screen to be read.
+      toast.error("ההעתקה נכשלה — ניתן להקליד את הקוד ידנית");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {revealed ? (
+        <button
+          type="button"
+          onClick={copy}
+          className="rounded-lg px-2 py-0.5 hover:bg-hover"
+          title="העתקת הקוד"
+          aria-label={`${label} — העתקה`}
+        >
+          <bdi className="ltr-num font-mono tabular-nums font-bold text-ink">{passcode.code}</bdi>
+        </button>
+      ) : (
+        <bdi className="ltr-num font-mono tabular-nums px-2 py-0.5 text-muted" aria-hidden="true">
+          •••••
+        </bdi>
+      )}
+      <button
+        type="button"
+        onClick={() => onToggleReveal(revealKey)}
+        className="rounded-lg p-2 text-muted hover:bg-hover"
+        aria-label={revealed ? `הסתרת ${label}` : `הצגת ${label}`}
+      >
+        <Icon name={revealed ? "eye-off" : "eye"} size={17} />
+      </button>
+    </div>
+  );
+}
+
+/** The apartment-code cell in full: the code, its warnings, and the rotate control. */
+function ApartmentCodeCell({
+  lock,
+  revealed,
+  onToggleReveal,
+  confirming,
+  onConfirm,
+  rotating,
+  onRotate,
+  busy,
+}: {
+  lock: LockView;
+  revealed: Set<string>;
+  onToggleReveal: (key: string) => void;
+  confirming: boolean;
+  onConfirm: (id: string | null) => void;
+  rotating: boolean;
+  onRotate: (l: LockView) => void;
+  busy: boolean;
+}) {
+  // A door with no room has no apartment to name a code after, and mapping is
+  // the operator's next step anyway.
+  if (!lock.room) return <span className="t-label text-faint">שייך חדר תחילה</span>;
+
+  const key = `${lock.id}:apartment`;
+  const code = lock.apartmentCode;
+  // Derived from the OTHER live rows, not from the displayed one. The displayed
+  // code is the new one; the stale code is a different row, and keying the
+  // warning off the displayed row's state made this warning unreachable in
+  // exactly the case it exists for.
+  const stale = lock.supersededCodes;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      {code ? (
+        <CodeCell
+          passcode={code}
+          revealKey={key}
+          revealed={revealed.has(key)}
+          onToggleReveal={onToggleReveal}
+          label="קוד הדירה"
+        />
+      ) : (
+        <span className="t-label text-faint">אין קוד</span>
+      )}
+
+      {/* The code was removed in the TTLock app, not here. Rotation is the fix:
+          it puts a code back on the door. */}
+      {code?.state === "missing" && (
+        <span className="t-label flex items-center gap-1.5 text-status-danger">
+          <Icon name="warning" size={13.5} />
+          הקוד נמחק מחוץ למערכת
+        </span>
+      )}
+
+      {/* Stays until the worker's retry lands. See the file header. */}
+      {stale.map((last2) => (
+        <span key={last2} className="t-label flex items-center gap-1.5 text-status-warning">
+          <Icon name="warning" size={13.5} />
+          הקוד הישן <bdi className="ltr-num">••{last2}</bdi> עדיין פעיל על הדלת — המערכת תנסה למחוק אותו שוב
+        </span>
+      ))}
+
+      {!lock.canRotate ? (
+        <span className="t-label text-muted">אין שער (Gateway) — לא ניתן להחליף קוד מרחוק</span>
+      ) : confirming ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="t-label text-text2">הקוד הנוכחי יפסיק לפעול. להחליף?</span>
+          <button type="button" onClick={() => onRotate(lock)} disabled={busy} className="btn btn-sm btn-primary">
+            החלפה
+          </button>
+          <button type="button" onClick={() => onConfirm(null)} disabled={busy} className="btn btn-sm btn-secondary">
+            ביטול
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onConfirm(lock.id)}
+          disabled={busy || rotating}
+          className="btn btn-sm btn-secondary self-start"
+        >
+          <Icon name="refresh" size={17} />
+          {rotating ? "מחליף…" : "החלפת קוד"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LocksTable({
   locks,
   rooms,
   takenRoomIds,
   busy,
   busyId,
+  revealed,
+  onToggleReveal,
+  confirmRotate,
+  onConfirmRotate,
+  rotatingId,
+  onRotate,
   editRows,
   draftOf,
   onDraft,
@@ -274,6 +526,12 @@ function LocksTable({
   takenRoomIds: Set<string>;
   busy: boolean;
   busyId: string | null;
+  revealed: Set<string>;
+  onToggleReveal: (key: string) => void;
+  confirmRotate: string | null;
+  onConfirmRotate: (id: string | null) => void;
+  rotatingId: string | null;
+  onRotate: (l: LockView) => void;
   editRows: Set<string>;
   draftOf: (l: LockView) => string;
   onDraft: (id: string, v: string) => void;
@@ -290,13 +548,15 @@ function LocksTable({
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-line">
-        <table className="w-full min-w-[860px] text-sm">
+        <table className="w-full min-w-[1080px] text-sm">
           <thead>
             <tr className="border-b border-line bg-hover/40">
               <th className="t-label px-4 py-3 text-start text-faint">מנעול</th>
               <th className="t-label px-4 py-3 text-start text-faint">מזהה TTLock</th>
               <th className="t-label px-4 py-3 text-start text-faint">סוללה</th>
               <th className="t-label px-4 py-3 text-start text-faint">חדר</th>
+              <th className="t-label px-4 py-3 text-start text-faint">קוד דירה</th>
+              <th className="t-label px-4 py-3 text-start text-faint">קוד מנהל</th>
               <th className="t-label px-4 py-3 text-start text-faint">סטטוס</th>
               <th className="t-label px-4 py-3 text-start text-faint">סונכרן</th>
               <th className="t-label px-4 py-3 text-start text-faint">פעולות</th>
@@ -355,6 +615,38 @@ function LocksTable({
                       </select>
                     ) : (
                       <span className="text-ink">{lock.room ? roomLabel(lock.room) : "—"}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    <ApartmentCodeCell
+                      lock={lock}
+                      revealed={revealed}
+                      onToggleReveal={onToggleReveal}
+                      confirming={confirmRotate === lock.id}
+                      onConfirm={onConfirmRotate}
+                      rotating={rotatingId === lock.id}
+                      onRotate={onRotate}
+                      busy={busy || rotatingId !== null}
+                    />
+                  </td>
+                  <td className="px-4 py-3 align-top">
+                    {/* Shown, never rotated: no button here, not even disabled. */}
+                    {lock.managerCode ? (
+                      <div className="flex flex-col gap-1.5">
+                        <span className="chip chip-neutral self-start">
+                          <Icon name="key" size={13.5} />
+                          מנהל
+                        </span>
+                        <CodeCell
+                          passcode={lock.managerCode}
+                          revealKey={`${lock.id}:manager`}
+                          revealed={revealed.has(`${lock.id}:manager`)}
+                          onToggleReveal={onToggleReveal}
+                          label="קוד המנהל"
+                        />
+                      </div>
+                    ) : (
+                      <span className="t-label text-faint">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
