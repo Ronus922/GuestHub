@@ -68,13 +68,24 @@ const LOW_BATTERY = 20;
 // leave a live door code facing the lobby.
 const REVEAL_MS = 10_000;
 
+// PRESENTATION ONLY. The keypad wants the code terminated with #, so that is
+// how the operator should read it out and how it should land on the clipboard —
+// but the STORED code, the value sent to /v3/keyboardPwd/add, the audit mask and
+// the duplicate check are all digits and stay digits. This function is the whole
+// of the suffix: it lives in the screen, it is never imported by the ttlock
+// library, and check-ttlock-secrets rule 11 fails the build if a "#" ever turns
+// up in src/lib/ttlock/.
+//
+// Applied INSIDE the existing <bdi className="ltr-num">, so the RTL paragraph
+// direction cannot reorder the suffix away from the digits it belongs to.
+const forDisplay = (code: string) => `${code}#`;
+
 export function LocksBoard({ initial }: { initial: LocksScreenView }) {
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncing, startSync] = useTransition();
   // Which cells are currently showing their digits, keyed `${lockId}:${role}`.
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
-  const [confirmRotate, setConfirmRotate] = useState<string | null>(null);
   const [rotatingId, setRotatingId] = useState<string | null>(null);
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -168,7 +179,6 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
   }
 
   async function onRotate(lock: LockView) {
-    setConfirmRotate(null);
     setRotatingId(lock.id);
     const res = await rotateApartmentCodeAction(lock.id);
     setRotatingId(null);
@@ -276,8 +286,6 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
               busyId={busyId}
               revealed={revealed}
               onToggleReveal={(key) => setReveal(key, !revealed.has(key))}
-              confirmRotate={confirmRotate}
-              onConfirmRotate={setConfirmRotate}
               rotatingId={rotatingId}
               onRotate={onRotate}
               editRows={editRows}
@@ -373,7 +381,9 @@ function CodeCell({
 }) {
   async function copy() {
     try {
-      await navigator.clipboard.writeText(passcode.code);
+      // The clipboard gets the same string the operator sees, suffix included —
+      // pasting it into WhatsApp should produce something a guest can type.
+      await navigator.clipboard.writeText(forDisplay(passcode.code));
       toast.success("הקוד הועתק");
     } catch {
       // A clipboard the browser refused (permissions, insecure origin) is not
@@ -392,11 +402,11 @@ function CodeCell({
           title="העתקת הקוד"
           aria-label={`${label} — העתקה`}
         >
-          <bdi className="ltr-num font-mono tabular-nums font-bold text-ink">{passcode.code}</bdi>
+          <bdi className="ltr-num font-mono tabular-nums font-bold text-ink">{forDisplay(passcode.code)}</bdi>
         </button>
       ) : (
         <bdi className="ltr-num font-mono tabular-nums px-2 py-0.5 text-muted" aria-hidden="true">
-          •••••
+          •••••#
         </bdi>
       )}
       <button
@@ -416,8 +426,6 @@ function ApartmentCodeCell({
   lock,
   revealed,
   onToggleReveal,
-  confirming,
-  onConfirm,
   rotating,
   onRotate,
   busy,
@@ -425,8 +433,6 @@ function ApartmentCodeCell({
   lock: LockView;
   revealed: Set<string>;
   onToggleReveal: (key: string) => void;
-  confirming: boolean;
-  onConfirm: (id: string | null) => void;
   rotating: boolean;
   onRotate: (l: LockView) => void;
   busy: boolean;
@@ -470,26 +476,22 @@ function ApartmentCodeCell({
       {stale.map((last2) => (
         <span key={last2} className="t-label flex items-center gap-1.5 text-status-warning">
           <Icon name="warning" size={13.5} />
-          הקוד הישן <bdi className="ltr-num">••{last2}</bdi> עדיין פעיל על הדלת — המערכת תנסה למחוק אותו שוב
+          הקוד הישן <bdi className="ltr-num">••{last2}#</bdi> עדיין פעיל על הדלת — המערכת תנסה למחוק אותו שוב
         </span>
       ))}
 
       {!lock.canRotate ? (
         <span className="t-label text-muted">אין שער (Gateway) — לא ניתן להחליף קוד מרחוק</span>
-      ) : confirming ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="t-label text-text2">הקוד הנוכחי יפסיק לפעול. להחליף?</span>
-          <button type="button" onClick={() => onRotate(lock)} disabled={busy} className="btn btn-sm btn-primary">
-            החלפה
-          </button>
-          <button type="button" onClick={() => onConfirm(null)} disabled={busy} className="btn btn-sm btn-secondary">
-            ביטול
-          </button>
-        </div>
       ) : (
+        // ONE CLICK, NO CONFIRM — the owner's explicit request. The inline
+        // confirm still guards a MAPPING change, which is the destructive one:
+        // re-pointing a door at another apartment is silent and easy to get
+        // wrong. A rotation announces itself (the new code appears revealed)
+        // and the door keeps working either way, so a second click bought
+        // nothing but friction on the action used most often.
         <button
           type="button"
-          onClick={() => onConfirm(lock.id)}
+          onClick={() => onRotate(lock)}
           disabled={busy || rotating}
           className="btn btn-sm btn-secondary self-start"
         >
@@ -509,8 +511,6 @@ function LocksTable({
   busyId,
   revealed,
   onToggleReveal,
-  confirmRotate,
-  onConfirmRotate,
   rotatingId,
   onRotate,
   editRows,
@@ -528,8 +528,6 @@ function LocksTable({
   busyId: string | null;
   revealed: Set<string>;
   onToggleReveal: (key: string) => void;
-  confirmRotate: string | null;
-  onConfirmRotate: (id: string | null) => void;
   rotatingId: string | null;
   onRotate: (l: LockView) => void;
   editRows: Set<string>;
@@ -622,8 +620,6 @@ function LocksTable({
                       lock={lock}
                       revealed={revealed}
                       onToggleReveal={onToggleReveal}
-                      confirming={confirmRotate === lock.id}
-                      onConfirm={onConfirmRotate}
                       rotating={rotatingId === lock.id}
                       onRotate={onRotate}
                       busy={busy || rotatingId !== null}

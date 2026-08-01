@@ -699,7 +699,37 @@ for (const f of [...ttlockFiles.map((x) => `${TTLOCK_DIR}/${x}`), "src/app/(dash
     );
   }
 }
-ok("RULE 11 — no full passcode reaches an audit payload or a log line (maskCode is the only durable form)");
+// …and the DISPLAY SUFFIX never becomes part of a code.
+//
+// The keypad wants the code terminated with #, so the /locks screen renders and
+// copies `62245#`. That is presentation and must stay presentation: the stored
+// code, the value sent to /v3/keyboardPwd/add, the audit mask and the duplicate
+// check are digits. A "#" that reached the ADD payload would put a code on the
+// door that nobody can log in as, and the local row would disagree with the
+// hardware with no way to tell which is right.
+//
+// Two layers, because the suffix could arrive at either end:
+//  a) the keyboardPwd VALUE handed to the http layer, and
+//  b) any "#" at all in src/lib/ttlock/ — which catches the subtler version,
+//     where the suffix is baked into the code before the call is even built.
+for (const name of ["ttlockAuthedRequest", "ttlockRequest"]) {
+  for (const args of extractCalls(passcodes, name)) {
+    for (const kv of args.matchAll(/\bkeyboardPwd\s*:\s*([^,\n]+)/g)) {
+      assert.ok(
+        !kv[1].includes("#"),
+        `RULE 11: a "#" reaches the TTLock payload as keyboardPwd: ${kv[1].trim().slice(0, 60)} — the suffix is presentation only`,
+      );
+    }
+  }
+}
+for (const f of ttlockFiles) {
+  const src = code(`${TTLOCK_DIR}/${f}`);
+  assert.ok(
+    !src.includes("#"),
+    `RULE 11: ${f} contains a "#" — the keypad display suffix belongs to the screen, never to a stored or transmitted code`,
+  );
+}
+ok("RULE 11 — no full passcode reaches an audit payload or a log line, and the display suffix never reaches a code");
 
 // ============================================================
 // RULE 12 — passcodes.ts and tick.ts stay worker-graph-safe (D124).
