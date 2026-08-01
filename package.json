@@ -58,6 +58,7 @@
     "check:channel-card-ingest": "node scripts/check-channel-card-ingest.mjs",
     "check:card-save-flow": "node scripts/check-card-save-flow.mjs",
     "check:messaging": "node scripts/check-messaging.mjs",
+    "check:ttlock-secrets": "node scripts/check-ttlock-secrets.mjs",
     "check:guest-communications": "node scripts/check-guest-communications.mjs && node scripts/check-guest-communications-automation.mjs && node scripts/check-guest-communications-worker.mjs",
     "check:guest-communications-db": "node scripts/check-guest-communications-db.mjs",
     "check:ota-confirm-once": "node scripts/check-ota-confirm-once.mjs",
