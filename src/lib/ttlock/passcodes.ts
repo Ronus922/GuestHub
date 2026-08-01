@@ -184,7 +184,12 @@ type LockRow = {
   has_gateway: boolean;
 };
 
-async function readLocks(tenantId: string, db: Sql, lockRowId?: string): Promise<LockRow[]> {
+async function readLocks(
+  tenantId: string,
+  db: Sql,
+  lockRowId?: string,
+  lockIds?: readonly string[],
+): Promise<LockRow[]> {
   // hasGateway comes out of the stored payload rather than a column of its own:
   // it is upstream's fact about the hardware, it changes when a gateway is
   // added, and re-deriving it on read means a sync is all it takes to correct.
@@ -198,6 +203,7 @@ async function readLocks(tenantId: string, db: Sql, lockRowId?: string): Promise
     LEFT JOIN guesthub.rooms r ON r.id = l.room_id AND r.tenant_id = l.tenant_id
     WHERE l.tenant_id = ${tenantId}
       ${lockRowId ? db`AND l.id = ${lockRowId}` : db``}
+      ${lockIds ? db`AND l.id = ANY(${lockIds as string[]}::uuid[])` : db``}
     ORDER BY l.alias ASC`;
 }
 
@@ -231,9 +237,23 @@ export function classifyPasscode(name: string, roomNumber: string | null): Passc
  * event the operator needs to see; a code we simply failed to fetch must not
  * look like one, so 'missing' is a state and never a DELETE.
  */
-export async function syncPasscodes(tenantId: string, db: Sql): Promise<SyncPasscodesResult> {
+export async function syncPasscodes(
+  tenantId: string,
+  db: Sql,
+  /**
+   * Narrow the sync to specific lock rows (D125). The filter is pushed into the
+   * SQL — a fetch-all-then-drop would still make one upstream call per door,
+   * which is the entire cost this option exists to avoid. Undefined = all.
+   */
+  lockIds?: readonly string[],
+): Promise<SyncPasscodesResult> {
+  // An explicit EMPTY selection means "nothing", never "everything". Falling
+  // through to a tenant-wide sync here would turn a UI edge case into 12
+  // upstream calls nobody asked for.
+  if (lockIds && lockIds.length === 0) return { locks: 0, added: 0, updated: 0, missing: 0 };
+
   const connection = await readConnection(tenantId, db);
-  const locks = await readLocks(tenantId, db);
+  const locks = await readLocks(tenantId, db, undefined, lockIds);
   if (locks.length === 0) return { locks: 0, added: 0, updated: 0, missing: 0 };
 
   const accessToken = await resolveTTLockAccessToken(db, connection);
@@ -346,11 +366,32 @@ export function generateCode(forbidden: readonly string[]): string {
   for (let i = 0; i < MAX_CODE_DRAWS; i += 1) {
     const candidate = String(randomInt(10000, 100000)); // 10000-99999, no leading zero
     if (banned.has(candidate)) continue;
-    if (/^(\d)\1{4}$/.test(candidate)) continue; // 11111
-    if (isRun(candidate)) continue; // 12345 / 54321
+    if (codeRejection(candidate, banned)) continue;
     return candidate;
   }
   throw new Error(`could not generate a passcode in ${MAX_CODE_DRAWS} draws`);
+}
+
+/**
+ * THE ONE PLACE A CODE IS JUDGED (D125).
+ *
+ * A random draw and an operator-typed code must clear exactly the same bar.
+ * Before the bulk drawer existed there was only the draw, and its checks lived
+ * inline in generateCode; a second entry point that re-implemented "4-6 digits,
+ * no runs" would drift from this one the first time either changed. So the
+ * rules moved here, both callers use it, and guard rule 17 fails the build if
+ * the operator's path stops going through it.
+ *
+ * Returns a Hebrew reason, or null when the code is acceptable.
+ */
+export function codeRejection(code: string, forbidden: ReadonlySet<string> | readonly string[]): string | null {
+  const banned = forbidden instanceof Set ? forbidden : new Set(forbidden);
+  if (!/^\d{4,6}$/.test(code)) return "הקוד חייב להיות 4–6 ספרות";
+  if (code.startsWith("0")) return "קוד לא יכול להתחיל באפס";
+  if (/^(\d)\1*$/.test(code)) return "קוד לא יכול להיות ספרה אחת חוזרת";
+  if (isRun(code)) return "קוד לא יכול להיות רצף עולה או יורד";
+  if (banned.has(code)) return "הקוד כבר בשימוש על המנעול הזה";
+  return null;
 }
 
 function isRun(code: string): boolean {
@@ -389,6 +430,15 @@ export class TTLockNoGatewayError extends Error {
   }
 }
 
+/** An operator-typed code that failed codeRejection. The message is already
+ *  Hebrew and is safe to surface — it describes the CODE, not the upstream. */
+export class TTLockCodeRejectedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "TTLockCodeRejectedError";
+  }
+}
+
 /**
  * Replace a door's apartment code with a fresh five-digit one.
  *
@@ -407,10 +457,19 @@ export async function rotateApartmentCode({
   tenantId,
   lockRowId,
   db,
+  requestedCode,
 }: {
   tenantId: string;
   lockRowId: string;
   db: Sql;
+  /**
+   * A code the OPERATOR typed, instead of a random draw (D125). It is judged by
+   * codeRejection — the same function, with the same banned patterns and the
+   * same live-code set — before it can reach the hardware. There is no path
+   * that skips that: the bulk action does not build its own payload, it calls
+   * this function, and guard rule 17 fails the build if the check is bypassed.
+   */
+  requestedCode?: string;
 }): Promise<RotateResult> {
   const connection = await readConnection(tenantId, db);
   const [lock] = await readLocks(tenantId, db, lockRowId);
@@ -430,7 +489,18 @@ export async function rotateApartmentCode({
       AND state IN ('active', 'rotating', 'revoking')`;
 
   const currentApartment = await readCurrentApartment(tenantId, lockRowId, db);
-  const code = generateCode(live.map((r) => r.code));
+
+  // Operator-chosen or drawn — both end up judged by codeRejection. The
+  // rejection is thrown BEFORE any row is written, so a bad code costs nothing.
+  const bannedHere = new Set(live.map((r) => r.code));
+  let code: string;
+  if (requestedCode !== undefined) {
+    const reason = codeRejection(requestedCode, bannedHere);
+    if (reason) throw new TTLockCodeRejectedError(reason);
+    code = requestedCode;
+  } else {
+    code = generateCode([...bannedHere]);
+  }
   const pwdType = resolvePwdType(currentApartment);
   const name = lock.room_number ? `דירה ${lock.room_number}` : lock.alias;
 

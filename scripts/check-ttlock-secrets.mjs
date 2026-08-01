@@ -567,21 +567,37 @@ ok("token.ts — MD5 wire format, refresh→password fallback, persist-before-re
 const passcodes = code(`${TTLOCK_DIR}/passcodes.ts`);
 
 // name → body, for every function declared in the file.
+//
+// THE PARAMETER LIST MUST BE SKIPPED BY PAREN MATCHING FIRST. Taking the first
+// `{` after the function name finds the brace of an INLINE OBJECT TYPE when one
+// appears in the signature — `(items: { lockId: string }[])` — and the body
+// then "ends" a few characters later. That is not a cosmetic slip: a rule
+// asking "does this function's body do X" would be reading a type annotation
+// and quietly answering no. Found by rule 16 failing on a correct
+// implementation; every rule built on this helper depended on it.
 const functionBodies = (src) => {
   const map = new Map();
   const re = /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(/g;
   let m;
   while ((m = re.exec(src)) !== null) {
-    // brace-match from the parameter list forward to the body's close
-    let i = src.indexOf("{", re.lastIndex);
-    if (i === -1) continue;
-    let depth = 0;
-    let j = i;
+    // 1. walk the parameter list to its closing paren
+    let depth = 1;
+    let i = re.lastIndex;
+    for (; i < src.length && depth > 0; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")") depth--;
+    }
+    // 2. the body opens at the first `{` after it (skipping a return type)
+    const open = src.indexOf("{", i);
+    if (open === -1) continue;
+    // 3. brace-match the body
+    depth = 0;
+    let j = open;
     for (; j < src.length; j++) {
       if (src[j] === "{") depth++;
       else if (src[j] === "}") { depth--; if (depth === 0) { j++; break; } }
     }
-    map.set(m[1], src.slice(i, j));
+    map.set(m[1], src.slice(open, j));
   }
   return map;
 };
@@ -769,5 +785,124 @@ assert.ok(
   "RULE 12: src/lib/channel/worker.ts calls runTTLockTick — the tick is wired in, not orphaned",
 );
 ok(`RULE 12 — ${TICK_SAFE.join(", ")} are worker-graph-safe and the tick is wired into the channel worker`);
+
+// ============================================================
+// RULE 16 — the bulk rotate touches ONLY the locks it was handed (D125).
+//
+// One operator gesture now rotates ten doors. The failure mode that matters is
+// not a bad code, it is a WIDER SET than the operator selected: a loop over
+// "this tenant's locks" instead of over the validated input would rotate every
+// door in the building from a three-row selection, and each rotation is a real
+// code on a real door that the guest in front of it does not have.
+//
+// So: the action's rotation loop must iterate the PARSED INPUT. Reading the
+// selected locks from the database to validate them is fine and necessary —
+// what may not happen is a query that enumerates locks without being bounded by
+// the submitted ids.
+// ============================================================
+const bulkBodies = functionBodies(locksActions);
+assert.ok(
+  bulkBodies.has("bulkRotateApartmentCodesAction"),
+  "RULE 16: bulkRotateApartmentCodesAction is declared in the locks actions",
+);
+const bulkBody = bulkBodies.get("bulkRotateApartmentCodesAction");
+
+// EVERY loop in this action iterates the validated array — not "at least one".
+//
+// Asserting that a parsed.data loop merely EXISTS is not the same claim, and
+// the difference is not academic: this action also runs a duplicate-id check
+// over parsed.data, so the weaker rule was satisfied by that loop while the
+// rotation loop underneath it iterated a database query. The B2 break that
+// swapped exactly that produced no failure. Found by running the pass.
+// PAREN-MATCHED, not `[^)]+`. A character class that cannot cross a `)` simply
+// FAILS TO MATCH a loop whose iterable contains a call — `lockRows.map(...)` —
+// and a header the rule never sees is a header the rule never checks. The
+// second B2 attempt walked straight through that hole too.
+const forHeadersOf = (body) => {
+  const out = [];
+  const re = /\bfor\s*\(/g;
+  while (re.exec(body) !== null) {
+    let depth = 1;
+    let i = re.lastIndex;
+    for (; i < body.length && depth > 0; i++) {
+      if (body[i] === "(") depth++;
+      else if (body[i] === ")") depth--;
+    }
+    out.push(body.slice(re.lastIndex, i - 1).trim());
+    re.lastIndex = i;
+  }
+  return out;
+};
+
+const forHeaders = forHeadersOf(bulkBody);
+assert.ok(forHeaders.length > 0, "RULE 16: the bulk action iterates its input");
+for (const header of forHeaders) {
+  const m = header.match(/^(?:const|let)\s+\w+\s+of\s+(.+)$/s);
+  assert.ok(
+    m && m[1].trim() === "parsed.data",
+    `RULE 16: a loop in the bulk rotate iterates "${(m ? m[1] : header).trim().slice(0, 60)}" instead of parsed.data — only the operator's validated selection may be rotated`,
+  );
+}
+// Every lock query inside it is bounded by those ids.
+for (const q of extractSqlTemplates(bulkBody)) {
+  if (!/\bttlock_locks\b/.test(q)) continue;
+  assert.ok(
+    /\bid\s*=\s*ANY\s*\(\$\{/.test(q) || /\bid\s*=\s*\$\{/.test(q),
+    `RULE 16: a bulk-rotate query reads ttlock_locks without bounding it to the submitted ids:\n${q.trim().slice(0, 200)}`,
+  );
+}
+// And rotateApartmentCode is never called with a lock id that did not come from
+// an item of that array.
+for (const args of extractCalls(bulkBody, "rotateApartmentCode")) {
+  assert.ok(
+    /lockRowId:\s*item\.lockId/.test(args),
+    `RULE 16: bulk rotate calls rotateApartmentCode with something other than item.lockId:\n${args.trim().slice(0, 160)}`,
+  );
+}
+ok("RULE 16 — the bulk rotate applies only to the locks in its validated input");
+
+// ============================================================
+// RULE 17 — an operator-typed code clears the SAME bar as a random draw (D125).
+//
+// The draw has always been filtered: no leading zero, no 11111, no 12345, and
+// nothing already live on that door. A hand-typed code that skipped those
+// checks would let the weakest possible code onto a real apartment door — and
+// the tempting shape of that bug is not malice, it is a Zod schema that
+// validates `^\d{4,6}$` and a caller that trusts it.
+//
+// Both paths therefore go through codeRejection, in rotateApartmentCode, before
+// anything is written or sent. This rule pins that: the function exists, the
+// requested path calls it and throws on a reason, and the banned patterns are
+// not re-implemented in the action layer where they could drift.
+// ============================================================
+const passcodeSrc = code(`${TTLOCK_DIR}/passcodes.ts`);
+assert.ok(
+  /export function codeRejection\s*\(/.test(passcodeSrc),
+  "RULE 17: codeRejection is the shared judgement and is exported",
+);
+
+const rotateBody = functionBodies(passcodeSrc).get("rotateApartmentCode");
+assert.ok(rotateBody, "RULE 17: rotateApartmentCode is declared in passcodes.ts");
+assert.ok(
+  /codeRejection\s*\(\s*requestedCode/.test(rotateBody),
+  "RULE 17: requestedCode must be judged by codeRejection before it is used",
+);
+assert.ok(
+  /if\s*\(\s*reason\s*\)\s*throw/.test(rotateBody),
+  "RULE 17: a rejection reason must THROW — a logged-and-ignored rejection is not a check",
+);
+// The rejection must happen BEFORE the code reaches the upstream payload.
+const rejectionAt = rotateBody.indexOf("codeRejection");
+const payloadAt = rotateBody.indexOf("keyboardPwd:");
+assert.ok(
+  rejectionAt !== -1 && payloadAt !== -1 && rejectionAt < payloadAt,
+  "RULE 17: codeRejection must run before the code is placed in the TTLock payload",
+);
+// The random draw goes through the same function — otherwise the two drift.
+assert.ok(
+  /codeRejection\s*\(\s*candidate/.test(functionBodies(passcodeSrc).get("generateCode") ?? ""),
+  "RULE 17: generateCode must use the same codeRejection, so both paths share one bar",
+);
+ok("RULE 17 — operator-typed and randomly-drawn codes pass identical validation before reaching a door");
 
 console.log(`\ncheck-ttlock-secrets: all ${n} groups passed ✓`);
