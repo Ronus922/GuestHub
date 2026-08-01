@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 // ============================================================
-// check:ttlock-secrets — the TTLock connection layer's five invariants (D122).
+// check:ttlock-secrets — the TTLock layer's invariants: five for the connection
+// (D122), three more for the lock list and its room mapping (D123).
 //
 // THE STANDARD THIS GUARD IS HELD TO. It must fail when the SEMANTIC CORE is
 // neutralised while the STRUCTURE stays intact. Deleting a file is not the
 // interesting case — anything catches that. The interesting cases are: a
 // masked getter quietly starting to return the plaintext bag; a worker-graph
 // module growing a `next/headers` import; a query losing its tenant filter; an
-// audit payload gaining a `password` key; and a client component pulling this
-// whole graph into the browser bundle. Each of the five rules below was
-// verified by BREAKING it and confirming this script goes red (B2).
+// audit payload gaining a `password` key; a client component pulling this whole
+// graph into the browser bundle; a sync deciding it may overwrite the
+// operator's room mapping or delete a lock it did not see. Each of the eight
+// rules below was verified by BREAKING it and confirming this script goes red
+// (B2) — rules 1-5 re-verified for D123, because extractSqlTemplates (shared
+// parsing) changed and a fix to shared code invalidates the earlier proof.
 //
 // Rule 5 carries extra weight. tsconfig.worker.json's include list is exactly
 // ["src/lib/channel/worker.ts"], so tsc cannot see src/lib/ttlock/ at all until
@@ -190,9 +194,15 @@ ok("RULE 2 — http.ts/token.ts/crypto.ts import no server-only, next/*, react, 
 // terminates on its backtick — silently truncating the outer UPDATE before its
 // WHERE, which is exactly how an unscoped query would slip past this rule. So:
 // scan, tracking ${} depth, and skip nested templates wholesale.
+//
+// BOTH TAG NAMES, and that is not cosmetic. locks.ts takes its connection as a
+// parameter named `db` (it is worker-graph code and cannot import the
+// server-only `sql` singleton), so a scanner that only knew `sql` would have
+// stopped covering an entire new file in the very directory this rule guards —
+// silently, with rule 3 still printing a tick. Adding `db` here re-covers it.
 function extractSqlTemplates(src) {
   const out = [];
-  const re = /\bsql(?:<[^>]*>)?`/g;
+  const re = /\b(?:sql|db)(?:<[^>]*>)?`/g;
   while (re.exec(src) !== null) {
     let i = re.lastIndex;
     let depth = 0;
@@ -239,8 +249,14 @@ for (const f of ttlockFiles) {
     //     id is strictly narrower than a tenant filter.
     const isInsert = /^\s*INSERT\s+INTO/i.test(q.trim());
     const insertCols = isInsert ? q.match(/INSERT\s+INTO\s+[\w.]+\s*\(([^)]*)\)/i) : null;
+    // A batch upsert written with porsager's helper — INSERT INTO t ${db(rows,
+    // "tenant_id", …)} — carries its column list INSIDE the interpolation, so
+    // there is no parenthesised list to read. Fall back to scanning the
+    // statement HEAD, cut at ON CONFLICT so a DO UPDATE SET can never satisfy
+    // the rule on the insert's behalf.
+    const insertHead = isInsert ? q.split(/\bON\s+CONFLICT\b/i)[0] : "";
     const scoped = isInsert
-      ? Boolean(insertCols && /\btenant_id\b/.test(insertCols[1]))
+      ? Boolean(insertCols ? /\btenant_id\b/.test(insertCols[1]) : /\btenant_id\b/.test(insertHead))
       : /tenant_id\s*=\s*\$\{/.test(q) || /\bWHERE\s+id\s*=\s*\$\{/i.test(q);
 
     assert.ok(
@@ -336,7 +352,125 @@ for (const cf of clientFiles) {
 ok(`RULE 5 — no "use client" file reaches ${TTLOCK_PREFIX} (${clientFiles.length} client components walked)`);
 
 // ============================================================
-// Supporting invariants — the construction the five rules assume.
+// RULE 6 — syncLocks never WRITES room_id (D123).
+//
+// The lock→room binding is operator knowledge that exists nowhere upstream:
+// TTLock knows a door as "דירה 4 כניסה" and has never heard of room 402. An
+// upstream row can therefore never have an opinion about it. The enforcement in
+// the code is an OMISSION — room_id is simply absent from the insert's column
+// list and from the DO UPDATE SET — and an omission is exactly the kind of
+// protection a later edit restores by accident. Hence a rule.
+//
+// Reads are fine. This checks what a statement can ASSIGN: an insert's column
+// list plus its conflict update, and an update's SET clause (cut at WHERE, so
+// filtering on room_id stays legal).
+// ============================================================
+const locks = code(`${TTLOCK_DIR}/locks.ts`);
+const syncBody = locks.match(/export async function syncLocks\([\s\S]*?\n\}/);
+assert.ok(syncBody, "RULE 6: syncLocks is declared in locks.ts");
+
+const syncWrites = extractSqlTemplates(syncBody[0]).filter((q) =>
+  /^\s*(INSERT\s+INTO|UPDATE)\b/i.test(q.trim()),
+);
+assert.ok(syncWrites.length >= 2, "RULE 6: syncLocks performs the upsert and the missing-stamp writes");
+
+for (const q of syncWrites) {
+  const isInsert = /^\s*INSERT\s+INTO/i.test(q.trim());
+  // insert → everything it assigns, i.e. up to RETURNING (column list + the
+  // ON CONFLICT DO UPDATE SET). update → up to WHERE, i.e. the SET clause.
+  const writeSpec = isInsert ? q.split(/\bRETURNING\b/i)[0] : q.split(/\bWHERE\b/i)[0];
+  assert.ok(
+    !/\broom_id\b/.test(writeSpec),
+    `RULE 6: syncLocks assigns room_id — the operator's mapping is not the sync's to write:\n${writeSpec.trim().slice(0, 200)}`,
+  );
+}
+ok("RULE 6 — syncLocks never writes room_id (the operator's mapping survives every sync)");
+
+// ============================================================
+// RULE 7 — no sync path DELETEs from guesthub.ttlock_locks (D123).
+//
+// The obvious "sync" is fetch, upsert, delete-the-rest. That implementation
+// destroys operator work: a gateway that is offline, a paging edge, a rate
+// limit or a lock temporarily unshared all return a SHORTER list, and each
+// would silently drop a hand-built mapping. A lock the response did not carry
+// is STAMPED (missing_since) and kept.
+//
+// Scoped to src/lib/ttlock/ on purpose. Deletion is not forbidden forever — it
+// is forbidden HERE. An operator-initiated delete would live in the actions
+// module, behind a permission and a confirmation, where a human decided it.
+// ============================================================
+for (const f of ttlockFiles) {
+  const src = code(`${TTLOCK_DIR}/${f}`);
+  for (const q of extractSqlTemplates(src)) {
+    if (!/\bttlock_locks\b/.test(q)) continue;
+    assert.ok(
+      !/\bDELETE\s+FROM\b/i.test(q) && !/\bTRUNCATE\b/i.test(q),
+      `RULE 7: ${f} deletes from ttlock_locks — a short upstream list is a fault, not an instruction to forget a mapping:\n${q.trim().slice(0, 200)}`,
+    );
+  }
+}
+// …and not through a raw call that skips the tagged-template scanner either.
+assert.ok(
+  !/DELETE\s+FROM\s+guesthub\.ttlock_locks/i.test(locks),
+  "RULE 7: locks.ts contains no DELETE against ttlock_locks in any form",
+);
+ok("RULE 7 — no sync path deletes a lock row; an absent lock is stamped, not forgotten");
+
+// ============================================================
+// RULE 8 — every guesthub. query in locks.ts is tenant-scoped, with no
+// primary-key exemption.
+//
+// Rule 3 grants one narrow exemption: token.ts writes a connection row by its
+// id, which the caller already resolved under a tenant filter. locks.ts gets no
+// such exemption. It is the module a worker tick will call with a tenant id and
+// nothing else, so every statement in it must carry that filter explicitly —
+// there is no "the caller already checked" to lean on when the caller is a cron.
+// ============================================================
+// SELECTED BY TABLE REFERENCE, NOT BY THE STRING "guesthub." — and that
+// distinction was found by breaking this rule. Filtering on /guesthub\./ meant
+// UNQUALIFYING a table also removed the query from the rule's own scope: the
+// guard stayed green on exactly the edit it exists to catch. A rule whose
+// trigger is the thing it forbids is not a rule.
+const tableRefsOf = (q) => {
+  const leadingUpdate = q.trim().match(/^UPDATE\s+([A-Za-z_][\w.]*)(\s*\()?/i);
+  return [
+    ...q.matchAll(/\b(?:FROM|JOIN|INSERT\s+INTO)\s+([A-Za-z_][\w.]*)(\s*\()?/gi),
+    ...(leadingUpdate ? [leadingUpdate] : []),
+    // A name followed by "(" is a set-returning FUNCTION in the FROM clause
+    // (jsonb_to_recordset, unnest), not a relation. It carries no tenant data
+    // of its own, so a schema requirement on it would be nonsense.
+  ].filter((m) => !m[2]);
+};
+
+const locksQueries = extractSqlTemplates(locks).filter((q) => tableRefsOf(q).length > 0);
+assert.ok(locksQueries.length >= 3, "RULE 8: locks.ts queries the connection and the locks table");
+
+for (const q of locksQueries) {
+  // Every table reference is schema-qualified — an unqualified name resolves
+  // through search_path, which is not a guarantee. Only a LEADING `UPDATE`
+  // names a table: the `UPDATE` in `ON CONFLICT DO UPDATE SET` is a clause
+  // keyword and its next token is SET, not a relation.
+  for (const m of tableRefsOf(q)) {
+    assert.ok(
+      m[1].startsWith("guesthub."),
+      `RULE 8: locks.ts references the unqualified table "${m[1]}" — qualify it guesthub.<table>`,
+    );
+  }
+
+  const isInsert = /^\s*INSERT\s+INTO/i.test(q.trim());
+  const head = isInsert ? q.split(/\bON\s+CONFLICT\b/i)[0] : q;
+  const scoped = isInsert
+    ? /\btenant_id\b/.test(head)
+    : /tenant_id\s*=\s*\$\{/.test(q);
+  assert.ok(
+    scoped,
+    `RULE 8: locks.ts queries a guesthub. table without a tenant filter (no row-id exemption here):\n${q.trim().slice(0, 200)}`,
+  );
+}
+ok(`RULE 8 — all ${locksQueries.length} guesthub. queries in locks.ts are schema-qualified and tenant-scoped`);
+
+// ============================================================
+// Supporting invariants — the construction the eight rules assume.
 // ============================================================
 const crypto = code(`${TTLOCK_DIR}/crypto.ts`);
 assert.ok(/aes-256-gcm/.test(crypto), "authenticated AES-256-GCM");
