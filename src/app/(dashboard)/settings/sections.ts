@@ -6,7 +6,7 @@ import type { IconName } from "@/components/shared/Icon";
 // scope here and are not stubbed (§I: do not redesign unrelated Settings sections).
 
 export type SettingsSectionKey =
-  | "business" | "vat" | "extra-guest" | "statuses" | "check-in-check-out" | "cancellation" | "payment" | "messaging";
+  | "business" | "vat" | "extra-guest" | "statuses" | "check-in-check-out" | "cancellation" | "payment" | "messaging" | "ttlock";
 
 export type SettingsSectionDef = {
   key: SettingsSectionKey;
@@ -50,6 +50,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     title: "תקשורת",
     items: [
       { key: "messaging", label: "תקשורת והודעות", icon: "send", desc: "Gmail ו-WhatsApp" },
+    ],
+  },
+  {
+    // super_admin only — filtered in SettingsShell via canManageTTLock (D122).
+    title: "מנעולים",
+    items: [
+      { key: "ttlock", label: "מנעולים חכמים", icon: "lock", desc: "חיבור לחשבון TTLock" },
     ],
   },
 ];

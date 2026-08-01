@@ -139,6 +139,20 @@ export function canManageMessaging(actor: GuardActor): GuardResult {
   return no("ניהול ספקי תקשורת זמין למנהל-על בלבד");
 }
 
+// ---- TTLock smart-lock connection (D122) ----
+// Same posture as channels and messaging: the TTLock clientSecret and account
+// password are integration CREDENTIALS and outrank ordinary full access, so
+// ONLY super_admin may view or modify them (admin does NOT qualify).
+//
+// This is a DIFFERENT boundary from the locks.view / locks.rotate permissions
+// seeded in migration 069, which admin DOES hold. An admin rotates a door code
+// — an operational act on a lock — and never sees the credential that reaches
+// it. Two boundaries, deliberately, because they protect two different things.
+export function canManageTTLock(actor: GuardActor): GuardResult {
+  if (actor.roleKey === "super_admin") return ok;
+  return no("ניהול חיבור TTLock זמין למנהל-על בלבד");
+}
+
 export function canTogglePermission(
   actor: GuardActor,
   targetRoleKey: string,
