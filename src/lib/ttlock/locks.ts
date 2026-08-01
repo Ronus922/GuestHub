@@ -36,7 +36,7 @@ export type TTLockDevice = {
   mac: string | null;
   battery: number | null;
   tzOffsetMinutes: number | null;
-  /** the upstream row verbatim — no credential is present in it */
+  /** the upstream row, minus the admin passcode it carries (see stripCredentials) */
   raw: Record<string, unknown>;
 };
 
@@ -70,6 +70,17 @@ function asText(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+// /v3/lock/list returns the lock's ADMIN passcode in cleartext as `noKeyPwd`.
+// 070's header claimed this payload carried no credential; it does. We have no
+// use for the admin code, so it is dropped before `raw` is written and 071
+// scrubs it from the rows already stored. Everything else is kept verbatim.
+function stripCredentials(row: Record<string, unknown>): Record<string, unknown> {
+  if (!("noKeyPwd" in row)) return row;
+  const rest = { ...row };
+  delete rest.noKeyPwd;
+  return rest;
+}
+
 function toDevice(row: Record<string, unknown>): TTLockDevice | null {
   const lockId = asNumber(row.lockId);
   if (lockId === null) return null; // a row with no id cannot be keyed — skip it
@@ -82,7 +93,7 @@ function toDevice(row: Record<string, unknown>): TTLockDevice | null {
     mac: asText(row.lockMac),
     battery: asNumber(row.electricQuantity),
     tzOffsetMinutes: asNumber(row.timezoneRawOffset),
-    raw: row,
+    raw: stripCredentials(row),
   };
 }
 

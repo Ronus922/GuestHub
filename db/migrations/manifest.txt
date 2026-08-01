@@ -76,3 +76,4 @@
 068_ota_confirm_watermark.sql
 069_ttlock_connection.sql
 070_ttlock_locks.sql
+071_ttlock_passcodes.sql

@@ -14,6 +14,7 @@ import {
 import type { Beds24CreditSnapshot } from "./beds24-credits";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 import { runCommunicationTick } from "@/lib/communications/worker";
+import { runTTLockTick } from "@/lib/ttlock/tick";
 
 // ============================================================
 // The GuestHub channel worker (D68) — a long-running PM2 process
@@ -322,6 +323,15 @@ export async function runTick(workerId: string, log: (m: string) => void): Promi
     await runCommunicationTick(workerId, log);
   } catch (e) {
     log(`communications tick failed: ${e instanceof Error ? e.name : "error"}`);
+  }
+  // Smart locks share this process for the same reason communications do (D124):
+  // one durable consumer, no second scheduler. runTTLockTick isolates its own
+  // per-tenant failures and never throws — this catch is the belt to that
+  // braces, so a TTLock fault can never stop channel work from being claimed.
+  try {
+    await runTTLockTick(sql, log);
+  } catch (e) {
+    log(`ttlock tick failed: ${e instanceof Error ? e.name : "error"}`);
   }
   await ensureDrainJobs();
   await ensureInboundPullJobs();
