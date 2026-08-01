@@ -51,6 +51,15 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // מנעולים — a TOP-LEVEL section by the owner's explicit request, not an item
+    // under תפעול. It holds one entry today; the next task adds codes beside it,
+    // so a one-item section is the intended shape, not an oversight.
+    title: "מנעולים",
+    items: [
+      { label: "מנעולים וקודים", icon: "lock", href: "/locks", permission: "locks.view" },
+    ],
+  },
+  {
     title: "ניהול עסקי",
     hidden: true,
     items: [
