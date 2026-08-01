@@ -78,6 +78,27 @@ export type TwilioSettingsView = MaskedProviderView & {
   webhookToken: string;
 };
 
+// ---- TTLock (D120): client-safe, masked view of the lock connection ----
+// Declared STRUCTURALLY here rather than imported from @/lib/ttlock/store,
+// which is "server-only" — same reason as every other view type in this file.
+// NEVER carries a clientSecret, a password or an access token: only the
+// non-secret identifiers plus a "••••••••XXXX" hint.
+export type TTLockConnectionView = {
+  configured: boolean;
+  region: "eu" | "global";
+  clientId: string;
+  username: string;
+  secretHint: string;
+  status: string; // connected | not_configured | error
+  statusDetail: string | null;
+  lastTestedAt: string | null;
+};
+
+export type TTLockSettingsView = {
+  secretsKeyConfigured: boolean;
+  connection: TTLockConnectionView;
+};
+
 export type MessagingSettingsView = {
   secretsKeyConfigured: boolean;
   gmail: GmailSettingsView;

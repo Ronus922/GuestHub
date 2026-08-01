@@ -9,6 +9,7 @@ import { ExtraGuestSection } from "./ExtraGuestSection";
 import { CancellationSection } from "./CancellationSection";
 import { PaymentSection } from "./PaymentSection";
 import { MessagingSection } from "./MessagingSection";
+import { TTLockSection } from "./TTLockSection";
 import { BusinessProfileSection } from "./BusinessProfileSection";
 import { WorkflowStatusSection } from "./WorkflowStatusSection";
 import { CheckInCheckOutSection } from "./CheckInCheckOutSection";
@@ -21,6 +22,7 @@ import type {
   PaymentPolicyView,
   PaymentMethodRef,
   MessagingSettingsView,
+  TTLockSettingsView,
 } from "./types";
 
 // Two-pane settings shell (approved design): right-hand grouped nav + content
@@ -38,6 +40,8 @@ export function SettingsShell({
   paymentMethods,
   canManageMessaging,
   messaging,
+  canManageTTLock,
+  ttlock,
   workflowStatuses,
   enabledCurrencies,
 }: {
@@ -55,6 +59,8 @@ export function SettingsShell({
   paymentMethods: PaymentMethodRef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
+  canManageTTLock: boolean;
+  ttlock: TTLockSettingsView | null;
   workflowStatuses: WorkflowStatusDef[];
 }) {
   const [section, setSection] = useQueryState(
@@ -62,10 +68,15 @@ export function SettingsShell({
     parseAsStringLiteral(SETTINGS_SECTION_KEYS).withDefault("vat"),
   );
 
-  // Messaging is super_admin-only: hide its group from the nav when not allowed.
+  // Messaging and TTLock are super_admin-only: hide their groups from the nav
+  // when not allowed. Both are integration CREDENTIALS (§ guards), not screens.
   const groups = SETTINGS_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => canManageMessaging || item.key !== "messaging"),
+    items: group.items.filter(
+      (item) =>
+        (canManageMessaging || item.key !== "messaging") &&
+        (canManageTTLock || item.key !== "ttlock"),
+    ),
   })).filter((group) => group.items.length > 0);
 
   return (
@@ -134,6 +145,8 @@ export function SettingsShell({
             paymentMethods={paymentMethods}
             canManageMessaging={canManageMessaging}
             messaging={messaging}
+            canManageTTLock={canManageTTLock}
+            ttlock={ttlock}
             workflowStatuses={workflowStatuses}
           />
         </div>
@@ -182,6 +195,8 @@ function SectionBody({
   paymentMethods,
   canManageMessaging,
   messaging,
+  canManageTTLock,
+  ttlock,
   workflowStatuses,
 }: {
   section: SettingsSectionKey;
@@ -196,6 +211,8 @@ function SectionBody({
   paymentMethods: PaymentMethodRef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
+  canManageTTLock: boolean;
+  ttlock: TTLockSettingsView | null;
   workflowStatuses: WorkflowStatusDef[];
 }) {
   switch (section) {
@@ -220,5 +237,7 @@ function SectionBody({
       return <PaymentSection policies={paymentPolicies} methods={paymentMethods} />;
     case "messaging":
       return canManageMessaging && messaging ? <MessagingSection data={messaging} /> : null;
+    case "ttlock":
+      return canManageTTLock && ttlock ? <TTLockSection data={ttlock} /> : null;
   }
 }

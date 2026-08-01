@@ -10,10 +10,11 @@ import {
 } from "@/lib/commercial/service";
 import { SettingsShell } from "./SettingsShell";
 import { getMessagingSettingsAction } from "./messaging-actions";
+import { getTTLockSettingsAction } from "./ttlock-actions";
 import { listWorkflowStatusesAction } from "./status-actions";
 import { getBusinessProfileContextAction, type BusinessProfileContext } from "./business-actions";
 import { formatPropertyIdentity, IDENTITY_NOT_SET } from "@/lib/business/profile";
-import type { MessagingSettingsView } from "./types";
+import type { MessagingSettingsView, TTLockSettingsView } from "./types";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,15 @@ export default async function SettingsPage() {
     if (res.success && res.data) messaging = res.data;
   }
 
+  // TTLock credentials are the same posture (D120): fetched only when the
+  // caller may hold them, so a non-super_admin's HTML never carries the view.
+  const canManageTTLock = actor.roleKey === "super_admin";
+  let ttlock: TTLockSettingsView | null = null;
+  if (canManageTTLock) {
+    const res = await getTTLockSettingsAction();
+    if (res.success && res.data) ttlock = res.data;
+  }
+
   return (
     <SettingsShell
       // the page-header identity is the CANONICAL Business Profile (same
@@ -68,6 +78,8 @@ export default async function SettingsPage() {
       paymentMethods={paymentMethods}
       canManageMessaging={canManageMessaging}
       messaging={messaging}
+      canManageTTLock={canManageTTLock}
+      ttlock={ttlock}
       workflowStatuses={workflowStatuses}
     />
   );
