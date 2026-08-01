@@ -4,7 +4,7 @@ import type { IconName } from "@/components/shared/Icon";
 // matrix and by the staff edit panel's effective-permissions tab — one source.
 export const CATEGORY_ORDER = [
   "dashboard", "calendar", "reservations", "guests", "rooms", "rates",
-  "payments", "housekeeping", "staff", "users", "roles", "permissions",
+  "payments", "housekeeping", "locks", "staff", "users", "roles", "permissions",
   "settings", "reports", "system",
 ];
 
@@ -17,6 +17,7 @@ export const CATEGORY_LABEL: Record<string, string> = {
   rates: "תמחור",
   payments: "תשלומים",
   housekeeping: "ניקיון",
+  locks: "מנעולים",
   staff: "עובדים",
   users: "משתמשים",
   roles: "תפקידים",
@@ -41,6 +42,7 @@ export const CATEGORY_ICON: Record<string, IconName> = {
   rates: "bulk-update",
   payments: "finance",
   housekeeping: "cleaning",
+  locks: "lock",
   staff: "employees",
   users: "user",
   roles: "shield-check",

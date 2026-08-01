@@ -74,3 +74,4 @@
 066_messaging_settings_parent.sql
 067_template_lineage.sql
 068_ota_confirm_watermark.sql
+069_ttlock_connection.sql
