@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // ============================================================
 // check:ttlock-secrets — the TTLock layer's invariants: five for the connection
-// (D122), three more for the lock list and its room mapping (D123).
+// (D122), three for the lock list and its room mapping (D123), four for the
+// passcodes and the worker tick (D124).
 //
 // THE STANDARD THIS GUARD IS HELD TO. It must fail when the SEMANTIC CORE is
 // neutralised while the STRUCTURE stays intact. Deleting a file is not the
@@ -10,18 +11,20 @@
 // module growing a `next/headers` import; a query losing its tenant filter; an
 // audit payload gaining a `password` key; a client component pulling this whole
 // graph into the browser bundle; a sync deciding it may overwrite the
-// operator's room mapping or delete a lock it did not see. Each of the eight
-// rules below was verified by BREAKING it and confirming this script goes red
-// (B2) — rules 1-5 re-verified for D123, because extractSqlTemplates (shared
-// parsing) changed and a fix to shared code invalidates the earlier proof.
+// operator's room mapping or delete a lock it did not see; a background tick
+// quietly gaining the power to change what a physical door accepts. Each of the
+// twelve rules below was verified by BREAKING it and confirming this script goes
+// red (B2) — rules 1-8 re-verified for D124, because the shared scanner grew
+// functionBodies/reachableFrom and a change to shared parsing invalidates every
+// earlier proof.
 //
-// Rule 5 carries extra weight. tsconfig.worker.json's include list is exactly
-// ["src/lib/channel/worker.ts"], so tsc cannot see src/lib/ttlock/ at all until
-// a worker file imports it — which is the NEXT task. Until then this script is
-// the only enforcement that exists, and rule 5 covers more than `server-only`
-// ever did: it follows the import graph transitively rather than trusting a
-// directive that resolves to an empty module outside React's react-server
-// condition.
+// Rule 5 carried extra weight through D123: tsconfig.worker.json's include list
+// is exactly ["src/lib/channel/worker.ts"], so tsc could not see src/lib/ttlock/
+// at all until a worker file imported it, and this script was the ONLY
+// enforcement that existed. As of D124 worker.ts imports tick.ts, so tsc now
+// compiles the graph too — but rule 5 still covers what tsc cannot: it follows
+// imports transitively rather than trusting a `server-only` directive that
+// resolves to an empty module outside React's react-server condition.
 //
 // Static only: no DB, no network, no build. Usage: node scripts/check-ttlock-secrets.mjs
 // ============================================================
@@ -255,9 +258,20 @@ for (const f of ttlockFiles) {
     // statement HEAD, cut at ON CONFLICT so a DO UPDATE SET can never satisfy
     // the rule on the insert's behalf.
     const insertHead = isInsert ? q.split(/\bON\s+CONFLICT\b/i)[0] : "";
-    const scoped = isInsert
+
+    // d) EXACTLY ONE deliberate cross-tenant read exists (D124): the worker tick
+    //    has to discover which tenants have a TTLock credential before it can
+    //    scope anything to one. It is exempt only if it SAYS SO and selects
+    //    nothing but tenant_id — a fan-out that grew a ciphertext column would
+    //    be a completely different query wearing the same marker, and this stays
+    //    red for it.
+    const sqlOnly = q.replace(/--[^\n]*/g, "").trim();
+    const isTenantEnumeration =
+      /--\s*CROSS-TENANT/.test(q) && /^SELECT\s+tenant_id\s+FROM\b/i.test(sqlOnly);
+
+    const scoped = isTenantEnumeration || (isInsert
       ? Boolean(insertCols ? /\btenant_id\b/.test(insertCols[1]) : /\btenant_id\b/.test(insertHead))
-      : /tenant_id\s*=\s*\$\{/.test(q) || /\bWHERE\s+id\s*=\s*\$\{/i.test(q);
+      : /tenant_id\s*=\s*\$\{/.test(q) || /\bWHERE\s+id\s*=\s*\$\{/i.test(q));
 
     assert.ok(
       scoped,
@@ -274,10 +288,36 @@ ok("RULE 3 — every guesthub. query in src/lib/ttlock/ is tenant-scoped (or key
 // lands in one is a credential in a backup forever.
 // ============================================================
 const BANNED_AUDIT_KEYS = ["password", "secret", "token", "clientSecret"];
+
+// Extract each call's ARGUMENT TEXT by matching parentheses, not by regex.
+//
+// A non-greedy `[\s\S]*?\n\s*\)\s*;` looks equivalent and is not: it terminates
+// on the first line that happens to end in `);`, so a call written on ONE line
+// runs on and swallows whatever follows until some later statement closes that
+// way. It cost a false failure here — a `sql<{ code: string }[]>` annotation
+// two statements below an audit call was read as an audit key — and the same
+// slip in the other direction would let a real payload key escape the scan by
+// sitting after a one-line call.
+const extractCalls = (src, name) => {
+  const out = [];
+  const re = new RegExp(`\\b${name}\\s*\\(`, "g");
+  while (re.exec(src) !== null) {
+    let depth = 1;
+    let i = re.lastIndex;
+    for (; i < src.length && depth > 0; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")") depth--;
+    }
+    out.push(src.slice(re.lastIndex, i - 1));
+    re.lastIndex = i;
+  }
+  return out;
+};
+
 const auditCalls = [
-  ...actions.matchAll(/\baudit\s*\(\s*actor\s*,\s*[\s\S]*?\n\s*\}\s*\)\s*;/g),
-  ...actions.matchAll(/\bwriteAudit\s*\([\s\S]*?\n\s*\}\s*\)\s*;/g),
-];
+  ...extractCalls(actions, "audit"),
+  ...extractCalls(actions, "writeAudit"),
+].map((args) => [args]);
 assert.ok(auditCalls.length > 0, "RULE 4: ttlock-actions.ts records audit entries");
 for (const call of auditCalls) {
   // Object KEYS only — "clientSecretProvided: Boolean(...)" is a boolean about
@@ -510,5 +550,194 @@ for (const f of ttlockFiles) {
   assert.ok(!/console\.(log|error|warn)/.test(code(`${TTLOCK_DIR}/${f}`)), `${f}: no console output`);
 }
 ok("token.ts — MD5 wire format, refresh→password fallback, persist-before-return, honest single-flight");
+
+// ============================================================
+// RULE 9 — the passcode SYNC never calls a TTLock WRITE endpoint (D124).
+//
+// These are live codes on live doors. A read that quietly gained the ability to
+// add or delete one would mean a background worker changing what a physical
+// door accepts, on a five-minute timer, with nobody having pressed anything.
+// The ONLY sanctioned writer is rotateApartmentCode, invoked by a person.
+//
+// Checked across the CALL GRAPH, not one function body: syncPasscodes itself
+// contains no endpoint string — it calls fetchPasscodes, which does. A rule that
+// only read the top-level body would pass while a helper it calls did the
+// forbidden thing.
+// ============================================================
+const passcodes = code(`${TTLOCK_DIR}/passcodes.ts`);
+
+// name → body, for every function declared in the file.
+const functionBodies = (src) => {
+  const map = new Map();
+  const re = /(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    // brace-match from the parameter list forward to the body's close
+    let i = src.indexOf("{", re.lastIndex);
+    if (i === -1) continue;
+    let depth = 0;
+    let j = i;
+    for (; j < src.length; j++) {
+      if (src[j] === "{") depth++;
+      else if (src[j] === "}") { depth--; if (depth === 0) { j++; break; } }
+    }
+    map.set(m[1], src.slice(i, j));
+  }
+  return map;
+};
+
+const reachableFrom = (bodies, entry) => {
+  const seen = new Set();
+  const stack = [entry];
+  const out = [];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (seen.has(cur) || !bodies.has(cur)) continue;
+    seen.add(cur);
+    const body = bodies.get(cur);
+    out.push([cur, body]);
+    for (const name of bodies.keys()) {
+      if (name !== cur && new RegExp(`\\b${name}\\s*\\(`).test(body)) stack.push(name);
+    }
+  }
+  return out;
+};
+
+const passcodeBodies = functionBodies(passcodes);
+assert.ok(passcodeBodies.has("syncPasscodes"), "RULE 9: syncPasscodes is declared in passcodes.ts");
+
+const WRITE_ENDPOINTS = /\/v3\/keyboardPwd\/(add|change|delete|get)/;
+const syncReach = reachableFrom(passcodeBodies, "syncPasscodes");
+assert.ok(syncReach.length >= 2, "RULE 9: syncPasscodes reaches its fetch helper");
+for (const [name, body] of syncReach) {
+  for (const lit of body.matchAll(/["'](\/v3\/[^"']+)["']/g)) {
+    assert.ok(
+      !WRITE_ENDPOINTS.test(lit[1]),
+      `RULE 9: the passcode sync reaches a WRITE endpoint (${lit[1]}) via ${name}() — sync is read-only upstream`,
+    );
+  }
+}
+ok(`RULE 9 — the passcode sync calls no TTLock write endpoint (${syncReach.length} functions in its call graph)`);
+
+// ============================================================
+// RULE 10 — no sync path UPDATEs `role` on an existing passcode row (D124).
+//
+// role is decided from the code's NAME the first time we see it, and names are
+// operator-editable upstream. If classification re-ran on every sync, renaming
+// "דירה 4" to "דירה 4 (ישן)" would turn the guest's code into 'other' — and the
+// rotate button would then mint a SECOND apartment code beside a live one
+// instead of replacing it. A rename containing "מנהל" is worse: it would make
+// the guest's code look like the manager's, the one code this feature may never
+// rotate.
+//
+// Assigning role in an INSERT is correct and stays legal. What is forbidden is
+// re-assigning it: the ON CONFLICT DO UPDATE SET, or an UPDATE's SET clause.
+// ============================================================
+const syncWriteQueries = [];
+for (const [, body] of syncReach) {
+  for (const q of extractSqlTemplates(body)) {
+    if (/^\s*(INSERT\s+INTO|UPDATE)\b/i.test(q.trim())) syncWriteQueries.push(q);
+  }
+}
+assert.ok(syncWriteQueries.length >= 2, "RULE 10: the sync performs its upsert and its missing-stamp writes");
+
+for (const q of syncWriteQueries) {
+  const isInsert = /^\s*INSERT\s+INTO/i.test(q.trim());
+  // insert → ONLY the conflict-update half (the column list may assign role).
+  // update → the SET clause, cut at WHERE so filtering on role stays legal.
+  const conflict = isInsert ? q.split(/\bDO\s+UPDATE\s+SET\b/i)[1] : null;
+  const reassigns = isInsert
+    ? (conflict ?? "").split(/\bRETURNING\b/i)[0]
+    : q.split(/\bWHERE\b/i)[0];
+  assert.ok(
+    !/\brole\s*=/.test(reassigns),
+    `RULE 10: a sync path re-assigns role on an existing passcode row — classification is an INSERT-time decision:\n${reassigns.trim().slice(0, 200)}`,
+  );
+}
+ok("RULE 10 — the sync assigns role only on insert; an upstream rename cannot reclassify a live code");
+
+// ============================================================
+// RULE 11 — a full passcode never reaches an audit payload or a log line.
+//
+// The code itself is not encrypted and does not need to be: it is five digits
+// the operator reads off the screen and says out loud. What must not happen is
+// that it becomes DURABLE somewhere nobody is looking — an audit row lives in
+// every backup forever, and a pm2 log is world-readable on the box. maskCode()
+// is the only form allowed in either.
+//
+// Returning the full code from the rotate ACTION is explicitly fine: it goes to
+// the authorized operator who pressed the button, and nowhere else.
+// ============================================================
+const locksActions = code("src/app/(dashboard)/locks/actions.ts");
+const CODE_KEYS = /^(code|newCode|oldCode|passcode|keyboardPwd)$/;
+
+const locksAuditCalls = [
+  ...extractCalls(locksActions, "audit"),
+  ...extractCalls(locksActions, "writeAudit"),
+].map((args) => [args]);
+assert.ok(locksAuditCalls.length > 0, "RULE 11: the locks actions record audit entries");
+for (const call of locksAuditCalls) {
+  for (const kv of call[0].matchAll(/\b([A-Za-z_]\w*)\s*:\s*([^,\n}]+)/g)) {
+    if (!CODE_KEYS.test(kv[1])) continue;
+    assert.ok(
+      /maskCode\s*\(|Masked\b|\bnull\b/.test(kv[2]),
+      `RULE 11: an audit payload carries "${kv[1]}: ${kv[2].trim().slice(0, 60)}" — audit maskCode(...) instead of the digits`,
+    );
+  }
+}
+
+// …and no log/console sink in the ttlock graph interpolates a code value. The
+// pattern is deliberately narrow: `${summary.passcodesAdded}` is a COUNT and
+// must stay legal, while `${code}` and `${row.code}` must not.
+const CODE_INTERPOLATION = /\$\{[^}]*(?:\bcode\b|\bnewCode\b|\boldCode\b|\.code\b)[^}]*\}/;
+for (const f of [...ttlockFiles.map((x) => `${TTLOCK_DIR}/${x}`), "src/app/(dashboard)/locks/actions.ts"]) {
+  const src = code(f);
+  for (const call of src.matchAll(/\b(?:log|console\.(?:log|error|warn|info))\s*\(([\s\S]*?)\)\s*;/g)) {
+    assert.ok(
+      !CODE_INTERPOLATION.test(call[1]),
+      `RULE 11: ${f} logs a passcode value:\n${call[1].trim().slice(0, 160)}`,
+    );
+  }
+}
+ok("RULE 11 — no full passcode reaches an audit payload or a log line (maskCode is the only durable form)");
+
+// ============================================================
+// RULE 12 — passcodes.ts and tick.ts stay worker-graph-safe (D124).
+//
+// This is the task where tsconfig.worker.json ACTUALLY starts compiling
+// src/lib/ttlock/: worker.ts imports tick.ts, so the whole graph below it —
+// tick, passcodes, locks, token, http, crypto — is compiled to plain CommonJS
+// for PM2. Rule 2 made this promise for the connection layer before anything
+// tested it; rule 12 extends it to the three files that made it real, including
+// locks.ts, which rule 2 never listed.
+// ============================================================
+const TICK_SAFE = ["passcodes.ts", "tick.ts", "locks.ts"];
+for (const f of TICK_SAFE) {
+  const src = code(`${TTLOCK_DIR}/${f}`);
+  assert.ok(
+    !/^\s*import\s+["']server-only["']/m.test(src),
+    `RULE 12: ${f} must not import "server-only" — the PM2 worker compiles it`,
+  );
+  for (const m of src.matchAll(FORBIDDEN_IMPORT)) {
+    const spec = m[1];
+    assert.ok(!spec.startsWith("next/") && spec !== "next", `RULE 12: ${f} must not import ${spec}`);
+    assert.ok(spec !== "react" && !spec.startsWith("react/"), `RULE 12: ${f} must not import ${spec}`);
+    assert.ok(spec !== "server-only", `RULE 12: ${f} must not import server-only`);
+  }
+  for (const dep of walkGraph(`${TTLOCK_DIR}/${f}`)) {
+    assert.ok(
+      !isUseServer(dep),
+      `RULE 12: ${f} reaches the "use server" module ${dep} — the worker graph cannot compile it`,
+    );
+  }
+}
+// The wiring itself: the worker must actually call the tick, or every promise
+// above is about a file nothing runs.
+const channelWorker = code("src/lib/channel/worker.ts");
+assert.ok(
+  /runTTLockTick\s*\(/.test(channelWorker),
+  "RULE 12: src/lib/channel/worker.ts calls runTTLockTick — the tick is wired in, not orphaned",
+);
+ok(`RULE 12 — ${TICK_SAFE.join(", ")} are worker-graph-safe and the tick is wired into the channel worker`);
 
 console.log(`\ncheck-ttlock-secrets: all ${n} groups passed ✓`);
