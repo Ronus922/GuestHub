@@ -139,7 +139,7 @@ export function canManageMessaging(actor: GuardActor): GuardResult {
   return no("ניהול ספקי תקשורת זמין למנהל-על בלבד");
 }
 
-// ---- TTLock smart-lock connection (D120) ----
+// ---- TTLock smart-lock connection (D122) ----
 // Same posture as channels and messaging: the TTLock clientSecret and account
 // password are integration CREDENTIALS and outrank ordinary full access, so
 // ONLY super_admin may view or modify them (admin does NOT qualify).

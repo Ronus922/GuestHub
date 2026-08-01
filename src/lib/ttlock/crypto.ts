@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 // ============================================================
-// TTLock secrets vault (D120). AES-256-GCM (authenticated), key derived from
+// TTLock secrets vault (D122). AES-256-GCM (authenticated), key derived from
 // env TTLOCK_SECRETS_KEY — never stored in the DB, never sent to a browser.
 // Ciphertext format: "v1.<iv>.<tag>.<data>" (base64). Every value gets a fresh
 // random 96-bit IV. FAIL CLOSED: a missing key throws; there is no plaintext
@@ -12,7 +12,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 // a channel credential sells rooms. Separate secret, separate blast radius —
 // the same doctrine that keeps the card vault apart from both.
 //
-// NO `import "server-only"` HERE — DELIBERATE (D120). token.ts must be able to
+// NO `import "server-only"` HERE — DELIBERATE (D122). token.ts must be able to
 // encrypt a freshly minted token from inside the PM2 channel-worker graph,
 // which tsconfig.worker.json compiles to plain CommonJS with no React
 // condition. The Beds24 sibling (src/lib/channel/crypto.ts) DOES carry the

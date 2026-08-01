@@ -51,7 +51,7 @@ export default async function SettingsPage() {
     if (res.success && res.data) messaging = res.data;
   }
 
-  // TTLock credentials are the same posture (D120): fetched only when the
+  // TTLock credentials are the same posture (D122): fetched only when the
   // caller may hold them, so a non-super_admin's HTML never carries the view.
   const canManageTTLock = actor.roleKey === "super_admin";
   let ttlock: TTLockSettingsView | null = null;

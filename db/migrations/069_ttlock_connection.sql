@@ -1,5 +1,5 @@
 -- ============================================================
---  069 — TTLock Open Platform connection, per tenant (D120)
+--  069 — TTLock Open Platform connection, per tenant (D122)
 --
 --  WHY THIS TABLE EXISTS. Ronen's apartment doors are TTLock smart locks. To
 --  ever issue a door code to a guest, the server must first hold a working
@@ -50,9 +50,18 @@
 --  canManageTTLock in src/lib/auth/guards.ts, which is super_admin-only. Two
 --  different boundaries on purpose.
 --
---  Idempotent. Safe to replay.
---    docker exec -i supabase-db psql -U supabase_admin -d postgres \
---      < db/migrations/069_ttlock_connection.sql
+--  HOW THIS IS APPLIED — NOT BY HAND. Since 064 the deploy owns migration
+--  application: scripts/deploy-production.sh runs
+--  scripts/apply-pending-migrations.mjs BEFORE the pm2 restart, and that runner
+--  writes the guesthub.schema_migrations row only after the file applied
+--  cleanly. Applying this DDL manually via `docker exec … psql` leaves NO
+--  ledger row — the "applied but unrecorded" state migration 064 exists to end.
+--  065-068 carry no run line for exactly this reason; neither does this one.
+--
+--  Idempotent. Safe to replay — and that is load-bearing, not a courtesy: the
+--  runner performs the apply and the ledger INSERT as two separate psql
+--  invocations, not one transaction, so a crash between them re-applies this
+--  file on the next deploy.
 --
 --  ROLLBACK:
 --    DROP TABLE IF EXISTS guesthub.ttlock_connections;
@@ -107,7 +116,7 @@ CREATE TABLE IF NOT EXISTS guesthub.ttlock_connections (
 );
 
 COMMENT ON TABLE guesthub.ttlock_connections IS
-  'Per-tenant TTLock Open Platform connection (D120). secret_ciphertext is an AES-256-GCM bag {clientSecret, password} under TTLOCK_SECRETS_KEY — never returned to a client. region selects the cloud (eu|global); a mismatch reports as errcode 10001, indistinguishable from a wrong secret.';
+  'Per-tenant TTLock Open Platform connection (D122). secret_ciphertext is an AES-256-GCM bag {clientSecret, password} under TTLOCK_SECRETS_KEY — never returned to a client. region selects the cloud (eu|global); a mismatch reports as errcode 10001, indistinguishable from a wrong secret.';
 
 DO $$
 BEGIN

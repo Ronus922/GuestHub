@@ -5,7 +5,7 @@ import type { TTLockRegion } from "./http";
 import type { TTLockConnectionRow } from "./token";
 
 // ============================================================
-// Persistence for the per-tenant TTLock connection (D120).
+// Persistence for the per-tenant TTLock connection (D122).
 //
 // THE BOUNDARY THIS FILE IS. Everything above it (actions, UI) may see only
 // what getConnection returns — a MASKED view with a hint string and never a

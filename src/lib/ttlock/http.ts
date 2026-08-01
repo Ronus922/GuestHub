@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 // ============================================================
-// TTLock Open Platform HTTP layer (D120) — WORKER-GRAPH-SAFE.
+// TTLock Open Platform HTTP layer (D122) — WORKER-GRAPH-SAFE.
 //
 // Nothing here may import "server-only", next/…, react, or a "use server"
 // module. The later worker task compiles its graph through

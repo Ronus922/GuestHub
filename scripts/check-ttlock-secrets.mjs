@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // ============================================================
-// check:ttlock-secrets — the TTLock connection layer's five invariants (D120).
+// check:ttlock-secrets — the TTLock connection layer's five invariants (D122).
 //
 // THE STANDARD THIS GUARD IS HELD TO. It must fail when the SEMANTIC CORE is
 // neutralised while the STRUCTURE stays intact. Deleting a file is not the
@@ -124,7 +124,7 @@ for (const f of WORKER_SAFE) {
   const src = code(`${TTLOCK_DIR}/${f}`);
   assert.ok(
     !/^\s*import\s+["']server-only["']/m.test(src),
-    `RULE 2: ${f} must not import "server-only" (D120 — it is not the enforcement here)`,
+    `RULE 2: ${f} must not import "server-only" (D122 — it is not the enforcement here)`,
   );
   for (const m of src.matchAll(FORBIDDEN_IMPORT)) {
     const spec = m[1];

@@ -3,7 +3,7 @@ import { encryptSecret, decryptSecret } from "./crypto";
 import { ttlockRequest, md5Hex, TTLockError, type TTLockRegion } from "./http";
 
 // ============================================================
-// TTLock access-token resolver (D120) — WORKER-GRAPH-SAFE, like http.ts.
+// TTLock access-token resolver (D122) — WORKER-GRAPH-SAFE, like http.ts.
 // No "server-only", no next/…, no react, no "use server" module. Enforced by
 // scripts/check-ttlock-secrets.mjs rule 2.
 //

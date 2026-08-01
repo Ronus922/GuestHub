@@ -14,7 +14,7 @@ import {
 import type { TTLockSettingsView } from "./types";
 
 // ============================================================
-// מנעולים חכמים (D120) — super_admin settings for the TTLock Open Platform
+// מנעולים חכמים (D122) — super_admin settings for the TTLock Open Platform
 // connection. Secrets are never rendered: the stored value shows as a masked
 // hint under the field, and leaving an input blank keeps it on the server.
 //

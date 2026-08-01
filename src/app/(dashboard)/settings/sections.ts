@@ -53,7 +53,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     ],
   },
   {
-    // super_admin only — filtered in SettingsShell via canManageTTLock (D120).
+    // super_admin only — filtered in SettingsShell via canManageTTLock (D122).
     title: "מנעולים",
     items: [
       { key: "ttlock", label: "מנעולים חכמים", icon: "lock", desc: "חיבור לחשבון TTLock" },

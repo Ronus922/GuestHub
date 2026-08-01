@@ -19,7 +19,7 @@ import type { ActionResult } from "../calendar/types";
 import type { TTLockSettingsView } from "./types";
 
 // ============================================================
-// TTLock connection settings actions (D120) — super_admin ONLY, enforced
+// TTLock connection settings actions (D122) — super_admin ONLY, enforced
 // server-side on EVERY action (hiding the section in the UI is not security).
 // The clientSecret and the account password are integration credentials: they
 // are stored encrypted and NEVER returned to a client, never written to an
