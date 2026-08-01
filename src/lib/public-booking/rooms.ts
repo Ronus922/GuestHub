@@ -8,7 +8,23 @@ import { PUBLIC_TENANT_ID } from "./config";
 // the owner marked show_on_website. Availability and price never come from
 // here (they are per-date, and live in publicAvailability) — a card built on
 // this model may say WHAT a room is, never whether it is free tonight.
+//
+// Only rooms that have at least one image are returned: a room card without a
+// photo is a hole in a public gallery, and every consumer would otherwise have
+// to filter for itself.
 // ============================================================
+
+export type PublicRoomLang = "he" | "en" | "ar";
+
+// A row in room_translations is not proof of a translation: the app seeds it
+// from the room's internal name, so the "he" row of most rooms still holds the
+// English PMS label. Text that carries none of the language's own script is
+// treated as untranslated, so the fallback chain can reach real Hebrew copy.
+const SCRIPT: Record<PublicRoomLang, RegExp | null> = {
+  he: /[\u0590-\u05FF]/,
+  ar: /[\u0600-\u06FF]/,
+  en: null,
+};
 
 type RoomRow = {
   id: string;
@@ -33,11 +49,16 @@ type RoomRow = {
 
 export type PublicRoomImage = { url: string; alt: string | null };
 
+// Where `title` came from. A consumer that renders the room type as its own
+// badge uses this to avoid printing the same words twice.
+export type PublicRoomTitleSource = "translation" | "room" | "type" | "number";
+
 export type PublicRoom = {
   id: string;
   roomNumber: string;
   slug: string | null;
   title: string;
+  titleSource: PublicRoomTitleSource;
   summary: string | null;
   description: string | null;
   floor: string | null;
@@ -54,9 +75,34 @@ const trimmed = (s: string | null): string | null => {
   return v ? v : null;
 };
 
+// Text that is usable AS the requested language (see SCRIPT above).
+const inLang = (s: string | null, lang: PublicRoomLang): string | null => {
+  const v = trimmed(s);
+  const script = SCRIPT[lang];
+  return v && (!script || script.test(v)) ? v : null;
+};
+
+// The heading a card shows, and where it came from. The owner's translation
+// wins; then the room's own name if it happens to be written in the requested
+// language; then the room type, which the owner maintains in Hebrew and is the
+// approved public label for an untranslated room. The room number is the last
+// resort so a card can never render an empty heading.
+function resolveTitle(
+  r: RoomRow,
+  lang: PublicRoomLang,
+): { title: string; titleSource: PublicRoomTitleSource } {
+  const translation = inLang(r.tr_name, lang);
+  if (translation) return { title: translation, titleSource: "translation" };
+  const own = inLang(r.room_name, lang);
+  if (own) return { title: own, titleSource: "room" };
+  const type = inLang(r.room_type_name, lang);
+  if (type) return { title: type, titleSource: "type" };
+  return { title: r.room_number, titleSource: "number" };
+}
+
 export async function publicWebsiteRooms(
   db: Sql | TransactionSql,
-  lang: "he" | "en" | "ar" = "he",
+  lang: PublicRoomLang = "he",
 ): Promise<PublicRoom[]> {
   const rooms = await db<RoomRow[]>`
     SELECT r.id, r.room_number, r.name AS room_name, r.floor,
@@ -72,6 +118,8 @@ export async function publicWebsiteRooms(
            ON t.room_id = r.id AND t.lang = ${lang}
     WHERE r.tenant_id = ${PUBLIC_TENANT_ID}
       AND r.show_on_website AND r.is_active AND r.status <> 'inactive'
+      AND EXISTS (SELECT 1 FROM guesthub.room_images ri
+                   WHERE ri.tenant_id = r.tenant_id AND ri.room_id = r.id)
     ORDER BY r.sort_order, r.room_number`;
 
   if (rooms.length === 0) return [];
@@ -110,14 +158,11 @@ export async function publicWebsiteRooms(
     id: r.id,
     roomNumber: r.room_number,
     slug: trimmed(r.tr_slug),
-    // The owner's translated name wins; the room's internal name and finally
-    // "<type> <number>" keep a card from ever rendering an empty heading.
-    title:
-      trimmed(r.tr_name) ??
-      trimmed(r.room_name) ??
-      [trimmed(r.room_type_name), r.room_number].filter(Boolean).join(" "),
-    summary: trimmed(r.tr_summary),
-    description: trimmed(r.tr_description),
+    ...resolveTitle(r, lang),
+    // Copy in the wrong language is worse than no copy: the consumer hides an
+    // absent summary, but would print an English paragraph on a Hebrew page.
+    summary: inLang(r.tr_summary, lang),
+    description: inLang(r.tr_description, lang),
     floor: trimmed(r.floor),
     sizeSqm: r.size_sqm,
     maxOccupancy: r.max_occupancy ?? r.type_max_occupancy,
