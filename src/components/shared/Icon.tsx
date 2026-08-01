@@ -165,6 +165,16 @@ const ICONS = {
   payments: "payments",
   location: "location_on",
   "smart-button": "smart_button",
+  // /locks V2 (D125) — the ligatures the locks design reference uses that no
+  // screen had needed before. `bolt` already exists above as "automations",
+  // and `tune`/`content_copy`/`visibility` as "filter"/"copy"/"eye".
+  autorenew: "autorenew",
+  dice: "casino",
+  "link-off": "link_off",
+  password: "password",
+  spinner: "progress_activity",
+  sync: "sync",
+  "add-link": "add_link",
   // variable groups
   "confirmation-number": "confirmation_number",
   storefront: "storefront",
