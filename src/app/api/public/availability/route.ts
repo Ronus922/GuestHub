@@ -42,10 +42,18 @@ export async function GET(req: Request): Promise<NextResponse> {
       checkOut,
       nights: nightsBetween(checkIn, checkOut),
       currency: "ILS",
-      /* units — הדירות הבודדות הפנויות (לתצוגת דירה-פר-כרטיס באתר) */
+      /* units — הדירות הבודדות הפנויות (לתצוגת דירה-פר-כרטיס באתר).
+         roomId הוא מזהה החדר הפיזי ב-guesthub.rooms, והוא המפתח היחיד שבו
+         מותר לחבר זמינות לתוכן מ-/api/public/rooms. מספר חדר, שם או מיקום
+         במערך אינם מזהים יציבים. */
       roomTypes: roomTypes.map(({ units, ...pub }) => ({
         ...pub,
-        units: units.map((u) => ({ suId: u.suId, code: u.code, totalPrice: u.totalPrice })),
+        units: units.map((u) => ({
+          suId: u.suId,
+          roomId: u.roomId,
+          code: u.code,
+          totalPrice: u.totalPrice,
+        })),
       })),
     });
   } catch (e) {
