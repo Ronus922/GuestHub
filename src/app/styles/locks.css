@@ -492,101 +492,19 @@
   color: var(--warn-deep);
 }
 
-/* ---------- drawer ---------- */
-.lk-ov {
-  position: fixed;
-  inset: 0;
-  background: rgb(17 22 36 / 0.42);
-  backdrop-filter: blur(3px);
-  z-index: 40;
-  display: flex;
-  justify-content: flex-start;
-}
-.lk-dw {
-  height: 100%;
-  width: min(60%, 720px);
-  min-width: 340px;
-  background: var(--field-bg);
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-float);
-  animation: lk-slidein 0.22s ease-out;
-}
-@keyframes lk-slidein {
-  from { transform: translateX(-24px); opacity: 0.4; }
-  to { transform: translateX(0); opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .lk-dw { animation: none; }
-}
-.lk-dw-hd {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--brand);
-  padding: 18px 22px;
-  color: var(--surface);
-}
-.lk-dw-ic {
-  /* A decorative icon tile in the drawer band — not a button, not a field, and
-     not tappable, so the 44px control rule does not apply to it. */
-  width: 40px; /* ds-allow: decorative tile, not a control */
-  height: 40px; /* ds-allow: decorative tile, not a control */
-  border-radius: 12px;
-  background: rgb(255 255 255 / 0.16);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
-.lk-dw-t { font-size: 21px; font-weight: 800; line-height: 1.15; }
-.lk-dw-s {
-  font-size: 14px;
-  font-weight: 600;
-  color: rgb(255 255 255 / 0.75);
-  margin-block-start: 2px;
-}
-.lk-dw-sp { flex: 1; }
-.lk-dw-x {
-  width: 38px;
-  height: 44px;
-  border-radius: 12px;
-  border: none;
-  background: rgb(255 255 255 / 0.16);
-  color: var(--surface);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
-.lk-dw-x:hover { background: rgb(255 255 255 / 0.3); }
-.lk-dw-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 20px 22px 26px;
+/* ---------- drawer BODY ONLY ----------
+   The shell is <SidePanel> (GUIDELINES §7) — the app's one drawer, which opens
+   from the left with a focus trap, Esc-to-close, a portal and a scroll lock.
+   The reference ships its own overlay/panel/blue-header CSS; porting that
+   verbatim produced a second drawer that opened from the opposite side to
+   every other one in the product. It was deleted rather than aligned: sections
+   are `.card` + `.card-bd`, the header is `.dw-hd`, the footer is `.dw-ft`.
+   What survives here is only what the §7 body has no primitive for — the
+   segmented control, the code inputs and the per-door list. */
+.lk-dw-stack {
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-.lk-dw-ft {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 22px;
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-}
-
-.lk-sec {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: var(--shadow-card);
-  padding: 14px 16px;
 }
 .lk-sec-t { font-size: 17px; font-weight: 800; margin-block-end: 4px; }
 .lk-sec-s {
@@ -595,17 +513,6 @@
   color: var(--muted);
   margin-block-end: 10px;
   text-wrap: pretty;
-}
-.lk-sec.grow {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 190px;
-}
-.lk-sec.grow .lk-aplist {
-  flex: 1 1 auto;
-  min-height: 132px;
-  max-height: 34vh;
 }
 
 .lk-seg { display: flex; gap: 8px; }
@@ -675,6 +582,7 @@
   flex-direction: column;
   gap: 8px;
   overflow: auto;
+  max-height: 46vh;
   padding-inline-end: 2px;
 }
 .lk-aprow {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
+import { SidePanel } from "@/components/ui/SidePanel";
 import {
   syncLocksAction, syncPasscodesAction, mapLockToRoomAction, unmapLockAction,
   rotateApartmentCodeAction, bulkRotateApartmentCodesAction,
@@ -954,6 +955,14 @@ function LockRow({
  *  · SELECTION (N locks) — mode segment, uniform or per-door codes;
  *  · SINGLE (the bolt button) — one input, no mode segment, because "uniform
  *    vs per" is meaningless for one door.
+ *
+ * IT IS THE APP'S SidePanel, not a second drawer shell. The design reference
+ * ships its own overlay/panel/blue-header CSS, and porting that verbatim gave
+ * this screen a drawer that opened from the opposite side to every other one in
+ * the product — and that lacked Esc-to-close, the focus trap, the portal and
+ * the body scroll lock that §7 has had all along. A screen-specific drawer is
+ * not a visual choice, it is a second implementation of a solved problem.
+ * Everything below is BODY CONTENT; the shell is canonical.
  */
 function RotateDrawer({
   locks, single, onClose, onApply,
@@ -1004,32 +1013,31 @@ function RotateDrawer({
   }
 
   return (
-    <div className="lk-ov" onClick={onClose} role="presentation">
-      <div
-        className="lk-dw"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="החלפת קוד דירה"
-      >
-        <div className="lk-dw-hd">
-          <div className="lk-dw-ic">
-            <Icon name="password" size={24} />
-          </div>
-          <div>
-            <div className="lk-dw-t">החלפת קוד דירה</div>
-            <div className="lk-dw-s">{subtitle}</div>
-          </div>
-          <div className="lk-dw-sp" />
-          <button type="button" className="lk-dw-x" onClick={onClose} aria-label="סגירה">
-            <Icon name="close" size={20} />
+    <SidePanel
+      open
+      onClose={onClose}
+      title="החלפת קוד דירה"
+      subtitle={subtitle}
+      icon="password"
+      footer={
+        <>
+          {/* PRIMARY FIRST in the DOM — .dw-ft is row-reverse, so this hugs the
+              left edge and ביטול sits to its right (§7). */}
+          <button type="button" className="btn btn-primary" onClick={submit} disabled={!canApply}>
+            <Icon name="check" size={20} />
+            {applying ? "מחליף…" : applyLabel}
           </button>
-        </div>
-
-        <div className="lk-dw-body">
-          {/* One door: "uniform vs per" has nothing to choose between. */}
-          {!single && (
-            <div className="lk-sec">
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            ביטול
+          </button>
+        </>
+      }
+    >
+      <div className="lk-dw-stack">
+        {/* One door: "uniform vs per" has nothing to choose between. */}
+        {!single && (
+          <div className="card">
+            <div className="card-bd">
               <div className="lk-sec-t" style={{ marginBottom: "8px" }}>
                 אופן ההחלפה
               </div>
@@ -1048,10 +1056,12 @@ function RotateDrawer({
                 </button>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {(single || mode === "uniform") && (
-            <div className="lk-sec">
+        {(single || mode === "uniform") && (
+          <div className="card">
+            <div className="card-bd">
               <div className="lk-sec-t">הקוד החדש</div>
               <div className="lk-sec-s">
                 {single
@@ -1076,10 +1086,12 @@ function RotateDrawer({
                 </button>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {!single && mode === "per" && (
-            <div className="lk-sec grow">
+        {!single && mode === "per" && (
+          <div className="card">
+            <div className="card-bd">
               <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
                 <div className="lk-sec-t">קוד לכל דירה</div>
                 <div style={{ flex: 1 }} />
@@ -1130,28 +1142,18 @@ function RotateDrawer({
                 })}
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {skipped > 0 && (
-            <div className="lk-note">
-              <Icon name="warning" size={20} />
-              <bdi className="ltr-num">{skipped}</bdi> מהדירות שנבחרו ללא שער (Gateway) — לא ניתן להחליף
-              להן קוד מרחוק והן ידולגו.
-            </div>
-          )}
-        </div>
-
-        <div className="lk-dw-ft">
-          <button type="button" className="btn btn-primary" onClick={submit} disabled={!canApply}>
-            <Icon name="check" size={20} />
-            {applying ? "מחליף…" : applyLabel}
-          </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>
-            ביטול
-          </button>
-        </div>
+        {skipped > 0 && (
+          <div className="lk-note">
+            <Icon name="warning" size={20} />
+            <bdi className="ltr-num">{skipped}</bdi> מהדירות שנבחרו ללא שער (Gateway) — לא ניתן להחליף
+            להן קוד מרחוק והן ידולגו.
+          </div>
+        )}
       </div>
-    </div>
+    </SidePanel>
   );
 }
 
