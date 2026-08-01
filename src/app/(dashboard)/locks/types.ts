@@ -83,6 +83,23 @@ export type SyncPasscodesSummary = {
   missing: number;
 };
 
+export type BulkRotateItemResult = {
+  lockId: string;
+  /** room label for the failure toast — never a code */
+  label: string;
+  ok: boolean;
+  /** present only on success; the operator asked for this door's code */
+  newCode?: string;
+  oldStillActive?: boolean;
+  error?: string;
+};
+
+export type BulkRotateResult = {
+  results: BulkRotateItemResult[];
+  succeeded: number;
+  total: number;
+};
+
 export type RotateCodeResult = {
   /** the new code, for the operator who pressed the button — never logged */
   newCode: string;

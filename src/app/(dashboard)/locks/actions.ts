@@ -7,7 +7,8 @@ import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { sql } from "@/lib/db";
 import { syncLocks } from "@/lib/ttlock/locks";
 import {
-  syncPasscodes, rotateApartmentCode, maskCode, TTLockNoGatewayError,
+  syncPasscodes, rotateApartmentCode, maskCode,
+  TTLockNoGatewayError, TTLockCodeRejectedError,
 } from "@/lib/ttlock/passcodes";
 import { TTLockNotConfiguredError } from "@/lib/ttlock/token";
 import { TTLockError, hebrewMessageFor } from "@/lib/ttlock/http";
@@ -16,6 +17,7 @@ import type { ActionResult } from "../calendar/types";
 import type {
   LocksScreenView, LockView, LockRoomView, PasscodeView,
   SyncLocksSummary, SyncPasscodesSummary, RotateCodeResult,
+  BulkRotateResult, BulkRotateItemResult,
 } from "./types";
 
 // ============================================================
@@ -40,6 +42,16 @@ const SECRETS_KEY_MISSING = "מפתח ההצפנה TTLOCK_SECRETS_KEY אינו �
 const uuid = z.string().uuid("מזהה שגוי");
 const mapSchema = z.object({ lockId: uuid, roomId: uuid });
 
+// Shape only. The BANNED PATTERNS (runs, repeats, leading zero, collision with
+// a code already on that door) are not duplicated here — they live in
+// codeRejection and are applied inside rotateApartmentCode, so the operator's
+// code and the random draw clear the identical bar. Re-implementing them in
+// this schema is how the two would drift apart. See guard rule 17.
+const bulkSchema = z
+  .array(z.object({ lockId: uuid, code: z.string().regex(/^\d{4,6}$/, "הקוד חייב להיות 4–6 ספרות") }))
+  .min(1, "לא נבחרו דירות")
+  .max(50, "ניתן להחליף עד 50 קודים בבת אחת");
+
 async function requireLocks(permission: "locks.view" | "locks.map" | "locks.rotate"): Promise<Actor> {
   const actor = await getActor();
   requirePermission(actor, permission);
@@ -56,6 +68,8 @@ function failFrom(e: unknown): { success: false; error: string } {
   if (e instanceof TTLockNotConfiguredError) return { success: false, error: NOT_CONFIGURED_HE };
   // Already a Hebrew sentence about the hardware, not an upstream string.
   if (e instanceof TTLockNoGatewayError) return { success: false, error: e.message };
+  // Already Hebrew, and about the CODE the operator typed — not the upstream.
+  if (e instanceof TTLockCodeRejectedError) return { success: false, error: e.message };
   if (e instanceof TTLockError) return { success: false, error: hebrewMessageFor(e.errcode) };
   return { success: false, error: "אירעה שגיאה בלתי צפויה" };
 }
@@ -255,12 +269,18 @@ export async function syncLocksAction(): Promise<ActionResult<SyncLocksSummary>>
  * therefore the right gate — a role that may READ the codes may refresh them,
  * and nothing here can change what is on a door.
  */
-export async function syncPasscodesAction(): Promise<ActionResult<SyncPasscodesSummary>> {
+export async function syncPasscodesAction(lockIds?: string[]): Promise<ActionResult<SyncPasscodesSummary>> {
   try {
     const actor = await requireLocks("locks.view");
     if (!ttlockSecretsConfigured()) return { success: false, error: SECRETS_KEY_MISSING };
 
-    const result = await syncPasscodes(actor.tenantId, sql);
+    // The ids are validated but NOT trusted as a scope: syncPasscodes still
+    // filters by tenant_id, so a foreign lock id narrows the sync to nothing
+    // rather than reaching another tenant's door.
+    const parsedIds = lockIds ? z.array(uuid).min(1).max(200).safeParse(lockIds) : null;
+    if (parsedIds && !parsedIds.success) return { success: false, error: "מזהה שגוי" };
+
+    const result = await syncPasscodes(actor.tenantId, sql, parsedIds?.data);
 
     await audit(actor, "ttlock.passcodes.sync", null, {
       locks: result.locks,
@@ -327,6 +347,117 @@ export async function rotateApartmentCodeAction(lockId: string): Promise<ActionR
 
     revalidatePath("/locks");
     return { success: true, data: { newCode: result.newCode, oldStillActive: result.oldStillActive } };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+/**
+ * Replace the apartment code on many doors at once, with codes the operator
+ * chose (D125).
+ *
+ * IT RIDES THE SINGLE-LOCK MACHINERY. Every item goes through the same
+ * rotateApartmentCode as the one-click button — same add-then-delete order,
+ * same outbox, same door-never-codeless invariant, same validation. The only
+ * difference is `requestedCode`. Duplicating that machinery for the bulk path
+ * is how the two would drift, and the half that drifted would be the one that
+ * touches ten doors at a time.
+ *
+ * SEQUENTIAL, WITH PER-LOCK ISOLATION. One offline gateway must not abort the
+ * other nine. Sequential rather than parallel because each rotation makes two
+ * upstream calls against one rate-limited account, and because the failure
+ * report is only readable if the order is the operator's.
+ *
+ * Audit is ONE ENTRY PER LOCK, in the same masked form as the single rotate.
+ * There is deliberately no aggregate row: a summary listing ten codes would be
+ * exactly the durable record of live door codes that rule 11 exists to prevent.
+ */
+export async function bulkRotateApartmentCodesAction(
+  items: { lockId: string; code: string }[],
+): Promise<ActionResult<BulkRotateResult>> {
+  try {
+    const actor = await requireLocks("locks.rotate");
+    if (!ttlockSecretsConfigured()) return { success: false, error: SECRETS_KEY_MISSING };
+
+    const parsed = bulkSchema.safeParse(items);
+    if (!parsed.success) {
+      return { success: false, error: parsed.error.issues[0]?.message ?? "נתונים שגויים" };
+    }
+
+    // One lock may appear once. Two codes for one door in a single submit is a
+    // client bug, and "last one wins" would silently rotate twice.
+    const seen = new Set<string>();
+    for (const item of parsed.data) {
+      if (seen.has(item.lockId)) return { success: false, error: "מנעול נבחר יותר מפעם אחת" };
+      seen.add(item.lockId);
+    }
+
+    // Re-read EVERY id under this tenant before anything reaches hardware. The
+    // rotation loop below iterates the VALIDATED input only — there is no path
+    // here that widens to a lock the operator did not send (guard rule 16).
+    const lockRows = await sql<{ id: string; alias: string; room_id: string | null; room_number: string | null }[]>`
+      SELECT l.id, l.alias, l.room_id, r.room_number
+      FROM guesthub.ttlock_locks l
+      LEFT JOIN guesthub.rooms r ON r.id = l.room_id AND r.tenant_id = l.tenant_id
+      WHERE l.tenant_id = ${actor.tenantId}
+        AND l.id = ANY(${parsed.data.map((i) => i.lockId)}::uuid[])`;
+    const byId = new Map(lockRows.map((l) => [l.id, l]));
+
+    const results: BulkRotateItemResult[] = [];
+
+    for (const item of parsed.data) {
+      const lock = byId.get(item.lockId);
+      const label = lock?.room_number ? `דירה ${lock.room_number}` : (lock?.alias ?? "מנעול");
+
+      if (!lock) {
+        results.push({ lockId: item.lockId, label, ok: false, error: "המנעול לא נמצא" });
+        continue;
+      }
+      if (!lock.room_id) {
+        results.push({ lockId: item.lockId, label, ok: false, error: "יש לשייך את המנעול לחדר לפני החלפת קוד" });
+        continue;
+      }
+
+      try {
+        const [previous] = await sql<{ code: string }[]>`
+          SELECT code FROM guesthub.ttlock_passcodes
+          WHERE tenant_id = ${actor.tenantId} AND lock_id = ${item.lockId}
+            AND role = 'apartment' AND state = 'active'
+          ORDER BY updated_at DESC LIMIT 1`;
+        const previousMasked = previous ? maskCode(previous.code) : null;
+
+        const res = await rotateApartmentCode({
+          tenantId: actor.tenantId,
+          lockRowId: item.lockId,
+          db: sql,
+          requestedCode: item.code,
+        });
+
+        await audit(
+          actor,
+          "ttlock.passcode.rotate",
+          lock.id,
+          { alias: lock.alias, code: maskCode(res.newCode), oldStillActive: res.oldStillActive, bulk: true },
+          { code: previousMasked },
+          "ttlock_passcode",
+        );
+
+        results.push({
+          lockId: item.lockId, label, ok: true,
+          newCode: res.newCode, oldStillActive: res.oldStillActive,
+        });
+      } catch (e) {
+        // Isolated on purpose: this door failed, the next one still runs.
+        const failure = failFrom(e);
+        results.push({ lockId: item.lockId, label, ok: false, error: failure.error });
+      }
+    }
+
+    revalidatePath("/locks");
+    return {
+      success: true,
+      data: { results, succeeded: results.filter((r) => r.ok).length, total: results.length },
+    };
   } catch (e) {
     return failFrom(e);
   }
