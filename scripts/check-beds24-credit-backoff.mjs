@@ -319,6 +319,12 @@ try {
     for (const t of [
       "channel_sync_errors", "channel_dirty_ranges", "channel_booking_revisions",
       "channel_sync_jobs", "channel_beds24_room_mappings", "channel_connections",
+      // D119: the inbound-import CREATE seam now writes a reservation.confirmed
+      // communication_events row, whose FK is ON DELETE RESTRICT by design (036:
+      // the events are evidence of what was sent to a guest) — teardown must
+      // clear them (messages first: outbound_messages RESTRICTs on events)
+      // before the reservations, exactly as the cancellation guards already do.
+      "outbound_messages", "communication_events",
       "audit_logs", "reservation_rooms", "reservations", "guests", "rooms",
       "room_types", "tenants",
     ]) {

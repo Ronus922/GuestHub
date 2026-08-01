@@ -1046,6 +1046,15 @@
     font-weight: 600;
     line-height: 1.5;
   }
+  /* the same note in amber: a consequence the operator opted INTO (an OTA
+     source on the confirmation trigger = a second confirmation for the guest),
+     not an unavailable control. Matches .gc-src.is-on.is-warn above, so the
+     chip and its explanation read as one warning. */
+  .gc-auto-note.is-warn {
+    border-color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    color: var(--warn);
+  }
   /* one line of the preview column's summary.
      NOT `.gc-sum`: that name is the KPI stat card at the top of this file
      (:89) — the second declaration overrode its 3px gap and painted it brand. */

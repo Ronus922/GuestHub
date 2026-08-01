@@ -93,6 +93,27 @@ export type EventPreparation = { created: number; duplicates: number; skipped: n
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OTA_ORIGINS = new Set<string>(["ota"]);
 
+/**
+ * "This reservation came from a sales channel" — ONE predicate for both OTA
+ * gates (D119). The hard-skip used the WIDE form (origin OR live channel
+ * linkage); `exclusions.ota` used the NARROW one (origin only). While
+ * reservation.confirmed carried otaHardSkip, the wide form covered it; dropping
+ * that flag so the operator can switch OTA on would have silently narrowed what
+ * "OTA" means for confirmations, letting a channel-linked reservation whose
+ * booking_origin is not 'ota' through a filter that used to stop it.
+ *
+ * Measured on production at cutover (2026-07-31): of 52 non-'ota' reservations,
+ * ZERO carry external_booking_id, channel_connection_id or ota_name — the
+ * import writes booking_origin='ota' at creation and never rewrites it, and it
+ * adopts a row only by external_booking_id. So this unification changes no
+ * behaviour today; it keeps the defensive breadth the hard-skip had, and it can
+ * only ever skip MORE, never send more.
+ */
+function isChannelBooking(reservation: ReservationSnapshot): boolean {
+  return OTA_ORIGINS.has(reservation.booking_origin)
+    || Boolean(reservation.external_booking_id || reservation.channel_connection_id || reservation.ota_name);
+}
+
 function guestComposition(adults: number, children: number, infants: number): string {
   const values = [`${adults} מבוגרים`];
   if (children) values.push(`${children} ילדים`);
@@ -535,13 +556,13 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
   // The persisted reservation is authoritative; an event cannot override its
   // provenance. Record one truthful terminal row per matching automation.
   // Trigger-parameterized eligibility: a cancellation message REQUIRES
-  // status='cancelled'; the OTA hard-skip applies only where the registry says
-  // (reservation.confirmed — the OTA already sends its own confirmation).
+  // status='cancelled'. The OTA hard-skip applies only where the registry says
+  // — since D119 no trigger sets it, because every one of them now has an event
+  // a channel booking can actually produce; the decision moved to the
+  // automation's own exclusions.ota, which the operator sets from the chips.
   const globalSkipReason = reservation.booking_origin !== event.source
     ? "source_mismatch"
-    : trigger.otaHardSkip
-      && (OTA_ORIGINS.has(reservation.booking_origin)
-        || Boolean(reservation.external_booking_id || reservation.channel_connection_id || reservation.ota_name))
+    : trigger.otaHardSkip && isChannelBooking(reservation)
       ? "ota_excluded"
       : !trigger.eligibleStatuses.includes(reservation.status)
         ? trigger.id === "reservation.confirmed" ? "reservation_not_confirmed" : "reservation_not_eligible"
@@ -595,7 +616,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       if (!sources.include.includes(reservation.booking_origin)) {
         await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
-      if (exclusions.ota && OTA_ORIGINS.has(reservation.booking_origin)) {
+      if (exclusions.ota && isChannelBooking(reservation)) {
         await skipAutomation(summary, event, automation, reservation, "ota_excluded", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.guestCommunicationOptOut && reservation.guest_communication_opt_out) {

@@ -47,9 +47,11 @@ export type TriggerDef = {
    */
   eligibleStatuses: string[];
   /**
-   * true → OTA-linked reservations are skipped unconditionally (the OTA sends
-   * its own confirmation). Only reservation.confirmed keeps this hard skip —
-   * other triggers leave the decision to the automation's exclusions.ota.
+   * true → OTA-linked reservations are skipped unconditionally, whatever the
+   * automation says. Reserved for a trigger whose event is never emitted for a
+   * channel booking: offering the source would control nothing. Since D119 the
+   * import DOES emit reservation.confirmed, so no trigger carries this today —
+   * every one of them leaves the decision to the automation's exclusions.ota.
    */
   otaHardSkip: boolean;
   defaultConditions: { logic: "all"; items: TriggerConditionItem[] };
@@ -68,7 +70,11 @@ export const TRIGGERS: Record<TriggerId, TriggerDef> = {
     description: "נשלח מיד כאשר הזמנה מאושרת — ידנית, מהאתר או בייבוא.",
     shortName: "confirmed",
     eligibleStatuses: ["confirmed"],
-    otaHardSkip: true,
+    // D119 — the Beds24 import now emits this event when it CREATES a
+    // reservation, so the OTA source is a real operator switch: it stays OFF by
+    // default (defaultExclusions.ota below), and turning it on sends OUR
+    // confirmation in addition to the channel's own.
+    otaHardSkip: false,
     defaultConditions: {
       logic: "all",
       items: [
@@ -195,17 +201,17 @@ export const SOURCE_GROUP_IDS = SOURCE_GROUPS.map((g) => g.id) as readonly Sourc
  * reads (automation.ts), so the control and the send path can never drift: if
  * the panel offers OTA, the engine will evaluate it.
  *
- * Today this returns a reason only for reservation.confirmed, and the reason is
- * not a policy preference — it is a capability fact in two independent layers:
- *   · NO confirmation event is ever emitted for an OTA reservation. The Beds24
- *     import emits only `cancelled` (booking-import.ts); the status-transition
- *     emitter is guarded by `booking_origin !== 'ota'` (reservations/actions.ts).
- *   · Even if one were emitted, `otaHardSkip` skips it (automation.ts).
- * An enabled toggle here would control nothing at all.
+ * D119 — this now returns null for EVERY trigger, because the last capability
+ * gap closed: the Beds24 import emits `reservation.confirmed` when it creates a
+ * reservation (booking-import.ts), so an enabled OTA chip controls something
+ * real on all five triggers. The function stays, and stays derived, because the
+ * rule it encodes has not changed: a source is offered only where the send path
+ * can honour it. A future trigger whose event no channel booking ever produces
+ * sets otaHardSkip and is blocked here automatically.
  */
 export function otaSourceBlockReason(triggerId: TriggerId): string | null {
   return TRIGGERS[triggerId].otaHardSkip
-    ? "לא נפלט אירוע אישור עבור הזמנות OTA — הייבוא מהערוץ אינו יוצר אירוע אישור, וה-OTA שולח לאורח אישור משלו. הפעלה כאן לא הייתה שולחת דבר."
+    ? "לא נפלט אירוע עבור הזמנות OTA בטריגר הזה — הפעלה כאן לא הייתה שולחת דבר."
     : null;
 }
 

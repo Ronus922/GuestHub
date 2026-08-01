@@ -11,7 +11,7 @@ import {
   type NormalizedRoom,
 } from "./booking-normalize";
 import { markAriDirty } from "./outbox";
-import { enqueueReservationCancelled } from "@/lib/communications/outbox";
+import { enqueueReservationCancelled, enqueueReservationConfirmed } from "@/lib/communications/outbox";
 import {
   dispatchExternalChangeEmails,
   recordExternalDateChange,
@@ -518,6 +518,30 @@ async function applyLiveRevision(
               ${norm.insertedAt}, ${wf?.id ?? null})
       RETURNING id`;
     reservationId = created.id;
+    // THE OTA CONFIRMATION SEAM (D119). An imported reservation comes into
+    // existence AS 'confirmed' (the literal in the INSERT above) — so THIS, and
+    // only this, is the moment an OTA reservation reaches a confirmed state.
+    //
+    // Deliberately inside the create branch, NOT after the if/else: the import
+    // re-sees every booking inside LOOKBACK_DAYS on every pull and takes the
+    // UPDATE branch for it, where line ~421 rewrites status='confirmed'
+    // unconditionally. An emission placed there could not tell "reached
+    // confirmed now" from "was already confirmed" and would fire for
+    // pre-existing reservations on every re-pull. Here, a re-import cannot
+    // reach the call at all — that is a syntactic property, not a runtime check.
+    //
+    // Two independent guarantees that this fires ONCE per reservation, ever:
+    //   1. structural — unreachable from the UPDATE branch (above);
+    //   2. the occurrence key `reservation:<id>:confirmed:v1` under
+    //      UNIQUE (tenant_id, event_type, aggregate_type, occurrence_key), with
+    //      migration 068 having already occupied that key for every reservation
+    //      that existed at cutover.
+    // Rides this transaction: the event exists iff the reservation does.
+    await enqueueReservationConfirmed(tx, {
+      tenantId: conn.tenant_id,
+      reservationId,
+      bookingOrigin: "ota",
+    });
   }
 
   for (const stay of stays) {
