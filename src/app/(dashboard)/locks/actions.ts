@@ -6,11 +6,17 @@ import { getActor, requirePermission, AuthorizationError, type Actor } from "@/l
 import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { sql } from "@/lib/db";
 import { syncLocks } from "@/lib/ttlock/locks";
+import {
+  syncPasscodes, rotateApartmentCode, maskCode, TTLockNoGatewayError,
+} from "@/lib/ttlock/passcodes";
 import { TTLockNotConfiguredError } from "@/lib/ttlock/token";
 import { TTLockError, hebrewMessageFor } from "@/lib/ttlock/http";
 import { ttlockSecretsConfigured } from "@/lib/ttlock/crypto";
 import type { ActionResult } from "../calendar/types";
-import type { LocksScreenView, LockView, LockRoomView, SyncLocksSummary } from "./types";
+import type {
+  LocksScreenView, LockView, LockRoomView, PasscodeView,
+  SyncLocksSummary, SyncPasscodesSummary, RotateCodeResult,
+} from "./types";
 
 // ============================================================
 // /locks Server Actions (D123).
@@ -34,7 +40,7 @@ const SECRETS_KEY_MISSING = "מפתח ההצפנה TTLOCK_SECRETS_KEY אינו �
 const uuid = z.string().uuid("מזהה שגוי");
 const mapSchema = z.object({ lockId: uuid, roomId: uuid });
 
-async function requireLocks(permission: "locks.view" | "locks.map"): Promise<Actor> {
+async function requireLocks(permission: "locks.view" | "locks.map" | "locks.rotate"): Promise<Actor> {
   const actor = await getActor();
   requirePermission(actor, permission);
   return actor;
@@ -48,22 +54,29 @@ async function requireLocks(permission: "locks.view" | "locks.map"): Promise<Act
 function failFrom(e: unknown): { success: false; error: string } {
   if (e instanceof AuthorizationError) return { success: false, error: e.message };
   if (e instanceof TTLockNotConfiguredError) return { success: false, error: NOT_CONFIGURED_HE };
+  // Already a Hebrew sentence about the hardware, not an upstream string.
+  if (e instanceof TTLockNoGatewayError) return { success: false, error: e.message };
   if (e instanceof TTLockError) return { success: false, error: hebrewMessageFor(e.errcode) };
   return { success: false, error: "אירעה שגיאה בלתי צפויה" };
 }
 
 // Audit payloads carry ids, aliases and room numbers — the operator's own data.
-// Never a secret, never a token, never a fragment of an upstream response.
+// Never a secret, never a token, never a fragment of an upstream response, and
+// — since D124 — never a full passcode. A rotation audits maskCode(), which is
+// two digits: enough to match a row against what the operator was told, useless
+// to anybody who reads the audit trail looking for a way in. Rule 11 fails the
+// build if a full code ever reaches this function.
 async function audit(
   actor: Actor,
   action: string,
   entityId: string | null,
   after: Record<string, unknown>,
   before?: Record<string, unknown>,
+  entityType: "ttlock_lock" | "ttlock_passcode" = "ttlock_lock",
 ): Promise<void> {
   const ctx = await auditRequestContext();
   await writeAudit(actor, {
-    entityType: "ttlock_lock",
+    entityType,
     entityId,
     action,
     before,
@@ -84,6 +97,16 @@ type LockRow = {
   room_number: string | null;
   room_name: string | null;
   room_floor: string | null;
+  can_rotate: boolean;
+};
+
+type PasscodeRow = {
+  lock_id: string;
+  role: string;
+  code: string;
+  state: string;
+  updated_at: string | null;
+  last_error: string | null;
 };
 
 /**
@@ -102,7 +125,7 @@ export async function listLocksAction(): Promise<ActionResult<LocksScreenView>> 
       FROM guesthub.ttlock_connections
       WHERE tenant_id = ${actor.tenantId}`;
 
-    const [lockRows, roomRows] = await Promise.all([
+    const [lockRows, roomRows, codeRows] = await Promise.all([
       sql<LockRow[]>`
         SELECT l.id,
                l.ttlock_lock_id::text AS ttlock_lock_id,
@@ -113,7 +136,10 @@ export async function listLocksAction(): Promise<ActionResult<LocksScreenView>> 
                l.room_id,
                r.room_number AS room_number,
                r.name        AS room_name,
-               r.floor       AS room_floor
+               r.floor       AS room_floor,
+               -- no gateway, no remote code push: the button is disabled with a
+               -- sentence rather than left to fail against the hardware.
+               COALESCE((l.raw->>'hasGateway')::int, 0) = 1 AS can_rotate
         FROM guesthub.ttlock_locks l
         LEFT JOIN guesthub.rooms r ON r.id = l.room_id AND r.tenant_id = l.tenant_id
         WHERE l.tenant_id = ${actor.tenantId}
@@ -123,20 +149,60 @@ export async function listLocksAction(): Promise<ActionResult<LocksScreenView>> 
         FROM guesthub.rooms
         WHERE tenant_id = ${actor.tenantId} AND is_active = true
         ORDER BY sort_order ASC, room_number ASC`,
+      // EVERY live code, not one per role — the picking happens below in TS.
+      //
+      // A DISTINCT ON here looked equivalent and was not. It returns the
+      // newest ACTIVE code and drops the rest, so a rotation whose delete
+      // failed — the exact case the outbox exists for — would show the new
+      // code and silently hide the superseded one that still opens the door.
+      // The real-DB exercise produced that state and caught it.
+      sql<PasscodeRow[]>`
+        SELECT lock_id, role, code, state,
+               updated_at::text AS updated_at,
+               last_error
+        FROM guesthub.ttlock_passcodes
+        WHERE tenant_id = ${actor.tenantId}
+          AND role IN ('apartment', 'manager')
+          AND state IN ('active', 'rotating', 'revoking', 'missing')
+        ORDER BY lock_id, role,
+                 CASE state WHEN 'active' THEN 0 WHEN 'rotating' THEN 1 WHEN 'revoking' THEN 2 ELSE 3 END,
+                 updated_at DESC`,
     ]);
 
-    const locks: LockView[] = lockRows.map((l) => ({
-      id: l.id,
-      ttlockLockId: l.ttlock_lock_id,
-      alias: l.alias,
-      battery: l.battery,
-      room:
-        l.room_id && l.room_number
-          ? { roomId: l.room_id, roomNumber: l.room_number, name: l.room_name, floor: l.room_floor }
-          : null,
-      syncedAt: l.synced_at,
-      missingSince: l.missing_since,
-    }));
+    const toPasscode = (r: PasscodeRow | undefined): PasscodeView | null =>
+      r ? { code: r.code, state: r.state, updatedAt: r.updated_at, lastError: r.last_error } : null;
+
+    // A code the guest could type in RIGHT NOW. 'revoking' counts: the delete
+    // has not landed, so the digits still work.
+    const isLive = (r: PasscodeRow) => r.state === "active" || r.state === "revoking";
+
+    const locks: LockView[] = lockRows.map((l) => {
+      const mine = codeRows.filter((c) => c.lock_id === l.id);
+      // The query's ORDER BY already puts the current one first.
+      const apartment = mine.find((c) => c.role === "apartment");
+      const superseded = mine
+        .filter((c) => c.role === "apartment" && c !== apartment && isLive(c))
+        .map((c) => c.code.slice(-2));
+
+      return {
+        id: l.id,
+        ttlockLockId: l.ttlock_lock_id,
+        alias: l.alias,
+        battery: l.battery,
+        room:
+          l.room_id && l.room_number
+            ? { roomId: l.room_id, roomNumber: l.room_number, name: l.room_name, floor: l.room_floor }
+            : null,
+        syncedAt: l.synced_at,
+        missingSince: l.missing_since,
+        apartmentCode: toPasscode(apartment),
+        managerCode: toPasscode(mine.find((c) => c.role === "manager")),
+        // Only the last two digits: the screen needs to NAME the stale code,
+        // not to hand it out a second time.
+        supersededCodes: superseded,
+        canRotate: l.can_rotate,
+      };
+    });
 
     const rooms: LockRoomView[] = roomRows.map((r) => ({
       roomId: r.id,
@@ -176,6 +242,91 @@ export async function syncLocksAction(): Promise<ActionResult<SyncLocksSummary>>
 
     revalidatePath("/locks");
     return { success: true, data: result };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+/**
+ * Pull every door's code list from TTLock and reconcile.
+ *
+ * READ-ONLY UPSTREAM: syncPasscodes calls one endpoint, /v3/lock/listKeyboardPwd,
+ * and no write endpoint exists on that path (guard rule 9). `locks.view` is
+ * therefore the right gate — a role that may READ the codes may refresh them,
+ * and nothing here can change what is on a door.
+ */
+export async function syncPasscodesAction(): Promise<ActionResult<SyncPasscodesSummary>> {
+  try {
+    const actor = await requireLocks("locks.view");
+    if (!ttlockSecretsConfigured()) return { success: false, error: SECRETS_KEY_MISSING };
+
+    const result = await syncPasscodes(actor.tenantId, sql);
+
+    await audit(actor, "ttlock.passcodes.sync", null, {
+      locks: result.locks,
+      added: result.added,
+      updated: result.updated,
+      missing: result.missing,
+    }, undefined, "ttlock_passcode");
+
+    revalidatePath("/locks");
+    return { success: true, data: result };
+  } catch (e) {
+    return failFrom(e);
+  }
+}
+
+/**
+ * Replace one door's apartment code with a fresh five-digit one.
+ *
+ * `locks.rotate` — the permission 069 seeded two migrations ago and that has
+ * had no screen behind it until now. It is a strictly stronger act than viewing
+ * or mapping: it changes what a physical door accepts.
+ *
+ * THE FULL CODE IS RETURNED TO THIS CALLER AND NOWHERE ELSE. The operator who
+ * pressed the button is the person who has to read it out; the audit row gets
+ * maskCode() and so does every other sink.
+ */
+export async function rotateApartmentCodeAction(lockId: string): Promise<ActionResult<RotateCodeResult>> {
+  try {
+    const actor = await requireLocks("locks.rotate");
+    if (!ttlockSecretsConfigured()) return { success: false, error: SECRETS_KEY_MISSING };
+
+    const parsed = uuid.safeParse(lockId);
+    if (!parsed.success) return { success: false, error: "מזהה שגוי" };
+
+    // Re-read under this tenant before touching hardware: the client supplies a
+    // uuid and is trusted for nothing. A lock id from another tenant must not
+    // reach TTLock at all.
+    const [lock] = await sql<{ id: string; alias: string; room_id: string | null }[]>`
+      SELECT id, alias, room_id
+      FROM guesthub.ttlock_locks
+      WHERE id = ${parsed.data} AND tenant_id = ${actor.tenantId}`;
+    if (!lock) return { success: false, error: "המנעול לא נמצא" };
+    if (!lock.room_id) return { success: false, error: "יש לשייך את המנעול לחדר לפני החלפת קוד" };
+
+    // Read for the audit BEFORE the change, and masked at the point of read so
+    // no full code is ever held in a variable that an audit payload can see.
+    const [previous] = await sql<{ code: string }[]>`
+      SELECT code FROM guesthub.ttlock_passcodes
+      WHERE tenant_id = ${actor.tenantId} AND lock_id = ${parsed.data}
+        AND role = 'apartment' AND state = 'active'
+      ORDER BY updated_at DESC LIMIT 1`;
+    const previousMasked = previous ? maskCode(previous.code) : null;
+
+    const result = await rotateApartmentCode({ tenantId: actor.tenantId, lockRowId: parsed.data, db: sql });
+
+    await audit(
+      actor,
+      "ttlock.passcode.rotate",
+      lock.id,
+      { alias: lock.alias, code: maskCode(result.newCode), oldStillActive: result.oldStillActive },
+      { code: previousMasked },
+      "ttlock_passcode",
+    );
+
+    revalidatePath("/locks");
+    return { success: true, data: { newCode: result.newCode, oldStillActive: result.oldStillActive } };
   } catch (e) {
     return failFrom(e);
   }
