@@ -206,8 +206,19 @@ export function DashboardScreen({
             </span>
             <div className="kpi-text">
               {/* Phase 2 replaces the em dash. A zero here would be a number the
-                  operator cannot tell from a measurement. */}
-              <div className="kpi-value ltr-num">—</div>
+                  operator cannot tell from a measurement.
+
+                  .ltr-num goes on an INLINE span, never on this block. It carries
+                  `direction: ltr`, and on the block that flips the line's start
+                  edge to the left while the label and subline below stay RTL —
+                  measured at 1440px, the value drifted 9/41/44px away from the
+                  label's edge. Isolating the digits inline keeps the shekel sign,
+                  the percent and the thousands separators in the right order AND
+                  keeps the value flush with its own label, as
+                  DeshbordMain.source.html renders it (.kv is plain RTL there). */}
+              <div className="kpi-value">
+                <span className="ltr-num">—</span>
+              </div>
               <div className="kpi-label">{k.label}</div>
               <div className="kpi-sub">{k.sub}</div>
             </div>
