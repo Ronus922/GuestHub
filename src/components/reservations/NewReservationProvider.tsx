@@ -14,7 +14,8 @@ export type NewReservationSource =
   | "calendar_drag"
   | "calendar_context"
   | "calendar_double_click"
-  | "calendar_mobile";
+  | "calendar_mobile"
+  | "dashboard_topbar";
 
 export type NewReservationPrefill = {
   roomId?: string;

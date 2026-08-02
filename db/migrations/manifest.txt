@@ -77,3 +77,4 @@
 069_ttlock_connection.sql
 070_ttlock_locks.sql
 071_ttlock_passcodes.sql
+072_user_ui_preferences.sql
