@@ -178,6 +178,17 @@ const ICONS = {
   // variable groups
   "confirmation-number": "confirmation_number",
   storefront: "storefront",
+  // --- dashboard windows (design-ref/DeshbordMain) — the seven ligatures the
+  // eleven window headers need that no screen had asked for before. `bell`,
+  // `maintenance`, `cleaning` and `list-checks` above already cover the other
+  // four (notifications / build / cleaning_services / checklist).
+  "arrivals-departures": "sync_alt",
+  "chart-area": "show_chart",
+  agenda: "event_note",
+  reviews: "reviews",
+  forum: "forum",
+  donut: "donut_large",
+  "night-shelter": "night_shelter",
 } as const;
 
 export type IconName = keyof typeof ICONS;
