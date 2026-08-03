@@ -3,6 +3,9 @@ import { sql } from "@/lib/db";
 import type { DateOnly } from "@/lib/dates";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
 import { nightlyRevenue } from "@/lib/reports/nightly-revenue";
+import { monthlyRevenue, type MonthlyRevenuePoint } from "@/lib/reports/monthly-revenue";
+import { sourcesBreakdown, type SourcesBreakdown } from "@/lib/reports/sources-breakdown";
+import { periodSpan } from "./period";
 
 // ============================================================
 // Dashboard Phase 2 — the read side of the five live surfaces (KPI, arr, inh,
@@ -76,8 +79,15 @@ export type AlertRow = {
   href: string | null;
 };
 
+/** design §4.2: the chart's range is 6–12; 12 is the default */
+export const CHART_MONTHS = 12;
+
 export type DashboardData = {
   kpi: KpiData;
+  /** rev — the last CHART_MONTHS calendar months */
+  monthly: MonthlyRevenuePoint[];
+  /** src — the CURRENT month, the same call the drawer makes */
+  sources: SourcesBreakdown;
   arrivals: StayRow[];
   departures: StayRow[];
   inHouse: StayRow[];
@@ -130,6 +140,9 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
   // "tonight" is the single night [today, today+1) — hotel-night semantics, the
   // same half-open window every other date range in this codebase uses
   const tomorrow = addOneDay(today);
+  // the src window shows the CURRENT month — the drawer's default period, so
+  // opening it does not change the numbers the operator was just looking at
+  const monthSpan = periodSpan(today, "month");
 
   const [
     occupancy,
@@ -139,6 +152,8 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     hkRows,
     revenue,
     alerts,
+    monthly,
+    sources,
   ] = await Promise.all([
     // ---- KPI 1: occupancy tonight -----------------------------------------
     // D128 — the denominator is `status='available' AND is_active`, the SAME
@@ -212,6 +227,12 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
 
     // ---- alr: the curated signals ----------------------------------------
     dashboardAlerts(tenantId),
+
+    // ---- rev: one pass over the last 12 calendar months -------------------
+    monthlyRevenue(tenantId, today, CHART_MONTHS),
+
+    // ---- src: the current month, shared with the drawer -------------------
+    sourcesBreakdown(tenantId, monthSpan.from, monthSpan.to, "guests"),
   ]);
 
   const tonight = revenue.days[0];
@@ -234,6 +255,8 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     },
     arrivals,
     departures,
+    monthly,
+    sources,
     inHouse: inHouseRows.map(toStay),
     housekeeping: hkRows.map((r) => ({
       taskId: r.task_id as string,

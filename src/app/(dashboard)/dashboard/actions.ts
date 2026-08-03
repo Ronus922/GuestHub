@@ -2,7 +2,15 @@
 
 import { sql } from "@/lib/db";
 import { getActor } from "@/lib/auth/actor";
+import { requirePermission, AuthorizationError } from "@/lib/auth/permission-check";
+import { todayInTz } from "@/lib/dates";
+import {
+  sourcesBreakdown,
+  type SourceMetric,
+  type SourcesBreakdown,
+} from "@/lib/reports/sources-breakdown";
 import { normalizeDashboardLayout, type DashboardPreferences } from "./windows";
+import { periodSpan, type SourcesPeriod } from "./period";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 // ============================================================
@@ -43,4 +51,35 @@ export async function saveDashboardLayoutAction(input: unknown): Promise<ActionR
     WHERE id = ${actor.userId} AND tenant_id = ${actor.tenantId}`;
 
   return { success: true };
+}
+
+// ============================================================
+// sourcesBreakdownAction — the drawer's period/metric re-query.
+//
+// It calls the SAME sourcesBreakdown() the page already called for the src
+// window. The drawer changing period must not become a second definition of the
+// numbers; it is the same function over a different span.
+//
+// Read-only and tenant-scoped. Gated on reservations.view: the breakdown is
+// commercial data about bookings, and that is the key that already governs
+// seeing bookings.
+// ============================================================
+export async function sourcesBreakdownAction(
+  period: SourcesPeriod,
+  metric: SourceMetric,
+): Promise<ActionResult<SourcesBreakdown>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "reservations.view");
+    const [{ timezone }] = await sql<{ timezone: string | null }[]>`
+      SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
+    const today = todayInTz(timezone || "Asia/Jerusalem");
+    const { from, to } = periodSpan(today, period);
+    const data = await sourcesBreakdown(actor.tenantId, from, to, metric);
+    return { success: true, data };
+  } catch (e) {
+    if (e instanceof AuthorizationError) return { success: false, error: e.message };
+    console.error("[dashboard/sources]", e);
+    return { success: false, error: "אירעה שגיאה בלתי צפויה" };
+  }
 }

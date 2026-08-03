@@ -1227,6 +1227,333 @@
   }
 
 
+  /* ============================================================
+     DASHBOARD PHASE 3 — rev chart, src donut legend, sources drawer.
+     Closed scale only; every colour is a token or comes from the data
+     (lookup_items.color / the D132 fallback palette in lib/colors.ts).
+     ============================================================ */
+
+  /* ---- rev ---- */
+  .rev {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 6px 2px;
+  }
+  .rev-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 0 6px;
+  }
+  .rev-total {
+    font-size: 21px;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+  .rev-total-lbl {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .rev-chart {
+    position: relative;
+  }
+  .rev-svg {
+    display: block;
+    width: 100%;
+    height: 190px;
+    overflow: visible;
+    touch-action: pan-y;
+  }
+  .rev-baseline {
+    stroke: var(--line);
+    stroke-width: 2;
+  }
+  .rev-fill-top {
+    stop-color: var(--brand);
+    stop-opacity: 0.22;
+  }
+  .rev-fill-bottom {
+    stop-color: var(--brand);
+    stop-opacity: 0.02;
+  }
+  .rev-line {
+    fill: none;
+    stroke: var(--brand);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+  .rev-cursor {
+    stroke: var(--brand-line);
+    stroke-width: 2;
+    vector-effect: non-scaling-stroke;
+  }
+  .rev-dot {
+    fill: var(--surface);
+    stroke: var(--brand);
+    stroke-width: 3;
+    vector-effect: non-scaling-stroke;
+  }
+  .rev-tip {
+    position: absolute;
+    top: 0;
+    transform: translateX(50%);
+    background: var(--ink);
+    color: var(--surface);
+    border-radius: var(--r-sm);
+    padding: 7px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: var(--shadow-float);
+    z-index: 2;
+  }
+  .rev-tip-m {
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0.75;
+  }
+  .rev-tip-r {
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .rev-tip-o {
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0.75;
+  }
+  .rev-axis {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 2px;
+  }
+  .rev-axis-m {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+  }
+  .rev-axis-m.on {
+    color: var(--brand);
+  }
+  .rev-partial {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    opacity: 0.8;
+  }
+  .rev-foot {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+    padding: 0 6px 2px;
+  }
+
+  /* ---- src ---- */
+  .src {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 10px 2px;
+    flex-wrap: wrap;
+  }
+  .src-legend {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .src-legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .src-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .src-label {
+    font-size: 13.5px;
+    font-weight: 700;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .src-n {
+    font-size: 13.5px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .src-pct {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 46px;
+    text-align: end;
+  }
+  .src-more {
+    width: calc(100% - 20px);
+    margin: 8px 10px 2px;
+    justify-content: center;
+  }
+
+  /* ---- the sources drawer ---- */
+  .sd-controls {
+    display: flex;
+    gap: 10px;
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+  .sd-controls > * {
+    flex: 1;
+    min-width: 220px;
+  }
+  .sd-main {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 18px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+    transition: opacity 0.15s ease;
+  }
+  .sd-main.loading {
+    opacity: 0.55;
+  }
+  .sd-legend {
+    flex: 1;
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .sd-legend-row {
+    display: grid;
+    grid-template-columns: 10px 1fr auto auto;
+    grid-template-areas:
+      "dot label n pct"
+      ".   meter meter rev";
+    align-items: center;
+    gap: 4px 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    background: transparent;
+    border-radius: var(--r-md);
+    font-family: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+  .sd-legend-row:hover,
+  .sd-legend-row.on {
+    background: var(--surface-hover);
+  }
+  .sd-legend-row:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+  .sd-legend-row .src-dot {
+    grid-area: dot;
+  }
+  .sd-legend-label {
+    grid-area: label;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sd-legend-n {
+    grid-area: n;
+    font-size: 14px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .sd-legend-pct {
+    grid-area: pct;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 46px;
+    text-align: end;
+  }
+  .sd-meter {
+    grid-area: meter;
+    height: 6px;
+    border-radius: var(--r-xs);
+    background: var(--line);
+    overflow: hidden;
+  }
+  .sd-meter-fill {
+    display: block;
+    height: 100%;
+    border-radius: var(--r-xs);
+  }
+  .sd-legend-rev {
+    grid-area: rev;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+  .sd-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .sd-card {
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sd-card-t {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .sd-card-v {
+    font-size: 21px;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+  .sd-card-u {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  .sd-card-r {
+    font-size: 14px;
+    font-weight: 800;
+    margin-top: 4px;
+  }
+
+
   @media (max-width: 1100px) {
     .kpis {
       grid-template-columns: repeat(2, 1fr);
