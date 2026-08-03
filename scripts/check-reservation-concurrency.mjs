@@ -11,8 +11,18 @@
 //   A. Two concurrent transactions INSERT overlapping BLOCKING stays on the same
 //      room (bypassing the app lock) → exactly one commits, the other is rejected
 //      by the exclusion constraint.
-//   B. Two draft (non-blocking) stays for the same room+dates coexist; confirming
-//      BOTH concurrently → exactly one succeeds.
+//   B. Two NON-BLOCKING stays for the same room+dates coexist; flipping BOTH to
+//      a blocking status concurrently → exactly one succeeds. This is the
+//      UPDATE-side race (res_propagate_blocking racing the constraint), which
+//      scenario A's INSERT-side race does not reach.
+//
+//      D126 moved which statuses are non-blocking. Until then this scenario
+//      used two overlapping DRAFTS; since D126 a draft consumes inventory, so
+//      the old seed is rejected by rr_no_double_booking before the race can
+//      even be set up. `cancelled` is now the ONLY non-blocking status, so the
+//      pair starts cancelled and is reinstated — an ordinary operation, and a
+//      real race when two operators reinstate overlapping bookings at once.
+//      B0 below pins the D126 half so the old seed cannot quietly return.
 //   C. Adjacent stays (checkout == next checkin) on one room → BOTH allowed
 //      (half-open [check_in,check_out)).
 import postgres from "postgres";
@@ -53,13 +63,32 @@ try {
     catch (e) { isExcl(e) ? ok("A: concurrent overlapping blocking insert rejected by exclusion constraint") : bad("A: rejected but wrong error", e); }
   } catch (e) { bad("A: setup", e); }
 
-  // ---- Scenario B: two drafts, confirm both concurrently ----
-  const D1 = await mkRes('draft'), D2 = await mkRes('draft');
+  // ---- Scenario B0 (D126): a draft CONSUMES inventory, so two overlapping
+  //      drafts can no longer coexist. This is the assumption the old scenario-B
+  //      seed rested on; asserting its inverse keeps the seed from regressing.
+  try {
+    const X1 = await mkRes('draft'), X2 = await mkRes('draft');
+    await admin`insert into guesthub.reservation_rooms (tenant_id, reservation_id, room_id, check_in, check_out) values
+       (${T}, ${X1}, ${ROOM}, '2027-04-01','2027-04-04')`;
+    try {
+      await admin`insert into guesthub.reservation_rooms (tenant_id, reservation_id, room_id, check_in, check_out) values
+         (${T}, ${X2}, ${ROOM}, '2027-04-02','2027-04-06')`;
+      bad("B0: a second overlapping DRAFT was accepted — draft no longer holds inventory (D126 regressed)");
+    } catch (e) {
+      if (isExcl(e)) ok("B0: overlapping DRAFT stays rejected — a draft holds the room (D126)");
+      else bad("B0: rejected but wrong error", e);
+    }
+    await admin`delete from guesthub.reservations where id in (${X1}, ${X2})`;
+  } catch (e) { bad("B0: setup", e); }
+
+  // ---- Scenario B: two non-blocking stays, flip both to blocking concurrently ----
+  // `cancelled` is the only non-blocking status since D126 (see header).
+  const D1 = await mkRes('cancelled'), D2 = await mkRes('cancelled');
   await admin`insert into guesthub.reservation_rooms (tenant_id, reservation_id, room_id, check_in, check_out) values
      (${T}, ${D1}, ${ROOM}, '2027-05-01','2027-05-04')`;
   await admin`insert into guesthub.reservation_rooms (tenant_id, reservation_id, room_id, check_in, check_out) values
-     (${T}, ${D2}, ${ROOM}, '2027-05-02','2027-05-06')`;  // overlaps, but both draft = non-blocking = allowed
-  ok("B: two overlapping DRAFT stays coexist (non-blocking)");
+     (${T}, ${D2}, ${ROOM}, '2027-05-02','2027-05-06')`;  // overlaps, both non-blocking = allowed
+  ok("B: two overlapping NON-BLOCKING stays coexist (cancelled)");
   try {
     let firstOk=false, secondFailed=false;
     await c1.begin(async (t1) => {
@@ -69,8 +98,8 @@ try {
       globalThis.__pB = p2; firstOk=true;
     });
     try { await globalThis.__pB; } catch (e) { if (isExcl(e)) secondFailed=true; else throw e; }
-    (firstOk && secondFailed) ? ok("B: confirming the second overlapping draft rejected by exclusion constraint")
-                              : bad("B: both confirmations succeeded (double booking!)");
+    (firstOk && secondFailed) ? ok("B: reinstating the second overlapping stay rejected by exclusion constraint")
+                              : bad("B: both reinstatements succeeded (double booking!)");
   } catch (e) { bad("B: confirm race", e); }
 
   // ---- Scenario C: adjacency allowed ----
