@@ -80,6 +80,7 @@ export type RevenueReport = {
 
 // Revenue + ADR for stays overlapping [from, to). Room revenue is the reservation
 // room total; ADR = room revenue / room-nights. Uses confirmed+ stays only.
+// NOT IN USE (zero consumers) — superseded for dashboard money by nightlyRevenue() in ./nightly-revenue.ts, which prorates per night instead of adding each stay's whole price_total to every window it touches.
 export async function revenueReport(tenantId: string, from: string, to: string): Promise<RevenueReport> {
   const [row] = await sql<{ res: number; nights: number; revenue: number }[]>`
     SELECT count(DISTINCT r.id)::float8 AS res,
@@ -139,6 +140,7 @@ export async function cashUpReport(tenantId: string, from: string, to: string): 
 export type ChannelProductionRow = { channel: string; reservations: number; roomRevenue: number };
 
 // Channel production — volume + value per OTA/source for stays overlapping the range.
+// NOT IN USE (zero consumers) — superseded for dashboard money by nightlyRevenue() in ./nightly-revenue.ts.
 export async function channelProductionReport(tenantId: string, from: string, to: string): Promise<ChannelProductionRow[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT COALESCE(NULLIF(btrim(r.ota_name), ''), r.booking_origin, 'direct') AS channel,

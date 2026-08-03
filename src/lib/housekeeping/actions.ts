@@ -217,6 +217,7 @@ export async function advanceMyTaskAction(taskId: string): Promise<Result> {
     if (!done.ok) return { success: false, error: done.error };
     revalidatePath("/housekeeping/my-tasks");
     revalidatePath("/rooms");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);
@@ -303,6 +304,7 @@ export async function assignTaskAction(taskId: string, userId: string | null): P
     revalidatePath("/housekeeping");
     revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);
@@ -341,13 +343,33 @@ const BOARD_STATUSES = ["pending", "in_progress", "completed", "inspected"] as c
 export async function setTaskStatusAction(taskId: string, status: string): Promise<Result> {
   try {
     const actor = await getActor();
-    requirePermission(actor, "housekeeping.manage");
+    // D-Phase2 / migration 074 — "I finished cleaning this room" is not "I run
+    // the housekeeping board". Marking a task COMPLETE accepts either key, so
+    // the front desk can press "סמן כנקי" without also gaining task creation,
+    // assignment and board editing. Every OTHER transition on this action
+    // (in_progress, inspected, back to pending) still requires manage — the
+    // branch is on the one status the dashboard button writes, not on the
+    // action as a whole.
+    if (status === "completed") {
+      if (!actor) throw new AuthorizationError("לא מחובר למערכת");
+      if (!hasPermission(actor, "housekeeping.manage") && !hasPermission(actor, "housekeeping.mark_clean"))
+        throw new AuthorizationError("חסרה הרשאה: housekeeping.mark_clean");
+    } else {
+      requirePermission(actor, "housekeeping.manage");
+    }
     if (!BOARD_STATUSES.includes(status as (typeof BOARD_STATUSES)[number]))
       return { success: false, error: "סטטוס אינו תקין" };
     const [row] = await sql<{ id: string }[]>`
       UPDATE guesthub.housekeeping_tasks
       SET status = ${status},
           completed_at = ${status === "completed" ? sql`now()` : sql`completed_at`},
+          -- D-Phase2: the design's chip reads "נקי · <עובדת>", and this action
+          -- never wrote assigned_to — so the chip had no name to show. COALESCE,
+          -- exactly as advanceMyTaskAction claims a task: an existing assignee
+          -- (the cleaner who actually did it) is never overwritten by whoever
+          -- pressed the button; an unassigned task records the presser, who is
+          -- the person asserting the room is clean.
+          assigned_to = ${status === "completed" ? sql`COALESCE(assigned_to, ${actor.userId}::uuid)` : sql`assigned_to`},
           updated_at = now()
       WHERE id = ${taskId} AND tenant_id = ${actor.tenantId}
       RETURNING id`;
@@ -359,7 +381,51 @@ export async function setTaskStatusAction(taskId: string, status: string): Promi
     revalidatePath("/housekeeping");
     revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
     return { success: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// D-Phase2 — "סימון הכל כנקי" from the dashboard's hk window. ONE statement for
+// the whole visible set, not N round-trips: the design's button is a single
+// operator gesture and must be a single write, or a slow network turns it into a
+// half-cleaned board with no way to tell which half landed.
+//
+// Takes the ids the window is actually SHOWING rather than "every open task",
+// so a task that appeared after the page rendered is never silently completed by
+// a button the operator pressed against a different list. Same permission branch
+// and same assigned_to rule as the single-row path above.
+export async function markTasksCleanAction(taskIds: string[]): Promise<Result & { count?: number }> {
+  try {
+    const actor = await getActor();
+    if (!actor) throw new AuthorizationError("לא מחובר למערכת");
+    if (!hasPermission(actor, "housekeeping.manage") && !hasPermission(actor, "housekeeping.mark_clean"))
+      throw new AuthorizationError("חסרה הרשאה: housekeeping.mark_clean");
+    const ids = [...new Set(taskIds.filter(Boolean))];
+    if (ids.length === 0) return { success: true, count: 0 };
+
+    const rows = await sql<{ id: string }[]>`
+      UPDATE guesthub.housekeeping_tasks
+      SET status = 'completed',
+          completed_at = now(),
+          assigned_to = COALESCE(assigned_to, ${actor.userId}::uuid),
+          updated_at = now()
+      WHERE tenant_id = ${actor.tenantId}
+        AND id = ANY(${ids}::uuid[])
+        AND status IN ('pending', 'in_progress')
+      RETURNING id`;
+
+    await writeAudit(actor, {
+      entityType: "housekeeping_task", entityId: null, action: "bulk_mark_clean",
+      after: { requested: ids.length, completed: rows.length },
+    });
+    revalidatePath("/housekeeping");
+    revalidatePath("/maintenance");
+    revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
+    return { success: true, count: rows.length };
   } catch (e) {
     return fail(e);
   }
@@ -418,6 +484,7 @@ export async function deleteTaskAction(taskId: string): Promise<Result> {
     revalidatePath("/housekeeping");
     revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);

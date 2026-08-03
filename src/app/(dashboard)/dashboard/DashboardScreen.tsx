@@ -26,6 +26,11 @@ import { Icon } from "@/components/shared/Icon";
 import { DashboardWindow } from "@/components/shared/DashboardWindow";
 import { useNewReservation } from "@/components/reservations/NewReservationProvider";
 import { saveDashboardLayoutAction } from "./actions";
+import { ArrivalsWindow } from "./windows/ArrivalsWindow";
+import { InHouseWindow } from "./windows/InHouseWindow";
+import { HousekeepingWindow } from "./windows/HousekeepingWindow";
+import { AlertsWindow } from "./windows/AlertsWindow";
+import type { DashboardData } from "./data";
 import {
   COLUMNS,
   columnOf,
@@ -61,24 +66,50 @@ export type KpiCard = {
   icon: "hotel" | "login" | "logout" | "payments";
   tone: "brand" | "ok" | "warn" | "mut";
   label: string;
+  value: string;
   sub: string;
 };
 
-const KPIS: readonly KpiCard[] = [
-  { key: "occ", icon: "hotel", tone: "brand", label: "תפוסה הלילה", sub: "מתוך יחידות פעילות" },
-  { key: "arr", icon: "login", tone: "ok", label: "הגעות היום", sub: "צ׳ק-אין מתוכנן" },
-  { key: "dep", icon: "logout", tone: "warn", label: "עזיבות היום", sub: "צ׳ק-אאוט מתוכנן" },
-  { key: "rev", icon: "payments", tone: "mut", label: "הכנסה צפויה הלילה", sub: "כולל מע״מ" },
-];
+const ils = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
+
+// Every subline states WHAT WAS COUNTED. "מתוך N יחידות" carries the computed
+// denominator (D128 — status='available' AND is_active), never a hardcoded
+// number and never a generic caption; and the revenue line says כולל מע״מ,
+// because every stored price is VAT-inclusive at 18% and an unlabelled figure
+// is wrong by exactly that (audit §4.4).
+function kpiCards(d: DashboardData): readonly KpiCard[] {
+  const k = d.kpi;
+  return [
+    {
+      key: "occ", icon: "hotel", tone: "brand", label: "תפוסה הלילה",
+      value: `${k.occupancyPct}%`,
+      sub: `${k.occupied} מתוך ${k.sellable} יחידות`,
+    },
+    {
+      key: "arr", icon: "login", tone: "ok", label: "הגעות היום",
+      value: String(k.arrivals), sub: "צ׳ק-אין מתוכנן",
+    },
+    {
+      key: "dep", icon: "logout", tone: "warn", label: "עזיבות היום",
+      value: String(k.departures), sub: "צ׳ק-אאוט מתוכנן",
+    },
+    {
+      key: "rev", icon: "payments", tone: "mut", label: "הכנסה צפויה הלילה",
+      value: ils(k.revenueTonight), sub: "כולל מע״מ",
+    },
+  ];
+}
 
 export function DashboardScreen({
   initial,
   todayLabel,
   unitLabel,
+  data,
 }: {
   initial: DashboardPreferences;
   todayLabel: string;
   unitLabel: string;
+  data: DashboardData;
 }) {
   const [layout, setLayout] = useState<DashboardLayout>(initial.layout);
   const [hidden, setHidden] = useState<DashboardWindowId[]>(initial.hidden);
@@ -199,16 +230,13 @@ export function DashboardScreen({
 
       {/* ---- KPI row ---- */}
       <section className="kpis" aria-label="מדדי היום">
-        {KPIS.map((k) => (
+        {kpiCards(data).map((k) => (
           <div key={k.key} className="card kpi">
             <span className={`kpi-icon kpi-${k.tone}`}>
               <Icon name={k.icon} size={20} />
             </span>
             <div className="kpi-text">
-              {/* Phase 2 replaces the em dash. A zero here would be a number the
-                  operator cannot tell from a measurement.
-
-                  .ltr-num goes on an INLINE span, never on this block. It carries
+              {/* .ltr-num goes on an INLINE span, never on this block. It carries
                   `direction: ltr`, and on the block that flips the line's start
                   edge to the left while the label and subline below stay RTL —
                   measured at 1440px, the value drifted 9/41/44px away from the
@@ -217,7 +245,7 @@ export function DashboardScreen({
                   keeps the value flush with its own label, as
                   DeshbordMain.source.html renders it (.kv is plain RTL there). */}
               <div className="kpi-value">
-                <span className="ltr-num">—</span>
+                <span className="ltr-num">{k.value}</span>
               </div>
               <div className="kpi-label">{k.label}</div>
               <div className="kpi-sub">{k.sub}</div>
@@ -262,7 +290,7 @@ export function DashboardScreen({
               {/* every card lives INSIDE its column div (DeshbordMain.md §8.3) */}
               <SortableContext items={visible[col]} strategy={verticalListSortingStrategy}>
                 {visible[col].map((id) => (
-                  <SortableWindow key={id} id={id} onHide={() => hideWindow(id)} />
+                  <SortableWindow key={id} id={id} onHide={() => hideWindow(id)} data={data} />
                 ))}
               </SortableContext>
             </div>
@@ -282,17 +310,31 @@ export function DashboardScreen({
   );
 }
 
-function SortableWindow({ id, onHide }: { id: DashboardWindowId; onHide: () => void }) {
+function SortableWindow({
+  id,
+  onHide,
+  data,
+}: {
+  id: DashboardWindowId;
+  onHide: () => void;
+  data: DashboardData;
+}) {
   const def = windowById(id);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
     useSortable({ id });
 
   if (!def) return null;
 
+  // Phase 2 lights up five windows. The other six keep the Phase 1 sentence
+  // that says what will go there — a window with no source renders the promise,
+  // never a fabricated row.
+  const live = liveContent(id, data);
+
   return (
     <DashboardWindow
       icon={def.icon}
       title={def.title}
+      subtitle={live?.subtitle}
       onHide={onHide}
       containerRef={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
@@ -300,10 +342,48 @@ function SortableWindow({ id, onHide }: { id: DashboardWindowId; onHide: () => v
       dropzone={isOver && !isDragging}
       headerProps={{ ...attributes, ...listeners }}
     >
-      <div className="empty-state empty-sm">
-        <span className="empty-t">אין נתונים להצגה עדיין</span>
-        <span className="empty-s">{def.empty}</span>
-      </div>
+      {live ? (
+        live.body
+      ) : (
+        <div className="empty-state empty-sm">
+          <span className="empty-t">אין נתונים להצגה עדיין</span>
+          <span className="empty-s">{def.empty}</span>
+        </div>
+      )}
     </DashboardWindow>
   );
+}
+
+function liveContent(
+  id: DashboardWindowId,
+  data: DashboardData,
+): { subtitle?: React.ReactNode; body: React.ReactNode } | null {
+  switch (id) {
+    case "arr":
+      return {
+        subtitle: `${data.arrivals.length} הגעות · ${data.departures.length} עזיבות`,
+        body: <ArrivalsWindow arrivals={data.arrivals} departures={data.departures} />,
+      };
+    case "inh":
+      return {
+        subtitle: `${data.inHouse.length} אורחים`,
+        body: <InHouseWindow rows={data.inHouse} />,
+      };
+    case "hk": {
+      const dirty = data.housekeeping.filter(
+        (r) => r.status !== "completed" && r.status !== "inspected",
+      ).length;
+      return {
+        subtitle: data.housekeeping.length > 0 ? `${dirty} מלוכלכים` : undefined,
+        body: <HousekeepingWindow rows={data.housekeeping} />,
+      };
+    }
+    case "alr":
+      return {
+        subtitle: data.alerts.length > 0 ? `${data.alerts.length} פריטים` : undefined,
+        body: <AlertsWindow rows={data.alerts} />,
+      };
+    default:
+      return null;
+  }
 }
