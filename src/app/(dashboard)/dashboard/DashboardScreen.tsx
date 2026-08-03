@@ -30,6 +30,8 @@ import { ArrivalsWindow } from "./windows/ArrivalsWindow";
 import { InHouseWindow } from "./windows/InHouseWindow";
 import { HousekeepingWindow } from "./windows/HousekeepingWindow";
 import { AlertsWindow } from "./windows/AlertsWindow";
+import { RevenueWindow } from "./windows/RevenueWindow";
+import { SourcesWindow } from "./windows/SourcesWindow";
 import type { DashboardData } from "./data";
 import {
   COLUMNS,
@@ -382,6 +384,13 @@ function liveContent(
       return {
         subtitle: data.alerts.length > 0 ? `${data.alerts.length} פריטים` : undefined,
         body: <AlertsWindow rows={data.alerts} />,
+      };
+    case "rev":
+      return { body: <RevenueWindow series={data.monthly} /> };
+    case "src":
+      return {
+        subtitle: `${data.sources.totals.guests} אורחים`,
+        body: <SourcesWindow breakdown={data.sources} />,
       };
     default:
       return null;
