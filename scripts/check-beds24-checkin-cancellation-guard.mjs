@@ -421,7 +421,11 @@ try {
   for (const f of [
     "src/lib/channel/booking-import.ts",
     "src/lib/channel/beds24-booking-import.ts",
-    "src/app/(dashboard)/reservations/actions.ts",
+    // D127 — the supervised-release surface (D93 layer 3) moved OUT of
+    // reservations/actions.ts into its own module, so the file-level
+    // check:calendar save-path guard stays sharp. Same surface, same
+    // assertion, new home. The gate is still consumed, never re-decided.
+    "src/app/(dashboard)/reservations/channel-release-actions.ts",
   ]) {
     assert.match(readFileSync(join(ROOT, f), "utf8"), /blocksAutomaticRelease\(/,
       `${f} consumes the shared gate rather than re-deciding locally`);
