@@ -3,6 +3,7 @@ import { getActor } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
 import { todayInTz, formatFullDate, HEBREW_DAY_LETTERS, dayOfWeek } from "@/lib/dates";
 import { getDashboardPreferences } from "./preferences";
+import { getDashboardData } from "./data";
 import { DashboardScreen } from "./DashboardScreen";
 
 // The dashboard is live: SSE nudges router.refresh(), so the page must not be
@@ -18,25 +19,26 @@ export default async function DashboardPage() {
   const actor = await getActor();
   if (!actor) redirect("/auth/signout");
 
-  const [tenant, units, prefs] = await Promise.all([
+  const [tenant, prefs] = await Promise.all([
     sql<{ timezone: string }[]>`
       SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`,
-    sql<{ c: number }[]>`
-      SELECT count(*)::int AS c FROM guesthub.rooms
-      WHERE tenant_id = ${actor.tenantId} AND is_active`,
     getDashboardPreferences(actor.userId, actor.tenantId),
   ]);
 
   // the property's day, not the server's — the session runs in UTC, so between
-  // local midnight and ~03:00 a naive new Date() names yesterday
+  // local midnight and ~03:00 a naive new Date() names yesterday. THE one date
+  // every window and every KPI below is computed against.
   const today = todayInTz(tenant[0]?.timezone || "Asia/Jerusalem");
-  const count = units[0]?.c ?? 0;
+  const data = await getDashboardData(actor.tenantId, today);
 
   return (
     <DashboardScreen
       initial={prefs}
+      data={data}
       todayLabel={`יום ${HEBREW_DAY_LETTERS[dayOfWeek(today)]} · ${formatFullDate(today)}`}
-      unitLabel={`${count} יחידות`}
+      // the header's unit count is the SAME denominator the occupancy KPI
+      // divides by, so the two can never tell the operator different numbers
+      unitLabel={`${data.kpi.sellable} יחידות`}
     />
   );
 }
