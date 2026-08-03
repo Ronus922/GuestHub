@@ -20,7 +20,13 @@ try {
 
   // ---- blocking statuses: TS mirror === SQL source ----
   const [{ statuses }] = await sql`SELECT guesthub.inventory_blocking_statuses() AS statuses`;
-  assert.deepEqual(statuses, ["confirmed", "checked_in", "blocked"], "SQL blocking statuses");
+  // D126 — every status except cancelled consumes inventory (migration 073)
+  assert.deepEqual(
+    statuses,
+    ["draft", "confirmed", "checked_in", "checked_out", "no_show", "blocked"],
+    "SQL blocking statuses",
+  );
+  assert.ok(!statuses.includes("cancelled"), "cancelled is the ONLY status that releases a room");
   const rulesSrc = (await import("node:fs")).readFileSync("src/lib/inventory-rules.ts", "utf8");
   const m = rulesSrc.match(/INVENTORY_BLOCKING_STATUSES = \[([^\]]+)\]/);
   const tsStatuses = m[1].split(",").map((s) => s.trim().replace(/["']/g, "")).filter(Boolean);

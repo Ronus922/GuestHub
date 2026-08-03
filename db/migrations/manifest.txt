@@ -78,3 +78,4 @@
 070_ttlock_locks.sql
 071_ttlock_passcodes.sql
 072_user_ui_preferences.sql
+073_all_statuses_block_inventory.sql
