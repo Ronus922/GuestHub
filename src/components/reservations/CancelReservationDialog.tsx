@@ -7,9 +7,11 @@ import { formatFullDate } from "@/lib/dates";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
 import {
   cancelReservationAction,
-  releaseChannelReservationAction,
   type ReservationDetail,
 } from "@/app/(dashboard)/reservations/actions";
+// D127 — the supervised release is the one reservation action allowed to reach
+// Beds24, so it lives outside the save-path module (see channel-release-actions).
+import { releaseChannelReservationAction } from "@/app/(dashboard)/reservations/channel-release-actions";
 
 // ============================================================
 // ביטול הזמנה — the ONE cancellation dialog (D77 §9), opened from the

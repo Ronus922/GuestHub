@@ -142,6 +142,14 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
 // construction. It is gone; the guarantee is now structural and asserted here:
 // no module a canonical save imports may reach the network, and the outbox
 // itself performs no HTTP call. Only the PM2 worker talks to the channel provider.
+//
+// D127 — this block COLLECTS every violation and fails ONCE at the end.
+// `assert` halts on the first finding, so while actions.ts imported
+// beds24-http its second violation (channel-http, same file) was invisible:
+// the guard could report "something is wrong" but never "nothing else is".
+// A guard that stops at one finding cannot answer "are there NEW violations?",
+// which is the only question a red baseline can be worked against. Same rules,
+// same strictness, same regexes — only the reporting changed.
 {
   const SAVE_PATHS = [
     "src/lib/channel/outbox.ts",
@@ -155,14 +163,24 @@ assert.equal(ranges.isPermanentError("rate_limited"), false, "rate limits retry"
   const HTTP = /\bfetch\(|XMLHttpRequest|axios|http\.request|https\.request/;
   // importing any of these transitively drags in the channel HTTP client
   const HTTP_MODULES = /channel-http|beds24-http|beds24-ari-sync|beds24-properties|channel\/worker/;
+  const violations = [];
   for (const f of SAVE_PATHS) {
     const src = readFileSync(f, "utf8");
-    assert.ok(!HTTP.test(src), `${f} contains no network code`);
+    if (HTTP.test(src)) violations.push(`${f} contains network code`);
     const imports = [...src.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
     for (const spec of imports) {
-      assert.ok(!HTTP_MODULES.test(spec), `${f} must not import the channel HTTP layer (${spec})`);
+      // every offending import of every file is reported, not just the first
+      if (HTTP_MODULES.test(spec)) {
+        violations.push(`${f} must not import the channel HTTP layer (${spec})`);
+      }
     }
   }
+  assert.equal(
+    violations.length,
+    0,
+    `save paths must not reach the network — ${violations.length} violation(s):\n` +
+      violations.map((v) => `  - ${v}`).join("\n"),
+  );
 }
 
 // the pure modules contain no network code at all — structural guarantee
