@@ -7,7 +7,8 @@ import type { AlertRow } from "../data";
 //
 // Only signals a GUEST feels: money owed, a card that will fail at the desk, a
 // booking nobody approved, a message that never arrived, a channel connection
-// about to stop selling.
+// that has actually stopped working (D133 — six measured conditions, none of
+// them the access token's TTL, which is a constant and never an alert).
 //
 // EXCLUDED DELIBERATELY, and this is the point of the window:
 //  · channel_dirty_ranges — 1,041 permanent rows (audit §7.1). An operational
@@ -27,7 +28,7 @@ const ICON: Record<AlertRow["kind"], IconName> = {
   card: "credit-card",
   approval: "hourglass",
   message: "mail-unread",
-  token: "channels",
+  connection: "channels",
 };
 
 export function AlertsWindow({ rows }: { rows: AlertRow[] }) {

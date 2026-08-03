@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import type { DateOnly } from "@/lib/dates";
+import { connectionHealth } from "@/lib/channel/connection-health";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
 import { nightlyRevenue } from "@/lib/reports/nightly-revenue";
 import { monthlyRevenue, type MonthlyRevenuePoint } from "@/lib/reports/monthly-revenue";
@@ -72,7 +73,7 @@ export type HousekeepingRow = {
 
 export type AlertRow = {
   id: string;
-  kind: "unpaid" | "partial" | "card" | "approval" | "message" | "token";
+  kind: "unpaid" | "partial" | "card" | "approval" | "message" | "connection";
   severity: "red" | "amber";
   title: string;
   detail: string;
@@ -294,7 +295,7 @@ function addOneDay(d: DateOnly): DateOnly {
 // when it matters.
 // ============================================================
 async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
-  const [money, cards, approvals, messages, tokens] = await Promise.all([
+  const [money, cards, approvals, messages, connections] = await Promise.all([
     sql<Record<string, unknown>[]>`
       SELECT res.id, res.reservation_number, COALESCE(g.full_name, 'אורח') AS guest_name,
              res.total_price::float8 AS total_price, res.paid_amount::float8 AS paid_amount
@@ -331,13 +332,36 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
     sql<{ c: number }[]>`
       SELECT count(*)::int AS c FROM guesthub.outbound_messages
        WHERE tenant_id = ${tenantId} AND status IN ('failed', 'undelivered')`,
-    sql<{ expires_at: string | null }[]>`
-      SELECT access_token_expires_at::text AS expires_at
-        FROM guesthub.channel_connections
-       WHERE tenant_id = ${tenantId} AND provider = 'beds24'
-         AND state = 'active' AND is_active_provider = true
-         AND access_token_expires_at IS NOT NULL
-         AND access_token_expires_at <= now() + interval '24 hours'`,
+    // D133 — the INPUTS to the health verdict, never the verdict itself. The
+    // rule lives in connection-health.ts so it can be asserted without a DB.
+    //
+    // SCOPE: `is_active_provider` alone. The old query also required
+    // state='active', which made its own state condition unreachable — a row in
+    // state='error' could never be selected to be reported as being in error.
+    // `is_active_provider` is the house scope for "which connection IS the
+    // one" (channel-release-actions.ts:86, beds24-booking-import.ts:139,
+    // booking-com-reports-core.ts:242); state='active' belongs to the OUTBOUND
+    // GATE ("may I push right now" — outbox.ts:48, rates-sync.ts:47-48), which
+    // is a different question and is not asked here.
+    //
+    // `now` comes from the DATABASE, so every age below is measured against the
+    // same clock that wrote the timestamps.
+    sql<Record<string, unknown>[]>`
+      SELECT c.state,
+             (c.api_key_ciphertext IS NOT NULL) AS has_refresh_token,
+             c.consecutive_failures,
+             c.inbound_sync_enabled,
+             c.circuit_open_until::text AS circuit_open_until,
+             (SELECT max(j.finished_at)
+                FROM guesthub.channel_sync_jobs j
+               WHERE j.connection_id = c.id
+                 AND j.job_type = 'pull_booking_revisions'
+                 AND j.status = 'succeeded')::text AS last_pull_at,
+             (SELECT max(w.beat_at) FROM guesthub.channel_worker_state w)::text AS worker_beat_at,
+             now()::text AS db_now
+        FROM guesthub.channel_connections c
+       WHERE c.tenant_id = ${tenantId} AND c.provider = 'beds24'
+         AND c.is_active_provider = true`,
   ]);
 
   const out: AlertRow[] = [];
@@ -386,15 +410,37 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
       href: "/communications",
     });
   }
-  if (tokens.length > 0) {
-    out.push({
-      id: "beds24-token",
-      kind: "token",
-      severity: "amber",
-      title: "חיבור Beds24",
-      detail: "תוקף ההרשאה פג או עומד לפוג — הסנכרון ייעצר",
-      href: "/channels",
-    });
+  // D133 — six independently-labelled conditions, and ZERO is the normal state.
+  // Nothing here reads the access token's expiry: it lives 24h and is re-minted
+  // under 5 minutes, so any threshold on it is a constant, not an alert.
+  for (const row of connections) {
+    const ms = (v: unknown): number | null => {
+      if (typeof v !== "string") return null;
+      const t = Date.parse(v);
+      return Number.isFinite(t) ? t : null;
+    };
+    const nowMs = ms(row.db_now) ?? Date.now();
+    for (const f of connectionHealth(
+      {
+        state: String(row.state ?? ""),
+        hasRefreshToken: row.has_refresh_token === true,
+        consecutiveFailures: Number(row.consecutive_failures ?? 0),
+        circuitOpenUntilMs: ms(row.circuit_open_until),
+        inboundSyncEnabled: row.inbound_sync_enabled === true,
+        lastSuccessfulPullMs: ms(row.last_pull_at),
+        workerBeatMs: ms(row.worker_beat_at),
+      },
+      nowMs,
+    )) {
+      out.push({
+        id: `connection-${f.code}`,
+        kind: "connection",
+        severity: f.severity,
+        title: "חיבור Beds24",
+        detail: f.detail,
+        href: "/channels",
+      });
+    }
   }
   return out;
 }
