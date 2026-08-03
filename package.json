@@ -90,6 +90,7 @@
     "check:calendar-departure-edge": "node scripts/check-calendar-departure-edge.mjs",
     "check:design": "node scripts/check-design-system.mjs",
     "check:dashboard-shell": "node scripts/check-dashboard-shell.mjs",
+    "check:connection-health": "node scripts/check-connection-health.mjs",
     "check:datepicker": "node scripts/check-datepicker.mjs",
     "check:reservations-ui": "node --experimental-websocket scripts/check-reservations-ui.mjs",
     "check:reservation-concurrency": "node scripts/check-reservation-concurrency.mjs",
