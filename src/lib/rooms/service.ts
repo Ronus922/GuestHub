@@ -169,7 +169,10 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
       LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
       WHERE r.tenant_id = ${tenantId}
       ORDER BY r.sort_order, r.room_number`,
-    // current stay + next confirmed arrival per room, in one window
+    // current stay + next arrival per room, in one window. D126: the board asks
+    // the SAME question the availability functions ask — "does this stay consume
+    // the room" — so it reads the canonical blocking set, never a hardcoded
+    // 'confirmed'. Before D126 a draft sitting on a room left the card "פנוי".
     sql<StayRow[]>`
       SELECT rr.room_id,
              COALESCE(NULLIF(TRIM(CONCAT(rr.guest_first_name, ' ', rr.guest_last_name)), ''), g.full_name, 'אורח') AS guest_name,
@@ -177,7 +180,8 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
       FROM guesthub.reservation_rooms rr
       JOIN guesthub.reservations res ON res.id = rr.reservation_id
       LEFT JOIN guesthub.guests g ON g.id = res.primary_guest_id
-      WHERE rr.tenant_id = ${tenantId} AND res.status = 'confirmed'
+      WHERE rr.tenant_id = ${tenantId}
+        AND res.status = ANY (guesthub.inventory_blocking_statuses())
         AND rr.room_id IS NOT NULL AND rr.check_out >= ${today}
       ORDER BY rr.check_in`,
     sql<HkRow[]>`

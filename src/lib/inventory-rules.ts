@@ -5,12 +5,29 @@
 // ============================================================
 
 // Which reservation statuses consume inventory (overview §8). Mirror of
-// guesthub.inventory_blocking_statuses() (migration 004) — the two are
-// asserted equal by scripts/check-inventory.mjs. cancelled / draft /
-// checked_out / no_show do NOT block.
-export const INVENTORY_BLOCKING_STATUSES = ["confirmed", "checked_in", "blocked"] as const;
+// guesthub.inventory_blocking_statuses() (migration 073) — the two are
+// asserted equal by scripts/check-inventory.mjs.
+//
+// D126 — החלטת בעלים: הזמנה היא הזמנה בכל סטטוס, עד שהיא מבוטלת. טיוטה שלא
+// שולמה, אורח שלא הגיע ואורח שכבר עזב — כולם מחזיקים את הלילות שלהם. רק
+// 'cancelled' משחרר מלאי. עד D126 טיוטה נראתה על היומן אך לא תפסה כלום: החדר
+// הוצג "פנוי", שומר ה-double-booking ב-DB התיר עליו הזמנה שנייה, ו-Beds24 המשיך
+// לפרסם אותו כזמין — כלומר טיוטה הייתה נתיב ישיר ל-double booking.
+//
+// זה גם המקור היחיד לשומר rr_no_double_booking (העמודה is_blocking נגזרת ממנו
+// בטריגר), ולכן הרחבתו כאן היא הרחבת החסימה בכל השכבות — לא רק בתצוגה.
+//
+// ההשלכה התפעולית: לילה של no-show או של טיוטה נטושה לא משתחרר מעצמו. כדי
+// למכור אותו מחדש חייבים לבטל או לקצר את ההזמנה — במכוון, כי זו הפעולה שמתעדת
+// למה החדר השתחרר.
+export const INVENTORY_BLOCKING_STATUSES = [
+  "draft", "confirmed", "checked_in", "checked_out", "no_show", "blocked",
+] as const;
 
-// Statuses the calendar renders (everything except cancelled).
+// Statuses the calendar renders (everything except cancelled). Since D126 this
+// is the SAME set as INVENTORY_BLOCKING_STATUSES — deliberately kept as two
+// names because they answer two different questions ("does it draw?" vs "does
+// it consume?"), and only the second one scopes the DB exclusion constraint.
 export const CALENDAR_VISIBLE_STATUSES = [
   "draft", "confirmed", "checked_in", "checked_out", "no_show", "blocked",
 ] as const;

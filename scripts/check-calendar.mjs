@@ -57,10 +57,25 @@ assert.equal(
   "infant allowed when capacity exists",
 );
 
-// ---- blocking statuses (§8) ----
-assert.deepEqual([...rules.INVENTORY_BLOCKING_STATUSES], ["confirmed", "checked_in", "blocked"]);
+// ---- blocking statuses (§8 · D126) ----
+assert.deepEqual(
+  [...rules.INVENTORY_BLOCKING_STATUSES],
+  ["draft", "confirmed", "checked_in", "checked_out", "no_show", "blocked"],
+);
 assert.ok(!rules.INVENTORY_BLOCKING_STATUSES.includes("cancelled"), "cancelled never consumes inventory");
 assert.ok(!rules.CALENDAR_VISIBLE_STATUSES.includes("cancelled"), "cancelled never renders");
+// D126 regression guard — a draft sitting on a room USED to leave it "פנוי",
+// sellable on Beds24 and unprotected by rr_no_double_booking. It must never
+// silently fall out of the blocking set again.
+for (const s of ["draft", "checked_out", "no_show"]) {
+  assert.ok(rules.INVENTORY_BLOCKING_STATUSES.includes(s), `${s} consumes inventory until cancelled (D126)`);
+}
+// every status the calendar draws also consumes — the two sets agree since D126
+assert.deepEqual(
+  [...rules.CALENDAR_VISIBLE_STATUSES].sort(),
+  [...rules.INVENTORY_BLOCKING_STATUSES].sort(),
+  "a stay that is drawn is a stay that is held (D126)",
+);
 
 // ---- payment state (§F) + canonical balance (D52 §6/§7) ----
 assert.equal(rules.paymentState(1000, 0), "unpaid");
