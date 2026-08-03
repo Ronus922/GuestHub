@@ -217,6 +217,7 @@ export async function advanceMyTaskAction(taskId: string): Promise<Result> {
     if (!done.ok) return { success: false, error: done.error };
     revalidatePath("/housekeeping/my-tasks");
     revalidatePath("/rooms");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);
@@ -303,6 +304,7 @@ export async function assignTaskAction(taskId: string, userId: string | null): P
     revalidatePath("/housekeeping");
     revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);
@@ -359,6 +361,7 @@ export async function setTaskStatusAction(taskId: string, status: string): Promi
     revalidatePath("/housekeeping");
     revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);
@@ -418,6 +421,7 @@ export async function deleteTaskAction(taskId: string): Promise<Result> {
     revalidatePath("/housekeeping");
     revalidatePath("/maintenance");
     revalidatePath("/housekeeping/my-tasks");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(e);

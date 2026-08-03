@@ -35,6 +35,7 @@ import {
   type CancellationPolicySnapshot,
 } from "@/lib/commercial/policy-snapshot";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { applyLifecycleSideEffects } from "@/lib/reservations/lifecycle";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { enqueueReservationCancelled, enqueueReservationConfirmed } from "@/lib/communications/outbox";
 import type { BookingOrigin } from "@/lib/communications/types";
@@ -444,6 +445,7 @@ export async function createReservationAction(
 
     revalidatePath("/calendar");
     revalidatePath("/reservations");
+    revalidatePath("/dashboard");
     return { success: true, data: result };
   } catch (e) {
     return fail(errorMessage(e));
@@ -741,12 +743,6 @@ export async function updateReservationAction(
         after: { status: nextStatus, check_in: agg.checkIn, check_out: agg.checkOut, rooms: priced.length, total },
       }, tx);
 
-      // Dirty when inventory consumption changed on either side — including a
-      // status flip into or out of a blocking status (a cancel/restore). Both
-      // the OLD and the NEW room/date ranges are marked: the released nights
-      // must be re-published as available, not just the newly-taken ones. The
-      // span covers both sides (a superset is always safe — the projection
-      // recomputes canonical state for every date it covers).
       const eventRoomIds = [
         ...oldRows.map((r) => r.room_id),
         ...priced.map((s) => s.roomId),
@@ -754,15 +750,6 @@ export async function updateReservationAction(
       const eventDates = [
         existing.check_in, existing.check_out, agg.checkIn, agg.checkOut,
       ].sort();
-      if (wasBlocking || nowBlocking) {
-        await markAriDirty(tx, {
-          tenantId: actor.tenantId,
-          roomIds: eventRoomIds,
-          dateFrom: eventDates[0],
-          dateTo: eventDates[eventDates.length - 1],
-        });
-      }
-
       if (
         existing.status !== "confirmed" &&
         nextStatus === "confirmed" &&
@@ -776,61 +763,30 @@ export async function updateReservationAction(
         });
       }
 
-      // lifecycle-aware event: a check-in/out/no-show save is its own signal
-      const lifecycleEvent =
-        input.status !== existing.status && input.status === "checked_in"
-          ? "reservation.checked_in"
-          : input.status !== existing.status && input.status === "checked_out"
-            ? "reservation.checked_out"
-            : input.status !== existing.status && input.status === "no_show"
-              ? "reservation.no_show"
-              : "reservation.modified";
-      await publishDomainEvent(tx, actor.tenantId, {
-        type: lifecycleEvent,
+      // D-Phase2 — the transition's consequences (ARI dirty, the lifecycle
+      // domain event, the checkout housekeeping task, inventory.changed) live in
+      // ONE place so the dashboard's status-only action cannot drift from this
+      // one. See lib/reservations/lifecycle.ts.
+      await applyLifecycleSideEffects(tx, {
+        tenantId: actor.tenantId,
         reservationId: input.id,
+        fromStatus: existing.status,
+        toStatus: nextStatus,
         roomIds: eventRoomIds,
         dateFrom: eventDates[0],
         dateTo: eventDates[eventDates.length - 1],
-        lifecycle: input.status,
       });
-      // §7 Housekeeping — a checkout makes the room(s) dirty and generates a
-      // cleaning task, connecting housekeeping to the real reservation lifecycle.
-      // Fires ONLY on the transition into checked_out; idempotent per room (skips a
-      // room that already has an open task for this reservation). Cleanliness does
-      // not reduce availability (a dirty room is still sellable before the next
-      // arrival — the D64 0/1 model), so no outbox marking here.
-      if (input.status !== existing.status && input.status === "checked_out") {
-        const cleanRoomIds = [...new Set(eventRoomIds.filter((r): r is string => !!r))];
-        if (cleanRoomIds.length > 0) {
-          await tx`
-            INSERT INTO guesthub.housekeeping_tasks
-              (tenant_id, room_id, reservation_id, checkout_time, status, priority, notes)
-            SELECT ${actor.tenantId}, rid, ${input.id}, now(), 'pending', 'normal', 'נוצר אוטומטית ביציאת אורח'
-            FROM unnest(${cleanRoomIds}::uuid[]) AS rid
-            WHERE NOT EXISTS (
-              SELECT 1 FROM guesthub.housekeeping_tasks h
-              WHERE h.tenant_id = ${actor.tenantId} AND h.room_id = rid
-                AND h.reservation_id = ${input.id} AND h.status IN ('pending','in_progress'))`;
-        }
-      }
       if (addPay > 0) {
         await publishDomainEvent(tx, actor.tenantId, {
           type: "reservation.payment_changed",
           reservationId: input.id,
         });
       }
-      if (wasBlocking || nowBlocking) {
-        await publishDomainEvent(tx, actor.tenantId, {
-          type: "inventory.changed",
-          roomIds: eventRoomIds,
-          dateFrom: eventDates[0],
-          dateTo: eventDates[eventDates.length - 1],
-        });
-      }
     });
 
     revalidatePath("/calendar");
     revalidatePath("/reservations");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(errorMessage(e));
@@ -931,6 +887,7 @@ export async function cancelReservationAction(
     });
     revalidatePath("/calendar");
     revalidatePath("/reservations");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(errorMessage(e));
@@ -979,7 +936,87 @@ export async function setWorkflowStatusAction(input: {
     });
     revalidatePath("/calendar");
     revalidatePath("/reservations");
+    revalidatePath("/dashboard");
     return { success: true, data: { workflowStatusId: input.workflowStatusId } };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// ---------------------------------------------------------------
+// status-ONLY lifecycle write (Dashboard Phase 2). The dashboard's arr row has
+// one button and no form: it cannot call updateReservationAction, whose schema
+// demands the full guest object and the full rooms array (audit §3.3).
+//
+// This action is the same shape as setWorkflowStatusAction — an id and a value,
+// nothing else — but on the LIFECYCLE axis. It touches no stay, no price and no
+// payment: a check-out must never silently re-price a stay, which is precisely
+// what routing the dashboard through updateReservationAction would have done.
+//
+// The consequences are NOT reimplemented here. applyLifecycleSideEffects is the
+// same body updateReservationAction runs, so a dashboard check-out and a panel
+// check-out produce the same housekeeping task, the same ARI dirty range and the
+// same domain event. That sharing is the whole point of the extraction.
+//
+// NO DATE GUARD, deliberately: a guest may leave before the stay ends
+// (DeshbordMain.md §4.1, and §3.4 of the audit — the panel has never had one).
+// ---------------------------------------------------------------
+const DASHBOARD_LIFECYCLE_STATUSES = ["checked_in", "checked_out"] as const;
+type DashboardLifecycleStatus = (typeof DASHBOARD_LIFECYCLE_STATUSES)[number];
+
+export async function setReservationStatusAction(
+  reservationId: string,
+  status: DashboardLifecycleStatus,
+): Promise<ActionResult<{ status: string }>> {
+  try {
+    const actor = await getActor();
+    // the SAME key updateReservationAction requires — the dashboard button is a
+    // shortcut to that capability, never a widening of it
+    requirePermission(actor, "reservations.edit");
+    if (!(DASHBOARD_LIFECYCLE_STATUSES as readonly string[]).includes(status))
+      return fail("סטטוס לא נתמך");
+
+    await sql.begin(async (tx) => {
+      const [res] = await tx<{ id: string; status: string; check_in: string; check_out: string }[]>`
+        SELECT id, status, check_in::text AS check_in, check_out::text AS check_out
+        FROM guesthub.reservations
+        WHERE id = ${reservationId} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
+      if (!res) throw new DomainError("הזמנה לא נמצאה");
+      if (res.status === "cancelled") throw new DomainError("הזמנה מבוטלת — לא ניתן לשנות סטטוס");
+      if (res.status === status) return; // idempotent: pressing twice is not an error
+
+      const rooms = await tx<{ room_id: string | null }[]>`
+        SELECT room_id FROM guesthub.reservation_rooms
+        WHERE reservation_id = ${reservationId} AND tenant_id = ${actor.tenantId}`;
+
+      await tx`
+        UPDATE guesthub.reservations SET status = ${status}
+        WHERE id = ${reservationId} AND tenant_id = ${actor.tenantId}`;
+
+      await writeAudit(actor, {
+        entityType: "reservation",
+        entityId: reservationId,
+        action: "status_change",
+        before: { status: res.status },
+        after: { status },
+      }, tx);
+
+      await applyLifecycleSideEffects(tx, {
+        tenantId: actor.tenantId,
+        reservationId,
+        fromStatus: res.status,
+        toStatus: status,
+        roomIds: rooms.map((r) => r.room_id),
+        dateFrom: res.check_in,
+        dateTo: res.check_out,
+      });
+    });
+
+    revalidatePath("/calendar");
+    revalidatePath("/reservations");
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard");
+    return { success: true, data: { status } };
   } catch (e) {
     return fail(errorMessage(e));
   }
@@ -1172,6 +1209,7 @@ export async function rescheduleReservationRoomAction(raw: {
 
     revalidatePath("/calendar");
     revalidatePath("/reservations");
+    revalidatePath("/dashboard");
     return { success: true };
   } catch (e) {
     return fail(errorMessage(e));
