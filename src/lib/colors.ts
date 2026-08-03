@@ -166,3 +166,41 @@ export function statusTintPalette(hex: string | null | undefined): TintPalette {
   }
   return { bg, bd: hex.toUpperCase(), tx: toHex(r, g, b) };
 }
+
+// ---- booking-source fallback palette (D132) ----
+// The canonical colour of a booking source is `lookup_items.color`. It is
+// nullable, and on the production tenant one of the seven rows (`website`) has
+// none — a donut slice with no colour is not a design choice, it is a hole.
+//
+// These are the eight channel colours DeshbordMain.md §5.6 fixes for the
+// sources surfaces, declared HERE because this file (with status-colors.ts) is
+// one of the only two permitted to hold raw colour. Assignment is by
+// `sort_order`, so a source keeps the same colour across every render, every
+// period and both windows — a slice that changes colour when the month changes
+// is unreadable as a series.
+//
+// NOT a replacement for CHANNEL_CONFIG: that map is keyed by
+// ota_name/booking_origin and paints the calendar's channel badge. This one is
+// keyed by the booking_sources lookup. Two different keys, two different
+// surfaces; see D132 for why they coexist rather than being unified now.
+export const SOURCE_FALLBACK_PALETTE = [
+  "#101B4D", // Booking.com
+  "#0BB8CC", // אתר המלון
+  "#2540C8", // ידני — בק אופיס
+  "#E8395A", // Airbnb
+  "#8A5CF6", // טלפון
+  "#F0940A", // Expedia
+  "#1FB458", // WhatsApp
+  "#98A2B3", // סוכנים וחברות
+] as const;
+
+/**
+ * The colour for a source: its own when the tenant set one, otherwise a stable
+ * palette entry chosen by position. `index` must be the row's rank by
+ * sort_order — NOT its array index in a filtered result, or a source's colour
+ * would change the moment another source has no bookings this month.
+ */
+export function sourceColor(color: string | null | undefined, index: number): string {
+  if (color && HEX_COLOR_RE.test(color)) return color.toUpperCase();
+  return SOURCE_FALLBACK_PALETTE[index % SOURCE_FALLBACK_PALETTE.length];
+}
