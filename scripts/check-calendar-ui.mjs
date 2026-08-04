@@ -7,7 +7,31 @@ import { mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import assert from "node:assert/strict";
+import strict from "node:assert/strict";
+
+// D135 — this guard COLLECTS every violation and fails ONCE at the end.
+// `assert` halts on the first finding, so while the tooltip's channel row was
+// flagged the SECOND violation (the .cb-msep width, a different file) was
+// invisible: the guard could report "something is wrong" but never "nothing
+// else is". A guard that stops at one finding cannot answer "are there NEW
+// violations?", which is the only question a red baseline can be worked
+// against. Same rules, same strictness, same regexes — only the reporting
+// changed. This is the fix D127 applied to check-calendar.mjs, in its sibling.
+const violations = [];
+const collect =
+  (fn) =>
+  (...args) => {
+    try {
+      fn(...args);
+    } catch (e) {
+      violations.push(e.message);
+    }
+  };
+const assert = {
+  ok: collect(strict.ok),
+  equal: collect(strict.equal),
+  deepEqual: collect(strict.deepEqual),
+};
 
 const out = mkdtempSync(join(tmpdir(), "calendar-ui-"));
 execSync(
@@ -360,17 +384,29 @@ assert.equal(rows.length, 4, "the card body declares four rows (dates, nights+ro
 // The channel row CONSOLIDATED the old free-text "מקור" row (it sits between
 // nights and money, per the channel-badge spec) — the normalized channel name +
 // the SAME <ChannelBadge> the pill wears, so the card can never show a second,
-// diverging source. It renders ONLY for a visible external/site channel: an
-// internal reservation (phone/walk_in/unknown/NULL) shows a three-row body
-// with no empty row or gap. The forbidden-row assertions below are unchanged.
+// diverging source. The forbidden-row assertions below are unchanged.
+//
+// D135 — the row is UNCONDITIONAL, and that is the invariant. resolveChannelBadge()
+// returns BadgeChannel and never null (`normalizeVisibleChannel(k) ?? "manual"`), so an
+// internal source — phone / walk_in / unknown / NULL — resolves to `manual` and wears the
+// pencil badge. The old `{channel && (…)}` wrapper is superseded: with a non-nullable
+// resolver the test is always true, i.e. dead syntax, and re-introducing a truthiness
+// guard would advertise a nullability the type no longer has. The hazard it was written
+// against (an empty row / a gap in the four-row body) is now unreachable by construction,
+// which is a stronger guarantee than the conditional ever gave.
 const rowOrder = [
   ["stay dates", /name="calendar"[\s\S]*?hebDayMonth\(stay\.check_in\)/],
   ["nights + room + status", /name="moon"[\s\S]*?<b>\{nights\}<\/b> לילות · חדר/],
   ["channel", /name="hub"[\s\S]*?CHANNEL_CONFIG\[channel\]\.name[\s\S]*?<ChannelBadge channel=\{channel\} size="md" \/>/],
   ["total + balance", /name="finance"[\s\S]*?total_price\.toLocaleString\(\)/],
 ];
-assert.ok(/\{channel && \(\s*<p className="cb-pl">/.test(body),
-  "the channel row is CONDITIONAL — an internal reservation gets no row, not an empty one");
+// non-nullability comes from the RESOLVER, not from a wrapper. normalizeVisibleChannel
+// does return null; swapping it back in here would make CHANNEL_CONFIG[channel] throw on
+// every phone / walk_in / unknown reservation, which is the whole card, not one row.
+assert.ok(/const channel = resolveChannelBadge\(stay\.source_key\)/.test(tooltip),
+  "the channel comes from resolveChannelBadge (never null → manual/pencil) — normalizeVisibleChannel returns null and would crash CHANNEL_CONFIG[channel] on every internal reservation");
+assert.ok(!/\{\s*[A-Za-z_$][\w$.]*\s*&&\s*\(\s*<p className="cb-pl">/.test(body),
+  "the channel row is UNCONDITIONAL — a truthiness guard over a never-null value is dead syntax that re-advertises a nullability the type dropped, and would hide the manual/pencil row behind a test that can never be false");
 assert.ok(!/source_label|מקור:/.test(tooltip), "the old free-text source row is consolidated, not duplicated");
 let cursor = 0;
 for (const [what, re] of rowOrder) {
@@ -411,8 +447,18 @@ assert.ok(/bottom: -8px/.test(css) && /top: -8px/.test(css),
 assert.ok(!/border-inline-start: 3px solid #b9c2d8/.test(css),
   "no cell/segment draws the month boundary as its own border — that is what broke the line");
 const sepRule = rule(".cb-msep");
-assert.ok(/position: absolute/.test(sepRule) && /width: 3px/.test(sepRule),
-  ".cb-msep is ONE positioned line, not a border");
+// D135 — STRUCTURE and WIDTH are two different claims and get two different
+// assertions. They were one conjunction, so an owner-approved restyle (3px →
+// 0.5px) failed under a message that said "not a border" — a cosmetic value
+// masquerading as a structural regression. Structure is the invariant:
+assert.ok(/position: absolute/.test(sepRule) && !/\bborder(?!-radius)[a-z-]*\s*:/.test(sepRule),
+  ".cb-msep is ONE positioned node, not a border — a border sizes its own box and puts the header line ~3px off the body line");
+// ...and the width is the owner-approved cosmetic value, asserted on its own so
+// the next restyle reports itself as a restyle. The separator is PURELY VISUAL
+// (D135 §3): it shows where one month ends and the next begins, and no code may
+// derive availability, inventory, date math or reservation boundaries from it.
+assert.ok(/width: 0\.5px/.test(sepRule),
+  ".cb-msep is the 0.5px owner-approved hairline (set 2026-07-21 against the owner reference) — cosmetic, not structural");
 assert.ok(/var\(--cb-room-col\)/.test(sepRule) && /var\(--cb-sep\)/.test(sepRule),
   ".cb-msep hangs off the canonical column boundary (room column + fraction of the strip)");
 assert.ok(/\.cb-chead \.cb-msep/.test(css) && /\.cb-cbody \.cb-msep/.test(css),
@@ -422,5 +468,12 @@ assert.ok(/{monthSeparators}/.test(gridSrc) && (gridSrc.match(/\{monthSeparators
 assert.ok(/"--cb-sep": day \/ data\.days/.test(gridSrc),
   "the separator fraction is the same number the day cells divide by");
 assert.ok(!/\$\{monthStart \? "ms" : ""\}/.test(gridSrc), "the obsolete month-start cell class is gone");
+
+// every offending assertion of every section is reported, not just the first
+strict.equal(
+  violations.length,
+  0,
+  `check-calendar-ui — ${violations.length} violation(s):\n` + violations.map((v) => `  - ${v}`).join("\n"),
+);
 
 console.log("check-calendar-ui: all interaction/geometry rules hold ✔");
