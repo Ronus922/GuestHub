@@ -257,6 +257,10 @@ try {
       CHECK_MARK_CLEAN_DB_URL: target,
       CHECK_SOURCES_DB_URL: target,
       ...EPHEMERAL,
+      // D138: credit-headers runs its suite tiers here — pure parsing legs +
+      // the ledger rollback round-trip on the guard's own clone. The live
+      // tier belongs to run-liveness.mjs and never runs inside the suite.
+      ...(name === "check:beds24-credit-headers" ? { CREDIT_HEADERS_TIERS: "pure,db" } : {}),
     };
     writeFileSync(ENV_LOCAL, Object.entries(vars).map(([k, v]) => `${k}=${v}`).join("\n") + "\n");
 
