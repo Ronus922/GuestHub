@@ -203,6 +203,7 @@ try {
 
     const missing = CANNOT_RUN[name]?.() ?? [];
     if (missing.length) {
+      writeFileSync(join(OUT_DIR, "logs", `${slug}.txt`), `cannot-run — needs: ${missing.join(", ")}\n`);
       results.push({ name, mode: "static", verdict: "cannot-run", why: `needs: ${missing.join(", ")}`, ms: 0 });
       console.log(`${String(i).padStart(2)}/${checks.length} cannot-run     ${name} (${missing.join(", ")})`);
       continue;
@@ -213,11 +214,27 @@ try {
     let db = null;
     if (dbBacked) {
       db = `sui_${String(i).padStart(2, "0")}_${slug}`.slice(0, 60);
-      try {
-        psqlAdmin(`DROP DATABASE IF EXISTS ${db}`);
-        psqlAdmin(mode === "empty-db" ? `CREATE DATABASE ${db}` : `CREATE DATABASE ${db} TEMPLATE ${TEMPLATE}`);
-      } catch (e) {
-        results.push({ name, mode, verdict: "cannot-run", why: `db setup failed: ${String(e.message).split("\n")[0]}`, ms: 0 });
+      // CREATE … TEMPLATE needs exclusive access to the template; a transient
+      // autovacuum worker inside it fails the clone. Kick sessions and retry.
+      let created = false, lastErr = null;
+      for (let attempt = 0; attempt < 3 && !created; attempt++) {
+        try {
+          if (attempt > 0) {
+            psqlAdmin(`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+                       WHERE datname = '${TEMPLATE}' AND pid <> pg_backend_pid()`);
+            execFileSync("sleep", ["0.4"]);
+          }
+          psqlAdmin(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
+          psqlAdmin(mode === "empty-db" ? `CREATE DATABASE ${db}` : `CREATE DATABASE ${db} TEMPLATE ${TEMPLATE}`);
+          created = true;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (!created) {
+        const why = `db setup failed: ${String(lastErr.message).split("\n")[0]}`;
+        writeFileSync(join(OUT_DIR, "logs", `${slug}.txt`), `cannot-run — ${why}\n`);
+        results.push({ name, mode, verdict: "cannot-run", why, ms: 0 });
         continue;
       }
     }

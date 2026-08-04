@@ -81,7 +81,12 @@ const B24_WIDE = "708101";   // room-level ceiling 365
 const B24_NARROW = "708102"; // room-level ceiling 200 — proves nothing is hardcoded
 const CEILING = { [B24_WIDE]: 365, [B24_NARROW]: 200 };
 
-const iso = (d) => d.toISOString().slice(0, 10);
+// The seeded tenant is Asia/Jerusalem and the drain clamps its push window to
+// that CALENDAR day (todayInTz in beds24-ari-sync), so the guard's window must
+// be built on the same calendar. Rendering UTC here made day(0) fall before
+// the clamp between 21:00 and 24:00 UTC — the guard was red three hours a day
+// on unchanged code.
+const iso = (d) => d.toLocaleDateString("en-CA", { timeZone: "Asia/Jerusalem" });
 const day = (o) => iso(new Date(Date.now() + o * 86_400_000));
 
 /** what Beds24 currently enforces: `${roomId}|${date}` → maxStay (or undefined) */
