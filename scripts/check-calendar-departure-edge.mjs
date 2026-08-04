@@ -10,7 +10,7 @@
 // the fetched edge rows. Fails closed on any production marker.
 //
 // Usage: node scripts/check-calendar-departure-edge.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";

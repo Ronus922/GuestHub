@@ -6,7 +6,7 @@
 // and zero jobs stuck for a non-beds24 provider (D91: nothing else may run).
 // Usage: node --env-file=.env.local scripts/check-beds24-jobs.mjs
 import postgres from "postgres";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
 let n = 0;

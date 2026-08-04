@@ -12,7 +12,7 @@ import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 // ROOT was hardcoded to "/var/www/guesthub" — the PRODUCTION checkout. Run from
 // any worktree, this guard compiled and asserted on production's src/ and

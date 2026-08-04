@@ -7,7 +7,7 @@ import { mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import strict from "node:assert/strict";
+import strict from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 // D135 — this guard COLLECTS every violation and fails ONCE at the end.
 // `assert` halts on the first finding, so while the tooltip's channel row was

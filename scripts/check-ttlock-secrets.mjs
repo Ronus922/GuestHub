@@ -28,7 +28,7 @@
 //
 // Static only: no DB, no network, no build. Usage: node scripts/check-ttlock-secrets.mjs
 // ============================================================
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";

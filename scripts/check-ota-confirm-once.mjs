@@ -30,7 +30,7 @@
 // Never touches production: the DB half refuses production markers and rolls
 // back. Usage: node scripts/check-ota-confirm-once.mjs
 // ============================================================
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

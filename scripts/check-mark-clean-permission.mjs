@@ -14,7 +14,7 @@
 //     manage alone. Widening any of them turns this red.
 //
 // Usage: CHECK_MARK_CLEAN_DB_URL=postgres://…:5433/… node scripts/check-mark-clean-permission.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 

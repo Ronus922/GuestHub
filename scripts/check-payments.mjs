@@ -8,7 +8,7 @@
 //   * the D52 migrations remove CVV (count-only) and reconcile the ledger.
 // No DB required — pure + source. Usage: node scripts/check-payments.mjs
 import { readFileSync } from "node:fs";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 // comment-stripped source (rules are about code, not the notes)
 const src = (p) =>

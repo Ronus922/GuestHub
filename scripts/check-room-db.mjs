@@ -6,14 +6,14 @@
 // ROLL BACK. Usage: node scripts/check-room-db.mjs
 import { execSync } from "node:child_process";
 import postgres from "postgres";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const URL = process.env.TEST_DATABASE_URL || "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
 for (const m of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
   if (URL.includes(m)) { console.error(`✗ refusing: production marker "${m}"`); process.exit(1); }
 }
 console.log("→ applying migration chain (idempotent)…");
-execSync('for f in $(ls db/migrations/*.sql | sort); do docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$f" >/dev/null; done',
+execSync(`for f in $(ls db/migrations/*.sql | sort); do psql "${URL}" -v ON_ERROR_STOP=1 -q < "$f" >/dev/null; done`,
   { stdio: "inherit", shell: "/bin/bash" });
 
 const sql = postgres(URL, { prepare: false, max: 1, onnotice: () => {} });

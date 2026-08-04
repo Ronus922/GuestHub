@@ -8,7 +8,7 @@
 //
 // Usage: node --env-file=.env.local scripts/check-rate-grid.mjs
 import postgres from "postgres";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";

@@ -14,7 +14,7 @@
 //   end state → ZERO cancelled-at-source-still-occupying reservations.
 //
 // Usage: node scripts/check-beds24-cancellation-sync.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";

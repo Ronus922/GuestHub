@@ -31,7 +31,7 @@
 // Usage: node scripts/check-room-picker-window.mjs
 // ============================================================
 
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -172,11 +172,11 @@ const { nightsBetween } = req(join(out, "lib/dates.js"));
 // ============================================================
 // Part C — end-to-end on the test DB (rolled back)
 // ============================================================
-console.log("applying migration chain to guesthub-testdb (:5433)…");
+console.log("applying migration chain to the test DB…");
 const migrations = readdirSync(join(ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
 for (const f of migrations) {
   execSync(
-    `docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "db/migrations/${f}"`,
+    `psql "${TEST_URL}" -v ON_ERROR_STOP=1 -q < "db/migrations/${f}"`,
     { cwd: ROOT, stdio: ["pipe", "ignore", "inherit"], shell: "/bin/bash" },
   );
 }

@@ -28,7 +28,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 console.log(`# tree under test: ${ROOT}`);
@@ -46,12 +46,12 @@ process.env.DATABASE_URL = TEST_URL;
 
 const psql = (sql) =>
   execSync(
-    `docker exec -i guesthub-testdb psql -U postgres -d postgres -tA -v ON_ERROR_STOP=1`,
+    `psql "${TEST_URL}" -tA -v ON_ERROR_STOP=1`,
     { input: sql, cwd: ROOT, shell: "/bin/bash" },
   ).toString().trim();
 const applyMigration = (file) =>
   execSync(
-    `docker exec -i guesthub-testdb psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 < "db/migrations/${file}"`,
+    `psql "${TEST_URL}" -q -v ON_ERROR_STOP=1 < "db/migrations/${file}"`,
     { cwd: ROOT, stdio: ["pipe", "ignore", "inherit"], shell: "/bin/bash" },
   );
 

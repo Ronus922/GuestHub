@@ -18,7 +18,7 @@
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 // Disposable local test DB only. Refuse anything that smells of production.
 const URL = process.env.TEST_DATABASE_URL || "postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres";
@@ -27,15 +27,15 @@ for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.i
 }
 
 const applyChain = () => execSync(
-  'for f in $(ls db/migrations/*.sql | sort); do docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$f" >/dev/null; done',
+  `for f in $(ls db/migrations/*.sql | sort); do psql "${URL}" -v ON_ERROR_STOP=1 -q < "$f" >/dev/null; done`,
   { stdio: "inherit", shell: "/bin/bash" },
 );
 const apply026 = () => execSync(
-  'docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < db/migrations/026_sellable_unit_lifecycle.sql >/dev/null 2>&1',
+  `psql "${URL}" -v ON_ERROR_STOP=1 -q < db/migrations/026_sellable_unit_lifecycle.sql >/dev/null 2>&1`,
   { stdio: "inherit", shell: "/bin/bash" },
 );
 
-console.log("→ applying migration chain 000..026 to guesthub-testdb…");
+console.log("→ applying migration chain 000..026 to the test DB…");
 applyChain();
 console.log("→ re-applying 026_sellable_unit_lifecycle.sql a second time (idempotency)…");
 apply026();

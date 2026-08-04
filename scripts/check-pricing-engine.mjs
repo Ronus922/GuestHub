@@ -11,7 +11,7 @@
 // Usage: node scripts/check-pricing-engine.mjs
 // ============================================================
 
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -40,11 +40,11 @@ for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.i
 process.env.DATABASE_URL = TEST_URL; // any transitively-created client points at the test DB
 
 // ---- apply the full migration chain (idempotent; validates 016 on the way) ----
-console.log("applying migration chain to guesthub-testdb (:5433)…");
+console.log("applying migration chain to the test DB…");
 const migrations = readdirSync(join(ROOT, "db/migrations")).filter((f) => f.endsWith(".sql")).sort();
 for (const f of migrations) {
   execSync(
-    `docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "db/migrations/${f}"`,
+    `psql "${TEST_URL}" -v ON_ERROR_STOP=1 -q < "db/migrations/${f}"`,
     { cwd: ROOT, stdio: ["pipe", "ignore", "inherit"], shell: "/bin/bash" },
   );
 }

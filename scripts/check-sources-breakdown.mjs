@@ -13,7 +13,7 @@
 // on stays sitting neatly inside the month proves nothing.
 //
 // Usage: CHECK_SOURCES_DB_URL=postgres://…:5433/… node scripts/check-sources-breakdown.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

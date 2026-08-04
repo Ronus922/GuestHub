@@ -23,7 +23,7 @@
 //   3 invariant       → zero ranges left synced by a drain that sent nothing
 //
 // Usage: node scripts/check-beds24-payload-integrity.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import Module from "node:module";

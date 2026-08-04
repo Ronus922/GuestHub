@@ -27,7 +27,7 @@
 // rooms, sellable units, a designated Rate Plan and real dirty ranges.
 //
 // Usage: node scripts/check-beds24-ari-drain.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";

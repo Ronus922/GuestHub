@@ -5,7 +5,7 @@
 // the now-enabled Rooms. Source-level (no DB). Usage: node scripts/check-settings-regression.mjs
 import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const BASE = "bc085b9";
 let n = 0;
