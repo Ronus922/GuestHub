@@ -3,8 +3,16 @@
 //
 // Deterministic replay-from-zero and drift-free tracking of db/migrations/*.sql.
 // Order comes from db/migrations/manifest.txt (resolves the duplicate 009 prefix).
-// Each applied migration is recorded in guesthub.schema_migrations with a sha256
-// checksum, so re-runs are idempotent and tampering is detectable.
+// Each applied migration is recorded as one row in guesthub.schema_migrations,
+// so re-runs are idempotent.
+//
+// LEDGER SHAPE (D136): migration 064 owns guesthub.schema_migrations and defines
+// it as (filename text PRIMARY KEY, applied_at timestamptz). This runner speaks
+// that shape and nothing else. It previously bootstrapped its own
+// (version, checksum, applied_at, applied_by) table; because both sides use
+// CREATE TABLE IF NOT EXISTS, the runner silently won the race on a from-zero
+// database and 064's INSERT ... (filename) then hit a column that did not exist.
+// The schema is the record; the runner conforms to it, never the reverse.
 //
 // SAFETY (V2 §3): the target is taken ONLY from MIGRATE_DATABASE_URL (never the
 // app's DATABASE_URL), its identity is printed, and the runner REFUSES to touch
@@ -22,7 +30,6 @@
 //   5432 on a NON-production host (never for this host's shared pooler).
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,25 +68,19 @@ for (const m of manifest) if (!onDisk.has(m)) { console.error(`ABORT: manifest l
 const listed = new Set(manifest);
 for (const f of onDisk) if (!listed.has(f)) { console.error(`ABORT: ${f} is on disk but missing from manifest.txt`); process.exit(2); }
 
-const sha = (f) => createHash("sha256").update(readFileSync(join(MIG_DIR, f))).digest("hex");
-
 // --- bootstrap ledger (idempotent; runner infrastructure, safe on fresh + existing DBs) ---
+// Byte-identical to 064's own DDL, deliberately: on a from-zero replay this runs
+// first and 064's CREATE TABLE IF NOT EXISTS is then a genuine no-op against an
+// identical shape, so its INSERT ... (filename) applies against the columns it
+// declared. Any divergence here re-creates the 064 failure.
 psql(["-c", `CREATE SCHEMA IF NOT EXISTS guesthub;
 CREATE TABLE IF NOT EXISTS ${LEDGER} (
-  version     text PRIMARY KEY,
-  checksum    text NOT NULL,
-  applied_at  timestamptz NOT NULL DEFAULT now(),
-  applied_by  text NOT NULL DEFAULT current_user
-);
-COMMENT ON TABLE ${LEDGER} IS 'GuestHub migration ledger (H5): one row per applied db/migrations file, in manifest order, with sha256 checksum.';`]);
+  filename   text PRIMARY KEY,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);`]);
 
-const appliedRows = psql(["-tAc", `SELECT version || '\t' || checksum FROM ${LEDGER}`])
-  .split("\n").map((l) => l.trim()).filter(Boolean);
-const applied = new Map(appliedRows.map((l) => l.split("\t")));
-
-// checksum drift detection
-for (const [v, cs] of applied) if (listed.has(v) && cs !== sha(v))
-  console.warn(`WARN: checksum drift for ${v} (ledger ${cs.slice(0,12)} != disk ${sha(v).slice(0,12)}) — file changed after apply`);
+const applied = new Set(psql(["-tAc", `SELECT filename FROM ${LEDGER}`])
+  .split("\n").map((l) => l.trim()).filter(Boolean));
 
 const pending = manifest.filter((m) => !applied.has(m));
 
@@ -93,7 +94,7 @@ if (mode === "status") {
 
 if (mode === "baseline") {
   for (const m of pending) {
-    psql(["-c", `INSERT INTO ${LEDGER}(version, checksum) VALUES ('${m}','${sha(m)}') ON CONFLICT (version) DO NOTHING`]);
+    psql(["-c", `INSERT INTO ${LEDGER}(filename) VALUES ('${m}') ON CONFLICT (filename) DO NOTHING`]);
     console.log(`baselined ${m}`);
   }
   console.log(`\nBaseline complete: ${manifest.length} migrations recorded as applied (nothing executed).`);
@@ -107,8 +108,12 @@ for (const m of pending) {
   const file = join(MIG_DIR, m);
   // -f and -c run inside ONE --single-transaction: the migration and its ledger
   // row commit together, or neither does.
+  // ON CONFLICT is load-bearing, not decoration: 064 backfills the ledger and
+  // includes its OWN filename, so on a from-zero replay the row already exists
+  // when this INSERT runs. A bare INSERT would raise a PK violation and roll the
+  // whole 064 transaction back.
   psql(["--single-transaction", "-f", file,
-        "-c", `INSERT INTO ${LEDGER}(version, checksum) VALUES ('${m}','${sha(m)}')`]);
+        "-c", `INSERT INTO ${LEDGER}(filename) VALUES ('${m}') ON CONFLICT (filename) DO NOTHING`]);
   console.log(`  ✓ ${m}`);
 }
 console.log(`\nDone: ${pending.length} applied, ${manifest.length} total.`);
