@@ -72,7 +72,6 @@ import type { NewReservationPrefill } from "@/components/reservations/NewReserva
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
-import { RateCellTooltip, type CellTipTarget } from "./RateCellTooltip";
 
 // ---- geometry — the ONE source (reference: GuesthubCalandrUpdate.html) ----
 // These numbers drive BOTH the drag math (which needs them as numbers) and the
@@ -215,9 +214,6 @@ export function CalendarGrid({
   // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
   // delay, kept alive while the pointer is inside the card or the tooltip
   const [tip, setTip] = useState<TooltipTarget | null>(null);
-  // empty-cell commercial (rate) hover tooltip (§2) — independent of the
-  // reservation tooltip; informational only, no write path.
-  const [cellTip, setCellTip] = useState<CellTipTarget | null>(null);
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
   const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
@@ -244,8 +240,6 @@ export function CalendarGrid({
   const gnRef = useRef<HTMLSpanElement | null>(null);
   const tipOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cellTipOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cellTipCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cancelTipTimers = useCallback(() => {
     if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
@@ -254,19 +248,6 @@ export function CalendarGrid({
     tipCloseTimer.current = null;
   }, []);
   useEffect(() => cancelTipTimers, [cancelTipTimers]);
-
-  const cancelCellTipTimers = useCallback(() => {
-    if (cellTipOpenTimer.current) clearTimeout(cellTipOpenTimer.current);
-    if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
-    cellTipOpenTimer.current = null;
-    cellTipCloseTimer.current = null;
-  }, []);
-  useEffect(() => cancelCellTipTimers, [cancelCellTipTimers]);
-
-  const closeCellTip = useCallback(() => {
-    cancelCellTipTimers();
-    setCellTip(null);
-  }, [cancelCellTipTimers]);
 
   const staysByRoom = useMemo(() => {
     const m = new Map<string, CalendarStay[]>();
@@ -576,12 +557,11 @@ export function CalendarGrid({
       if (!can.viewReservation) return;
       cancelTipTimers();
       setTip(null);
-      closeCellTip();
       setMenu(null);
       setClosurePop(null);
       onOpenReservation(stay.reservation_id);
     },
-    [can.viewReservation, cancelTipTimers, closeCellTip, onOpenReservation],
+    [can.viewReservation, cancelTipTimers, onOpenReservation],
   );
 
   // Capture-phase click suppressor on the grid body (§4). Exactly one synthetic
@@ -632,47 +612,6 @@ export function CalendarGrid({
   const cancelTipOpen = useCallback(() => {
     if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
     tipOpenTimer.current = null;
-  }, []);
-
-  // ---- empty-cell commercial tooltip wiring (§2): mirrors the reservation
-  // tooltip's deliberate open delay + close grace, on its own timers so the
-  // two never fight. Never opens during a drag/selection. ----
-  const onCellHoverStart = useCallback(
-    (e: React.PointerEvent, room: CalendarRoom, date: DateOnly, rate: RateRow | undefined) => {
-      if (e.pointerType !== "mouse") return;
-      if (sessionRef.current) return; // never during a drag/resize/selection
-      const el = e.currentTarget as HTMLElement;
-      if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
-      cellTipCloseTimer.current = null;
-      if (cellTipOpenTimer.current) clearTimeout(cellTipOpenTimer.current);
-      cellTipOpenTimer.current = setTimeout(() => {
-        cellTipOpenTimer.current = null;
-        if (sessionRef.current || !el.isConnected) return;
-        const r = el.getBoundingClientRect();
-        setCellTip({
-          room,
-          date,
-          rate,
-          anchor: { x: r.left + r.width / 2, top: r.top, bottom: r.bottom },
-        });
-      }, TOOLTIP_OPEN_MS);
-    },
-    [],
-  );
-
-  const scheduleCellTipClose = useCallback(() => {
-    if (cellTipOpenTimer.current) clearTimeout(cellTipOpenTimer.current);
-    cellTipOpenTimer.current = null;
-    if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
-    cellTipCloseTimer.current = setTimeout(() => {
-      cellTipCloseTimer.current = null;
-      setCellTip(null);
-    }, TOOLTIP_CLOSE_MS);
-  }, []);
-
-  const keepCellTipAlive = useCallback(() => {
-    if (cellTipCloseTimer.current) clearTimeout(cellTipCloseTimer.current);
-    cellTipCloseTimer.current = null;
   }, []);
 
   // ---- pointer wiring (handlers live ON the card via pointer capture —
@@ -789,7 +728,6 @@ export function CalendarGrid({
       if (!body) return;
       cancelTipTimers();
       setTip(null);
-      closeCellTip();
       setMenu(null);
       setClosurePop(null);
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
@@ -812,7 +750,7 @@ export function CalendarGrid({
         raf: 0,
       };
     },
-    [can.create, data.days, cancelTipTimers, closeCellTip],
+    [can.create, data.days, cancelTipTimers],
   );
 
   const onCellPointerMove = useCallback(
@@ -895,10 +833,9 @@ export function CalendarGrid({
       e.stopPropagation();
       setClosurePop(null);
       setTip(null);
-      closeCellTip();
       setMenu({ x: e.clientX, y: e.clientY, roomId, date });
     },
-    [closeCellTip],
+    [],
   );
 
   const onCellDouble = useCallback(
@@ -1128,8 +1065,6 @@ export function CalendarGrid({
                   onCellPointerCancel={onBarPointerCancel}
                   onCellContext={onCellContext}
                   onCellDouble={onCellDouble}
-                  onCellHoverStart={onCellHoverStart}
-                  onCellHoverEnd={scheduleCellTipClose}
                   onClosureClick={onClosureClick}
                 />
               ))}
@@ -1260,13 +1195,6 @@ export function CalendarGrid({
            positioned OUTSIDE the pill; never an interaction target (§1) ===== */}
       <ReservationTooltip target={tip} statusLabel={statusLabel} />
 
-      {/* ===== empty-cell commercial (rate) hover tooltip (§2, #11) ===== */}
-      <RateCellTooltip
-        target={cellTip}
-        onKeepAlive={keepCellTipAlive}
-        onRelease={scheduleCellTipClose}
-      />
-
       {/* ===== drag/resize confirmation (§2/§3): persists only on אישור ===== */}
       {confirmMove && (
         <MoveConfirmDialog
@@ -1315,8 +1243,6 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel,
   onCellContext,
   onCellDouble,
-  onCellHoverStart,
-  onCellHoverEnd,
   onClosureClick,
 }: {
   room: CalendarRoom;
@@ -1348,8 +1274,6 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (roomId: string, date: DateOnly, minNights: number) => void;
-  onCellHoverStart: (e: React.PointerEvent, room: CalendarRoom, date: DateOnly, rate: RateRow | undefined) => void;
-  onCellHoverEnd: () => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
   const sellable = room.status === "available" && room.is_active;
@@ -1414,8 +1338,6 @@ const RoomRow = memo(function RoomRow({
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
-              onPointerEnter={sellable ? (e) => onCellHoverStart(e, room, d, rate) : undefined}
-              onPointerLeave={sellable ? onCellHoverEnd : undefined}
             >
               {sellable && (
                 <>
