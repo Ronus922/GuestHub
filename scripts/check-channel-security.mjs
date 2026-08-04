@@ -36,12 +36,26 @@ for (const f of channelFiles) {
 }
 if (!leak) pass("no api-key / ciphertext / token reaches a log or an audit payload");
 
-// ---- the api-key travels ONLY in the request header, never a URL/query ----
-const http = read("src/lib/channel/channel-http.ts");
-if (!/"user-api-key":\s*opts\.apiKey/.test(http)) flag("api-key is not sent via the user-api-key header");
-else pass("api-key travels only in the user-api-key header");
-if (/\?[^"'`\n]*apiKey|`\$\{[^}]*apiKey/.test(http)) flag("api-key may appear in a URL/query string");
-else pass("api-key never appears in a URL/query string");
+// ---- the credential travels ONLY in request headers, never a URL/query ----
+// The file that actually issues requests is beds24-http.ts (D91: Channex and its
+// user-api-key scheme are gone; channel-http.ts holds only the taxonomy/evidence
+// primitives and sends nothing). Beds24's scheme: regular calls carry the access
+// token in a `token` header; the two /authentication endpoints carry their
+// credential in a dedicated header (`code` / `refreshToken`).
+const http = read("src/lib/channel/beds24-http.ts");
+if (!/headers:\s*\{\s*token:\s*opts\.token\s*\}/.test(http)) flag("the access token is not sent via the `token` header");
+else pass("access token travels only in the `token` header");
+if (!/headers:\s*\{\s*\[opts\.authHeader\.name\]:\s*opts\.authHeader\.value\s*\}/.test(http))
+  flag("auth-endpoint credential is not sent via its dedicated header (code/refreshToken)");
+else pass("auth credential travels only in its dedicated header (code / refreshToken)");
+// the ONE URL ever fetched is bare baseUrl+path — a credential in the URL/query
+// would land in access logs and proxies, so the shape itself is the invariant
+if (!/fetchImpl\(`\$\{opts\.baseUrl\}\$\{opts\.path\}`/.test(http))
+  flag("request URL is not the bare baseUrl+path (a credential could ride the URL)");
+else pass("request URL is exactly baseUrl+path — headers are the only credential carrier");
+if (/[?&](token|code|refreshToken|apiKey)=/i.test(http) || /`[^`\n]*\?[^`\n]*\$\{[^}]*(token|code|key)/i.test(http))
+  flag("a credential may appear in a URL/query string");
+else pass("no credential ever appears in a URL/query string");
 
 // ---- the masked connection view never exposes the ciphertext ----
 const admin = read("src/lib/channel/beds24-admin.ts");

@@ -15,17 +15,21 @@ const flag = (m) => { fail++; console.log(`✗ ${m}`); };
 const pass = (m) => console.log(`✓ ${m}`);
 
 // ---- static: checkout generates a cleaning task, idempotently ----
-const resActions = read("src/app/(dashboard)/reservations/actions.ts");
-if (!/input\.status === "checked_out"[\s\S]{0,600}INSERT INTO guesthub\.housekeeping_tasks/.test(resActions))
+// The checkout consequences live in the ONE lifecycle module (lifecycle.ts) —
+// extracted from reservations/actions.ts so the panel action and the
+// dashboard's status-only action run the SAME transition body. The DB proof
+// below exercises the same INSERT shape; this half pins where it lives.
+const lifecycle = read("src/lib/reservations/lifecycle.ts");
+if (!/toStatus === "checked_out"[\s\S]{0,600}INSERT INTO guesthub\.housekeeping_tasks/.test(lifecycle))
   flag("checkout does not generate a housekeeping task");
 else pass("checkout generates a cleaning task (lifecycle connection)");
-if (!/housekeeping_tasks[\s\S]{0,400}WHERE NOT EXISTS/.test(resActions))
+if (!/housekeeping_tasks[\s\S]{0,400}WHERE NOT EXISTS/.test(lifecycle))
   flag("checkout task generation is not idempotent (no NOT EXISTS guard)");
 else pass("task generation is idempotent (skips a room with an open task)");
 // cleanliness must NOT mark the ARI outbox (a dirty room stays sellable)
-const checkoutBlock = resActions.slice(
-  resActions.indexOf('input.status === "checked_out"'),
-  resActions.indexOf('input.status === "checked_out"') + 700,
+const checkoutBlock = lifecycle.slice(
+  lifecycle.indexOf('args.toStatus === "checked_out"'),
+  lifecycle.indexOf('args.toStatus === "checked_out"') + 700,
 );
 if (/markAriDirty/.test(checkoutBlock)) flag("checkout housekeeping block marks the ARI outbox (cleanliness must not affect availability)");
 else pass("cleanliness does not touch the ARI outbox (D64 0/1 model)");

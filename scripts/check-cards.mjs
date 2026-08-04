@@ -17,7 +17,7 @@ import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:as
 
 const out = mkdtempSync(join(tmpdir(), "cards-"));
 execSync(
-  `pnpm exec tsc src/lib/card-rules.ts src/lib/card-vault.ts src/lib/vat.ts src/lib/channel/payloads.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
+  `pnpm exec tsc src/lib/card-rules.ts src/lib/card-vault.ts src/lib/vat.ts src/lib/channel/payloads.ts src/lib/payments/gateway.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
   { stdio: "inherit" },
 );
 // card-vault imports the "server-only" marker package — stub it for node
@@ -278,8 +278,15 @@ assert.ok(!/total_price|paid_amount|balance/.test(settingsActions),
 const gatewaySrc = src("src/lib/payments/gateway.ts");
 assert.ok(/getPaymentGateway\(\): PaymentGateway \| null/.test(gatewaySrc),
   "gateway seam exposes getPaymentGateway(): PaymentGateway | null");
-assert.ok(/if \(!provider\) return null;/.test(gatewaySrc),
-  "no PSP_PROVIDER configured — getPaymentGateway returns null (fail closed)");
+// D46 fail-closed, asserted by EXECUTION rather than a source-shape grep: with
+// no PSP configured in the environment, the seam must return null. (Today
+// gateway.ts returns null unconditionally — strictly stronger than the old
+// `if (!provider) return null;` literal this guard used to demand.)
+const gateway = require(join(out, "payments", "gateway.js"));
+assert.equal(gateway.getPaymentGateway(), null,
+  "no PSP configured — getPaymentGateway() returns null (fail closed, executed)");
+assert.equal(gateway.paymentGatewayConfigured(), false,
+  "paymentGatewayConfigured() reports false while no provider exists");
 assert.ok(/NO_GATEWAY_MESSAGE/.test(gatewaySrc), "a no-provider message is defined for the UI/action");
 
 // charge routes through the seam; no gateway → fails closed; with a gateway,
