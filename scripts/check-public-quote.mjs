@@ -22,7 +22,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 console.log(`# tree under test: ${ROOT}`);
@@ -39,16 +39,16 @@ for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.i
 process.env.DATABASE_URL = TEST_URL;
 
 const psql = (sqlText) =>
-  execSync(`docker exec -i guesthub-testdb psql -U postgres -d postgres -tA -v ON_ERROR_STOP=1`,
+  execSync(`psql "${TEST_URL}" -tA -v ON_ERROR_STOP=1`,
     { input: sqlText, cwd: ROOT, shell: "/bin/bash" }).toString().trim();
 
 // schema bootstrap: full chain only when the schema is absent (a restored copy
 // is used as-is — this guard never mutates outside its rolled-back tx)
 if (psql(`SELECT to_regclass('guesthub.reservations') IS NULL`) === "t") {
-  console.log("applying migration chain to guesthub-testdb (:5433)…");
+  console.log("applying migration chain to the test DB…");
   for (const f of readdirSync(join(ROOT, "db/migrations")).filter((x) => x.endsWith(".sql")).sort()) {
     execSync(
-      `docker exec -i guesthub-testdb psql -U postgres -d postgres -q -v ON_ERROR_STOP=1 < "db/migrations/${f}"`,
+      `psql "${TEST_URL}" -q -v ON_ERROR_STOP=1 < "db/migrations/${f}"`,
       { cwd: ROOT, stdio: ["pipe", "ignore", "inherit"], shell: "/bin/bash" },
     );
   }

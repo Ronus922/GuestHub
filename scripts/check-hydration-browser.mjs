@@ -16,7 +16,7 @@
 //
 // Node 20 has no global WebSocket without --experimental-websocket.
 // ============================================================
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

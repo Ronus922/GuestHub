@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -15,7 +15,7 @@ for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.i
 }
 
 execSync(
-  'for f in $(ls db/migrations/*.sql | sort); do docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < "$f" >/dev/null 2>&1; done',
+  `for f in $(ls db/migrations/*.sql | sort); do psql "${url}" -v ON_ERROR_STOP=1 -q < "$f" >/dev/null 2>&1; done`,
   { stdio: "inherit", shell: "/bin/bash" },
 );
 

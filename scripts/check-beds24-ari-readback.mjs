@@ -30,7 +30,7 @@
 // documents — the server does not send those).
 //
 // Usage: node scripts/check-beds24-ari-readback.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";

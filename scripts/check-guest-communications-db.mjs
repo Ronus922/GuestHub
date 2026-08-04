@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import postgres from "postgres";
 
@@ -26,12 +26,12 @@ const counts = async () => (await sql`
 // Reapply twice so the assertion does not depend on whether the local test DB
 // was already current when this test started. Neither pass may emit work.
 execSync(
-  'docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < db/migrations/036_guest_communications.sql',
+  `psql "${url}" -v ON_ERROR_STOP=1 -q < db/migrations/036_guest_communications.sql`,
   { stdio: "inherit", shell: "/bin/bash" },
 );
 const afterFirst = await counts();
 execSync(
-  'docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < db/migrations/036_guest_communications.sql',
+  `psql "${url}" -v ON_ERROR_STOP=1 -q < db/migrations/036_guest_communications.sql`,
   { stdio: "inherit", shell: "/bin/bash" },
 );
 const afterSecond = await counts();

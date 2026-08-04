@@ -15,7 +15,7 @@
 //
 //   node scripts/check-rates-ui.mjs
 // ============================================================
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 
 const read = (p) => readFileSync(p, "utf8");

@@ -35,7 +35,7 @@
 // makes for the rest of the calendar contract.
 //
 // Usage: node scripts/check-beds24-maxstay-no-limit.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import Module from "node:module";

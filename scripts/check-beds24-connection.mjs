@@ -5,7 +5,7 @@
 // present, the circuit breaker closed — and no other provider active.
 // Usage: node --env-file=.env.local scripts/check-beds24-connection.mjs
 import postgres from "postgres";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
 let n = 0;

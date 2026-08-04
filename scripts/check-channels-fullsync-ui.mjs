@@ -17,7 +17,7 @@
 // Static + local compile only: no network, no DB, no browser.
 // Usage: node scripts/check-channels-fullsync-ui.mjs
 // ============================================================
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

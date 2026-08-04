@@ -9,7 +9,7 @@
 // All writes happen inside transactions that ROLL BACK — the live data is
 // never modified. Usage: node --env-file=.env.local scripts/check-inventory.mjs
 import postgres from "postgres";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const sql = postgres(process.env.DATABASE_URL, { prepare: true, max: 1 });
 const FROM = "2026-08-01";

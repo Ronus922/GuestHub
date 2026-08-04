@@ -21,7 +21,7 @@
 // against the disposable test DB (:5433) with a faked Beds24 in front of it.
 //
 // Usage: node scripts/check-booking-com-reports.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -192,7 +192,7 @@ const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 // migration's idempotency is proven in passing
 for (let i = 0; i < 2; i++) {
   execSync(
-    "docker exec -i guesthub-testdb psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q" +
+    `psql "${TEST_URL}" -v ON_ERROR_STOP=1 -q` +
       " < db/migrations/055_booking_com_channel_reports.sql",
     { stdio: "inherit", shell: "/bin/bash" },
   );

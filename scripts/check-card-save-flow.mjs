@@ -19,7 +19,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 console.log(`# tree under test: ${ROOT}`);

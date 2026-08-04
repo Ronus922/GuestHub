@@ -22,7 +22,7 @@ import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync, rmSync, w
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 let n = 0;
 const ok = (m) => { n++; console.log(`  ✓ ${m}`); };

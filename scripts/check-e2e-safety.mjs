@@ -4,7 +4,7 @@
 // verdicts are independent of the developer's current branch (the old check 9
 // broke whenever the checkout sat on main == origin/main).
 // Usage: node scripts/check-e2e-safety.mjs
-import assert from "node:assert/strict";
+import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
