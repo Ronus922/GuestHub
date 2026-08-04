@@ -11,6 +11,8 @@ import { runBeds24AriReadback } from "./beds24-ari-readback";
 import {
   loadBeds24InboundConnections, runBeds24InboundPull, runBeds24BookingReconciliation,
 } from "./beds24-booking-import";
+import { loadBeds24IngestConnections, runBeds24GuestMessagesPull } from "./beds24-messages";
+import { runBeds24ChannelReviewsPull } from "./beds24-reviews";
 import type { Beds24CreditSnapshot } from "./beds24-credits";
 import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 import { runCommunicationTick } from "@/lib/communications/worker";
@@ -216,6 +218,27 @@ async function runJob(
       }
       return { sentValues: released };
     }
+    if (jobType === "pull_guest_messages" || jobType === "pull_channel_reviews") {
+      // Phase 4 ingest (076) — receive-only. A connection that stopped being
+      // ingest-eligible (inbound disabled, rooms unmapped) is a quiet no-op,
+      // not an error — the eligibility predicate is the load function, same
+      // doctrine as the sync_ari_range drainable check. An OPEN §16 circuit is
+      // also a quiet no-op (circuitOpen) — the breaker's cooldown must not be
+      // converted into retry/dead-letter noise.
+      const [ingest] = (await loadBeds24IngestConnections(sql)).filter((c) => c.id === connectionId);
+      if (!ingest) return { sentValues: 0 };
+      const summary =
+        jobType === "pull_guest_messages"
+          ? await runBeds24GuestMessagesPull(sql, ingest)
+          : await runBeds24ChannelReviewsPull(sql, ingest);
+      await recordJobCredits(jobId, summary.credits, summary.creditPause?.reason ?? null);
+      // nothing can land when nothing was fetched, so this is the total-failure
+      // shape (mirrors the pull_booking_revisions throw)
+      if (summary.errors.length > 0 && summary.fetched === 0) {
+        throw Object.assign(new Error(summary.errors[0]), { code: "network_error" });
+      }
+      return { sentValues: summary.inserted };
+    }
     throw Object.assign(new Error(`unsupported job type: ${jobType}`), { code: "validation_error" });
   }
 
@@ -314,6 +337,44 @@ async function ensureReconcileJobs(): Promise<void> {
   }
 }
 
+// Phase 4 ingest cadences (076) — the same durable jobs-table pattern as the
+// inbound poll: no cron, no timer, at most one live job per connection per
+// type, a new one only when none ran (or was enqueued) within the window.
+// Messages every 5 minutes (a guest question is time-sensitive); reviews
+// hourly (a review changes rarely, and its reply lands via the same upsert on
+// whichever later cycle sees it). Measured cost is 1.0 credit per call for
+// BOTH endpoints (ref/audit/BEDS24-*-SHAPE-2026-08-05.json): +1.0 credit in
+// each 5-minute window plus 1.0 in one window in 12 — inside the reserve the
+// D93 safety-net arithmetic in beds24-credits.ts already carries.
+export const GUEST_MESSAGES_POLL_MINUTES = 5;
+export const CHANNEL_REVIEWS_POLL_MINUTES = 60;
+
+async function ensureIngestPullJobs(): Promise<void> {
+  const targets = await loadBeds24IngestConnections(sql);
+  const kinds = [
+    { jobType: "pull_guest_messages", minutes: GUEST_MESSAGES_POLL_MINUTES, priority: 70, keyPrefix: "guest_messages" },
+    { jobType: "pull_channel_reviews", minutes: CHANNEL_REVIEWS_POLL_MINUTES, priority: 80, keyPrefix: "channel_reviews" },
+  ] as const;
+  for (const conn of targets) {
+    for (const kind of kinds) {
+      const [recent] = await sql<{ x: number }[]>`
+        SELECT 1 AS x FROM guesthub.channel_sync_jobs
+        WHERE connection_id = ${conn.id} AND job_type = ${kind.jobType}
+          AND (status IN ('queued', 'processing', 'retry_wait')
+               OR created_at > now() - make_interval(mins => ${kind.minutes}))
+        LIMIT 1`;
+      if (recent) continue;
+      await enqueueChannelJob(sql, {
+        tenantId: conn.tenant_id,
+        connectionId: conn.id,
+        jobType: kind.jobType,
+        priority: kind.priority,
+        idempotencyKey: `${kind.keyPrefix}:${conn.id}`,
+      });
+    }
+  }
+}
+
 export async function runTick(workerId: string, log: (m: string) => void): Promise<TickSummary> {
   const summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
   // Guest communication shares this existing durable worker process. It runs
@@ -336,6 +397,7 @@ export async function runTick(workerId: string, log: (m: string) => void): Promi
   await ensureDrainJobs();
   await ensureInboundPullJobs();
   await ensureReconcileJobs();
+  await ensureIngestPullJobs();
   const jobs = await claimChannelJobs(workerId, JOBS_PER_TICK);
   summary.claimed = jobs.length;
   if (jobs.length === 0) return summary;
