@@ -340,14 +340,16 @@ async function ensureReconcileJobs(): Promise<void> {
 // Phase 4 ingest cadences (076) — the same durable jobs-table pattern as the
 // inbound poll: no cron, no timer, at most one live job per connection per
 // type, a new one only when none ran (or was enqueued) within the window.
-// Messages every 5 minutes (a guest question is time-sensitive); reviews
-// hourly (a review changes rarely, and its reply lands via the same upsert on
-// whichever later cycle sees it). Measured cost is 1.0 credit per call for
-// BOTH endpoints (ref/audit/BEDS24-*-SHAPE-2026-08-05.json): +1.0 credit in
-// each 5-minute window plus 1.0 in one window in 12 — inside the reserve the
-// D93 safety-net arithmetic in beds24-credits.ts already carries.
+// Messages every 5 minutes (a guest question is time-sensitive); reviews once
+// per 24 hours — reviews change slowly, and this is the only credit-consuming
+// call that does not need sub-daily freshness. A reply written upstream lands
+// via the same upsert on whichever next daily cycle sees it. Measured cost is
+// 1.0 credit per call for BOTH endpoints
+// (ref/audit/BEDS24-*-SHAPE-2026-08-05.json): +1.0 credit in each 5-minute
+// window for messages, +1.0 in ONE window per day for reviews — inside the
+// reserve the D93 safety-net arithmetic in beds24-credits.ts already carries.
 export const GUEST_MESSAGES_POLL_MINUTES = 5;
-export const CHANNEL_REVIEWS_POLL_MINUTES = 60;
+export const CHANNEL_REVIEWS_POLL_MINUTES = 24 * 60;
 
 async function ensureIngestPullJobs(): Promise<void> {
   const targets = await loadBeds24IngestConnections(sql);
