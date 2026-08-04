@@ -70,11 +70,14 @@ if (dsn && existsSync("/usr/bin/psql")) {
       SELECT availability INTO ax FROM guesthub.sellable_unit_inventory(t,d,d+1) WHERE sellable_unit_id=su;
       INSERT INTO probe_out VALUES (b, ao, ax, false);
     END $$;
-    SELECT COALESCE(skip::text,'f') || '|' || COALESCE(base::text,'') || '|' || COALESCE(oos::text,'') || '|' || COALESCE(ooo::text,'') FROM probe_out;
+    SELECT COALESCE(skip::text,'false') || '|' || COALESCE(base::text,'') || '|' || COALESCE(oos::text,'') || '|' || COALESCE(ooo::text,'') FROM probe_out;
     ROLLBACK;`);
   const line = out.split("\n").map((s) => s.trim()).find((s) => s.includes("|")) ?? "";
   const [skip, base, oos, ooo] = line.split("|");
-  if (skip === "t") console.log("• no sellable unit with member rooms on staging — DB probe skipped");
+  // boolean::text renders 'true'/'false' (psql's bare-boolean 't'/'f' is a
+  // different, output-format rendering) — comparing to 't' made this branch
+  // unreachable, so an intended SKIP surfaced as "probe produced no result".
+  if (skip === "true") console.log("• no sellable unit with member rooms on staging — DB probe skipped");
   else if (!base) flag(`DB probe produced no result (${out.slice(-160)})`);
   else {
     const [b, o, x] = [Number(base), Number(oos), Number(ooo)];
