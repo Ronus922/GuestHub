@@ -26,6 +26,11 @@
 //          appended in their default order. A saved layout can neither hide a
 //          new window nor resurrect a deleted one, so there is no version to
 //          forget to bump.
+//
+//   Cross-column drag (§3): the SAVED layout owns each window's column; the
+//   registry's `defaultCol` only places windows a stored layout never
+//   mentioned. DEFAULT_ORDER still pins every window to its default column —
+//   that is the fresh-user layout, not a constraint on saved state.
 // ============================================================
 import type { IconName } from "@/components/shared/Icon";
 
@@ -33,7 +38,8 @@ export type DashboardColumn = "l" | "r";
 
 export type DashboardWindowDef = {
   id: string;
-  col: DashboardColumn;
+  /** where a FRESH layout places this window — the saved layout owns the actual column */
+  defaultCol: DashboardColumn;
   icon: IconName;
   title: string;
   /** what Phase 2 will pour in — shown as the empty state until then */
@@ -44,77 +50,77 @@ export type DashboardWindowDef = {
 export const WINDOWS = [
   {
     id: "arr",
-    col: "l",
+    defaultCol: "l",
     icon: "arrivals-departures",
     title: "הגעות ועזיבות היום",
     empty: "כאן יופיעו ההגעות והעזיבות של היום, עם כפתור כניסה/יציאה לכל אורח.",
   },
   {
     id: "rev",
-    col: "l",
+    defaultCol: "l",
     icon: "chart-area",
     title: "הכנסות — 12 החודשים האחרונים",
     empty: "כאן יופיע גרף ההכנסות החודשי לצד אחוזי התפוסה.",
   },
   {
     id: "hk",
-    col: "l",
+    defaultCol: "l",
     icon: "cleaning",
     title: "חדרים לניקיון — עזיבות היום",
     empty: "כאן יופיעו החדרים שהתפנו היום וממתינים לניקיון.",
   },
   {
     id: "agd",
-    col: "l",
+    defaultCol: "l",
     icon: "agenda",
     title: "יומן היום",
     empty: "כאן יופיע ציר האירועים של היום.",
   },
   {
     id: "alr",
-    col: "r",
+    defaultCol: "r",
     icon: "bell",
     title: "דורש טיפול",
     empty: "כאן יופיעו ההזמנות והתשלומים שדורשים התייחסות.",
   },
   {
     id: "iss",
-    col: "r",
+    defaultCol: "r",
     icon: "maintenance",
     title: "תקלות פתוחות",
     empty: "כאן יופיעו התקלות הפתוחות לפי חומרה.",
   },
   {
     id: "tsk",
-    col: "r",
+    defaultCol: "r",
     icon: "list-checks",
     title: "משימות היום",
     empty: "כאן יופיעו המשימות שנקבעו להיום.",
   },
   {
     id: "rvw",
-    col: "r",
+    defaultCol: "r",
     icon: "reviews",
     title: "חוות דעת — Booking.com",
     empty: "כאן יופיעו חוות הדעת האחרונות והממתינות למענה.",
   },
   {
     id: "msg",
-    col: "r",
+    defaultCol: "r",
     icon: "forum",
     title: "הודעות אורחים",
     empty: "כאן יופיעו השיחות האחרונות עם האורחים.",
   },
   {
     id: "src",
-    col: "r",
+    defaultCol: "r",
     icon: "donut",
     title: "פילוח מקורות הזמנה",
     empty: "כאן יופיע פילוח הערוצים שדרכם הגיעו ההזמנות.",
   },
   {
     id: "inh",
-    col: "r",
+    defaultCol: "r",
     icon: "night-shelter",
     title: "בבית הלילה",
     empty: "כאן יופיעו האורחים ששוהים אצלנו הלילה.",
@@ -123,7 +129,10 @@ export const WINDOWS = [
 
 export type DashboardWindowId = (typeof WINDOWS)[number]["id"];
 
-type WindowOf<C extends DashboardColumn> = Extract<(typeof WINDOWS)[number], { col: C }>["id"];
+type WindowOf<C extends DashboardColumn> = Extract<
+  (typeof WINDOWS)[number],
+  { defaultCol: C }
+>["id"];
 
 export type DashboardLayout = Record<DashboardColumn, DashboardWindowId[]>;
 
@@ -159,7 +168,9 @@ export const COLUMNS: readonly DashboardColumn[] = ["l", "r"];
 function buildDefaultLayout(): DashboardLayout {
   const layout: DashboardLayout = { l: [], r: [] };
   for (const col of COLUMNS) {
-    const registered = WINDOWS.filter((w) => w.col === col).map((w) => w.id as DashboardWindowId);
+    const registered = WINDOWS.filter((w) => w.defaultCol === col).map(
+      (w) => w.id as DashboardWindowId,
+    );
     const placed = DEFAULT_ORDER[col] as readonly DashboardWindowId[];
 
     const unregistered = placed.filter((id) => !registered.includes(id));
@@ -193,9 +204,9 @@ export function isWindowId(id: unknown): id is DashboardWindowId {
   return typeof id === "string" && BY_ID.has(id);
 }
 
-export function columnOf(id: DashboardWindowId): DashboardColumn {
+export function defaultColumnOf(id: DashboardWindowId): DashboardColumn {
   // BY_ID is built from WINDOWS, so a valid id always resolves
-  return BY_ID.get(id)!.col;
+  return BY_ID.get(id)!.defaultCol;
 }
 
 /**
@@ -203,12 +214,17 @@ export function columnOf(id: DashboardWindowId): DashboardColumn {
  *
  * · an id that no longer exists is dropped — a deleted window cannot be
  *   resurrected by an old row;
- * · an id in the wrong column is moved back to its registered column — the
- *   column is a property of the window, never of the saved state;
- * · a registered id the stored layout never heard of is APPENDED to its own
- *   column, in DEFAULT_ORDER position among the other newcomers — so a new
- *   window always appears, and never at `order: 9`;
+ * · the stored column WINS — a window may live in either column, and the
+ *   registry supplies only the DEFAULT column for ids the stored layout never
+ *   mentioned; an id stored in both columns keeps its first occurrence
+ *   (l is scanned before r);
+ * · a registered id the stored layout never heard of is APPENDED to its
+ *   default column, in DEFAULT_ORDER position among the other newcomers — so a
+ *   new window always appears, and never at `order: 9`;
  * · hidden is filtered the same way, so a stale id cannot hide a live window.
+ *
+ * Together these guarantee every registered id appears exactly once across the
+ * two columns, whatever the input.
  *
  * Accepts `unknown` because the source is a jsonb column: nothing about its
  * shape is guaranteed by the type system.
@@ -224,7 +240,6 @@ export function normalizeDashboardLayout(stored: unknown): DashboardPreferences 
     const list = Array.isArray(rawLayout[col]) ? (rawLayout[col] as unknown[]) : [];
     for (const id of list) {
       if (!isWindowId(id) || seen.has(id)) continue;
-      if (columnOf(id) !== col) continue; // the registry owns the column
       seen.add(id);
       layout[col].push(id);
     }

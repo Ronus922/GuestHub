@@ -9,9 +9,13 @@ import {
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  pointerWithin,
+  useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import {
@@ -37,9 +41,9 @@ import { MessagesWindow } from "./windows/MessagesWindow";
 import type { DashboardData } from "./data";
 import {
   COLUMNS,
-  columnOf,
   isWindowId,
   windowById,
+  type DashboardColumn,
   type DashboardLayout,
   type DashboardPreferences,
   type DashboardWindowId,
@@ -52,10 +56,15 @@ import {
 // describes what Phase 2 will put there. The KPI values are "—" for the same
 // reason — a placeholder number is a lie an operator cannot tell from data.
 //
-// DRAG. @dnd-kit, one SortableContext per column, and onDragEnd refuses any
-// move whose source and target columns differ (DeshbordMain.md §3: "drop מותר
-// רק בתוך אותה עמודה"). The header is the only handle; the ✕ inside it stops
-// the pointer event so a click is a click.
+// DRAG. @dnd-kit, one SortableContext per column, and moves may CROSS columns
+// (DeshbordMain.md §3): onDragOver relocates the window live as it crosses the
+// border (with TaskDispatchBoard's anti-bounce guard so it doesn't ping-pong),
+// onDragEnd commits the order — a drop on a card lands BEFORE that card, a
+// drop on the column itself (empty column, or the space under its last card,
+// via useDroppable) appends. Escape restores the pre-drag snapshot. The column
+// a window lives in is state; windows.ts only supplies the default. The header
+// is the only handle; the ✕ inside it stops the pointer event so a click is a
+// click.
 //
 // WRITE. Debounced — a drag must not fire a request per pixel, and dnd-kit
 // fires onDragEnd once per drop, so the debounce is really about the operator
@@ -64,6 +73,31 @@ import {
 // ============================================================
 
 const SAVE_DEBOUNCE_MS = 800;
+
+// The column droppables live in the same DndContext as the cards, so their ids
+// share a namespace with window ids — "col:" keeps them apart (every window id
+// is three letters, no colon).
+const colDroppableId = (c: DashboardColumn) => `col:${c}`;
+const colFromDroppable = (id: unknown): DashboardColumn | null =>
+  id === "col:l" ? "l" : id === "col:r" ? "r" : null;
+
+// Which column an id belongs to, asked of the LAYOUT STATE — never of the
+// registry, whose defaultCol stops meaning "current column" the moment a
+// window is dragged across. Resolves both card ids and column-droppable ids.
+function findColumn(layout: DashboardLayout, id: unknown): DashboardColumn | null {
+  const asCol = colFromDroppable(id);
+  if (asCol) return asCol;
+  if (isWindowId(id)) {
+    if (layout.l.includes(id)) return "l";
+    if (layout.r.includes(id)) return "r";
+  }
+  return null;
+}
+
+const COLUMN_LABEL: Record<DashboardColumn, string> = {
+  l: "העמודה הראשית",
+  r: "העמודה המשנית",
+};
 
 export type KpiCard = {
   key: string;
@@ -153,6 +187,22 @@ export function DashboardScreen({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // pointerWithin first — closestCenter alone never resolves an empty column
+  // or the strip under a column's last card; it falls back for keyboard drags,
+  // where there is no pointer (TaskDispatchBoard's stableCollision).
+  const stableCollision: CollisionDetection = useCallback((args) => {
+    const within = pointerWithin(args);
+    return within.length > 0 ? within : closestCenter(args);
+  }, []);
+
+  // onDragOver moves state live, so handlers need the CURRENT layout (state
+  // reads inside a drag are stale), the source column for the anti-bounce
+  // guard, and a snapshot to restore when the drag is cancelled.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const dragSourceColRef = useRef<DashboardColumn | null>(null);
+  const preDragLayoutRef = useRef<DashboardLayout | null>(null);
+
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
   const visible = useMemo<DashboardLayout>(
     () => ({
@@ -164,26 +214,76 @@ export function DashboardScreen({
 
   const onDragStart = (e: DragStartEvent) => {
     const id = e.active.id;
-    if (isWindowId(id)) setActiveId(id);
+    if (!isWindowId(id)) return;
+    setActiveId(id);
+    preDragLayoutRef.current = layoutRef.current;
+    dragSourceColRef.current = findColumn(layoutRef.current, id);
+  };
+
+  // Cross-column moves happen HERE, live, so the card visibly leaves one
+  // column and opens a slot in the other while still in flight. Same-column
+  // ordering stays in onDragEnd — dnd-kit's sortable transforms handle the
+  // preview within a list.
+  const onDragOver = (e: DragOverEvent) => {
+    if (!e.over) return;
+    const activeIdNow = e.active.id;
+    const overId = e.over.id;
+    if (!isWindowId(activeIdNow)) return;
+    const from = findColumn(layoutRef.current, activeIdNow);
+    const to = findColumn(layoutRef.current, overId);
+    if (!from || !to || from === to) return;
+    // anti-bounce: the card already left its source — don't ping-pong it back
+    if (to === dragSourceColRef.current && from !== dragSourceColRef.current) return;
+    setLayout((prev) => {
+      const src = prev[from].filter((x) => x !== activeIdNow);
+      const dest = [...prev[to]];
+      const overIdx = isWindowId(overId) ? dest.indexOf(overId) : -1;
+      // before the target card; on the column itself (empty / below the last
+      // card) — append
+      dest.splice(overIdx === -1 ? dest.length : overIdx, 0, activeIdNow);
+      return { ...prev, [from]: src, [to]: dest };
+    });
   };
 
   const onDragEnd = (e: DragEndEvent) => {
     setActiveId(null);
+    dragSourceColRef.current = null;
+    preDragLayoutRef.current = null;
     const from = e.active.id;
-    const to = e.over?.id;
-    if (!isWindowId(from) || !isWindowId(to) || from === to) return;
-    // §3 — reordering happens WITHIN a column; a cross-column drop is refused
-    // rather than silently relocating a window out of its registered column.
-    const col = columnOf(from);
-    if (columnOf(to) !== col) return;
+    const overId = e.over?.id;
+    const cur = layoutRef.current;
+    if (!isWindowId(from)) return;
 
-    const oldIndex = layout[col].indexOf(from);
-    const newIndex = layout[col].indexOf(to);
-    if (oldIndex < 0 || newIndex < 0) return;
-
-    const next: DashboardLayout = { ...layout, [col]: arrayMove(layout[col], oldIndex, newIndex) };
+    let next = cur;
+    const fromCol = findColumn(cur, from);
+    const toCol = overId === undefined ? null : findColumn(cur, overId);
+    if (fromCol && toCol && isWindowId(overId) && overId !== from) {
+      if (fromCol === toCol) {
+        const oldIndex = cur[fromCol].indexOf(from);
+        const newIndex = cur[fromCol].indexOf(overId);
+        if (oldIndex >= 0 && newIndex >= 0 && oldIndex !== newIndex)
+          next = { ...cur, [fromCol]: arrayMove(cur[fromCol], oldIndex, newIndex) };
+      } else {
+        // the final frame crossed a column without a dragOver — same
+        // insert-before-target rule, idempotent with the live move
+        const src = cur[fromCol].filter((x) => x !== from);
+        const dest = [...cur[toCol]];
+        dest.splice(dest.indexOf(overId), 0, from);
+        next = { ...cur, [fromCol]: src, [toCol]: dest };
+      }
+    }
+    // save even when the order is unchanged — onDragOver may have already
+    // crossed a column, and this is that move's commit
     setLayout(next);
     save({ layout: next, hidden });
+  };
+
+  const onDragCancel = () => {
+    setActiveId(null);
+    // onDragOver already moved the card — Escape must put it back, unsaved
+    if (preDragLayoutRef.current) setLayout(preDragLayoutRef.current);
+    preDragLayoutRef.current = null;
+    dragSourceColRef.current = null;
   };
 
   const hideWindow = (id: DashboardWindowId) => {
@@ -283,21 +383,41 @@ export function DashboardScreen({
       {/* ---- the two columns ---- */}
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={stableCollision}
         onDragStart={onDragStart}
+        onDragOver={onDragOver}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        onDragCancel={onDragCancel}
+        accessibility={{
+          screenReaderInstructions: {
+            draggable: "לחץ רווח להרמה, חצים להזזה, רווח לשחרור, Escape לביטול.",
+          },
+          announcements: {
+            onDragStart: ({ active }) => `הרמת את ${windowLabel(active.id)}`,
+            onDragOver: ({ active, over }) => {
+              const col = over ? findColumn(layoutRef.current, over.id) : null;
+              return col ? `${windowLabel(active.id)} מעל ${COLUMN_LABEL[col]}` : "";
+            },
+            onDragEnd: ({ active, over }) => {
+              const col = over ? findColumn(layoutRef.current, over.id) : null;
+              return col ? `${windowLabel(active.id)} הונח ב${COLUMN_LABEL[col]}` : "";
+            },
+            onDragCancel: ({ active }) => `בוטלה גרירת ${windowLabel(active.id)}`,
+          },
+        }}
       >
-        <div className="dash-cols">
+        {/* dnd-active gives an emptied column a minimum drop height, only
+            while something is actually in flight */}
+        <div className={`dash-cols${activeId ? " dnd-active" : ""}`}>
           {COLUMNS.map((col) => (
-            <div key={col} className="dash-col">
+            <DroppableColumn key={col} col={col}>
               {/* every card lives INSIDE its column div (DeshbordMain.md §8.3) */}
               <SortableContext items={visible[col]} strategy={verticalListSortingStrategy}>
                 {visible[col].map((id) => (
                   <SortableWindow key={id} id={id} onHide={() => hideWindow(id)} data={data} />
                 ))}
               </SortableContext>
-            </div>
+            </DroppableColumn>
           ))}
         </div>
         <DragOverlay>
@@ -312,6 +432,28 @@ export function DashboardScreen({
       </DndContext>
     </div>
   );
+}
+
+// The column div is itself a drop target, so a drop lands even where no card
+// is under the pointer — an emptied column, or the strip below a column's last
+// card. A drop here appends (onDragOver's overIdx === -1 rule).
+function DroppableColumn({
+  col,
+  children,
+}: {
+  col: DashboardColumn;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: colDroppableId(col) });
+  return (
+    <div ref={setNodeRef} className={`dash-col${isOver ? " drop-target" : ""}`}>
+      {children}
+    </div>
+  );
+}
+
+function windowLabel(id: unknown): string {
+  return (isWindowId(id) ? windowById(id)?.title : undefined) ?? "חלון";
 }
 
 function SortableWindow({
