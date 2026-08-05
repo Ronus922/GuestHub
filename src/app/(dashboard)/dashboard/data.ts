@@ -9,9 +9,9 @@ import { sourcesBreakdown, type SourcesBreakdown } from "@/lib/reports/sources-b
 import { periodSpan } from "./period";
 
 // ============================================================
-// Dashboard Phase 2 — the read side of the five live surfaces (KPI, arr, inh,
-// hk, alr). One module, one round of queries, all scoped to the property's own
-// day. rev / src / rvw / msg / iss / tsk / agd are untouched.
+// Dashboard Phase 2 — the read side of the live surfaces (KPI, arr, inh, hk,
+// alr, rev, src, msg, rvw). One module, one round of queries, all scoped to
+// the property's own day. iss / tsk / agd are untouched.
 //
 // EVERY date here is the caller's `today`, which the page derives from
 // todayInTz(tenants.timezone). Never new Date(), never the server's local day:
@@ -80,6 +80,35 @@ export type AlertRow = {
   href: string | null;
 };
 
+export type ConversationRow = {
+  conversationId: string;
+  guestName: string;
+  channel: "beds24" | "whatsapp";
+  /** "YYYY-MM-DD HH:MM" in the property's timezone; null on a thread with no messages */
+  lastMessageAt: string | null;
+  /** first 90 chars, truncated in SQL */
+  lastMessageBody: string | null;
+  lastMessageDirection: "inbound" | "outbound" | null;
+  /** the thread's newest message is inbound — nothing was sent after it */
+  hasUnreadInbound: boolean;
+};
+
+export type ReviewRow = {
+  reviewId: string;
+  guestName: string;
+  /** the property-timezone day the review was submitted */
+  submittedAt: DateOnly;
+  /** 1..10, fractional (numeric(4,1) on the wire) */
+  overallScore: number;
+  /** first 90 chars; null on score-only reviews */
+  positiveText: string | null;
+  negativeText: string | null;
+  /** reply IS NULL — no staff reply has been seen by the extranet poll yet */
+  awaitingReply: boolean;
+  /** resolved read-time via booking_id → reservations.ota_reservation_code; null when unmatched, which is the common case */
+  reservationId: string | null;
+};
+
 /** design §4.2: the chart's range is 6–12; 12 is the default */
 export const CHART_MONTHS = 12;
 
@@ -94,6 +123,14 @@ export type DashboardData = {
   inHouse: StayRow[];
   housekeeping: HousekeepingRow[];
   alerts: AlertRow[];
+  /** msg — the latest 6 threads by last activity */
+  conversations: ConversationRow[];
+  /** msg subtitle: threads across the WHOLE tenant whose newest message is inbound */
+  unreadConversations: number;
+  /** rvw — the latest 6 Booking.com reviews */
+  reviews: ReviewRow[];
+  /** rvw subtitle: reviews across the WHOLE tenant with no extranet reply yet */
+  reviewsAwaitingReply: number;
 };
 
 const hhmm = (t: string | null): string | null => (t ? t.slice(0, 5) : null);
@@ -155,6 +192,10 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     alerts,
     monthly,
     sources,
+    conversationRows,
+    unreadCount,
+    reviewRows,
+    awaitingCount,
   ] = await Promise.all([
     // ---- KPI 1: occupancy tonight -----------------------------------------
     // D128 — the denominator is `status='available' AND is_active`, the SAME
@@ -234,6 +275,85 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
 
     // ---- src: the current month, shared with the drawer -------------------
     sourcesBreakdown(tenantId, monthSpan.from, monthSpan.to, "guests"),
+
+    // ---- msg: the six most recent threads, each with its latest message ----
+    // The guest name resolves the way the thread itself does (076): the linked
+    // reservation's primary guest first, then the guest_id the conversation
+    // carries, then the house fallback. The LATERAL picks the newest message
+    // for the preview; a thread with no messages is a renderable state.
+    // Timestamps are formatted HERE, in the property's timezone — a client-side
+    // new Date() would SSR in UTC and hydrate in browser time, and the two
+    // renders would disagree.
+    sql<Record<string, unknown>[]>`
+      SELECT c.id AS conversation_id,
+             COALESCE(NULLIF(TRIM(g.full_name), ''), 'אורח') AS guest_name,
+             c.channel,
+             to_char(c.last_message_at AT TIME ZONE tz.tzname, 'YYYY-MM-DD HH24:MI') AS last_message_at,
+             left(m.body, 90) AS last_message_body,
+             m.direction AS last_message_direction,
+             (c.last_inbound_at IS NOT NULL
+              AND c.last_inbound_at >= c.last_message_at) AS has_unread_inbound
+        FROM guesthub.guest_conversations c
+        CROSS JOIN (SELECT COALESCE(timezone, 'Asia/Jerusalem') AS tzname
+                      FROM guesthub.tenants WHERE id = ${tenantId}) tz
+        LEFT JOIN guesthub.reservations res
+          ON res.id = c.reservation_id AND res.tenant_id = c.tenant_id
+        LEFT JOIN guesthub.guests g
+          ON g.tenant_id = c.tenant_id AND g.id = COALESCE(res.primary_guest_id, c.guest_id)
+        LEFT JOIN LATERAL (
+          SELECT gm.body, gm.direction
+            FROM guesthub.guest_messages gm
+           WHERE gm.tenant_id = c.tenant_id AND gm.conversation_id = c.id
+           ORDER BY gm.sent_at DESC
+           LIMIT 1) m ON true
+       WHERE c.tenant_id = ${tenantId}
+       ORDER BY c.last_message_at DESC NULLS LAST
+       LIMIT 6`,
+
+    // msg subtitle — "unread" is the denormalized stamps' cheap expression of
+    // "an inbound with nothing sent after it": the single insert path maintains
+    // both stamps with GREATEST, so last_inbound_at = last_message_at exactly
+    // when the thread's newest message is inbound. A same-second tie counts as
+    // unread — the safe direction for an attention counter. Neither wire
+    // carries a read receipt, so this is answered-ness, not read-ness.
+    sql<{ c: number }[]>`
+      SELECT count(*)::int AS c
+        FROM guesthub.guest_conversations
+       WHERE tenant_id = ${tenantId}
+         AND last_inbound_at IS NOT NULL
+         AND last_inbound_at >= last_message_at`,
+
+    // ---- rvw: the six most recent Booking.com reviews ---------------------
+    // booking_id is BOOKING.COM's reservation number and joins
+    // reservations.ota_reservation_code (076 header), NOT external_booking_id.
+    // LATERAL + LIMIT 1 so a duplicated code can never fan one review into two
+    // rows; an unmatched review is normal (most direct-era rows), not an error.
+    sql<Record<string, unknown>[]>`
+      SELECT r.id AS review_id,
+             COALESCE(NULLIF(TRIM(r.guest_name), ''), 'אורח') AS guest_name,
+             to_char(r.submitted_at AT TIME ZONE tz.tzname, 'YYYY-MM-DD') AS submitted_day,
+             r.overall_score::float8 AS overall_score,
+             left(r.positive_text, 90) AS positive_text,
+             left(r.negative_text, 90) AS negative_text,
+             (r.reply IS NULL) AS awaiting_reply,
+             res.id AS reservation_id
+        FROM guesthub.channel_reviews r
+        CROSS JOIN (SELECT COALESCE(timezone, 'Asia/Jerusalem') AS tzname
+                      FROM guesthub.tenants WHERE id = ${tenantId}) tz
+        LEFT JOIN LATERAL (
+          SELECT rr.id
+            FROM guesthub.reservations rr
+           WHERE rr.tenant_id = r.tenant_id AND rr.ota_reservation_code = r.booking_id
+           LIMIT 1) res ON true
+       WHERE r.tenant_id = ${tenantId}
+       ORDER BY r.submitted_at DESC
+       LIMIT 6`,
+
+    // rvw subtitle — the same predicate as the 076 partial index (reply IS NULL)
+    sql<{ c: number }[]>`
+      SELECT count(*)::int AS c
+        FROM guesthub.channel_reviews
+       WHERE tenant_id = ${tenantId} AND reply IS NULL`,
   ]);
 
   const tonight = revenue.days[0];
@@ -272,6 +392,28 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
       cleanedByName: (r.cleaned_by_name as string) ?? null,
     })),
     alerts,
+    conversations: conversationRows.map((r) => ({
+      conversationId: r.conversation_id as string,
+      guestName: (r.guest_name as string) ?? "אורח",
+      channel: r.channel as ConversationRow["channel"],
+      lastMessageAt: (r.last_message_at as string) ?? null,
+      lastMessageBody: (r.last_message_body as string) ?? null,
+      lastMessageDirection:
+        (r.last_message_direction as ConversationRow["lastMessageDirection"]) ?? null,
+      hasUnreadInbound: r.has_unread_inbound === true,
+    })),
+    unreadConversations: unreadCount[0]?.c ?? 0,
+    reviews: reviewRows.map((r) => ({
+      reviewId: r.review_id as string,
+      guestName: (r.guest_name as string) ?? "אורח",
+      submittedAt: r.submitted_day as DateOnly,
+      overallScore: Number(r.overall_score ?? 0),
+      positiveText: (r.positive_text as string) ?? null,
+      negativeText: (r.negative_text as string) ?? null,
+      awaitingReply: r.awaiting_reply === true,
+      reservationId: (r.reservation_id as string) ?? null,
+    })),
+    reviewsAwaitingReply: awaitingCount[0]?.c ?? 0,
   };
 }
 
