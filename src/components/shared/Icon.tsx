@@ -51,6 +51,7 @@ const ICONS = {
   logout: "logout",
   login: "login",
   chevron: "expand_more",
+  "chevron-up": "expand_less",
   "unfold-less": "unfold_less",
   "unfold-more": "unfold_more",
   eye: "visibility",
