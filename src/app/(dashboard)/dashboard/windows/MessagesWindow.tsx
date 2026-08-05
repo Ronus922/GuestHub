@@ -1,28 +1,40 @@
 "use client";
 
-import { GuestRow } from "@/components/shared/GuestRow";
-import { formatDayMonth } from "@/lib/dates";
-import type { ConversationRow } from "../data";
+import { Icon } from "@/components/shared/Icon";
+import type { ConversationRow, MessagesSummary } from "../data";
+import { WindowHero } from "./WindowHero";
 import { initialsOf } from "./row-text";
 
 // ============================================================
-// msg — הודעות אורחים (DeshbordMain.md §5.5), read-only.
+// msg — הודעות אורחים, v2 (design-ref/DeshbordMain §5.5), read-only.
 //
-// SIX ROWS, NEWEST FIRST — a glance surface, not the inbox. No reply input, no
-// mark-as-read, no link out: the thread view is a later task, and a control
-// that cannot act yet would be a lie in a button's clothes.
+// HERO FIRST: how many threads wait for a human, how fast replies actually
+// went out this week, today's traffic, and the green "N נשלחו אוטומטית" chip
+// (omitted at zero). Then the latest three threads, each with its newest
+// message WHOLE — a glance surface, not the inbox: no reply input, no
+// mark-as-read, no link out, because the thread screen does not exist yet and
+// a control that cannot act is a lie in a button's clothes.
 //
-// "טרם נענתה" is what the stamps can honestly claim — the thread's newest
-// message is inbound, nothing was sent after it. It is NOT a read receipt;
-// neither wire carries one.
+// "ממתינות למענה" is what the stamps can honestly claim — the thread's newest
+// message is inbound, nothing was sent after it. NOT a read receipt; neither
+// wire carries one. The row's time chip wears amber for exactly those threads.
+//
+// The channel label is the GUEST's surface, not the transport: a Beds24-borne
+// thread is a Booking.com conversation to the operator reading it.
 // ============================================================
 
 const CHANNEL_LABEL: Record<ConversationRow["channel"], string> = {
-  beds24: "Beds24",
-  whatsapp: "WhatsApp",
+  beds24: "Booking.com",
+  whatsapp: "וואטסאפ",
 };
 
-export function MessagesWindow({ rows }: { rows: ConversationRow[] }) {
+export function MessagesWindow({
+  summary,
+  rows,
+}: {
+  summary: MessagesSummary;
+  rows: ConversationRow[];
+}) {
   if (rows.length === 0) {
     return (
       <div className="empty-state empty-sm">
@@ -32,39 +44,57 @@ export function MessagesWindow({ rows }: { rows: ConversationRow[] }) {
   }
   return (
     <>
+      <WindowHero
+        value={String(summary.unansweredCount)}
+        headline="ממתינות למענה"
+        subline={
+          <>
+            {summary.avgFirstReplyMinutes !== null && (
+              <>
+                זמן מענה ממוצע <span className="ltr-num">{summary.avgFirstReplyMinutes}</span>{" "}
+                דק׳ ·{" "}
+              </>
+            )}
+            <span className="ltr-num">{summary.messagesToday}</span> הודעות היום
+          </>
+        }
+        chip={
+          summary.autoSentToday > 0 ? (
+            <span className="chip chip-partial">
+              <Icon name="smart-toy" size={13.5} />
+              <span className="ltr-num">{summary.autoSentToday}</span> נשלחו אוטומטית
+            </span>
+          ) : undefined
+        }
+      />
       {rows.map((r) => (
-        <GuestRow
-          key={r.conversationId}
-          initials={initialsOf(r.guestName)}
-          name={r.guestName}
-          subline={subline(r)}
-          trailing={
-            r.hasUnreadInbound ? <span className="chip chip-brand">טרם נענתה</span> : undefined
-          }
-        />
+        <div className="win-row" key={r.conversationId}>
+          <span className="guest-avatar">{initialsOf(r.guestName)}</span>
+          <div className="win-row-body">
+            <div className="win-row-name">
+              {r.guestName}
+              <span className="win-row-sub">
+                · {CHANNEL_LABEL[r.channel]}
+                {r.roomNumber && ` · חדר ${r.roomNumber}`}
+              </span>
+            </div>
+            {r.lastMessageBody && (
+              <p className="win-row-text" dir="auto">
+                {r.lastMessageBody}
+              </p>
+            )}
+          </div>
+          {r.timeChip && (
+            <span className={`chip ${r.hasUnreadInbound ? "chip-approval" : "chip-neutral"}`}>
+              {/^\d/.test(r.timeChip) ? (
+                <span className="ltr-num">{r.timeChip}</span>
+              ) : (
+                r.timeChip
+              )}
+            </span>
+          )}
+        </div>
       ))}
-    </>
-  );
-}
-
-/** "Beds24 · 4/8 14:32 · נכנסת · תודה רבה" — only the parts that exist. */
-function subline(r: ConversationRow): React.ReactNode {
-  const when = r.lastMessageAt
-    ? `${formatDayMonth(r.lastMessageAt.slice(0, 10))} ${r.lastMessageAt.slice(11)}`
-    : null;
-  return (
-    <>
-      {CHANNEL_LABEL[r.channel]}
-      {when && (
-        <>
-          {" · "}
-          {/* the date-time is one LTR cluster; bare in the RTL line its two
-              number runs swap places (time before date) */}
-          <span className="ltr-num">{when}</span>
-        </>
-      )}
-      {r.lastMessageDirection && ` · ${r.lastMessageDirection === "inbound" ? "נכנסת" : "יוצאת"}`}
-      {r.lastMessageBody && ` · ${r.lastMessageBody}`}
     </>
   );
 }

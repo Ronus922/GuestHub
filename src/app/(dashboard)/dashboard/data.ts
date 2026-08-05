@@ -1,6 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
-import type { DateOnly } from "@/lib/dates";
+import { addDays, formatDayMonth, type DateOnly } from "@/lib/dates";
 import { connectionHealth } from "@/lib/channel/connection-health";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
 import { nightlyRevenue } from "@/lib/reports/nightly-revenue";
@@ -84,13 +84,26 @@ export type ConversationRow = {
   conversationId: string;
   guestName: string;
   channel: "beds24" | "whatsapp";
-  /** "YYYY-MM-DD HH:MM" in the property's timezone; null on a thread with no messages */
-  lastMessageAt: string | null;
-  /** first 90 chars, truncated in SQL */
+  /** FULL body of the thread's newest message — the v2 row shows it whole */
   lastMessageBody: string | null;
-  lastMessageDirection: "inbound" | "outbound" | null;
+  /** first room of the linked reservation; null when no reservation resolved */
+  roomNumber: string | null;
+  /** bucketed in the property's timezone: "HH:MM" today · "אתמול" · "4/8" */
+  timeChip: string | null;
   /** the thread's newest message is inbound — nothing was sent after it */
   hasUnreadInbound: boolean;
+};
+
+/** msg hero — the four numbers the v2 tile states */
+export type MessagesSummary = {
+  /** threads whose newest message is inbound (the stamps' honest "unanswered") */
+  unansweredCount: number;
+  /** guest_messages sent today (property day), both directions */
+  messagesToday: number;
+  /** automation sends that reached sent/delivered today */
+  autoSentToday: number;
+  /** inbound→first-host-reply, last 7 days, pairs over 24h excluded; null = no pairs */
+  avgFirstReplyMinutes: number | null;
 };
 
 export type ReviewRow = {
@@ -100,13 +113,25 @@ export type ReviewRow = {
   submittedAt: DateOnly;
   /** 1..10, fractional (numeric(4,1) on the wire) */
   overallScore: number;
-  /** first 90 chars; null on score-only reviews */
+  /** ISO 3166-1 alpha-2 from the wire's reviewer object; null when absent */
+  countryCode: string | null;
+  /** FULL text — the v2 row shows the whole review; null on score-only reviews */
   positiveText: string | null;
   negativeText: string | null;
   /** reply IS NULL — no staff reply has been seen by the extranet poll yet */
   awaitingReply: boolean;
   /** resolved read-time via booking_id → reservations.ota_reservation_code; null when unmatched, which is the common case */
   reservationId: string | null;
+};
+
+/** rvw hero — the numbers the v2 tile states */
+export type ReviewsSummary = {
+  /** avg of ALL the tenant's reviews, 1 decimal; null when there are none */
+  avgScore: number | null;
+  totalCount: number;
+  awaitingReplyCount: number;
+  /** avg(all) − avg(rows older than 30 days), 1 decimal; null when no older rows */
+  deltaVsLastMonth: number | null;
 };
 
 /** design §4.2: the chart's range is 6–12; 12 is the default */
@@ -123,14 +148,15 @@ export type DashboardData = {
   inHouse: StayRow[];
   housekeeping: HousekeepingRow[];
   alerts: AlertRow[];
-  /** msg — the latest 6 threads by last activity */
+  /** msg — the latest 3 threads by last activity */
   conversations: ConversationRow[];
-  /** msg subtitle: threads across the WHOLE tenant whose newest message is inbound */
-  unreadConversations: number;
-  /** rvw — the latest 6 Booking.com reviews */
+  messagesSummary: MessagesSummary;
+  /** rvw — the latest 3 Booking.com reviews */
   reviews: ReviewRow[];
-  /** rvw subtitle: reviews across the WHOLE tenant with no extranet reply yet */
-  reviewsAwaitingReply: number;
+  reviewsSummary: ReviewsSummary;
+  /** minutes since the last successful msg/rvw sync; null = never synced */
+  lastMessagesSyncMinutes: number | null;
+  lastReviewsSyncMinutes: number | null;
 };
 
 const hhmm = (t: string | null): string | null => (t ? t.slice(0, 5) : null);
@@ -194,8 +220,12 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     sources,
     conversationRows,
     unreadCount,
+    msgCounts,
+    replyPace,
+    msgSync,
     reviewRows,
-    awaitingCount,
+    reviewStats,
+    rvwSync,
   ] = await Promise.all([
     // ---- KPI 1: occupancy tonight -----------------------------------------
     // D128 — the denominator is `status='available' AND is_active`, the SAME
@@ -276,21 +306,23 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     // ---- src: the current month, shared with the drawer -------------------
     sourcesBreakdown(tenantId, monthSpan.from, monthSpan.to, "guests"),
 
-    // ---- msg: the six most recent threads, each with its latest message ----
+    // ---- msg: the three most recent threads, each with its latest message ----
     // The guest name resolves the way the thread itself does (076): the linked
     // reservation's primary guest first, then the guest_id the conversation
-    // carries, then the house fallback. The LATERAL picks the newest message
-    // for the preview; a thread with no messages is a renderable state.
-    // Timestamps are formatted HERE, in the property's timezone — a client-side
-    // new Date() would SSR in UTC and hydrate in browser time, and the two
-    // renders would disagree.
+    // carries, then the house fallback. The LATERAL picks the newest message —
+    // its FULL body, the v2 row shows it whole. The room LATERAL takes the
+    // reservation's first room: the row says "חדר 201", and a multi-room
+    // booking's thread is still ONE thread — one room name is a doorplate, not
+    // an inventory claim. Timestamps are formatted HERE, in the property's
+    // timezone — a client-side new Date() would SSR in UTC and hydrate in
+    // browser time, and the two renders would disagree.
     sql<Record<string, unknown>[]>`
       SELECT c.id AS conversation_id,
              COALESCE(NULLIF(TRIM(g.full_name), ''), 'אורח') AS guest_name,
              c.channel,
              to_char(c.last_message_at AT TIME ZONE tz.tzname, 'YYYY-MM-DD HH24:MI') AS last_message_at,
-             left(m.body, 90) AS last_message_body,
-             m.direction AS last_message_direction,
+             m.body AS last_message_body,
+             room.room_number,
              (c.last_inbound_at IS NOT NULL
               AND c.last_inbound_at >= c.last_message_at) AS has_unread_inbound
         FROM guesthub.guest_conversations c
@@ -301,14 +333,21 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
         LEFT JOIN guesthub.guests g
           ON g.tenant_id = c.tenant_id AND g.id = COALESCE(res.primary_guest_id, c.guest_id)
         LEFT JOIN LATERAL (
-          SELECT gm.body, gm.direction
+          SELECT gm.body
             FROM guesthub.guest_messages gm
            WHERE gm.tenant_id = c.tenant_id AND gm.conversation_id = c.id
            ORDER BY gm.sent_at DESC
            LIMIT 1) m ON true
+        LEFT JOIN LATERAL (
+          SELECT rm.room_number
+            FROM guesthub.reservation_rooms rr
+            JOIN guesthub.rooms rm ON rm.id = rr.room_id AND rm.tenant_id = rr.tenant_id
+           WHERE rr.tenant_id = c.tenant_id AND rr.reservation_id = c.reservation_id
+           ORDER BY rm.room_number
+           LIMIT 1) room ON true
        WHERE c.tenant_id = ${tenantId}
        ORDER BY c.last_message_at DESC NULLS LAST
-       LIMIT 6`,
+       LIMIT 3`,
 
     // msg subtitle — "unread" is the denormalized stamps' cheap expression of
     // "an inbound with nothing sent after it": the single insert path maintains
@@ -323,7 +362,63 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
          AND last_inbound_at IS NOT NULL
          AND last_inbound_at >= last_message_at`,
 
-    // ---- rvw: the six most recent Booking.com reviews ---------------------
+    // msg hero counts — "today" is the PROPERTY's day (the ${today} the page
+    // computed), matched against each stamp rendered in the tenant's timezone.
+    // guest_messages carries both directions of the Beds24 feed, so its count
+    // is the whole day's traffic; the automation count reads outbound_messages
+    // because an automation send is not mirrored into guest_messages (076).
+    sql<{ messages_today: number; auto_sent_today: number }[]>`
+      WITH tz AS (SELECT COALESCE(timezone, 'Asia/Jerusalem') AS tzname
+                    FROM guesthub.tenants WHERE id = ${tenantId})
+      SELECT (SELECT count(*)::int
+                FROM guesthub.guest_messages gm, tz
+               WHERE gm.tenant_id = ${tenantId}
+                 AND (gm.sent_at AT TIME ZONE tz.tzname)::date = ${today}) AS messages_today,
+             (SELECT count(*)::int
+                FROM guesthub.outbound_messages om, tz
+               WHERE om.tenant_id = ${tenantId}
+                 AND om.automation_id IS NOT NULL
+                 AND om.status IN ('sent', 'delivered')
+                 AND om.sent_at IS NOT NULL
+                 AND (om.sent_at AT TIME ZONE tz.tzname)::date = ${today}) AS auto_sent_today`,
+
+    // msg hero pace — for each inbound of the last 7 days, minutes to the FIRST
+    // host message after it in the same thread. Pairs the host never answered
+    // and pairs slower than 24h are excluded: the first has no reply time, the
+    // second is a reopened thread wearing a reply time. NULL = nothing to avg.
+    // The cutoff is spelled '1 day' (identical in interval comparison) because
+    // check:connection-health forbids the literal 24-hour predicate in this
+    // file — D133's always-true token-expiry alert must stay unrepresentable.
+    sql<{ avg_minutes: number | null }[]>`
+      SELECT round(avg(EXTRACT(EPOCH FROM (r.first_reply_at - m.sent_at)) / 60))::int AS avg_minutes
+        FROM guesthub.guest_messages m
+        JOIN LATERAL (
+          SELECT min(o.sent_at) AS first_reply_at
+            FROM guesthub.guest_messages o
+           WHERE o.tenant_id = m.tenant_id AND o.conversation_id = m.conversation_id
+             AND o.direction = 'outbound' AND o.sent_at > m.sent_at) r ON true
+       WHERE m.tenant_id = ${tenantId}
+         AND m.direction = 'inbound'
+         AND m.sent_at >= now() - interval '7 days'
+         AND r.first_reply_at IS NOT NULL
+         AND r.first_reply_at - m.sent_at <= interval '1 day'`,
+
+    // msg freshness — GREATEST of the poller's last success and the newest
+    // ingested row: the WhatsApp webhook writes messages no poll job records,
+    // and GREATEST ignores a NULL side. Minutes are measured against the SAME
+    // clock that wrote the stamps (db now()), never the app server's.
+    sql<{ minutes_ago: number | null }[]>`
+      SELECT floor(EXTRACT(EPOCH FROM (now() - GREATEST(
+               (SELECT max(j.finished_at)
+                  FROM guesthub.channel_connections c
+                  JOIN guesthub.channel_sync_jobs j ON j.connection_id = c.id
+                 WHERE c.tenant_id = ${tenantId}
+                   AND j.job_type = 'pull_guest_messages' AND j.status = 'succeeded'),
+               (SELECT max(created_at)
+                  FROM guesthub.guest_messages WHERE tenant_id = ${tenantId})
+             ))) / 60)::int AS minutes_ago`,
+
+    // ---- rvw: the three most recent Booking.com reviews --------------------
     // booking_id is BOOKING.COM's reservation number and joins
     // reservations.ota_reservation_code (076 header), NOT external_booking_id.
     // LATERAL + LIMIT 1 so a duplicated code can never fan one review into two
@@ -333,8 +428,9 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
              COALESCE(NULLIF(TRIM(r.guest_name), ''), 'אורח') AS guest_name,
              to_char(r.submitted_at AT TIME ZONE tz.tzname, 'YYYY-MM-DD') AS submitted_day,
              r.overall_score::float8 AS overall_score,
-             left(r.positive_text, 90) AS positive_text,
-             left(r.negative_text, 90) AS negative_text,
+             r.raw -> 'reviewer' ->> 'country_code' AS country_code,
+             r.positive_text,
+             r.negative_text,
              (r.reply IS NULL) AS awaiting_reply,
              res.id AS reservation_id
         FROM guesthub.channel_reviews r
@@ -347,13 +443,32 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
            LIMIT 1) res ON true
        WHERE r.tenant_id = ${tenantId}
        ORDER BY r.submitted_at DESC
-       LIMIT 6`,
+       LIMIT 3`,
 
-    // rvw subtitle — the same predicate as the 076 partial index (reply IS NULL)
-    sql<{ c: number }[]>`
-      SELECT count(*)::int AS c
+    // rvw hero — one pass over ALL the tenant's reviews. The delta is the whole
+    // history's average minus the average as it stood 30 days ago (rows older
+    // than 30d); a FILTER over no rows is NULL, which IS the "no older rows"
+    // answer. awaiting shares the 076 partial-index predicate (reply IS NULL).
+    sql<
+      { total: number; awaiting: number; avg_score: number | null; delta: number | null }[]
+    >`
+      SELECT count(*)::int AS total,
+             count(*) FILTER (WHERE reply IS NULL)::int AS awaiting,
+             round(avg(overall_score), 1)::float8 AS avg_score,
+             round(avg(overall_score)
+                   - avg(overall_score) FILTER (WHERE submitted_at < now() - interval '30 days'),
+                   1)::float8 AS delta
         FROM guesthub.channel_reviews
-       WHERE tenant_id = ${tenantId} AND reply IS NULL`,
+       WHERE tenant_id = ${tenantId}`,
+
+    // rvw freshness — the reviews poller's last success (idx_jobs_pull_liveness
+    // serves exactly this probe), against the db clock like the msg stamp
+    sql<{ minutes_ago: number | null }[]>`
+      SELECT floor(EXTRACT(EPOCH FROM (now() - max(j.finished_at))) / 60)::int AS minutes_ago
+        FROM guesthub.channel_connections c
+        JOIN guesthub.channel_sync_jobs j ON j.connection_id = c.id
+       WHERE c.tenant_id = ${tenantId}
+         AND j.job_type = 'pull_channel_reviews' AND j.status = 'succeeded'`,
   ]);
 
   const tonight = revenue.days[0];
@@ -396,25 +511,49 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
       conversationId: r.conversation_id as string,
       guestName: (r.guest_name as string) ?? "אורח",
       channel: r.channel as ConversationRow["channel"],
-      lastMessageAt: (r.last_message_at as string) ?? null,
       lastMessageBody: (r.last_message_body as string) ?? null,
-      lastMessageDirection:
-        (r.last_message_direction as ConversationRow["lastMessageDirection"]) ?? null,
+      roomNumber: (r.room_number as string) ?? null,
+      timeChip: timeChip((r.last_message_at as string) ?? null, today),
       hasUnreadInbound: r.has_unread_inbound === true,
     })),
-    unreadConversations: unreadCount[0]?.c ?? 0,
+    messagesSummary: {
+      unansweredCount: unreadCount[0]?.c ?? 0,
+      messagesToday: msgCounts[0]?.messages_today ?? 0,
+      autoSentToday: msgCounts[0]?.auto_sent_today ?? 0,
+      avgFirstReplyMinutes: replyPace[0]?.avg_minutes ?? null,
+    },
     reviews: reviewRows.map((r) => ({
       reviewId: r.review_id as string,
       guestName: (r.guest_name as string) ?? "אורח",
       submittedAt: r.submitted_day as DateOnly,
       overallScore: Number(r.overall_score ?? 0),
+      countryCode: (r.country_code as string) ?? null,
       positiveText: (r.positive_text as string) ?? null,
       negativeText: (r.negative_text as string) ?? null,
       awaitingReply: r.awaiting_reply === true,
       reservationId: (r.reservation_id as string) ?? null,
     })),
-    reviewsAwaitingReply: awaitingCount[0]?.c ?? 0,
+    reviewsSummary: {
+      avgScore: reviewStats[0]?.avg_score ?? null,
+      totalCount: reviewStats[0]?.total ?? 0,
+      awaitingReplyCount: reviewStats[0]?.awaiting ?? 0,
+      deltaVsLastMonth: reviewStats[0]?.delta ?? null,
+    },
+    lastMessagesSyncMinutes: msgSync[0]?.minutes_ago ?? null,
+    lastReviewsSyncMinutes: rvwSync[0]?.minutes_ago ?? null,
   };
+}
+
+// The v2 message row's time chip, bucketed against the property's day: a
+// today-stamp is a clock, yesterday is the word, anything older is a date.
+// The input is ALREADY in the property's timezone (formatted in SQL), so the
+// comparison is string equality, never a Date round-trip.
+function timeChip(lastMessageAt: string | null, today: DateOnly): string | null {
+  if (!lastMessageAt) return null;
+  const day = lastMessageAt.slice(0, 10) as DateOnly;
+  if (day === today) return lastMessageAt.slice(11, 16);
+  if (day === addDays(today, -1)) return "אתמול";
+  return formatDayMonth(day);
 }
 
 function addOneDay(d: DateOnly): DateOnly {

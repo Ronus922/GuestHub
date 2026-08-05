@@ -1554,6 +1554,131 @@
   }
 
 
+  /* ============================================================
+     DASHBOARD msg/rvw v2 — hero tile + full-text rows.
+     Anatomy from design-ref/DeshbordMain §5.4/§5.5; its off-scale 26px type,
+     its raw hexes and its own shadow are mapped into the closed scale and the
+     existing tokens (§1/§2) — nothing new is invented here.
+     ============================================================ */
+  .win-hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 12px 8px;
+    flex-wrap: wrap;
+  }
+  .win-hero-score {
+    width: 62px;
+    height: 62px;
+    border-radius: var(--r-lg);
+    background: var(--brand);
+    color: #fff;
+    font-size: 21px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    box-shadow: var(--brand-shadow);
+  }
+  .win-hero-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .win-hero-t {
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+  .win-hero-d {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .win-hero-chip {
+    margin-inline-start: auto;
+    display: inline-flex;
+    flex: none;
+  }
+
+  /* rows are top-aligned: a full message wraps, and the badge/avatar/chip must
+     anchor to the first line, not float to the middle of a paragraph */
+  .win-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 9px 12px;
+    border-radius: var(--r-md);
+    min-width: 0;
+  }
+  .win-row:hover {
+    background: var(--surface-hover);
+  }
+  .win-row > .chip {
+    flex: none;
+  }
+  .win-row-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .win-row-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .win-row-sub {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* the v2 rows never clamp — the whole text, wrapped */
+  .win-row-text {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .win-row-k {
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  /* the review's face is its number; below 7 it wears the danger tint,
+     DERIVED from --danger exactly like .alr-red above (§1: no new tokens) */
+  .rvw-badge {
+    height: 30px;
+    min-width: 40px;
+    padding: 0 8px;
+    border-radius: 10px;
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-size: 15px;
+    font-weight: 800;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  .rvw-badge.low {
+    background: color-mix(in srgb, var(--danger) 13%, #fff);
+    color: color-mix(in srgb, var(--danger) 82%, #000);
+  }
+
   @media (max-width: 1100px) {
     .kpis {
       grid-template-columns: repeat(2, 1fr);
