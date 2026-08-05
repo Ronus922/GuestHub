@@ -391,24 +391,13 @@ function liveContent(
       return { body: <RevenueWindow series={data.monthly} /> };
     case "rvw":
       return {
-        // singular has its own form, as staySubline's "לילה אחד" already does
-        subtitle:
-          data.reviewsAwaitingReply === 1
-            ? "חוות דעת אחת ממתינה למענה"
-            : data.reviewsAwaitingReply > 0
-              ? `${data.reviewsAwaitingReply} ממתינות למענה`
-              : undefined,
-        body: <ReviewsWindow rows={data.reviews} />,
+        subtitle: freshness(data.lastReviewsSyncMinutes),
+        body: <ReviewsWindow summary={data.reviewsSummary} rows={data.reviews} />,
       };
     case "msg":
       return {
-        subtitle:
-          data.unreadConversations === 1
-            ? "שיחה אחת טרם נענתה"
-            : data.unreadConversations > 0
-              ? `${data.unreadConversations} שיחות טרם נענו`
-              : undefined,
-        body: <MessagesWindow rows={data.conversations} />,
+        subtitle: freshness(data.lastMessagesSyncMinutes),
+        body: <MessagesWindow summary={data.messagesSummary} rows={data.conversations} />,
       };
     case "src":
       return {
@@ -418,4 +407,19 @@ function liveContent(
     default:
       return null;
   }
+}
+
+// The msg/rvw chrome line — how stale the window is, from the sync stamps
+// (DeshbordMain §5.4/§5.5: "עודכן לפני 12 דק׳"). Minutes are the native unit;
+// an older stamp escalates to hours/days rather than stating "540 דק'".
+function freshness(minutes: number | null): string | undefined {
+  if (minutes === null) return undefined;
+  if (minutes < 1) return "עודכן ממש עכשיו";
+  if (minutes === 1) return "עודכן לפני דקה";
+  if (minutes < 60) return `עודכן לפני ${minutes} דק׳`;
+  const hours = Math.floor(minutes / 60);
+  if (hours === 1) return "עודכן לפני שעה";
+  if (hours < 24) return `עודכן לפני ${hours} שע׳`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "עודכן אתמול" : `עודכן לפני ${days} ימים`;
 }

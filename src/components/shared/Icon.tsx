@@ -187,6 +187,7 @@ const ICONS = {
   agenda: "event_note",
   reviews: "reviews",
   forum: "forum",
+  "smart-toy": "smart_toy",
   donut: "donut_large",
   "night-shelter": "night_shelter",
 } as const;
