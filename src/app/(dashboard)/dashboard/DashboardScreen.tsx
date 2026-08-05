@@ -32,6 +32,8 @@ import { HousekeepingWindow } from "./windows/HousekeepingWindow";
 import { AlertsWindow } from "./windows/AlertsWindow";
 import { RevenueWindow } from "./windows/RevenueWindow";
 import { SourcesWindow } from "./windows/SourcesWindow";
+import { ReviewsWindow } from "./windows/ReviewsWindow";
+import { MessagesWindow } from "./windows/MessagesWindow";
 import type { DashboardData } from "./data";
 import {
   COLUMNS,
@@ -327,9 +329,9 @@ function SortableWindow({
 
   if (!def) return null;
 
-  // Phase 2 lights up five windows. The other six keep the Phase 1 sentence
-  // that says what will go there — a window with no source renders the promise,
-  // never a fabricated row.
+  // Eight windows are live. The other three (agd, iss, tsk) keep the Phase 1
+  // sentence that says what will go there — a window with no source renders
+  // the promise, never a fabricated row.
   const live = liveContent(id, data);
 
   return (
@@ -387,6 +389,27 @@ function liveContent(
       };
     case "rev":
       return { body: <RevenueWindow series={data.monthly} /> };
+    case "rvw":
+      return {
+        // singular has its own form, as staySubline's "לילה אחד" already does
+        subtitle:
+          data.reviewsAwaitingReply === 1
+            ? "חוות דעת אחת ממתינה למענה"
+            : data.reviewsAwaitingReply > 0
+              ? `${data.reviewsAwaitingReply} ממתינות למענה`
+              : undefined,
+        body: <ReviewsWindow rows={data.reviews} />,
+      };
+    case "msg":
+      return {
+        subtitle:
+          data.unreadConversations === 1
+            ? "שיחה אחת טרם נענתה"
+            : data.unreadConversations > 0
+              ? `${data.unreadConversations} שיחות טרם נענו`
+              : undefined,
+        body: <MessagesWindow rows={data.conversations} />,
+      };
     case "src":
       return {
         subtitle: `${data.sources.totals.guests} אורחים`,
