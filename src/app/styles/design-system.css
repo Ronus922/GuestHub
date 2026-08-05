@@ -1613,6 +1613,11 @@
     border-radius: var(--r-md);
     min-width: 0;
   }
+  /* a COLLAPSED message row is one line tall — its avatar, chip and chevron
+     sit centred; the expanded state falls back to the top-anchored default */
+  .win-row.mid {
+    align-items: center;
+  }
   .win-row:hover {
     background: var(--surface-hover);
   }
@@ -1644,7 +1649,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* the v2 rows never clamp — the whole text, wrapped */
+  /* review rows show the whole text; message rows clamp to ONE line until the
+     operator opens them (the chevron), so a long automated welcome cannot
+     swallow the window */
   .win-row-text {
     margin: 0;
     font-size: 14px;
@@ -1652,6 +1659,16 @@
     color: var(--ink);
     line-height: 1.5;
     overflow-wrap: anywhere;
+  }
+  .win-row-text.mut {
+    color: var(--muted);
+  }
+  .win-row-text.clamp {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    overflow: hidden;
   }
   .win-row-k {
     color: var(--muted);
