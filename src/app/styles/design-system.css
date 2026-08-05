@@ -822,6 +822,19 @@
     gap: 14px;
     min-width: 0;
   }
+  /* an emptied column keeps a drop height only while a drag is in flight —
+     outside a drag it reserves nothing */
+  .dash-cols.dnd-active .dash-col {
+    min-block-size: 96px;
+  }
+  /* the pointer is over the column itself (empty column / under the last
+     card) — the card-level cue stays .dash-win.dropzone below */
+  .dash-col.drop-target {
+    outline: 2px dashed var(--brand);
+    outline-offset: 4px;
+    border-radius: var(--r-md);
+    background: var(--brand-soft);
+  }
 
   /* ---- one window ---- */
   .dash-win {

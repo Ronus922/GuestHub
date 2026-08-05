@@ -8,9 +8,10 @@
 //   A. THE WINDOW REGISTRY (DeshbordMain.md §8.1/§8.2). A window registered but
 //      never placed falls to the bottom of its column and its drag breaks; a
 //      stored layout from an older build hides a window that now exists, or
-//      resurrects one that no longer does. Every assertion below is on
-//      BEHAVIOUR — feed normalizeDashboardLayout a hostile object and look at
-//      what comes out.
+//      resurrects one that no longer does. The SAVED layout owns each window's
+//      column (§3 cross-column drag); the registry owns only the default. Every
+//      assertion below is on BEHAVIOUR — feed normalizeDashboardLayout a
+//      hostile object and look at what comes out.
 //
 //   B. THE DONUT ARCS (InvitationSources.md §10). The offsets must be negative
 //      and accumulating, the dash remainder must be the UNPAINTED part, and the
@@ -93,8 +94,8 @@ try {
   );
   for (const col of W.COLUMNS)
     for (const id of W.DEFAULT_LAYOUT[col])
-      assert.equal(W.columnOf(id), col, `${id} is placed in the column it is registered in`);
-  ok("DEFAULT_LAYOUT covers every window exactly once, each in its registered column");
+      assert.equal(W.defaultColumnOf(id), col, `${id} is placed in its DEFAULT column`);
+  ok("DEFAULT_LAYOUT covers every window exactly once, each in its default column");
 
   assert.deepEqual(W.DEFAULT_LAYOUT.l, ["arr", "rev", "hk", "agd"], "left column default order");
   assert.deepEqual(
@@ -127,10 +128,35 @@ try {
   assert.equal(stale.layout.r[0], "msg", "the stored right-column order is respected too");
   ok("a stale stored layout: unknown ids dropped, new ids appended, order preserved");
 
-  const wrongCol = W.normalizeDashboardLayout({ layout: { l: ["msg"], r: [] }, hidden: [] });
-  assert.ok(!wrongCol.layout.l.includes("msg"), "a window cannot be stored into the wrong column");
-  assert.ok(wrongCol.layout.r.includes("msg"), "it is returned to its registered column");
-  ok("the registry owns the column, not the saved state");
+  // §3 cross-column drag — the saved state owns the column, the registry only
+  // supplies the default for ids the stored layout never mentioned
+  const moved = W.normalizeDashboardLayout({ layout: { l: ["msg", "arr"], r: [] }, hidden: [] });
+  assert.ok(moved.layout.l.includes("msg"), "a window stored in the other column STAYS there");
+  assert.ok(!moved.layout.r.includes("msg"), "…and does not also appear in its default column");
+  assert.equal(moved.layout.l[0], "msg", "the stored order within the adopted column is respected");
+  assert.deepEqual(
+    [...moved.layout.l, ...moved.layout.r].sort(),
+    [...ids].sort(),
+    "every registered window appears exactly once across BOTH columns",
+  );
+  assert.deepEqual(
+    moved.layout.r,
+    ["alr", "iss", "tsk", "rvw", "src", "inh"],
+    "unmentioned right-column windows append in default order",
+  );
+  ok("the saved state owns the column; the registry owns only the default");
+
+  const dup = W.normalizeDashboardLayout({ layout: { l: ["msg"], r: ["msg", "alr"] }, hidden: [] });
+  assert.ok(
+    dup.layout.l.includes("msg") && !dup.layout.r.includes("msg"),
+    "an id stored in both columns keeps its first occurrence only (l scans before r)",
+  );
+  assert.deepEqual(
+    [...dup.layout.l, ...dup.layout.r].sort(),
+    [...ids].sort(),
+    "de-duplication still yields all 11 exactly once",
+  );
+  ok("a cross-column duplicate: first occurrence wins, nothing is lost");
 
   for (const junk of [undefined, 0, "x", [], { layout: "no" }, { layout: { l: 7, r: null } }]) {
     const out = W.normalizeDashboardLayout(junk);
