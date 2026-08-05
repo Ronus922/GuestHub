@@ -201,7 +201,7 @@ CREATE TRIGGER trg_channel_reviews_updated_at
 
 -- ---- 4. durable job types for the two pollers (additive CHECK widening) ----
 -- 'pull_guest_messages'  = GET /bookings/messages, every 5 minutes
--- 'pull_channel_reviews' = GET /channels/booking/reviews, every 60 minutes
+-- 'pull_channel_reviews' = GET /channels/booking/reviews, once per 24 hours
 ALTER TABLE guesthub.channel_sync_jobs DROP CONSTRAINT IF EXISTS channel_sync_jobs_job_type_check;
 ALTER TABLE guesthub.channel_sync_jobs ADD  CONSTRAINT channel_sync_jobs_job_type_check
   CHECK (job_type IN (

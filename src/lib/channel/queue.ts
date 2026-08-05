@@ -27,7 +27,7 @@ import { JOBS_WAKE_CHANNEL } from "@/lib/realtime/events";
 // SIX are enqueued and dispatched today: `pull_booking_revisions`, `full_sync`,
 // `sync_ari_range`, `reconcile_inventory` (D91/D93), plus the Phase 4 ingest
 // pair `pull_guest_messages` (5-minute guest-message poll) and
-// `pull_channel_reviews` (hourly Booking.com review poll) — both added by 076.
+// `pull_channel_reviews` (daily Booking.com review poll) — both added by 076.
 // The others are inherited from the Channex era and are unreachable: nothing
 // enqueues them, and worker.ts#runJob answers an unsupported type with a
 // permanent validation error, so a stray historical row dead-letters loudly
