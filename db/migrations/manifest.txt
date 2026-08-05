@@ -81,3 +81,4 @@
 073_all_statuses_block_inventory.sql
 074_housekeeping_mark_clean_permission.sql
 075_sync_jobs_finished_index.sql
+076_guest_conversations_and_reviews.sql
