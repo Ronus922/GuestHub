@@ -6,12 +6,12 @@ import {
   getExtraGuestDefaults,
   listCancellationPolicies,
   listPaymentPolicies,
-  getPaymentMethods,
 } from "@/lib/commercial/service";
 import { SettingsShell } from "./SettingsShell";
 import { getMessagingSettingsAction } from "./messaging-actions";
 import { getTTLockSettingsAction } from "./ttlock-actions";
 import { listWorkflowStatusesAction } from "./status-actions";
+import { listPaymentMethodsAction } from "./payment-method-actions";
 import { getBusinessProfileContextAction, type BusinessProfileContext } from "./business-actions";
 import { formatPropertyIdentity, IDENTITY_NOT_SET } from "@/lib/business/profile";
 import type { MessagingSettingsView, TTLockSettingsView } from "./types";
@@ -26,7 +26,7 @@ export default async function SettingsPage() {
   if (!actor) redirect("/auth/signout");
   if (!hasPermission(actor, "settings.edit")) redirect("/dashboard");
 
-  const [currency, enabledCurrencies, vatRate, checkInCheckOut, extraGuest, cancellationPolicies, paymentPolicies, paymentMethods, businessCtx] =
+  const [currency, enabledCurrencies, vatRate, checkInCheckOut, extraGuest, cancellationPolicies, paymentPolicies, businessCtx] =
     await Promise.all([
       getTenantCurrency(actor.tenantId),
       getEnabledCurrencies(actor.tenantId),
@@ -35,11 +35,12 @@ export default async function SettingsPage() {
       getExtraGuestDefaults(actor.tenantId),
       listCancellationPolicies(actor.tenantId),
       listPaymentPolicies(actor.tenantId),
-      getPaymentMethods(actor.tenantId),
       getBusinessProfileContextAction(),
     ]);
   const workflowRes = await listWorkflowStatusesAction();
   const workflowStatuses = workflowRes.success && workflowRes.data ? workflowRes.data : [];
+  const paymentMethodsRes = await listPaymentMethodsAction();
+  const paymentMethodDefs = paymentMethodsRes.success && paymentMethodsRes.data ? paymentMethodsRes.data : [];
   const businessProfile: BusinessProfileContext | null =
     businessCtx.success && businessCtx.data ? businessCtx.data : null;
 
@@ -75,7 +76,7 @@ export default async function SettingsPage() {
       extraGuest={extraGuest}
       cancellationPolicies={cancellationPolicies}
       paymentPolicies={paymentPolicies}
-      paymentMethods={paymentMethods}
+      paymentMethodDefs={paymentMethodDefs}
       canManageMessaging={canManageMessaging}
       messaging={messaging}
       canManageTTLock={canManageTTLock}

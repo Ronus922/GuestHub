@@ -157,10 +157,13 @@ export async function savePaymentPolicyAction(raw: unknown): Promise<ActionResul
     if (!parsed.success) return { success: false, error: zodError(parsed.error) };
     const p = parsed.data;
 
-    // canonical payment-method reference check (§C) — methods must exist for the tenant
+    // canonical payment-method reference check (§C) — methods must EXIST for the
+    // tenant, active or not: deactivating a method must not brick every future
+    // save of a policy that already references it (the editor only OFFERS active
+    // ones; a deactivated key already on a stage stays removable)
     const allowed = (await sql<{ key: string }[]>`
       SELECT key FROM guesthub.lookup_items
-      WHERE tenant_id = ${actor.tenantId} AND category = 'payment_methods' AND is_active`).map((r) => r.key);
+      WHERE tenant_id = ${actor.tenantId} AND category = 'payment_methods'`).map((r) => r.key);
     const { errors } = validatePaymentStages(p.stages, allowed);
     if (errors.length) return { success: false, error: errors[0] };
 

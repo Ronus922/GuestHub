@@ -64,7 +64,16 @@ export function PolicyCard({
   };
 
   return (
-    <div className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface p-4">
+    // double-click anywhere on the card opens the editor — the same handler as
+    // the edit button. No onClick: a single click stays free. select-none keeps
+    // the double-click from selecting text; inner buttons are excluded.
+    <div
+      className="flex select-none items-start justify-between gap-3 rounded-xl border border-line bg-surface p-4"
+      onDoubleClick={(e) => {
+        if ((e.target as HTMLElement).closest("button")) return;
+        onEdit();
+      }}
+    >
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="t-body font-bold text-ink">{name}</p>

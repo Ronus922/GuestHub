@@ -16,11 +16,11 @@ import { CheckInCheckOutSection } from "./CheckInCheckOutSection";
 import type { CheckInCheckOutSettings } from "@/lib/check-in-check-out";
 import type { BusinessProfileContext } from "./business-actions";
 import type { WorkflowStatusDef } from "./status-actions";
+import type { PaymentMethodDef } from "./payment-method-actions";
 import type {
   ExtraGuestView,
   CancellationPolicyView,
   PaymentPolicyView,
-  PaymentMethodRef,
   MessagingSettingsView,
   TTLockSettingsView,
 } from "./types";
@@ -37,7 +37,7 @@ export function SettingsShell({
   extraGuest,
   cancellationPolicies,
   paymentPolicies,
-  paymentMethods,
+  paymentMethodDefs,
   canManageMessaging,
   messaging,
   canManageTTLock,
@@ -56,7 +56,7 @@ export function SettingsShell({
   extraGuest: ExtraGuestView;
   cancellationPolicies: CancellationPolicyView[];
   paymentPolicies: PaymentPolicyView[];
-  paymentMethods: PaymentMethodRef[];
+  paymentMethodDefs: PaymentMethodDef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
   canManageTTLock: boolean;
@@ -142,7 +142,7 @@ export function SettingsShell({
             extraGuest={extraGuest}
             cancellationPolicies={cancellationPolicies}
             paymentPolicies={paymentPolicies}
-            paymentMethods={paymentMethods}
+            paymentMethodDefs={paymentMethodDefs}
             canManageMessaging={canManageMessaging}
             messaging={messaging}
             canManageTTLock={canManageTTLock}
@@ -192,7 +192,7 @@ function SectionBody({
   extraGuest,
   cancellationPolicies,
   paymentPolicies,
-  paymentMethods,
+  paymentMethodDefs,
   canManageMessaging,
   messaging,
   canManageTTLock,
@@ -208,7 +208,7 @@ function SectionBody({
   extraGuest: ExtraGuestView;
   cancellationPolicies: CancellationPolicyView[];
   paymentPolicies: PaymentPolicyView[];
-  paymentMethods: PaymentMethodRef[];
+  paymentMethodDefs: PaymentMethodDef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
   canManageTTLock: boolean;
@@ -234,7 +234,7 @@ function SectionBody({
     case "cancellation":
       return <CancellationSection policies={cancellationPolicies} />;
     case "payment":
-      return <PaymentSection policies={paymentPolicies} methods={paymentMethods} />;
+      return <PaymentSection policies={paymentPolicies} methodDefs={paymentMethodDefs} />;
     case "messaging":
       return canManageMessaging && messaging ? <MessagingSection data={messaging} /> : null;
     case "ttlock":
