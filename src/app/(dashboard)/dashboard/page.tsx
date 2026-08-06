@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getActor } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
-import { todayInTz, formatFullDate, HEBREW_DAY_LETTERS, dayOfWeek } from "@/lib/dates";
+import { todayInTz, nowHHMMInTz, formatFullDate, HEBREW_DAY_LETTERS, dayOfWeek } from "@/lib/dates";
 import { getDashboardPreferences } from "./preferences";
 import { getDashboardData } from "./data";
 import { DashboardScreen } from "./DashboardScreen";
@@ -28,13 +28,17 @@ export default async function DashboardPage() {
   // the property's day, not the server's — the session runs in UTC, so between
   // local midnight and ~03:00 a naive new Date() names yesterday. THE one date
   // every window and every KPI below is computed against.
-  const today = todayInTz(tenant[0]?.timezone || "Asia/Jerusalem");
+  const tz = tenant[0]?.timezone || "Asia/Jerusalem";
+  const today = todayInTz(tz);
   const data = await getDashboardData(actor.tenantId, today);
 
   return (
     <DashboardScreen
       initial={prefs}
       data={data}
+      // agd's clock — recomputed on every SSE-nudged refresh, so "past" events
+      // dim without a client-side Date that would disagree with the SSR pass
+      now={nowHHMMInTz(tz)}
       todayLabel={`יום ${HEBREW_DAY_LETTERS[dayOfWeek(today)]} · ${formatFullDate(today)}`}
       // the header's unit count is the SAME denominator the occupancy KPI
       // divides by, so the two can never tell the operator different numbers

@@ -1,6 +1,7 @@
 /* globals.css = table of contents only (iron rule #9). CSS lives in app/styles/. */
 @import "tailwindcss";
 @import "./styles/design-system.css";
+@import "./styles/dashboard-widgets.css";
 @import "./styles/base.css";
 @import "./styles/calendar.css";
 @import "./styles/calendar-mobile.css";

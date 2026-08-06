@@ -960,8 +960,13 @@ export async function setWorkflowStatusAction(input: {
 //
 // NO DATE GUARD, deliberately: a guest may leave before the stay ends
 // (DeshbordMain.md §4.1, and §3.4 of the audit — the panel has never had one).
+//
+// "confirmed" is the alerts window's אישור button — approving a booking nobody
+// approved. Unlike the other two it IS from-guarded: only a draft may be
+// approved this way. check-in/check-out from any live state is a shortcut the
+// panel also allows; silently flipping a checked_out back to confirmed is not.
 // ---------------------------------------------------------------
-const DASHBOARD_LIFECYCLE_STATUSES = ["checked_in", "checked_out"] as const;
+const DASHBOARD_LIFECYCLE_STATUSES = ["confirmed", "checked_in", "checked_out"] as const;
 type DashboardLifecycleStatus = (typeof DASHBOARD_LIFECYCLE_STATUSES)[number];
 
 export async function setReservationStatusAction(
@@ -984,6 +989,8 @@ export async function setReservationStatusAction(
       if (!res) throw new DomainError("הזמנה לא נמצאה");
       if (res.status === "cancelled") throw new DomainError("הזמנה מבוטלת — לא ניתן לשנות סטטוס");
       if (res.status === status) return; // idempotent: pressing twice is not an error
+      if (status === "confirmed" && res.status !== "draft")
+        throw new DomainError("רק הזמנה ממתינה לאישור ניתן לאשר");
 
       const rooms = await tx<{ room_id: string | null }[]>`
         SELECT room_id FROM guesthub.reservation_rooms

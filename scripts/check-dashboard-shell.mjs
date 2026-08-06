@@ -81,9 +81,9 @@ try {
 
   // ================= A. the window registry =================
   const ids = W.WINDOWS.map((w) => w.id);
-  assert.equal(ids.length, 11, "eleven windows are registered");
-  assert.equal(new Set(ids).size, 11, "window ids are unique");
-  ok(`11 windows registered, ids unique: ${ids.join(", ")}`);
+  assert.equal(ids.length, 12, "twelve windows are registered");
+  assert.equal(new Set(ids).size, 12, "window ids are unique");
+  ok(`12 windows registered, ids unique: ${ids.join(", ")}`);
 
   // §8.1 — every registered window has a place, in its own column
   const placed = [...W.DEFAULT_LAYOUT.l, ...W.DEFAULT_LAYOUT.r];
@@ -100,7 +100,7 @@ try {
   assert.deepEqual(W.DEFAULT_LAYOUT.l, ["arr", "rev", "hk", "agd"], "left column default order");
   assert.deepEqual(
     W.DEFAULT_LAYOUT.r,
-    ["alr", "iss", "tsk", "rvw", "msg", "src", "inh"],
+    ["alr", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
     "right column default order",
   );
   ok("default order matches DeshbordMain.md §3");
@@ -141,7 +141,7 @@ try {
   );
   assert.deepEqual(
     moved.layout.r,
-    ["alr", "iss", "tsk", "rvw", "src", "inh"],
+    ["alr", "stk", "iss", "tsk", "rvw", "src", "inh"],
     "unmentioned right-column windows append in default order",
   );
   ok("the saved state owns the column; the registry owns only the default");
@@ -154,7 +154,7 @@ try {
   assert.deepEqual(
     [...dup.layout.l, ...dup.layout.r].sort(),
     [...ids].sort(),
-    "de-duplication still yields all 11 exactly once",
+    "de-duplication still yields all 12 exactly once",
   );
   ok("a cross-column duplicate: first occurrence wins, nothing is lost");
 
@@ -163,10 +163,10 @@ try {
     assert.deepEqual(
       [...out.layout.l, ...out.layout.r].sort(),
       [...ids].sort(),
-      `junk input ${JSON.stringify(junk)} still yields all 11 windows`,
+      `junk input ${JSON.stringify(junk)} still yields all 12 windows`,
     );
   }
-  ok("six malformed jsonb shapes each still yield all 11 windows");
+  ok("six malformed jsonb shapes each still yield all 12 windows");
 
   // ================= B. the donut =================
   const CIRC = 2 * Math.PI * 70;
