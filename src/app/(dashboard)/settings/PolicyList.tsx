@@ -6,9 +6,9 @@ import { Icon } from "@/components/shared/Icon";
 import { IconBtn } from "./controls";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
-// Shared list chrome for the policy sections (cancellation / payment) — same card
-// language, default/active chips, edit + archive actions, empty state. Keeps the
-// two sections DRY (iron rule #10). Every visual here is a canonical primitive.
+// List chrome for the cancellation-policy section — card language, default/active
+// chips, edit + archive actions, empty state. Every visual here is a canonical
+// primitive.
 
 export function PolicyToolbar({ title, subtitle, onAdd }: { title: string; subtitle: string; onAdd: () => void }) {
   return (

@@ -37,26 +37,6 @@ export const DISTRIBUTION: Record<string, string> = {
 
 export const TIME_UNIT: Record<string, string> = { hours: "שעות", days: "ימים" };
 
-export const PAY_TRIGGER: Record<string, string> = {
-  booking: "בעת ההזמנה",
-  before_checkin: "לפני צ׳ק-אין",
-  checkin: "בצ׳ק-אין",
-  checkout: "בצ׳ק-אאוט",
-};
-
-export const PAY_AMOUNT: Record<string, string> = {
-  fixed: "סכום קבוע",
-  percentage: "אחוז",
-  remaining_balance: "יתרה נותרת",
-  full_balance: "יתרה מלאה",
-};
-
-export const RETRY: Record<string, string> = {
-  manual: "טיפול ידני",
-  retry_then_cancel: "ניסיון חוזר ואז ביטול",
-  retry_then_notify: "ניסיון חוזר ואז התראה",
-};
-
 // generic dropdown options builder from a label map
 export function opts(map: Record<string, string>): { value: string; label: string }[] {
   return Object.entries(map).map(([value, label]) => ({ value, label }));

@@ -70,7 +70,7 @@ src/
 - **Rooms/inventory:** `rooms`, `room_types`, `room_images`, `room_amenities`, `room_translations`, `room_closures`, `areas`, `operational_areas`, `floors` via lookup, `lookup_items`, `sellable_units`, `sellable_unit_rooms`, `sellable_units_backup_028` (leftover), `housekeeping_tasks`
 - **Reservations/guests:** `reservations`, `reservation_rooms`, `reservation_cards`, `reservation_payment_methods`, `guests`
 - **Pricing:** `pricing_plans`, `pricing_plan_rates`, `pricing_plan_units`, `pricing_plan_unit_rates`, `rates`, `bulk_rate_update_logs`, `bulk_rate_update_items`
-- **Payments/policies:** `payments`, `payment_policies`, `payment_policy_stages`, `cancellation_policies`, `cancellation_policy_tiers`
+- **Payments/policies:** `payments`, `cancellation_policies`, `cancellation_policy_tiers` (payment-policy tables removed in 078)
 - **Channel manager (Channex):** `channel_connections`, `channel_sync_jobs`, `channel_webhook_events`, `channel_booking_revisions`, `channel_dirty_ranges`, `channel_worker_state`, `channel_sync_errors`, `channel_room_type_mappings`, `channel_rate_plan_mappings`, `channel_room_mappings`, `channel_room_rate_mappings`, `channel_inbound_rate_plan_aliases`, `channel_inventory_holds`, `channel_external_changes`
 - **Messaging/communications:** `messaging_provider_connections`, `message_templates`, `message_template_versions`, `outbound_messages`, `message_events`, `communication_automations`, `communication_events`, `communication_delivery_attempts`, `communication_settings`
 - **Audit:** `audit_logs`

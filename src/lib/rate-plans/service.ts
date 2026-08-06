@@ -123,7 +123,6 @@ export type PlanAssignmentRow = {
 export type RatePlanDetail = RatePlanListItem & {
   description: string | null;
   public_description: string | null;
-  payment_policy_id: string | null;
   assignments: PlanAssignmentRow[];
 };
 
@@ -135,15 +134,15 @@ export async function getRatePlanDetail(
   const plans = await listRatePlans(tenantId, db);
   const plan = plans.find((p) => p.id === planId);
   if (!plan) return null;
-  const [extra] = await db<{ description: string | null; public_description: string | null; payment_policy_id: string | null }[]>`
-    SELECT description, public_description, payment_policy_id
+  const [extra] = await db<{ description: string | null; public_description: string | null }[]>`
+    SELECT description, public_description
     FROM guesthub.pricing_plans WHERE id = ${planId} AND tenant_id = ${tenantId}`;
   const assignments = await db<PlanAssignmentRow[]>`
     SELECT sellable_unit_id, is_active, adjustment_value::float8 AS adjustment_value,
            valid_from::text AS valid_from, valid_until::text AS valid_until
     FROM guesthub.pricing_plan_units
     WHERE tenant_id = ${tenantId} AND pricing_plan_id = ${planId}`;
-  return { ...plan, ...(extra ?? { description: null, public_description: null, payment_policy_id: null }), assignments };
+  return { ...plan, ...(extra ?? { description: null, public_description: null }), assignments };
 }
 
 // The assignable-unit list for Step 3 + the simulator, derived from the

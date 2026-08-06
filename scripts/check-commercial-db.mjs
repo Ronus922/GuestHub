@@ -108,28 +108,11 @@ try {
          VALUES (${tA.id}, ${pol2.id}, 1, 'after_checkin', 'percentage', 150, 'accommodation')`);
     ok("CHECK constraints reject negative money and percent > 100");
 
-    // ---- payment policy + ordered stages + methods jsonb ----
-    const [pp] = await tx`INSERT INTO guesthub.payment_policies (tenant_id, name, public_title, code, is_default, created_by)
-      VALUES (${tA.id}, 'Deposit 30', 'מקדמה', 'dep30', true, ${u.id}) RETURNING id`;
-    await tx`INSERT INTO guesthub.payment_policy_stages
-      (tenant_id, policy_id, sort_order, trigger_type, amount_type, amount_percent, methods)
-      VALUES (${tA.id}, ${pp.id}, 0, 'booking', 'percentage', 30, ${sql.json(["credit_card"])}::jsonb)`;
-    await tx`INSERT INTO guesthub.payment_policy_stages
-      (tenant_id, policy_id, sort_order, trigger_type, trigger_offset_unit, trigger_offset_value, amount_type, methods)
-      VALUES (${tA.id}, ${pp.id}, 1, 'before_checkin', 'days', 7, 'remaining_balance', ${sql.json(["credit_card","cash"])}::jsonb)`;
-    const stages = await tx`SELECT sort_order, methods FROM guesthub.payment_policy_stages WHERE tenant_id=${tA.id} AND policy_id=${pp.id} ORDER BY sort_order`;
-    assert.deepEqual(stages.map((s) => s.sort_order), [0, 1], "stages ordered");
-    assert.deepEqual(stages[1].methods, ["credit_card", "cash"], "methods jsonb round-trips");
-    await expectViolation(tx, "23514", "payment percent > 100", (sp) =>
-      sp`INSERT INTO guesthub.payment_policy_stages (tenant_id, policy_id, sort_order, trigger_type, amount_type, amount_percent)
-         VALUES (${tA.id}, ${pp.id}, 9, 'booking', 'percentage', 150)`);
-    ok("payment stages ordered, methods jsonb round-trips, percent CHECK enforced");
-
     // ---- cascade: deleting a policy removes its children ----
     await tx`DELETE FROM guesthub.cancellation_policies WHERE id = ${pol.id}`;
     const [{ c }] = await tx`SELECT count(*)::int AS c FROM guesthub.cancellation_policy_tiers WHERE policy_id = ${pol.id}`;
     assert.equal(c, 0, "tiers cascade-deleted with the policy");
-    ok("ON DELETE CASCADE removes tiers/stages with the policy");
+    ok("ON DELETE CASCADE removes tiers with the policy");
 
     throw new Rollback(); // leave the test DB untouched
   });

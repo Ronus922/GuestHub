@@ -4,12 +4,9 @@
 // components.
 import type { ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import type { CancellationTier } from "@/lib/commercial/cancellation";
-import type { PaymentStage } from "@/lib/commercial/payment";
 import type { WhatsAppProviderId } from "@/lib/messaging/types";
 
 export type ExtraGuestView = ExtraGuestDefaults & { adult_min_age: number };
-
-export type PaymentMethodRef = { key: string; label: string };
 
 export type PolicyTranslations = Record<string, { public_title?: string; guest_description?: string }>;
 
@@ -27,19 +24,6 @@ export type CancellationPolicyView = {
   timezone: string | null;
   checkin_time_basis: string | null;
   tiers: CancellationTier[];
-};
-
-export type PaymentPolicyView = {
-  id: string;
-  name: string;
-  public_title: string;
-  code: string;
-  is_active: boolean;
-  is_default: boolean;
-  internal_notes: string | null;
-  guest_description: string | null;
-  translations: PolicyTranslations;
-  stages: PaymentStage[];
 };
 
 // ---- messaging (D53): client-safe, masked view of provider connections ----

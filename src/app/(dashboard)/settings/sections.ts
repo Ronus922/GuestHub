@@ -42,7 +42,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
     title: "תשלומים",
     items: [
-      { key: "payment", label: "מדיניות תשלום", icon: "credit-card", desc: "תבניות מדיניות תשלום" },
+      { key: "payment", label: "אמצעי תשלום", icon: "credit-card", desc: "אמצעי התשלום, הסדר והזמינות שלהם" },
     ],
   },
   {

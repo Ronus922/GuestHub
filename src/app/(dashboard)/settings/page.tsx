@@ -5,7 +5,6 @@ import { getTenantVatRate, getTenantCurrency,
 import {
   getExtraGuestDefaults,
   listCancellationPolicies,
-  listPaymentPolicies,
 } from "@/lib/commercial/service";
 import { SettingsShell } from "./SettingsShell";
 import { getMessagingSettingsAction } from "./messaging-actions";
@@ -26,7 +25,7 @@ export default async function SettingsPage() {
   if (!actor) redirect("/auth/signout");
   if (!hasPermission(actor, "settings.edit")) redirect("/dashboard");
 
-  const [currency, enabledCurrencies, vatRate, checkInCheckOut, extraGuest, cancellationPolicies, paymentPolicies, businessCtx] =
+  const [currency, enabledCurrencies, vatRate, checkInCheckOut, extraGuest, cancellationPolicies, businessCtx] =
     await Promise.all([
       getTenantCurrency(actor.tenantId),
       getEnabledCurrencies(actor.tenantId),
@@ -34,7 +33,6 @@ export default async function SettingsPage() {
       getTenantCheckInCheckOutSettings(actor.tenantId),
       getExtraGuestDefaults(actor.tenantId),
       listCancellationPolicies(actor.tenantId),
-      listPaymentPolicies(actor.tenantId),
       getBusinessProfileContextAction(),
     ]);
   const workflowRes = await listWorkflowStatusesAction();
@@ -75,7 +73,6 @@ export default async function SettingsPage() {
       checkInCheckOut={checkInCheckOut}
       extraGuest={extraGuest}
       cancellationPolicies={cancellationPolicies}
-      paymentPolicies={paymentPolicies}
       paymentMethodDefs={paymentMethodDefs}
       canManageMessaging={canManageMessaging}
       messaging={messaging}

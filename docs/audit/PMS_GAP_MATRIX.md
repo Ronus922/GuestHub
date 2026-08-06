@@ -47,7 +47,7 @@ Owning stage (RS/HV only): core-domain (reservations, inventory, pricing, paymen
 
 ## 4. Payments
 
-**Current capability.** `guesthub.payments` is the authoritative ledger; `paid_amount`/`balance` are derived caches recomputed in-transaction (`src/lib/payments/ledger.ts`, migration `019`); collected money = `status='paid'` only; negative balance = honest credit. Collection view (`src/lib/payments/collection.ts`). PSP gateway seam exists and fails closed — no provider wired (`src/lib/payments/gateway.ts` returns `null`). Card vault encrypted at rest (`src/lib/card-vault.ts`, `CARD_VAULT_KEY`), CVV never stored (column dropped, migration `018_remove_stored_cvv.sql`); masked-only read path (`reservations/actions.ts` card select); manual card delete/replace exists (`card-actions.ts:402`). External-payment recorder for OTA-collected money (D46). Payment policies + stages configurable (`guesthub.payment_policies`, `payment_policy_stages`, `src/lib/commercial/payment.ts`). Idempotency key on payment rows.
+**Current capability.** `guesthub.payments` is the authoritative ledger; `paid_amount`/`balance` are derived caches recomputed in-transaction (`src/lib/payments/ledger.ts`, migration `019`); collected money = `status='paid'` only; negative balance = honest credit. Collection view (`src/lib/payments/collection.ts`). PSP gateway seam exists and fails closed — no provider wired (`src/lib/payments/gateway.ts` returns `null`). Card vault encrypted at rest (`src/lib/card-vault.ts`, `CARD_VAULT_KEY`), CVV never stored (column dropped, migration `018_remove_stored_cvv.sql`); masked-only read path (`reservations/actions.ts` card select); manual card delete/replace exists (`card-actions.ts:402`). External-payment recorder for OTA-collected money (D46). Payment methods managed on `lookup_items` category=`payment_methods` (settings card, PR #173); the old payment-policy templates were removed (migration `078`). Idempotency key on payment rows.
 
 **Gaps.**
 - **Card-vault retention enforcement** — `reservation_cards.available_until` exists but NO job or hook ever purges expired card data; deletion is manual-only (`card-actions.ts:402`). Encrypted PANs accumulate indefinitely on a self-hosted box — PCI-scope and breach-blast-radius issue. → **RS, Stage 3**
@@ -171,7 +171,7 @@ Owning stage (RS/HV only): core-domain (reservations, inventory, pricing, paymen
 
 ## 18. Business configuration (/settings)
 
-**Current capability.** Two-pane settings (`src/app/(dashboard)/settings/`): Business Profile with Google Maps picker (`BusinessProfileSection.tsx`, `LocationPicker.tsx`), VAT rate (`VatSection.tsx`, `src/lib/vat.ts`), Israel-aware check-in/out schedules (holiday/erev/Shabbat via hebcal — `src/lib/check-in-check-out.ts`), extra-guest pricing, cancellation-policy templates with tiers (`guesthub.cancellation_policies/_tiers`), payment policies, workflow statuses, messaging providers. Lookup taxonomies seeded (`guesthub.lookup_items`: sources, currencies, languages, statuses, amenities…).
+**Current capability.** Two-pane settings (`src/app/(dashboard)/settings/`): Business Profile with Google Maps picker (`BusinessProfileSection.tsx`, `LocationPicker.tsx`), VAT rate (`VatSection.tsx`, `src/lib/vat.ts`), Israel-aware check-in/out schedules (holiday/erev/Shabbat via hebcal — `src/lib/check-in-check-out.ts`), extra-guest pricing, cancellation-policy templates with tiers (`guesthub.cancellation_policies/_tiers`), payment methods, workflow statuses, messaging providers. Lookup taxonomies seeded (`guesthub.lookup_items`: sources, currencies, languages, statuses, amenities…).
 
 **Gaps.**
 - Multi-currency handling formalization — `reservations.currency` exists and code honestly refuses to sum across currencies (`guests/data.ts`), but there is no FX/display strategy. → **AP**
@@ -221,7 +221,7 @@ Owning stage (RS/HV only): core-domain (reservations, inventory, pricing, paymen
 | Guests | Guest merge/dedup tooling (channel import inserts new row per booking) | High-value near-term | Stage 3 | `booking-import.ts:343`; `guests/data.ts` header comment |
 | Guests | Guest management UI (edit/VIP/block outside reservation flow) | High-value near-term | Stage 3 | `guests/actions.ts` (read-only profile) |
 | Payments | Refund/void operator workflow | High-value near-term | Stage 3 | `ledger.ts` statuses; no refund UI found |
-| Payments | Payment-policy stage enforcement/alerts | High-value near-term | Stage 3 | `payment_policies/_stages`; `commercial/payment.ts` |
+| Payments | Payment-schedule enforcement/alerts | High-value near-term | Stage 3 | payment-policy tables removed (078) — a future schedule feature starts fresh |
 | Pricing | Restriction enforcement (min-stay/CTA/CTD) on direct entry — verify & close | High-value near-term | Stage 3 | `pricing_plan_unit_rates` columns vs `createReservationAction` |
 | Audit | Audit viewer/search + full per-entity history | High-value near-term | Stage 3 | write-only `audit_logs`; only `actions.ts:1424` last-10 feed |
 | Users & permissions | MFA/2FA for operators | High-value near-term | Stage 3 | `lib/auth/*` (password + gated Google only) |

@@ -40,14 +40,12 @@ export function RatePlansScreen({
   plans,
   units,
   cancellationPolicies,
-  paymentPolicies,
   can,
 }: {
   plans: RatePlanListItem[];
   units: AssignableUnit[];
   /** length-of-stay tiers (D104) — the commercial rule THE engine prices with */
   cancellationPolicies: PolicyOption[];
-  paymentPolicies: PolicyOption[];
   can: RatePlansCan;
 }) {
   const router = useRouter();
@@ -249,7 +247,6 @@ export function RatePlansScreen({
           plans={plans}
           units={units}
           cancellationPolicies={cancellationPolicies}
-          paymentPolicies={paymentPolicies}
           canSave={wizard.detail ? can.edit : can.create}
         />
       )}

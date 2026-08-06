@@ -83,3 +83,4 @@
 075_sync_jobs_finished_index.sql
 076_guest_conversations_and_reviews.sql
 077_guest_ingest_grants.sql
+078_drop_payment_policies.sql
