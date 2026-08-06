@@ -63,21 +63,6 @@ export const cancellationPolicySchema = z.object({
 });
 export type CancellationPolicyInput = z.infer<typeof cancellationPolicySchema>;
 
-// ---- §C payment policy + stages ----
-export const paymentStageSchema = z.object({
-  trigger_type: z.enum(["booking", "before_checkin", "checkin", "checkout"]),
-  trigger_offset_unit: z.enum(["hours", "days"]).nullable(),
-  trigger_offset_value: z.number().int().min(0).max(100000).nullable(),
-  amount_type: z.enum(["fixed", "percentage", "remaining_balance", "full_balance"]),
-  amount_value: money,
-  amount_percent: percent,
-  methods: z.array(z.string().max(60)).max(20),
-  require_card_guarantee: z.boolean(),
-  retry_behavior: z.enum(["manual", "retry_then_cancel", "retry_then_notify"]),
-  staff_instructions: longText.optional().nullable(),
-  guest_text: longText.optional().nullable(),
-});
-
 // ---- §3/§7 room occupancy + extra-guest override ----
 const occ = z.number().int().min(1).max(50);
 export const roomOccupancySchema = z.object({
@@ -95,17 +80,3 @@ export const roomOccupancySchema = z.object({
   charge_frequency_override: z.enum(["per_night", "per_stay"]).nullable(),
 });
 export type RoomOccupancyInput = z.infer<typeof roomOccupancySchema>;
-
-export const paymentPolicySchema = z.object({
-  id: z.uuid().optional(),
-  name: shortText,
-  public_title: shortText,
-  code,
-  is_active: z.boolean(),
-  is_default: z.boolean(),
-  internal_notes: longText.optional().nullable(),
-  guest_description: longText.optional().nullable(),
-  translations,
-  stages: z.array(paymentStageSchema).min(1, "נדרש שלב אחד לפחות").max(50),
-});
-export type PaymentPolicyInput = z.infer<typeof paymentPolicySchema>;

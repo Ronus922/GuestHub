@@ -20,7 +20,6 @@ import type { PaymentMethodDef } from "./payment-method-actions";
 import type {
   ExtraGuestView,
   CancellationPolicyView,
-  PaymentPolicyView,
   MessagingSettingsView,
   TTLockSettingsView,
 } from "./types";
@@ -36,7 +35,6 @@ export function SettingsShell({
   checkInCheckOut,
   extraGuest,
   cancellationPolicies,
-  paymentPolicies,
   paymentMethodDefs,
   canManageMessaging,
   messaging,
@@ -55,7 +53,6 @@ export function SettingsShell({
   checkInCheckOut: CheckInCheckOutSettings;
   extraGuest: ExtraGuestView;
   cancellationPolicies: CancellationPolicyView[];
-  paymentPolicies: PaymentPolicyView[];
   paymentMethodDefs: PaymentMethodDef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
@@ -141,7 +138,6 @@ export function SettingsShell({
             checkInCheckOut={checkInCheckOut}
             extraGuest={extraGuest}
             cancellationPolicies={cancellationPolicies}
-            paymentPolicies={paymentPolicies}
             paymentMethodDefs={paymentMethodDefs}
             canManageMessaging={canManageMessaging}
             messaging={messaging}
@@ -191,7 +187,6 @@ function SectionBody({
   checkInCheckOut,
   extraGuest,
   cancellationPolicies,
-  paymentPolicies,
   paymentMethodDefs,
   canManageMessaging,
   messaging,
@@ -207,7 +202,6 @@ function SectionBody({
   checkInCheckOut: CheckInCheckOutSettings;
   extraGuest: ExtraGuestView;
   cancellationPolicies: CancellationPolicyView[];
-  paymentPolicies: PaymentPolicyView[];
   paymentMethodDefs: PaymentMethodDef[];
   canManageMessaging: boolean;
   messaging: MessagingSettingsView | null;
@@ -234,7 +228,7 @@ function SectionBody({
     case "cancellation":
       return <CancellationSection policies={cancellationPolicies} />;
     case "payment":
-      return <PaymentSection policies={paymentPolicies} methodDefs={paymentMethodDefs} />;
+      return <PaymentSection methodDefs={paymentMethodDefs} />;
     case "messaging":
       return canManageMessaging && messaging ? <MessagingSection data={messaging} /> : null;
     case "ttlock":

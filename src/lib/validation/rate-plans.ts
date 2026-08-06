@@ -42,7 +42,6 @@ export const ratePlanSaveSchema = z
     isActive: z.boolean().default(true),
     isRefundable: z.boolean().default(true),
     cancellationPolicyId: z.uuid().nullable().default(null),
-    paymentPolicyId: z.uuid().nullable().default(null),
     mealPlan: z.string().trim().max(120).nullable().default(null),
     validFrom: nullableDate.default(null),
     validUntil: nullableDate.default(null),

@@ -137,12 +137,6 @@ export async function saveRatePlanAction(raw: unknown): Promise<ActionResult & {
           WHERE id = ${p.cancellationPolicyId} AND tenant_id = ${actor!.tenantId}`;
         if (!cp) fail("מדיניות הביטול לא נמצאה");
       }
-      if (p.paymentPolicyId) {
-        const [pp] = await tx<{ id: string }[]>`
-          SELECT id FROM guesthub.payment_policies
-          WHERE id = ${p.paymentPolicyId} AND tenant_id = ${actor!.tenantId}`;
-        if (!pp) fail("מדיניות התשלום לא נמצאה");
-      }
 
       let planId: string;
       let before: Record<string, unknown> | null = null;
@@ -162,7 +156,6 @@ export async function saveRatePlanAction(raw: unknown): Promise<ActionResult & {
             adjustment_value = ${p.adjustmentValue},
             is_active = ${p.isActive}, is_refundable = ${p.isRefundable},
             cancellation_policy_id = ${p.cancellationPolicyId},
-            payment_policy_id = ${p.paymentPolicyId},
             meal_plan = ${p.mealPlan},
             valid_from = ${p.validFrom}, valid_until = ${p.validUntil},
             min_advance_days = ${p.minAdvanceDays}, max_advance_days = ${p.maxAdvanceDays},
@@ -178,7 +171,7 @@ export async function saveRatePlanAction(raw: unknown): Promise<ActionResult & {
           INSERT INTO guesthub.pricing_plans
             (tenant_id, sellable_unit_id, code, name, public_name, description,
              public_description, plan_kind, parent_plan_id, adjustment_value,
-             is_base, is_active, is_refundable, cancellation_policy_id, payment_policy_id,
+             is_base, is_active, is_refundable, cancellation_policy_id,
              meal_plan, valid_from, valid_until, min_advance_days, max_advance_days,
              allowed_checkin_days, default_min_stay, default_max_stay,
              default_closed_to_arrival, default_closed_to_departure,
@@ -186,7 +179,7 @@ export async function saveRatePlanAction(raw: unknown): Promise<ActionResult & {
           VALUES
             (${actor!.tenantId}, NULL, ${p.code}, ${p.name}, ${p.publicName}, ${p.description},
              ${p.publicDescription}, ${p.planKind}, ${p.parentPlanId}, ${p.adjustmentValue},
-             false, ${p.isActive}, ${p.isRefundable}, ${p.cancellationPolicyId}, ${p.paymentPolicyId},
+             false, ${p.isActive}, ${p.isRefundable}, ${p.cancellationPolicyId},
              ${p.mealPlan}, ${p.validFrom}, ${p.validUntil}, ${p.minAdvanceDays}, ${p.maxAdvanceDays},
              ${p.allowedCheckinDays}::smallint[],
              ${p.defaultMinStay}, ${p.defaultMaxStay},
@@ -281,14 +274,14 @@ export async function duplicateRatePlanAction(raw: unknown): Promise<ActionResul
         INSERT INTO guesthub.pricing_plans
           (tenant_id, sellable_unit_id, code, name, public_name, description,
            public_description, plan_kind, parent_plan_id, adjustment_value,
-           is_base, is_active, is_refundable, cancellation_policy_id, payment_policy_id,
+           is_base, is_active, is_refundable, cancellation_policy_id,
            meal_plan, valid_from, valid_until, min_advance_days, max_advance_days,
            allowed_checkin_days, default_min_stay, default_max_stay,
            default_closed_to_arrival, default_closed_to_departure,
            is_visible_website, is_visible_channels, sort_order, created_by, updated_by)
         SELECT tenant_id, NULL, ${code}, name || ' (עותק)', public_name, description,
                public_description, plan_kind, parent_plan_id, adjustment_value,
-               false, false, is_refundable, cancellation_policy_id, payment_policy_id,
+               false, false, is_refundable, cancellation_policy_id,
                meal_plan, valid_from, valid_until, min_advance_days, max_advance_days,
                allowed_checkin_days, default_min_stay, default_max_stay,
                default_closed_to_arrival, default_closed_to_departure,

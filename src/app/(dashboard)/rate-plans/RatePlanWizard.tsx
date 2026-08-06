@@ -36,7 +36,6 @@ type Draft = {
   sortOrder: number;
   isRefundable: boolean;
   cancellationPolicyId: string;
-  paymentPolicyId: string;
   mealPlan: string;
   validFrom: string;
   validUntil: string;
@@ -66,7 +65,6 @@ export function RatePlanWizard({
   plans,
   units,
   cancellationPolicies,
-  paymentPolicies,
   canSave,
 }: {
   open: boolean;
@@ -75,7 +73,6 @@ export function RatePlanWizard({
   plans: RatePlanListItem[];
   units: AssignableUnit[];
   cancellationPolicies: PolicyOption[];
-  paymentPolicies: PolicyOption[];
   canSave: boolean;
 }) {
   const router = useRouter();
@@ -92,7 +89,6 @@ export function RatePlanWizard({
     sortOrder: detail?.sort_order ?? 0,
     isRefundable: detail?.is_refundable ?? true,
     cancellationPolicyId: detail?.cancellation_policy_id ?? "",
-    paymentPolicyId: detail?.payment_policy_id ?? "",
     mealPlan: detail?.meal_plan ?? "",
     validFrom: detail?.valid_from ?? "",
     validUntil: detail?.valid_until ?? "",
@@ -228,7 +224,6 @@ export function RatePlanWizard({
     isActive: d.isActive,
     isRefundable: d.isRefundable,
     cancellationPolicyId: d.cancellationPolicyId || null,
-    paymentPolicyId: d.paymentPolicyId || null,
     mealPlan: d.mealPlan.trim() || null,
     validFrom: d.validFrom || null,
     validUntil: d.validUntil || null,
@@ -279,11 +274,10 @@ export function RatePlanWizard({
     setStep((s) => (s === 3 ? 3 : ((s + 1) as Step)));
   };
 
-  // policy selects keep an inactive current selection visible (edit mode)
+  // the policy select keeps an inactive current selection visible (edit mode)
   const cancelOptions = cancellationPolicies.filter(
     (p) => p.is_active || p.id === d.cancellationPolicyId,
   );
-  const paymentOptions = paymentPolicies.filter((p) => p.is_active || p.id === d.paymentPolicyId);
 
   // summary labels
   const validityLabel: React.ReactNode =
@@ -468,20 +462,6 @@ export function RatePlanWizard({
                   >
                     <option value="">ללא</option>
                     {cancelOptions.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </F>
-                <F label="מדיניות תשלום">
-                  <select
-                    className="field-input"
-                    value={d.paymentPolicyId}
-                    onChange={(e) => set("paymentPolicyId", e.target.value)}
-                  >
-                    <option value="">ללא</option>
-                    {paymentOptions.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name}
                       </option>

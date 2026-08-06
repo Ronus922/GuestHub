@@ -11,11 +11,11 @@ import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 // Tenant payment-method definitions — CRUD over the EXISTING lookup_items
 // list model, category 'payment_methods' (the same shape status-actions.ts
 // manages for workflow statuses). Rules enforced SERVER-SIDE:
-//   · key is immutable — payments.method and payment_policy_stages.methods
-//     store it as TEXT with no FK, so renaming would orphan history
-//   · a method referenced by payments or by a policy stage cannot be hard
-//     deleted (no FK backstop exists — the in-tx counts ARE the guard); it
-//     is deactivated instead and stays resolvable on historical rows
+//   · key is immutable — payments.method stores it as TEXT with no FK, so
+//     renaming would orphan history
+//   · a method referenced by payments cannot be hard deleted (no FK backstop
+//     exists — the in-tx count IS the guard); it is deactivated instead and
+//     stays resolvable on historical rows
 //   · 'credit_card' can never be deleted: the card-capture flow keys on it
 //     (BookingPanel / EditReservationPanel / CardFields / card-actions).
 //     Deactivating it is allowed — card charges keep writing the key to
@@ -34,8 +34,6 @@ export type PaymentMethodDef = {
   isActive: boolean;
   /** payments rows carrying this key — drives the delete/deactivate affordance */
   paymentsCount: number;
-  /** payment-policy stages whose methods array references this key */
-  policyRefCount: number;
   /** key the card flow depends on — delete is always blocked */
   isProtected: boolean;
 };
@@ -53,14 +51,12 @@ async function listForTenant(tenantId: string): Promise<PaymentMethodDef[]> {
     await sql<
       {
         id: string; key: string; label: string; sort_order: number;
-        is_active: boolean; payments_count: number; policy_ref_count: number;
+        is_active: boolean; payments_count: number;
       }[]
     >`
       SELECT li.id, li.key, li.label, li.sort_order, li.is_active,
              (SELECT COUNT(*)::int FROM guesthub.payments p
-               WHERE p.tenant_id = li.tenant_id AND p.method = li.key) AS payments_count,
-             (SELECT COUNT(*)::int FROM guesthub.payment_policy_stages s
-               WHERE s.tenant_id = li.tenant_id AND s.methods ? li.key) AS policy_ref_count
+               WHERE p.tenant_id = li.tenant_id AND p.method = li.key) AS payments_count
       FROM guesthub.lookup_items li
       WHERE li.tenant_id = ${tenantId} AND li.category = ${CATEGORY}
       ORDER BY li.sort_order, li.created_at`
@@ -71,7 +67,6 @@ async function listForTenant(tenantId: string): Promise<PaymentMethodDef[]> {
     sortOrder: r.sort_order,
     isActive: r.is_active,
     paymentsCount: r.payments_count,
-    policyRefCount: r.policy_ref_count,
     isProtected: r.key === PROTECTED_KEY,
   }));
 }
@@ -228,9 +223,9 @@ export async function setPaymentMethodActiveAction(input: {
 }
 
 // Hard delete is allowed ONLY for an unused, unprotected method. payments.method
-// and payment_policy_stages.methods carry the key as plain text (no FK), so the
-// counts inside this transaction are the only backstop — FOR UPDATE on the
-// lookup row keeps the check-then-delete window minimal.
+// carries the key as plain text (no FK), so the count inside this transaction is
+// the only backstop — FOR UPDATE on the lookup row keeps the check-then-delete
+// window minimal.
 export async function deletePaymentMethodAction(input: {
   id: string;
 }): Promise<ActionResult<PaymentMethodDef[]>> {
@@ -245,16 +240,11 @@ export async function deletePaymentMethodAction(input: {
       if (!target) throw new AuthorizationError("אמצעי התשלום לא נמצא");
       if (target.key === PROTECTED_KEY)
         throw new AuthorizationError("אמצעי התשלום 'כרטיס אשראי' מובנה במערכת — ניתן להשבית בלבד");
-      const [{ payments_count, policy_ref_count }] = await tx<
-        { payments_count: number; policy_ref_count: number }[]
-      >`
-        SELECT
-          (SELECT COUNT(*)::int FROM guesthub.payments p
-            WHERE p.tenant_id = ${actor.tenantId} AND p.method = ${target.key}) AS payments_count,
-          (SELECT COUNT(*)::int FROM guesthub.payment_policy_stages s
-            WHERE s.tenant_id = ${actor.tenantId} AND s.methods ? ${target.key}) AS policy_ref_count`;
-      if (payments_count + policy_ref_count > 0)
-        throw new AuthorizationError("אמצעי התשלום בשימוש (תשלומים או מדיניות תשלום) — ניתן להשבית בלבד");
+      const [{ payments_count }] = await tx<{ payments_count: number }[]>`
+        SELECT COUNT(*)::int AS payments_count FROM guesthub.payments p
+        WHERE p.tenant_id = ${actor.tenantId} AND p.method = ${target.key}`;
+      if (payments_count > 0)
+        throw new AuthorizationError("אמצעי התשלום בשימוש בתשלומים — ניתן להשבית בלבד");
       await tx`
         DELETE FROM guesthub.lookup_items
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId} AND category = ${CATEGORY}`;

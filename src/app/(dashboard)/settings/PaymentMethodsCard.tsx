@@ -152,7 +152,7 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
           </div>
 
           {rows.map((row, i) => {
-            const used = row.paymentsCount + row.policyRefCount > 0;
+            const used = row.paymentsCount > 0;
             const undeletable = row.isProtected || used;
             return (
               <div
@@ -180,8 +180,7 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
                   <span className="chip chip-neutral ltr-num">{row.key}</span>
                 </span>
                 <span className="pm-cnt">
-                  <b className="ltr-num">{row.paymentsCount}</b> תשלומים ·{" "}
-                  <b className="ltr-num">{row.policyRefCount}</b> מדיניות
+                  <b className="ltr-num">{row.paymentsCount}</b> תשלומים
                 </span>
                 <span className="c">
                   <Switch
@@ -232,7 +231,7 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
                           row.isProtected
                             ? "אמצעי מובנה במערכת — ניתן להשבית בלבד"
                             : used
-                              ? "אמצעי בשימוש (תשלומים או מדיניות) — ניתן להשבית בלבד"
+                              ? "אמצעי בשימוש בתשלומים — ניתן להשבית בלבד"
                               : "מחיקה"
                         }
                         disabled={pending || undeletable}

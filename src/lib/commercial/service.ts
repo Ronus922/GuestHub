@@ -6,7 +6,6 @@ import {
   type ExtraGuestDefaults,
 } from "./extra-guest";
 import type { CancellationTier } from "./cancellation";
-import type { PaymentStage } from "./payment";
 import {
   resolveEffectivePricing,
   type RoomExtraGuestOverride,
@@ -33,7 +32,6 @@ export async function getExtraGuestDefaults(
 }
 
 // Canonical payment-method keys for this tenant (lookup_items 'payment_methods').
-// Policies REFERENCE these — they are never duplicated into the policy tables.
 export async function getPaymentMethods(
   tenantId: string,
 ): Promise<{ key: string; label: string }[]> {
@@ -84,46 +82,6 @@ export async function listCancellationPolicies(tenantId: string): Promise<Cancel
     byPolicy.set(policy_id, arr);
   }
   return policies.map((p) => ({ ...p, tiers: byPolicy.get(p.id) ?? [] }));
-}
-
-// ---- §C payment policies (with ordered stages) ----
-export type PaymentPolicy = {
-  id: string;
-  name: string;
-  public_title: string;
-  code: string;
-  is_active: boolean;
-  is_default: boolean;
-  internal_notes: string | null;
-  guest_description: string | null;
-  translations: Record<string, { public_title?: string; guest_description?: string }>;
-  is_archived: boolean;
-  stages: PaymentStage[];
-};
-
-export async function listPaymentPolicies(tenantId: string): Promise<PaymentPolicy[]> {
-  const policies = await sql<Omit<PaymentPolicy, "stages">[]>`
-    SELECT id, name, public_title, code, is_active, is_default, internal_notes,
-           guest_description, translations, is_archived
-    FROM guesthub.payment_policies
-    WHERE tenant_id = ${tenantId} AND NOT is_archived
-    ORDER BY is_default DESC, name`;
-  if (policies.length === 0) return [];
-  const stages = await sql<(PaymentStage & { policy_id: string })[]>`
-    SELECT policy_id, trigger_type, trigger_offset_unit, trigger_offset_value,
-           amount_type, amount_value::float8 AS amount_value,
-           amount_percent::float8 AS amount_percent, methods,
-           require_card_guarantee, retry_behavior, staff_instructions, guest_text
-    FROM guesthub.payment_policy_stages
-    WHERE tenant_id = ${tenantId}
-    ORDER BY policy_id, sort_order`;
-  const byPolicy = new Map<string, PaymentStage[]>();
-  for (const { policy_id, ...s } of stages) {
-    const arr = byPolicy.get(policy_id) ?? [];
-    arr.push(s);
-    byPolicy.set(policy_id, arr);
-  }
-  return policies.map((p) => ({ ...p, stages: byPolicy.get(p.id) ?? [] }));
 }
 
 // ============================================================

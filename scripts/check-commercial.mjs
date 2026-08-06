@@ -1,6 +1,6 @@
 // Runnable check for the PURE commercial-settings logic (no DB, no browser):
-//   src/lib/commercial/{extra-guest,cancellation,payment}.ts
-// Compiles the three files with tsc, imports them, and asserts the business
+//   src/lib/commercial/{extra-guest,cancellation}.ts
+// Compiles the two files with tsc, imports them, and asserts the business
 // rules the Server Actions and UI depend on. Usage: node scripts/check-commercial.mjs
 import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -10,13 +10,12 @@ import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:as
 
 const out = mkdtempSync(join(tmpdir(), "commercial-"));
 execSync(
-  `pnpm exec tsc src/lib/commercial/extra-guest.ts src/lib/commercial/cancellation.ts src/lib/commercial/payment.ts ` +
+  `pnpm exec tsc src/lib/commercial/extra-guest.ts src/lib/commercial/cancellation.ts ` +
     `--outDir ${out} --module esnext --target es2022 --moduleResolution bundler --skipLibCheck`,
   { stdio: "inherit" },
 );
 const eg = await import(join(out, "extra-guest.js"));
 const c = await import(join(out, "cancellation.js"));
-const p = await import(join(out, "payment.js"));
 
 let n = 0;
 const ok = (name) => { console.log(`  ✓ ${name}`); n++; };
@@ -137,55 +136,5 @@ ok('fee_type "nights" with 0 nights → error');
 ok("uncovered gap + missing no-show → warnings (not errors)");
 assert.ok(c.validateCancellationTiers([]).errors.length, "empty policy → error");
 ok("empty tier list → error");
-
-// ============================================================
-// §C payment stages
-// ============================================================
-const METHODS = ["cash", "credit_card", "bank_transfer"];
-{
-  const good = [
-    { trigger_type: "booking", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "percentage", amount_value: 0, amount_percent: 30, methods: ["credit_card"], require_card_guarantee: true, retry_behavior: "manual" },
-    { trigger_type: "before_checkin", trigger_offset_unit: "days", trigger_offset_value: 7, amount_type: "remaining_balance", amount_value: 0, amount_percent: 0, methods: ["credit_card", "cash"], require_card_guarantee: false, retry_behavior: "retry_then_notify" },
-  ];
-  const r = p.validatePaymentStages(good, METHODS);
-  assert.deepEqual(r.errors, [], `valid schedule: ${r.errors}`);
-}
-ok("§C deposit-then-balance schedule validates clean");
-
-assert.ok(p.validatePaymentStages([
-  { trigger_type: "booking", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "percentage", amount_value: 0, amount_percent: 60, methods: [], require_card_guarantee: false, retry_behavior: "manual" },
-  { trigger_type: "checkin", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "percentage", amount_value: 0, amount_percent: 60, methods: [], require_card_guarantee: false, retry_behavior: "manual" },
-], METHODS).errors.some((e) => e.includes("100%")), "percent sum > 100 → error");
-ok("percentage stages summing > 100% → error");
-
-assert.ok(p.validatePaymentStages([{ trigger_type: "booking", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "fixed", amount_value: 0, amount_percent: 0, methods: [], require_card_guarantee: false, retry_behavior: "manual" }], METHODS).errors.some((e) => e.includes("קבוע")));
-ok("fixed amount of 0 → error");
-
-assert.ok(p.validatePaymentStages([{ trigger_type: "before_checkin", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "full_balance", amount_value: 0, amount_percent: 0, methods: [], require_card_guarantee: false, retry_behavior: "manual" }], METHODS).errors.some((e) => e.includes("לפני הגעה")));
-ok("before_checkin stage missing offset → error");
-
-assert.ok(p.validatePaymentStages([{ trigger_type: "booking", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "full_balance", amount_value: 0, amount_percent: 0, methods: ["bitcoin"], require_card_guarantee: false, retry_behavior: "manual" }], METHODS).errors.some((e) => e.includes("לא מוכר")));
-ok("unknown payment method (not in canonical set) → error");
-
-{
-  const closeThenMore = [
-    { trigger_type: "booking", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "full_balance", amount_value: 0, amount_percent: 0, methods: [], require_card_guarantee: false, retry_behavior: "manual" },
-    { trigger_type: "checkin", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "fixed", amount_value: 10, amount_percent: 0, methods: [], require_card_guarantee: false, retry_behavior: "manual" },
-  ];
-  const r = p.validatePaymentStages(closeThenMore, METHODS);
-  assert.ok(r.warnings.some((w) => w.includes("לא יישאר")), "stage after full balance → warning");
-}
-ok("stage after a full-balance collection → warning");
-
-{
-  const outOfOrder = [
-    { trigger_type: "checkout", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "percentage", amount_value: 0, amount_percent: 50, methods: [], require_card_guarantee: false, retry_behavior: "manual" },
-    { trigger_type: "booking", trigger_offset_unit: null, trigger_offset_value: null, amount_type: "percentage", amount_value: 0, amount_percent: 50, methods: [], require_card_guarantee: false, retry_behavior: "manual" },
-  ];
-  assert.ok(p.validatePaymentStages(outOfOrder, METHODS).warnings.some((w) => w.includes("סדר הזמן")));
-}
-ok("stages out of chronological order → warning");
-assert.ok(p.validatePaymentStages([], METHODS).errors.length, "empty schedule → error");
-ok("empty stage list → error");
 
 console.log(`\n✓ commercial pure-logic checks passed (${n} assertions groups)`);
