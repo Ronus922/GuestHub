@@ -9,9 +9,9 @@ import { sourcesBreakdown, type SourcesBreakdown } from "@/lib/reports/sources-b
 import { periodSpan } from "./period";
 
 // ============================================================
-// Dashboard Phase 2 — the read side of the live surfaces (KPI, arr, inh, hk,
-// alr, rev, src, msg, rvw). One module, one round of queries, all scoped to
-// the property's own day. iss / tsk / agd are untouched.
+// Dashboard Phase 2+ — the read side of the live surfaces (KPI, arr, inh, hk,
+// alr, rev, src, msg, rvw, stk, iss, agd). One module, one round of queries,
+// all scoped to the property's own day. tsk alone still renders its promise.
 //
 // EVERY date here is the caller's `today`, which the page derives from
 // todayInTz(tenants.timezone). Never new Date(), never the server's local day:
@@ -56,6 +56,9 @@ export type StayRow = {
   /** HH:MM or null */
   expectedArrival: string | null;
   checkOut: DateOnly;
+  /** the booking's planned times (defaults 15:00 / 11:00), HH:MM — agd's clock */
+  checkInTime: string | null;
+  checkOutTime: string | null;
 };
 
 export type HousekeepingRow = {
@@ -78,6 +81,39 @@ export type AlertRow = {
   title: string;
   detail: string;
   href: string | null;
+  /** set on approval rows whose lifecycle is still draft — the inline "אישור"
+      button approves exactly this reservation (draft → confirmed) */
+  approveReservationId: string | null;
+};
+
+/** stk — channel bookings whose auto-ingest failed (import_status quarantined/failed) */
+export type StuckSummary = {
+  /** distinct provider bookings, not revisions — one booking with two failed
+      revisions is ONE booking to fix */
+  count: number;
+  /** whole hours since the OLDEST unresolved revision arrived; null when count=0 */
+  oldestHours: number | null;
+};
+
+export type AgendaItem = {
+  key: string;
+  /** HH:MM — the planned time, never the operator's click */
+  time: string;
+  kind: "departure" | "arrival";
+  title: string;
+  sub: string | null;
+  reservationId: string;
+};
+
+export type IssueRow = {
+  taskId: string;
+  title: string;
+  /** null = a public-area issue with no room attached */
+  roomNumber: string | null;
+  notes: string | null;
+  /** the app's scale is normal|high (no low/med) — high renders as דחוף */
+  priority: string;
+  status: string;
 };
 
 export type ConversationRow = {
@@ -139,6 +175,12 @@ export const CHART_MONTHS = 12;
 
 export type DashboardData = {
   kpi: KpiData;
+  /** stk — the failed-ingest counter */
+  stuck: StuckSummary;
+  /** agd — today's timeline, assembled from the rows already fetched */
+  agenda: AgendaItem[];
+  /** iss — open maintenance tasks (+ today's fixed ones, for the chip) */
+  issues: IssueRow[];
   /** rev — the last CHART_MONTHS calendar months */
   monthly: MonthlyRevenuePoint[];
   /** src — the CURRENT month, the same call the drawer makes */
@@ -177,6 +219,8 @@ function stayRows(tenantId: string, where: ReturnType<typeof sql>) {
            (rr.check_out - rr.check_in)::int AS nights,
            res.status,
            res.expected_arrival_time::text AS expected_arrival_time,
+           res.check_in_time::text AS check_in_time,
+           res.check_out_time::text AS check_out_time,
            rr.check_out::text AS check_out
       FROM guesthub.reservation_rooms rr
       JOIN guesthub.reservations res ON res.id = rr.reservation_id AND res.tenant_id = rr.tenant_id
@@ -198,6 +242,8 @@ const toStay = (r: Record<string, unknown>): StayRow => ({
   status: r.status as string,
   expectedArrival: hhmm((r.expected_arrival_time as string) ?? null),
   checkOut: r.check_out as DateOnly,
+  checkInTime: hhmm((r.check_in_time as string) ?? null),
+  checkOutTime: hhmm((r.check_out_time as string) ?? null),
 });
 
 export async function getDashboardData(tenantId: string, today: DateOnly): Promise<DashboardData> {
@@ -214,6 +260,8 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     departureRows,
     inHouseRows,
     hkRows,
+    stuckRows,
+    issueRows,
     revenue,
     alerts,
     monthly,
@@ -294,11 +342,46 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
          )
        ORDER BY (h.status IN ('completed','inspected')), rm.room_number NULLS LAST`,
 
+    // ---- stk: channel bookings whose auto-ingest failed --------------------
+    // The design's `channel_bookings WHERE status='stuck'` does not exist —
+    // the real failure axis is channel_booking_revisions.import_status:
+    // 'quarantined' (no room/rate-plan mapping) or 'failed' (transient error).
+    // Neither is terminal — the 5-minute pull re-imports both every cycle — so
+    // this counter DRAINS ITSELF the moment the mapping is fixed. DISTINCT
+    // provider_booking_id: a booking whose 'new' and 'modified' revisions both
+    // failed is one booking to fix, not two.
+    sql<{ c: number; oldest_hours: number | null }[]>`
+      SELECT count(DISTINCT provider_booking_id)::int AS c,
+             floor(EXTRACT(EPOCH FROM (now() - min(created_at))) / 3600)::int AS oldest_hours
+        FROM guesthub.channel_booking_revisions
+       WHERE tenant_id = ${tenantId}
+         AND import_status IN ('quarantined', 'failed')`,
+
+    // ---- iss: open maintenance tasks ---------------------------------------
+    // The design's `maintenance_issues` table was never built — maintenance
+    // lives in housekeeping_tasks under task_type='maintenance' (D88, the
+    // /maintenance board reads the same rows). Same visibility rule as hk:
+    // today's fixed ones stay, so the row becomes the "טופל ✓" chip instead of
+    // vanishing under the operator's hand.
+    sql<Record<string, unknown>[]>`
+      SELECT h.id AS task_id, h.title, h.notes, h.priority, h.status,
+             rm.room_number
+        FROM guesthub.housekeeping_tasks h
+        LEFT JOIN guesthub.rooms rm ON rm.id = h.room_id AND rm.tenant_id = h.tenant_id
+       WHERE h.tenant_id = ${tenantId}
+         AND h.task_type = 'maintenance'
+         AND (
+           h.status IN ('pending', 'in_progress')
+           OR (h.status IN ('completed', 'inspected') AND h.completed_at::date = ${today})
+         )
+       ORDER BY (h.status IN ('completed', 'inspected')),
+                (h.priority = 'high') DESC, h.created_at`,
+
     // ---- KPI 4: expected revenue tonight ----------------------------------
     nightlyRevenue(tenantId, today, tomorrow),
 
     // ---- alr: the curated signals ----------------------------------------
-    dashboardAlerts(tenantId),
+    dashboardAlerts(tenantId, today),
 
     // ---- rev: one pass over the last 12 calendar months -------------------
     monthlyRevenue(tenantId, today, CHART_MONTHS),
@@ -479,7 +562,48 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
   const arrivals = arrivalRows.map(toStay);
   const departures = departureRows.map(toStay);
 
+  // agd — assembled from the rows ALREADY fetched, no extra query. The design
+  // also lists "חיוב" (scheduled charge stages — dropped with migration 078,
+  // no source exists) and "משימה" (only tasks WITH a target hour — the table
+  // has due_date but no hour column, so the set is empty by construction).
+  // Departures before arrivals on an equal minute: the room empties first.
+  const agenda: AgendaItem[] = [
+    ...departures.map((d) => ({
+      key: `dep-${d.rrId}`,
+      time: d.checkOutTime ?? "11:00",
+      kind: "departure" as const,
+      title: d.guestName,
+      sub: d.roomNumber ? `חדר ${d.roomNumber}` : null,
+      reservationId: d.reservationId,
+    })),
+    ...arrivals.map((a) => ({
+      key: `arr-${a.rrId}`,
+      time: a.expectedArrival ?? a.checkInTime ?? "15:00",
+      kind: "arrival" as const,
+      title: a.guestName,
+      sub: a.roomNumber ? `חדר ${a.roomNumber}` : null,
+      reservationId: a.reservationId,
+    })),
+  ].sort(
+    (x, y) =>
+      x.time.localeCompare(y.time) ||
+      (x.kind === y.kind ? 0 : x.kind === "departure" ? -1 : 1),
+  );
+
   return {
+    stuck: {
+      count: stuckRows[0]?.c ?? 0,
+      oldestHours: (stuckRows[0]?.c ?? 0) > 0 ? (stuckRows[0]?.oldest_hours ?? 0) : null,
+    },
+    agenda,
+    issues: issueRows.map((r) => ({
+      taskId: r.task_id as string,
+      title: (r.title as string) || "תקלה",
+      roomNumber: (r.room_number as string) ?? null,
+      notes: (r.notes as string) ?? null,
+      priority: (r.priority as string) ?? "normal",
+      status: r.status as string,
+    })),
     kpi: {
       occupied,
       sellable,
@@ -575,7 +699,7 @@ function addOneDay(d: DateOnly): DateOnly {
 // state of the property, and padding it would make the sparse case unreadable
 // when it matters.
 // ============================================================
-async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
+async function dashboardAlerts(tenantId: string, today: DateOnly): Promise<AlertRow[]> {
   const [money, cards, approvals, messages, connections] = await Promise.all([
     sql<Record<string, unknown>[]>`
       SELECT res.id, res.reservation_number, COALESCE(g.full_name, 'אורח') AS guest_name,
@@ -601,7 +725,9 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
        ORDER BY res.check_in
        LIMIT 20`,
     sql<Record<string, unknown>[]>`
-      SELECT res.id, res.reservation_number, COALESCE(g.full_name, 'אורח') AS guest_name
+      SELECT res.id, res.reservation_number, COALESCE(g.full_name, 'אורח') AS guest_name,
+             res.status,
+             (res.check_in <= ${today}) AS overdue
         FROM guesthub.reservations res
         LEFT JOIN guesthub.guests g ON g.id = res.primary_guest_id AND g.tenant_id = res.tenant_id
         LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
@@ -658,6 +784,7 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
         ? `טרם שולם · ₪${Math.round(Number(r.total_price ?? 0)).toLocaleString("he-IL")}`
         : `שולם חלקית · יתרה ₪${Math.round(Number(r.total_price ?? 0) - paid).toLocaleString("he-IL")}`,
       href: `/reservations?open=${r.id as string}`,
+      approveReservationId: null,
     });
   }
   for (const r of cards) {
@@ -668,16 +795,24 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
       title: `${r.guest_name as string} · הזמנה ${r.reservation_number as string}`,
       detail: "כרטיס אשראי נדחה או אינו תקין",
       href: `/reservations?open=${r.id as string}`,
+      approveReservationId: null,
     });
   }
   for (const r of approvals) {
+    // check_in already reached and still unapproved — the guest may be standing
+    // at the desk. Escalates to red, and a draft gets the inline "אישור"
+    // button (the same draft → confirmed transition the reservations screen
+    // performs; a wf-only "pending" on a confirmed booking has no lifecycle to
+    // fix, so it links instead of offering a button).
+    const overdue = r.overdue === true;
     out.push({
       id: `approval-${r.id as string}`,
       kind: "approval",
-      severity: "amber",
+      severity: overdue ? "red" : "amber",
       title: `${r.guest_name as string} · הזמנה ${r.reservation_number as string}`,
-      detail: "ממתינה לאישור",
+      detail: overdue ? "צ׳ק-אין הגיע — ממתינה לאישור" : "ממתינה לאישור",
       href: `/reservations?open=${r.id as string}`,
+      approveReservationId: overdue && r.status === "draft" ? (r.id as string) : null,
     });
   }
   const failed = messages[0]?.c ?? 0;
@@ -689,6 +824,7 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
       title: "הודעות שלא נשלחו",
       detail: `${failed} הודעות יוצאות נכשלו`,
       href: "/communications",
+      approveReservationId: null,
     });
   }
   // D133 — six independently-labelled conditions, and ZERO is the normal state.
@@ -720,6 +856,7 @@ async function dashboardAlerts(tenantId: string): Promise<AlertRow[]> {
         title: "חיבור Beds24",
         detail: f.detail,
         href: "/channels",
+        approveReservationId: null,
       });
     }
   }
