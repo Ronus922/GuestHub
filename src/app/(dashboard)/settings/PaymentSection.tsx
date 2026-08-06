@@ -14,6 +14,8 @@ import {
   type RetryBehavior,
 } from "@/lib/commercial/payment";
 import { savePaymentPolicyAction, deletePaymentPolicyAction } from "./commercial-actions";
+import { PaymentMethodsCard } from "./PaymentMethodsCard";
+import type { PaymentMethodDef } from "./payment-method-actions";
 import { PolicyToolbar, PolicyCard, EmptyState } from "./PolicyList";
 import { Field, FormGrid, IconBtn, SettingsCard, Switch } from "./controls";
 import { PAY_TRIGGER, PAY_AMOUNT, RETRY, TIME_UNIT, opts } from "./labels";
@@ -68,11 +70,17 @@ const toDraft = (p: PaymentPolicyView): Draft => ({
   stages: p.stages.length ? p.stages : [emptyStage()],
 });
 
-export function PaymentSection({ policies, methods }: { policies: PaymentPolicyView[]; methods: PaymentMethodRef[] }) {
+export function PaymentSection({ policies, methodDefs }: { policies: PaymentPolicyView[]; methodDefs: PaymentMethodDef[] }) {
   const [editing, setEditing] = useState<Draft | null>(null);
+  // the stage editor offers ACTIVE methods; keys already saved on a stage whose
+  // method was deactivated since stay visible (and removable) via `inactive`
+  const methods: PaymentMethodRef[] = methodDefs.filter((m) => m.isActive).map((m) => ({ key: m.key, label: m.label }));
+  const inactive: PaymentMethodRef[] = methodDefs.filter((m) => !m.isActive).map((m) => ({ key: m.key, label: m.label }));
 
   return (
-    <div className="card">
+    <div className="flex flex-col gap-5">
+      <PaymentMethodsCard initial={methodDefs} />
+      <div className="card">
       <div className="card-bd">
         <PolicyToolbar
           title="מדיניות תשלום"
@@ -99,16 +107,31 @@ export function PaymentSection({ policies, methods }: { policies: PaymentPolicyV
           </div>
         )}
       </div>
-      {editing && <PaymentEditor draft={editing} methods={methods} onClose={() => setEditing(null)} />}
+      {editing && (
+        <PaymentEditor draft={editing} methods={methods} inactive={inactive} onClose={() => setEditing(null)} />
+      )}
+      </div>
     </div>
   );
 }
 
-function PaymentEditor({ draft, methods, onClose }: { draft: Draft; methods: PaymentMethodRef[]; onClose: () => void }) {
+function PaymentEditor({
+  draft,
+  methods,
+  inactive,
+  onClose,
+}: {
+  draft: Draft;
+  methods: PaymentMethodRef[];
+  inactive: PaymentMethodRef[];
+  onClose: () => void;
+}) {
   const router = useRouter();
   const [d, setD] = useState<Draft>(draft);
   const [saving, startSaving] = useTransition();
-  const allowed = methods.map((m) => m.key);
+  // allowed = every key the tenant HAS (incl. deactivated) — a stage saved with
+  // a method that was deactivated later must stay saveable, not turn invalid
+  const allowed = [...methods, ...inactive].map((m) => m.key);
   const { errors, warnings } = validatePaymentStages(d.stages, allowed);
   const metaOk = d.name.trim() && d.public_title.trim() && /^[a-z0-9_-]+$/i.test(d.code.trim());
   const canSave = !!metaOk && errors.length === 0;
@@ -218,6 +241,7 @@ function PaymentEditor({ draft, methods, onClose }: { draft: Draft; methods: Pay
                 total={d.stages.length}
                 stage={s}
                 methods={methods}
+                inactive={inactive}
                 onChange={(patch) => setStage(i, patch)}
                 onMove={(dir) => move(i, dir)}
                 onDup={() => dupStage(i)}
@@ -259,6 +283,7 @@ function StageRow({
   total,
   stage,
   methods,
+  inactive,
   onChange,
   onMove,
   onDup,
@@ -268,6 +293,7 @@ function StageRow({
   total: number;
   stage: PaymentStage;
   methods: PaymentMethodRef[];
+  inactive: PaymentMethodRef[];
   onChange: (patch: Partial<PaymentStage>) => void;
   onMove: (dir: -1 | 1) => void;
   onDup: () => void;
@@ -347,6 +373,22 @@ function StageRow({
             </button>
           );
         })}
+        {/* a method deactivated AFTER it was saved on this stage: still shown,
+            still removable — but never offered for (re)selection */}
+        {inactive
+          .filter((m) => stage.methods.includes(m.key))
+          .map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              aria-pressed
+              title="אמצעי מושבת — לחיצה מסירה אותו מהשלב"
+              onClick={() => toggleMethod(m.key)}
+              className="chip clickable on opacity-60"
+            >
+              {m.label} · מושבת
+            </button>
+          ))}
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm text-ink">
         <Switch checked={stage.require_card_guarantee} onChange={(v) => onChange({ require_card_guarantee: v })} label="נדרש כרטיס להבטחה" />

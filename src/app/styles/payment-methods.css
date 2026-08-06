@@ -1,0 +1,112 @@
+/* ============================================================
+   Settings → אמצעי תשלום (payment methods).
+   Prefix: pm-. This file holds ONLY what the design system has no primitive
+   for: the methods table grid, the drag handle and the drag-preview state.
+   Cards, headers, buttons, fields, chips, switches and icon buttons all come
+   from design-system.css — nothing here re-declares them.
+   ============================================================ */
+
+.pm-scroll {
+  overflow-x: auto;
+}
+.pm-tbl {
+  min-width: 780px;
+}
+.pm-thead,
+.pm-trow {
+  display: grid;
+  grid-template-columns: 52px 40px minmax(160px, 1.2fr) 130px minmax(170px, 1fr) 80px minmax(130px, 0.9fr);
+  align-items: center;
+  padding: 0 16px;
+}
+.pm-thead {
+  background: var(--field-bg);
+  border-bottom: 1px solid var(--line);
+  height: 44px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.pm-trow {
+  min-height: 60px;
+  border-bottom: 1px solid var(--line);
+}
+.pm-trow:last-of-type {
+  border-bottom: none;
+}
+.pm-trow:hover {
+  background: var(--surface-hover);
+}
+.pm-trow.off .pm-name,
+.pm-trow.off .chip,
+.pm-trow.off .pm-cnt {
+  opacity: 0.45;
+}
+/* the dragged row while its live preview reorders around it */
+.pm-trow.dragging {
+  opacity: 0.5;
+  background: var(--brand-soft);
+}
+.pm-thead .c,
+.pm-trow > .c {
+  justify-self: center;
+  text-align: center;
+}
+.pm-th-acts {
+  justify-self: end;
+}
+
+/* grab handle — the ONLY drag affordance (mousedown here arms the row);
+   44px touch target inside the 52px column */
+.pm-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-height: 44px;
+  color: var(--faint);
+  cursor: grab;
+  touch-action: none;
+}
+.pm-handle:active {
+  cursor: grabbing;
+}
+.pm-trow:hover .pm-handle {
+  color: var(--brand);
+}
+
+.pm-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.pm-cnt {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pm-cnt b {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.pm-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---- footer band ---- */
+.pm-ft {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 13px 20px;
+  background: var(--field-bg);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 700;
+}
