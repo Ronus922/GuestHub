@@ -57,6 +57,7 @@ export function StayPriceModeControls({
   ratePerNight, onRatePerNight,
   manualTotal, onManualTotal,
   canPriceOverride, disabled,
+  autoField, noteSuffix,
 }: {
   mode: PriceMode;
   onMode: (m: PriceMode) => void;
@@ -70,6 +71,10 @@ export function StayPriceModeControls({
   onManualTotal: (v: number) => void;
   canPriceOverride: boolean;
   disabled?: boolean;
+  /** the "מחיר מקורי" mode's field — the rate-plan select the parent owns */
+  autoField?: React.ReactNode;
+  /** appended to the live calc note (the edit window adds "כולל מע״מ") */
+  noteSuffix?: string;
 }) {
   const nightValue =
     mode === "manual_night" ? (ratePerNight ?? 0)
@@ -92,35 +97,49 @@ export function StayPriceModeControls({
           disabled={disabled}
         />
       )}
+      {/* ONE field, swapped by the segment (the MD spec, "כמו בהנחה"):
+          מחיר מקורי → the rate-plan select · ידני ללילה → the nightly field ·
+          סה״כ מחיר → the per-room total field. The live calc note sits beside
+          the active field; the inactive values keep living in state. */}
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm">
-          מחיר ללילה (₪)
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            dir="ltr"
-            aria-label="מחיר ללילה"
-            className="field-input ltr-num w-28 text-center tabular-nums"
-            value={nightValue}
-            readOnly={mode !== "manual_night" || disabled}
-            onChange={(e) => onRatePerNight(Number(e.target.value) || 0)}
-          />
-        </label>
-        <label className="flex items-center gap-2 text-sm">
-          סה״כ לחדר (₪)
-          <input
-            type="number"
-            min={0}
-            step="0.01"
-            dir="ltr"
-            aria-label="סה״כ לחדר"
-            className="field-input ltr-num w-32 text-center tabular-nums"
-            value={totalValue}
-            readOnly={mode !== "manual_total" || disabled}
-            onChange={(e) => onManualTotal(Number(e.target.value) || 0)}
-          />
-        </label>
+        {mode === "auto" && autoField}
+        {mode === "manual_night" && (
+          <label className="flex items-center gap-2 text-sm">
+            מחיר ללילה (₪)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              dir="ltr"
+              aria-label="מחיר ללילה"
+              className="field-input ltr-num w-28 text-center tabular-nums"
+              value={nightValue}
+              readOnly={disabled}
+              onChange={(e) => onRatePerNight(Number(e.target.value) || 0)}
+            />
+          </label>
+        )}
+        {mode === "manual_total" && (
+          <label className="flex items-center gap-2 text-sm">
+            סה״כ לחדר (₪)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              dir="ltr"
+              aria-label="סה״כ לחדר"
+              className="field-input ltr-num w-32 text-center tabular-nums"
+              value={totalValue}
+              readOnly={disabled}
+              onChange={(e) => onManualTotal(Number(e.target.value) || 0)}
+            />
+          </label>
+        )}
+        <span className="text-sm font-semibold text-muted tabular-nums">
+          ₪<bdi className="ltr-num">{nightValue.toLocaleString()}</bdi> ללילה · סה״כ ₪
+          <bdi className="ltr-num">{totalValue.toLocaleString()}</bdi>
+          {noteSuffix ? ` · ${noteSuffix}` : ""}
+        </span>
         {mode !== "auto" && !disabled && (
           <button
             type="button"
@@ -224,35 +243,45 @@ export function VatToggleRow({
             }`}
           />
         </button>
-        מע״מ ({formatVatRate(vatRate)}%) — {taxExempt ? "פטור ממע״מ" : "כלול במחיר"}
+        מע״מ ({formatVatRate(vatRate)}%) — {taxExempt ? "לא נגבה" : "כלול במחיר"}
       </span>
       <b className="ltr-num text-muted tabular-nums">₪{vat.toLocaleString()}</b>
     </div>
   );
 }
 
-// ---- the balance strip (mock step 4: שולם עד כה / יתרה לתשלום / סטטוס) ----
-export function BalanceBoxes({ total, paid }: { total: number; paid: number }) {
+// ---- the balance strip (MD step 5: the three cubes — שולם עד כה (ירוק) /
+// יתרה לתשלום (אדום כשחייבים, ירוק כשאין) / סטטוס תשלום) ----
+export function BalanceBoxes({
+  total, paid, statusChip,
+}: {
+  total: number;
+  paid: number;
+  /** the third cube's content — the payment-status badge the parent owns */
+  statusChip?: React.ReactNode;
+}) {
   const bal = formatBalance(total, paid);
   return (
     <div className="grid grid-cols-3 gap-3">
       <div className="bw-bal">
-        <p className="bw-bal-l">סה״כ</p>
-        <p className="bw-bal-v ltr-num">₪{total.toLocaleString()}</p>
-      </div>
-      <div className="bw-bal">
-        <p className="bw-bal-l">שולם</p>
-        <p className="bw-bal-v ltr-num">₪{paid.toLocaleString()}</p>
+        <p className="bw-bal-l">שולם עד כה</p>
+        <p className="bw-bal-v ltr-num text-status-success">₪{paid.toLocaleString()}</p>
       </div>
       <div className="bw-bal">
         <p className="bw-bal-l">{bal.label}</p>
         <p
           className={`bw-bal-v ltr-num ${
-            bal.kind === "credit" ? "text-status-success" : bal.kind === "due" ? "text-status-danger" : ""
+            bal.kind === "credit" || bal.kind === "settled"
+              ? "text-status-success"
+              : "text-status-danger"
           }`}
         >
           ₪{bal.amount.toLocaleString()}
         </p>
+      </div>
+      <div className="bw-bal">
+        <p className="bw-bal-l">סטטוס תשלום</p>
+        <div className="mt-1">{statusChip}</div>
       </div>
     </div>
   );

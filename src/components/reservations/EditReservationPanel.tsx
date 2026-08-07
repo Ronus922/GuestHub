@@ -321,6 +321,11 @@ export function EditReservationPanel({
   );
   const total = totals.grandTotal;
   const paidAfter = (detail?.paid_amount ?? 0) + addPay;
+  // for the discount feedback line (₪ per night across the whole booking)
+  const totalNightsAll = stays.reduce(
+    (n, s) => n + (s.checkOut > s.checkIn ? nightsBetween(s.checkIn, s.checkOut) : 0),
+    0,
+  );
 
   // statusOverride serves the quick actions (e.g. בצע צ׳ק-אין) — same
   // validated action, same payload, just an explicit status. An ordinary
@@ -516,7 +521,7 @@ export function EditReservationPanel({
       /* wide shell for the editor: 60% width (900–1200px), flat app-background
          body, no title icon. Typography/spacing are the canonical tokens — this
          panel has no scale of its own. */
-      widthClassName="w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
+      widthClassName="bw-win w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
       bodyClassName="bg-appbg p-0"
       subtitle={
         detail
@@ -578,7 +583,9 @@ export function EditReservationPanel({
       headerChips={
         detail ? (
           <>
-            <span className="chip chip-neutral ltr-num">#{detail.reservation_number}</span>
+            {/* the MD header: the number tag is white-translucent ON the brand
+                bar (§7 on-brand surface), not the grey counting chip */}
+            <span className="chip chip-onbrand ltr-num">#{detail.reservation_number}</span>
             {/* the tenant status colour family (tint bg / border / readable text),
                 painted by the canonical chip — same language as the calendar pill */}
             {(() => {
@@ -619,7 +626,8 @@ export function EditReservationPanel({
                 <button
                   type="button"
                   className="btn btn-primary"
-                  disabled={saving || !staysValid}
+                  /* the MD dirty contract: nothing to save ⇒ the button rests */
+                  disabled={saving || !staysValid || !dirty}
                   onClick={() => save()}
                 >
                   <Icon name="save" size={20} />
@@ -631,13 +639,14 @@ export function EditReservationPanel({
               </button>
               {dirty && (
                 <span className="chip chip-approval">
-                  <span className="dot" />
+                  <Icon name="warning" size={13.5} />
                   יש שינויים שלא נשמרו
                 </span>
               )}
               <span className="flex-1" />
               {canCancel && detail.status !== "cancelled" && (
-                <button type="button" className="btn btn-danger" onClick={() => setCancelOpen(true)}>
+                /* the MD footer: the destructive action wears the danger OUTLINE */
+                <button type="button" className="btn bw-btn-cancel" onClick={() => setCancelOpen(true)}>
                   <Icon name="circle-slash" size={20} />
                   בטל הזמנה
                 </button>
@@ -872,32 +881,36 @@ export function EditReservationPanel({
                     <div>
                       <b>{lineLabel}</b>
                       <div className="bw-plr">
-                        {ratePlans.length > 0 && canEditNow && (
-                          /* changing the plan re-prices server-side on save */
-                          <select
-                            className="field-input w-40"
-                            aria-label="תוכנית תעריף"
-                            value={s.ratePlanId ?? ""}
-                            onChange={(e) =>
-                              setStays((all) =>
-                                all.map((x) =>
-                                  x.key === s.key ? { ...x, ratePlanId: e.target.value || null } : x,
-                                ),
-                              )
-                            }
-                          >
-                            <option value="">מחיר בסיס</option>
-                            {ratePlans.map((p) => (
-                              <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
-                          </select>
-                        )}
                         <span className="text-xs text-muted">
                           <span className="ltr-num">{nights}</span> לילות
                         </span>
                       </div>
                       <div className="mt-2">
                         <StayPriceModeControls
+                          /* the "מחיר מקורי" mode's ONE field (MD): the plan
+                             select — changing it re-prices server-side on save */
+                          autoField={
+                            ratePlans.length > 0 && canEditNow ? (
+                              <select
+                                className="field-input w-40"
+                                aria-label="תוכנית תעריף"
+                                value={s.ratePlanId ?? ""}
+                                onChange={(e) =>
+                                  setStays((all) =>
+                                    all.map((x) =>
+                                      x.key === s.key ? { ...x, ratePlanId: e.target.value || null } : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                <option value="">מחיר בסיס</option>
+                                {ratePlans.map((p) => (
+                                  <option key={p.id} value={p.id}>{p.name}</option>
+                                ))}
+                              </select>
+                            ) : undefined
+                          }
+                          noteSuffix={taxExempt ? undefined : "כולל מע״מ"}
                           mode={mode}
                           onMode={(m) =>
                             /* switching mode keeps entered values (SPEC rule 6);
@@ -965,6 +978,24 @@ export function EditReservationPanel({
                   }}
                   disabled={!canEditNow}
                 />
+                {/* live discount feedback (MD, same principles as the wizard) */}
+                {totals.discountAmount > 0 && (
+                  <p className="mt-2 text-sm font-bold text-status-warning tabular-nums">
+                    −₪<bdi className="ltr-num">{totals.discountAmount.toLocaleString()}</bdi> ·{" "}
+                    <bdi className="ltr-num">
+                      {totals.roomsTotal > 0
+                        ? Math.round((totals.discountAmount / totals.roomsTotal) * 100)
+                        : 0}
+                    </bdi>
+                    % מהמחיר המלא · ₪
+                    <bdi className="ltr-num">
+                      {totalNightsAll > 0
+                        ? Math.round(totals.discountAmount / totalNightsAll).toLocaleString()
+                        : 0}
+                    </bdi>{" "}
+                    ללילה
+                  </p>
+                )}
               </div>
               <div className="bw-price-line mt-3">
                 <span className="bw-plr">מחיר מלא</span>
@@ -1375,9 +1406,17 @@ export function EditReservationPanel({
                       בצע צ׳ק-אין
                     </button>
                   )}
-                  {/* the reference's "שלח אישור הזמנה" action is deliberately
-                      NOT rendered here — this pass is a visual refactor; the
-                      header toolbar already owns the real messaging actions */}
+                  {/* "שלח אישור הזמנה" (the MD's quick action) — the SAME D53
+                      composer the header mail button opens; save-first guarded
+                      like every toolbar action */}
+                  <button
+                    type="button"
+                    className="btn btn-secondary bw-qa-btn"
+                    onClick={() => guardedToolbarAction(() => setComposer("email"))}
+                  >
+                    <Icon name="send" size={20} />
+                    שלח אישור הזמנה
+                  </button>
                   <button
                     type="button"
                     className="btn btn-secondary bw-qa-btn"

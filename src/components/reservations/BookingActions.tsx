@@ -36,9 +36,13 @@ export function BookingToolbar({
   const [overflow, setOverflow] = useState(false);
   // DOM order = RTL right→left: Email nearest the title, Print nearest the X.
   const actions: ToolbarAction[] = [
-    { key: "email", icon: "mail", label: "שליחת מייל", onClick: onEmail },
-    { key: "whatsapp", icon: "whatsapp", label: "שליחת WhatsApp", onClick: onWhatsApp },
-    { key: "pdf", icon: "download", label: "הורדת PDF", onClick: onPdf },
+    /* the MD header names (right→left): מייל לאורח · שליחת הודעה (chat) ·
+       הורדת אישור הזמנה (download) · הדפסה · ביטול — same actions, the
+       whatsapp/pdf buttons carry the MD's labels (their glyphs already are
+       chat / download) */
+    { key: "email", icon: "mail", label: "מייל לאורח", onClick: onEmail },
+    { key: "whatsapp", icon: "whatsapp", label: "שליחת הודעה", onClick: onWhatsApp },
+    { key: "pdf", icon: "download", label: "הורדת אישור הזמנה", onClick: onPdf },
     { key: "print", icon: "printer", label: "הדפסת הזמנה", onClick: onPrint },
     ...(onCancelReservation
       ? [{ key: "cancel", icon: "circle-slash" as IconName, label: "בטל הזמנה", onClick: onCancelReservation }]
@@ -53,6 +57,8 @@ export function BookingToolbar({
             <Icon name={a.icon} size={20} />
           </button>
         ))}
+        {/* the MD's vertical divider between the toolbar and the close X */}
+        <span className="bk-tb-div" aria-hidden />
       </div>
       {/* overflow menu — shown only when there isn't room for the inline row */}
       <div className="bk-tb-more">

@@ -38,7 +38,7 @@
   position: sticky;
   top: 0;
   flex: none;
-  width: 330px;
+  width: 320px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -684,7 +684,51 @@
   gap: 6px;
 }
 
+/* the outlined destructive footer action (ביטול / בטל הזמנה) — the MD spec:
+   white, a constant danger border, danger text; hover = the danger-050 fill.
+   Both hexes are the documented status-danger tokens, not new colours. */
+.bw-btn-cancel {
+  background: #fff;
+  border: 1.5px solid var(--color-status-danger);
+  color: var(--color-status-danger);
+}
+.bw-btn-cancel:hover:not(:disabled) {
+  background: var(--color-status-danger-050);
+}
+
+/* payment progress (wizard step 3) — "שולם X מתוך Y" over the ok token */
+.bw-payprog {
+  height: 10px;
+  border-radius: var(--r-xs);
+  background: var(--field-bg);
+  overflow: hidden;
+}
+.bw-payprog-fill {
+  height: 100%;
+  border-radius: var(--r-xs);
+  background: var(--ok);
+  transition: width 0.25s ease;
+}
+
 } /* @layer components */
+
+/* on the booking windows (.bw-win marker via widthClassName) the header X
+   hover is the documented V2 treatment: white surface, danger glyph.
+   Unlayered so it wins the layered .dw-close:hover. */
+.bw-win .dw-close:hover {
+  background: #fff;
+  color: var(--color-status-danger);
+}
+
+/* the vertical divider between the header toolbar and the close X —
+   the documented V2 chrome divider (1×26, white at .28) */
+.bk-tb-div {
+  width: 1px;
+  height: 26px;
+  background: rgba(255, 255, 255, 0.28);
+  flex: none;
+  margin-inline-start: 5px;
+}
 
 /* ============================================================
    Booking header action toolbar + in-panel message composer (D53).
