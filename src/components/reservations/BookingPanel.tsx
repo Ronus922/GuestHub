@@ -11,6 +11,7 @@ import {
   BalanceBoxes, CurrencySelector, DiscountControls, PaymentMethodExtras, StayPriceModeControls, VatToggleRow,
 } from "./PricingControls";
 import { BookingDocuments } from "./BookingDocuments";
+import { deleteBookingDocumentAction } from "@/app/(dashboard)/reservations/document-actions";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import { statusTintPalette } from "@/lib/colors";
 import { paymentTriplet, STATUS_COLORS } from "@/lib/status-colors";
@@ -175,6 +176,9 @@ export function BookingPanel({
   // dirty-state protection: snapshot of the form right after open
   const snapshotRef = useRef("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // documents uploaded during THIS wizard run (booking_id NULL server-side):
+  // attached inside the creation transaction; soft-deleted on discard
+  const [docIds, setDocIds] = useState<string[]>([]);
   // חברה / ארגון (MD ש'69) — GRAPHIC SHELL: guests has no such column, the
   // value never leaves this panel. TODO(wire-up): persist on the guest.
   const [company, setCompany] = useState("");
@@ -230,6 +234,7 @@ export function BookingPanel({
     setNotes("");
     setAsDraft(false);
     setCc(EMPTY_CARD);
+    setDocIds([]);
     holderTouched.current = false;
     paidTouched.current = false;
     setWorkflowStatusId("");
@@ -249,7 +254,7 @@ export function BookingPanel({
 
   const dirty =
     formSnapshot(guest, sourceId, stays, { discountMode, discountValue, taxExempt, currency }, paid, method, notes, arrivalTime, asDraft, cc) !==
-    snapshotRef.current;
+      snapshotRef.current || docIds.length > 0;
 
   // Escape / X / overlay click route here — unsaved changes get an explicit
   // discard confirmation (footer strip) instead of a silent reset
@@ -458,6 +463,7 @@ export function BookingPanel({
         paidAmount: paid || undefined,
         paymentMethod: method || undefined,
         workflowStatusId: workflowStatusId || undefined,
+        documentIds: docIds.length > 0 ? docIds : undefined,
       });
       if (!res.success) {
         toast.error(res.error);
@@ -593,7 +599,16 @@ export function BookingPanel({
              DOM order = visual left→right — the confirming action is FIRST
              so it hugs the LEFT edge; the warning text sits at the far right. */
           <>
-            <button type="button" className="btn btn-danger" onClick={onClose}>
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={() => {
+                // a discarded wizard leaves no live orphans — its pre-created
+                // documents (booking_id NULL) are soft-deleted, fire-and-forget
+                for (const id of docIds) void deleteBookingDocumentAction(id);
+                onClose();
+              }}
+            >
               סגור בלי לשמור
             </button>
             <button type="button" className="btn btn-secondary" onClick={() => setConfirmDiscard(false)}>
@@ -1221,13 +1236,15 @@ export function BookingPanel({
             </>
           )}
 
-          {/* ---- step 4: documents (MD §"שלב 4 — מסמכים") — a graphic shell,
-               see BookingDocuments ---- */}
-          {step === 3 && (
+          {/* ---- step 4: documents (MD §"שלב 4 — מסמכים") — WIRED: uploads
+               run immediately (booking_id NULL) and attach on create. Mounted
+               on every step (hidden outside step 4) so the rows survive step
+               navigation; the ids live in docIds above. ---- */}
+          <div className={step === 3 ? undefined : "hidden"}>
             <BookingCard icon="folder" title="מסמכים להזמנה">
-              <BookingDocuments />
+              <BookingDocuments bookingId={null} onIdsChange={setDocIds} />
             </BookingCard>
-          )}
+          </div>
 
           {/* ---- step 5: summary ---- */}
           {step === SUMMARY_STEP && (

@@ -113,6 +113,9 @@ export const createReservationSchema = z.object({
   paymentMethod: z.string().trim().max(40).optional(),
   // D77 §11 — optional explicit workflow status; omitted → tenant default
   workflowStatusId: z.uuid().optional(),
+  // documents the wizard uploaded BEFORE the reservation existed (booking_id
+  // NULL) — attached to the new reservation inside the creation transaction
+  documentIds: z.array(z.uuid()).max(50).optional(),
 });
 
 export const updateReservationSchema = z.object({
