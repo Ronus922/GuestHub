@@ -21,6 +21,12 @@ import { Icon, type IconName } from "@/components/shared/Icon";
 const DEFAULT_DURATION = 1.2;
 const GROUP_UPDATE_DURATION = 0.3;
 const GROUP_UPDATE_EASE = [0.32, 0.72, 0.28, 1] as const;
+// the two booking windows (prompts/הוראות לקלוד קוד — חלון הקמת הזמנה §1 +
+// חלון עריכת הזמנה §1): slide in from translateX(-108%), .45s
+// cubic-bezier(.32,.72,.24,1); the overlay is the edit-MD value (the later
+// file of the two decides where they disagree): rgba(15,23,42,.45) + blur.
+const BOOKING_DURATION = 0.45;
+const BOOKING_EASE = [0.32, 0.72, 0.24, 1] as const;
 
 export function SidePanel({
   open,
@@ -72,7 +78,7 @@ export function SidePanel({
   widthClassName?: string;
   // A caller-scoped visual treatment. Shared accessibility/portal behavior
   // remains canonical while reference-specific motion/overlay stays isolated.
-  visualVariant?: "default" | "group-update";
+  visualVariant?: "default" | "group-update" | "booking";
   children: React.ReactNode;
   // rendered inside the §7 `.dw-ft`. Pass FLAT .btn children with the PRIMARY
   // action FIRST in the DOM — .dw-ft is row-reverse, so the first child hugs
@@ -138,8 +144,10 @@ export function SidePanel({
   if (!portalRoot) return null;
 
   const isGroupUpdate = visualVariant === "group-update";
-  const duration = isGroupUpdate ? GROUP_UPDATE_DURATION : DEFAULT_DURATION;
-  const ease = isGroupUpdate ? GROUP_UPDATE_EASE : "easeInOut";
+  const isBooking = visualVariant === "booking";
+  const duration = isGroupUpdate ? GROUP_UPDATE_DURATION : isBooking ? BOOKING_DURATION : DEFAULT_DURATION;
+  const ease = isGroupUpdate ? GROUP_UPDATE_EASE : isBooking ? BOOKING_EASE : "easeInOut";
+  const offscreenX = isBooking ? "-108%" : "-100%";
 
   return createPortal(
     <AnimatePresence>
@@ -153,7 +161,9 @@ export function SidePanel({
             transition={{ duration, ease }}
             className={isGroupUpdate
               ? "absolute inset-0 bg-[rgba(16,24,40,.44)] backdrop-blur-[2.5px]"
-              : "absolute inset-0 bg-black/65 backdrop-blur-sm"}
+              : isBooking
+                ? "absolute inset-0 bg-[rgba(15,23,42,.45)] backdrop-blur-[2px]"
+                : "absolute inset-0 bg-black/65 backdrop-blur-sm"}
             onClick={onClose}
             aria-hidden="true"
           />
@@ -161,9 +171,9 @@ export function SidePanel({
           {/* Panel — slide from the left + fade. 60% of the screen (§7). */}
           <motion.aside
             ref={panelRef}
-            initial={{ x: "-100%", opacity: 0 }}
+            initial={{ x: offscreenX, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            exit={{ x: "-100%", opacity: 0 }}
+            exit={{ x: offscreenX, opacity: 0 }}
             transition={{ duration, ease }}
             role="dialog"
             aria-modal="true"

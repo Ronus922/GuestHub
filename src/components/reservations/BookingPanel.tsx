@@ -8,8 +8,9 @@ import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, type PaymentState } from "@/lib/inventory-rules";
 import { computeReservationTotals, type DiscountMode, type PriceMode } from "@/lib/pricing/totals";
 import {
-  BalanceBoxes, CurrencySelector, DiscountControls, StayPriceModeControls, VatToggleRow,
+  BalanceBoxes, CurrencySelector, DiscountControls, PaymentMethodExtras, StayPriceModeControls, VatToggleRow,
 } from "./PricingControls";
+import { BookingDocuments } from "./BookingDocuments";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import { statusTintPalette } from "@/lib/colors";
 import { paymentTriplet } from "@/lib/status-colors";
@@ -60,7 +61,28 @@ const EMPTY_GUEST: GuestForm = {
   language: "עברית",
 };
 
-const STEPS = ["פרטי אורח", "שהות וחדרים", "תמחור ותשלום", "סיכום ואישור"];
+// the MD's five steps (§2 ש'20): documents sit between pricing and the summary
+const STEPS = ["פרטי אורח", "שהות וחדרים", "תמחור ותשלום", "מסמכים", "סיכום ואישור"];
+const SUMMARY_STEP = STEPS.length - 1;
+
+// מדינה (MD ש'68: select) — the guests table has no country list of its own,
+// so the select carries a local option set; a value outside it (an imported
+// guest) is prepended so the field never lies.
+const COUNTRIES = [
+  "ישראל", "ארה\"ב", "בריטניה", "גרמניה", "צרפת", "רוסיה", "אוקראינה",
+  "איטליה", "ספרד", "הולנד", "בלגיה", "שווייץ", "אוסטריה", "פולין",
+  "רומניה", "גאורגיה", "קנדה", "אוסטרליה", "ברזיל", "ארגנטינה", "אחר",
+];
+
+// מדיניות ביטול (MD ש'126) — the option set the MD names, with its dynamic
+// explanation line. GRAPHIC SHELL: the policy engine this select should read
+// from was deleted (migration 078); the real at-booking terms render below it.
+// TODO(wire-up): feed the options from a policy engine when one exists.
+const CANCEL_POLICY_OPTIONS: { value: string; label: string; explain: string }[] = [
+  { value: "free7", label: "ביטול חינם עד 7 ימים לפני ההגעה", explain: "ביטול ללא עלות עד 7 ימים לפני מועד ההגעה; לאחר מכן חיוב לילה ראשון." },
+  { value: "free14", label: "ביטול חינם עד 14 יום לפני ההגעה", explain: "ביטול ללא עלות עד 14 יום לפני מועד ההגעה; לאחר מכן חיוב לילה ראשון." },
+  { value: "none", label: "ללא ביטול (Non-refundable)", explain: "הזמנה ללא אפשרות ביטול — חיוב מלא בכל שלב." },
+];
 
 // dirty-state fingerprint of everything the user can edit (stay "key"
 // fields are random per open, so the replacer drops them)
@@ -153,6 +175,21 @@ export function BookingPanel({
   // dirty-state protection: snapshot of the form right after open
   const snapshotRef = useRef("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // חברה / ארגון (MD ש'69) — GRAPHIC SHELL: guests has no such column, the
+  // value never leaves this panel. TODO(wire-up): persist on the guest.
+  const [company, setCompany] = useState("");
+  // מדיניות ביטול select (MD ש'126) — shell state, see CANCEL_POLICY_OPTIONS
+  const [policyChoice, setPolicyChoice] = useState(CANCEL_POLICY_OPTIONS[0].value);
+  // מסך הצלחה (MD ש'127): after a successful create the panel shows the green
+  // ✓ summary instead of closing straight away
+  const [created, setCreated] = useState<null | {
+    number: number | string;
+    guest: string;
+    rooms: number;
+    total: number;
+    paid: number;
+    balance: number;
+  }>(null);
 
   // guest search
   const [query, setQuery] = useState("");
@@ -164,6 +201,9 @@ export function BookingPanel({
   useEffect(() => {
     if (!open) return;
     const initialSource = bookingSources[0]?.id ?? "";
+    // אמצעי תשלום — ברירת מחדל מזומן (MD ש'25/ש'112); absent a cash method
+    // in the tenant list, no method is preselected
+    const initialMethod = paymentMethods.find((m) => m.key === "cash")?.key ?? "";
     const initialStays: StayDraft[] = [
       {
         key: newStayKey(),
@@ -186,7 +226,7 @@ export function BookingPanel({
     setCurrency("ILS");
     setExchangeRate(null);
     setPaid(0);
-    setMethod("");
+    setMethod(initialMethod);
     setNotes("");
     setAsDraft(false);
     setCc(EMPTY_CARD);
@@ -196,10 +236,13 @@ export function BookingPanel({
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
+    setCompany("");
+    setPolicyChoice(CANCEL_POLICY_OPTIONS[0].value);
+    setCreated(null);
     snapshotRef.current = formSnapshot(
       EMPTY_GUEST, initialSource, initialStays,
       { discountMode: "none", discountValue: 0, taxExempt: false, currency: "ILS" },
-      0, "", "", "", false, EMPTY_CARD,
+      0, initialMethod, "", "", false, EMPTY_CARD,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -212,6 +255,11 @@ export function BookingPanel({
   // discard confirmation (footer strip) instead of a silent reset
   const requestClose = () => {
     if (saving) return;
+    // the success screen is a terminal state — closing needs no discard confirm
+    if (created) {
+      onClose();
+      return;
+    }
     if (dirty && !confirmDiscard) setConfirmDiscard(true);
     else onClose();
   };
@@ -222,10 +270,11 @@ export function BookingPanel({
       setResults([]);
       return;
     }
+    // the MD's debounce (ש'53): 300ms
     searchTimer.current = setTimeout(async () => {
       const res = await searchGuestsAction(query);
       if (res.success && res.data) setResults(res.data);
-    }, 250);
+    }, 300);
   }, [query]);
 
   // live quotes for the sidebar + pricing/summary steps — the SAME central
@@ -299,7 +348,7 @@ export function BookingPanel({
   }, [total]);
 
   useEffect(() => {
-    if (step !== 3) return;
+    if (step !== SUMMARY_STEP) return;
     let alive = true;
     previewCancellationPolicyAction(stays[0]?.ratePlanId ?? null).then((res) => {
       if (alive) setPolicyPreview(res.success && res.data ? res.data : null);
@@ -434,7 +483,15 @@ export function BookingPanel({
       setCc(EMPTY_CARD);
       if (res.data) onCreated?.(res.data.reservationId);
       toast.success(`הזמנה #${res.data?.reservationNumber} נוצרה בהצלחה`);
-      onClose();
+      // מסך הצלחה (MD ש'127): ✓ ירוק + שורת תקציר — the panel closes from it
+      setCreated({
+        number: res.data?.reservationNumber ?? "",
+        guest: `${guest.firstName} ${guest.lastName}`.trim(),
+        rooms: stays.length,
+        total,
+        paid,
+        balance: totals.balance,
+      });
     });
 
   const guestDisplay = `${guest.firstName} ${guest.lastName}`.trim() || "אורח חדש";
@@ -453,10 +510,54 @@ export function BookingPanel({
       subtitle="אורח · שהות · תמחור · אישור"
       icon="reservations"
       /* the MD shell: 60% width bounded to 900–1200px (same bounds as the edit
-         window); bw-win scopes the header-X hover treatment to these panels */
-      widthClassName="bw-win w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
+         window); bw-win scopes the booking chrome (18px corner, 40px X, X-hover)
+         and bw-new the wizard-only values (subtitle .82, 26px total) */
+      widthClassName="bw-win bw-new w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
       bodyClassName="bg-appbg p-0"
+      /* MD §1: slide from -108% in .45s cubic-bezier(.32,.72,.24,1) over the
+         rgba(15,23,42,.45)+blur overlay — the booking visual variant */
+      visualVariant="booking"
+      headerActions={
+        /* the MD header cluster (ש'14-15) — RTL DOM order = right→left:
+           room-closure first, divider, then מייל/וואטסאפ/PDF/הדפסה/תצוגה
+           מקדימה, divider, and SidePanel's own X. Every button here is a
+           GRAPHIC SHELL: before the reservation exists none of these actions
+           has anything real to act on, so clicking does nothing.
+           TODO(wire-up): room-closure creation; TODO(wire-up): pre-create
+           mail/whatsapp/pdf/print/preview. */
+        <>
+          <button
+            type="button"
+            className="bw-hd-btn bw-close-room"
+            title="סגירת חדר ביומן"
+            aria-label="סגירת חדר ביומן"
+          >
+            <Icon name="door-front" size={20} />
+            <span className="bw-cr-badge">
+              <Icon name="lock" size={13.5} />
+            </span>
+          </button>
+          <span className="bk-tb-div" aria-hidden />
+          <button type="button" className="bw-hd-btn" title="מייל" aria-label="מייל">
+            <Icon name="mail" size={20} />
+          </button>
+          <button type="button" className="bw-hd-btn" title="וואטסאפ" aria-label="וואטסאפ">
+            <Icon name="whatsapp" size={20} />
+          </button>
+          <button type="button" className="bw-hd-btn" title="PDF" aria-label="PDF">
+            <Icon name="pdf" size={20} />
+          </button>
+          <button type="button" className="bw-hd-btn" title="הדפסה" aria-label="הדפסה">
+            <Icon name="printer" size={20} />
+          </button>
+          <button type="button" className="bw-hd-btn" title="תצוגה מקדימה" aria-label="תצוגה מקדימה">
+            <Icon name="eye" size={20} />
+          </button>
+          <span className="bk-tb-div" aria-hidden />
+        </>
+      }
       band={
+        created ? undefined : (
         /* stepper band (reference .stp) — RTL: step 1 rightmost */
         <div className="bw-stp">
           <div className="bw-stp-row">
@@ -478,9 +579,16 @@ export function BookingPanel({
             ))}
           </div>
         </div>
+        )
       }
       footer={
-        confirmDiscard ? (
+        created ? (
+          /* success-screen footer — the one remaining action is closing */
+          <button type="button" className="btn btn-primary" onClick={onClose}>
+            <Icon name="check" size={20} />
+            סגור
+          </button>
+        ) : confirmDiscard ? (
           /* dirty-state discard confirmation. §7 via .dw-ft (row-reverse):
              DOM order = visual left→right — the confirming action is FIRST
              so it hugs the LEFT edge; the warning text sits at the far right. */
@@ -500,7 +608,7 @@ export function BookingPanel({
              PRIMARY action is FIRST so it hugs the LEFT edge, "ביטול" to its
              right; the step label is pushed to the far right. */
           <>
-            {step < 3 ? (
+            {step < SUMMARY_STEP ? (
               <button type="button" className="btn btn-primary" onClick={handleNext}>
                 <Icon name="chevron-left" size={20} />
                 הבא
@@ -536,6 +644,23 @@ export function BookingPanel({
         )
       }
     >
+      {created ? (
+        /* מסך הצלחה (MD ש'127): ✓ ירוק גדול + "ההזמנה נוצרה בהצלחה" + שורת
+           תקציר (אורח · חדרים · סה"כ · שולם · יתרה) */
+        <div className="bw-success">
+          <span className="bw-success-ic">
+            <Icon name="check" size={24} />
+          </span>
+          <p className="bw-success-t">ההזמנה נוצרה בהצלחה</p>
+          <p className="bw-success-n ltr-num">הזמנה #{created.number}</p>
+          <p className="bw-success-s">
+            {created.guest || "אורח"} · {created.rooms === 1 ? "חדר אחד" : `${created.rooms} חדרים`} · סה״כ ₪
+            <bdi className="ltr-num">{created.total.toLocaleString()}</bdi> · שולם ₪
+            <bdi className="ltr-num">{created.paid.toLocaleString()}</bdi> · יתרה ₪
+            <bdi className="ltr-num">{Math.max(0, created.balance).toLocaleString()}</bdi>
+          </p>
+        </div>
+      ) : (
       <div className="bw-main">
         <div className="bw-col-main">
           {/* validation banner — shown when a blocked "הבא" reds the step's
@@ -560,7 +685,8 @@ export function BookingPanel({
                     className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-faint"
                   />
                   <input
-                    className="field-input ps-11"
+                    /* the MD's LARGE 54px search box (ש'52) */
+                    className="field-input bw-search ps-11"
                     placeholder="חפש לפי שם, טלפון או אימייל…"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -679,20 +805,42 @@ export function BookingPanel({
                       value={guest.language}
                       onChange={(e) => setGuest({ ...guest, language: e.target.value })}
                     >
-                      {/* the MD's order; Français predates the spec and was not
-                          ordered removed — it stays last */}
+                      {/* the MD's exact list and order (ש'67) */}
                       <option>עברית</option>
                       <option>English</option>
                       <option>العربية</option>
                       <option>Русский</option>
-                      <option>Français</option>
+                      {/* legacy passthrough — a guest stored with another
+                          language keeps displaying it until changed */}
+                      {guest.language &&
+                        !["עברית", "English", "العربية", "Русский"].includes(guest.language) && (
+                          <option>{guest.language}</option>
+                        )}
                     </select>
                   </Field>
                   <Field label="מדינה">
-                    <input
+                    {/* the MD orders a select (ש'68) — options are the local
+                        COUNTRIES set; an out-of-set stored value passes through */}
+                    <select
                       className="field-input"
                       value={guest.country}
                       onChange={(e) => setGuest({ ...guest, country: e.target.value })}
+                    >
+                      {guest.country && !COUNTRIES.includes(guest.country) && (
+                        <option>{guest.country}</option>
+                      )}
+                      {COUNTRIES.map((c) => (
+                        <option key={c}>{c}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="חברה / ארגון">
+                    {/* GRAPHIC SHELL (MD ש'69) — TODO(wire-up): no guest
+                        company column exists; the value stays in the panel */}
+                    <input
+                      className="field-input"
+                      value={company}
+                      onChange={(e) => setCompany(e.target.value)}
                     />
                   </Field>
                 </div>
@@ -1035,6 +1183,14 @@ export function BookingPanel({
                     </b>
                   </Field>
                 </div>
+                {/* conditional method windows (MD ש'26): ביט/פייבוקס → אסמכתא;
+                    העברה בנקאית → בנק/סניף/חשבון. keyed so switching methods
+                    starts the shell fields clean */}
+                <PaymentMethodExtras
+                  key={method}
+                  methodKey={method}
+                  methodLabel={paymentMethods.find((m) => m.key === method)?.label}
+                />
                 {/* manual card entry (D77 §15) — the area is always visible but
                     activates (white/enabled/focusable) ONLY when the selected
                     payment method is credit card; otherwise grey + disabled */}
@@ -1051,6 +1207,7 @@ export function BookingPanel({
                     }
                     chargeAmount={Math.max(0, total - paid)}
                     disabled={method !== "credit_card"}
+                    showSaveMark
                   />
                 ) : (
                   <p className="field-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
@@ -1059,8 +1216,16 @@ export function BookingPanel({
             </>
           )}
 
-          {/* ---- step 4: summary ---- */}
+          {/* ---- step 4: documents (MD §"שלב 4 — מסמכים") — a graphic shell,
+               see BookingDocuments ---- */}
           {step === 3 && (
+            <BookingCard icon="documents" title="מסמכים">
+              <BookingDocuments />
+            </BookingCard>
+          )}
+
+          {/* ---- step 5: summary ---- */}
+          {step === SUMMARY_STEP && (
             <BookingCard icon="check" title="סיכום ואישור">
               <div className="bw-grid2">
                 <Field label="אורח">
@@ -1149,11 +1314,35 @@ export function BookingPanel({
             </BookingCard>
           )}
 
-          {/* cancellation policy BELOW the notes (SPEC step 4 / complaint 11):
-              the exact terms the create action will freeze into the snapshot */}
-          {step === 3 && policyPreview && (
+          {/* cancellation policy BELOW the notes (SPEC step 4 / complaint 11) */}
+          {step === SUMMARY_STEP && (
             <BookingCard icon="documents" title="מדיניות ביטול">
-              <CancellationSnapshotView snap={policyPreview} />
+              {/* the MD's select (ש'126) with its dynamic explanation line —
+                  a GRAPHIC SHELL: the policy engine it should read from was
+                  deleted (migration 078). TODO(wire-up): policy engine. */}
+              <Field label="מדיניות ביטול">
+                <select
+                  className="field-input"
+                  value={policyChoice}
+                  onChange={(e) => setPolicyChoice(e.target.value)}
+                >
+                  {CANCEL_POLICY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p className="field-hint mt-2">
+                {CANCEL_POLICY_OPTIONS.find((o) => o.value === policyChoice)?.explain}
+              </p>
+              {/* the REAL at-booking terms the create action freezes into the
+                  snapshot — displayed unchanged below the select */}
+              {policyPreview && (
+                <div className="mt-4 border-t border-line pt-4">
+                  <CancellationSnapshotView snap={policyPreview} />
+                </div>
+              )}
             </BookingCard>
           )}
         </div>
@@ -1228,6 +1417,7 @@ export function BookingPanel({
           </div>
         </aside>
       </div>
+      )}
     </SidePanel>
   );
 }
@@ -1317,16 +1507,21 @@ export function PayChip({
   onClick?: () => void;
 }) {
   const t = paymentTriplet(state);
+  // "ממתין לאישור" is BLUE in the booking windows (both MDs: הקמה ש'111 —
+  // "(כחול)"; עריכה ש'43 — "אותם צבעים כמו בהקמה"): the canonical brand chip,
+  // not the shared pending→approval orange (which the calendar keeps).
+  const chipOn = state === "pending" ? "chip-brand" : t.chip;
+  const dotOff = state === "pending" ? "var(--brand)" : t.dot;
   return (
     <button
       type="button"
-      className={`chip ${on ? t.chip : "chip-neutral"} cursor-pointer disabled:cursor-not-allowed disabled:opacity-60`}
+      className={`chip ${on ? chipOn : "chip-neutral"} cursor-pointer disabled:cursor-not-allowed disabled:opacity-60`}
       aria-pressed={on}
       disabled={disabled}
       title={title}
       onClick={onClick}
     >
-      <span className="dot" style={on ? undefined : { background: t.dot }} />
+      <span className="dot" style={on ? undefined : { background: dotOff }} />
       {label}
     </button>
   );

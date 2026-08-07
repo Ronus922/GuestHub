@@ -129,6 +129,11 @@ export function StayEditor({
   const [showGuest, setShowGuest] = useState(
     Boolean(value.guestFirstName || value.guestLastName || value.guestPhone),
   );
+  // בסיס אירוח (both MDs, ש'85 / §3.2) — a GRAPHIC SHELL: the choice lives in
+  // this component's local state only, outside the stay draft, so it can never
+  // flip the dirty fingerprint or ride into a save payload.
+  // TODO(wire-up): no board-basis column/pricing exists yet.
+  const [boardBasis, setBoardBasis] = useState("לינה בלבד");
   // reference edit-modal: a chosen room renders as a summary row with a
   // "החלף חדר" button; the select shows only while actually choosing
   const [changing, setChanging] = useState(false);
@@ -272,6 +277,22 @@ export function StayEditor({
         <Counter label="ילדים" value={value.children} min={0} disabled={disabled} onChange={(children) => onChange({ ...value, children })} />
         <Counter label="תינוקות" value={value.infants} min={0} disabled={disabled} onChange={(infants) => onChange({ ...value, infants })} />
       </div>
+
+      {/* בסיס אירוח (MD ש'85) — the four options, local display state only */}
+      <label className="field mt-4">
+        <span className="field-label">בסיס אירוח</span>
+        <select
+          className="field-input"
+          value={boardBasis}
+          disabled={disabled}
+          onChange={(e) => setBoardBasis(e.target.value)}
+        >
+          <option>לינה בלבד</option>
+          <option>ארוחת בוקר</option>
+          <option>חצי פנסיון</option>
+          <option>פנסיון מלא</option>
+        </select>
+      </label>
 
       {selected && !changing ? (
         /* V2 .roomsel — room number bold-brand first, type after, swap = outline button */

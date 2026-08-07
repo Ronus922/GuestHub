@@ -413,8 +413,18 @@ assert.ok(/חזרה לפרטי הכרטיס הקיימים/.test(cardFields),
 // external-payment recorder is confirmation-gated
 assert.ok(/const NO_GATEWAY_MESSAGE = "לא מוגדר ספק סליקה פעיל"/.test(cardFields),
   "the no-provider message is shown by the charge control");
-assert.ok(/disabled\s+onClick={charge}/.test(cardFields),
-  "the live-charge button is rendered disabled");
+// 2026-08-07 — the booking-window MDs order a GREEN, balance-gated "סלוק
+// עכשיו" button (הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'117 / חלון
+// עריכת הזמנה.md ש'45); the previous pin (`disabled onClick={charge}`)
+// contradicted that order, so per D137 the guard follows the owner's decision.
+// The SAFETY property is unchanged in substance and STRONGER in form: the
+// button carries no charge wiring at all — CardFields never references the
+// charge action, so no click can reach the PSP path until it is explicitly
+// wired up (TODO(wire-up) in CardFields).
+assert.ok(/סלוק עכשיו/.test(cardFields),
+  "the charge control carries the MD's סלוק עכשיו label");
+assert.ok(!/chargeReservationCardAction/.test(cardFields),
+  "CardFields has no charge wiring — the סלוק עכשיו shell cannot reach the PSP path");
 assert.ok(/recordExternalPaymentAction/.test(cardFields) && /רישום תשלום שבוצע חיצונית/.test(cardFields),
   "the saved-card box offers the honestly-labelled external-payment recorder");
 assert.ok(/confirmed: true/.test(cardFields) && /payConfirm/.test(cardFields),
