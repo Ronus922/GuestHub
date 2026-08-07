@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getActor } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
-import { todayInTz, nowHHMMInTz, formatFullDate, HEBREW_DAY_LETTERS, dayOfWeek } from "@/lib/dates";
+import { todayInTz, formatFullDate, HEBREW_DAY_LETTERS, dayOfWeek } from "@/lib/dates";
 import { getDashboardPreferences } from "./preferences";
 import { getDashboardData } from "./data";
 import { DashboardScreen } from "./DashboardScreen";
@@ -36,9 +36,6 @@ export default async function DashboardPage() {
     <DashboardScreen
       initial={prefs}
       data={data}
-      // agd's clock — recomputed on every SSE-nudged refresh, so "past" events
-      // dim without a client-side Date that would disagree with the SSR pass
-      now={nowHHMMInTz(tz)}
       todayLabel={`יום ${HEBREW_DAY_LETTERS[dayOfWeek(today)]} · ${formatFullDate(today)}`}
       // the header's unit count is the SAME denominator the occupancy KPI
       // divides by, so the two can never tell the operator different numbers

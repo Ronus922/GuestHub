@@ -70,13 +70,6 @@ export const WINDOWS = [
     empty: "כאן יופיעו החדרים שהתפנו היום וממתינים לניקיון.",
   },
   {
-    id: "agd",
-    defaultCol: "l",
-    icon: "agenda",
-    title: "יומן היום",
-    empty: "כאן יופיע ציר האירועים של היום.",
-  },
-  {
     id: "alr",
     defaultCol: "r",
     icon: "bell",
@@ -163,7 +156,7 @@ export type DashboardPreferences = {
 // PlacedId is what is actually written) while still rejecting an unregistered
 // id, or a right-column window listed under `l`.
 const DEFAULT_ORDER = {
-  l: ["arr", "rev", "hk", "agd"],
+  l: ["arr", "rev", "hk"],
   r: ["alr", "pay", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
 } as const satisfies { l: readonly WindowOf<"l">[]; r: readonly WindowOf<"r">[] };
 

@@ -36,7 +36,6 @@ import { HousekeepingWindow } from "./windows/HousekeepingWindow";
 import { AlertsWindow } from "./windows/AlertsWindow";
 import { StuckWindow } from "./windows/StuckWindow";
 import { PayWindow } from "./windows/PayWindow";
-import { AgendaWindow } from "./windows/AgendaWindow";
 import { IssuesWindow } from "./windows/IssuesWindow";
 import { RevenueWindow } from "./windows/RevenueWindow";
 import { SourcesWindow } from "./windows/SourcesWindow";
@@ -147,14 +146,11 @@ export function DashboardScreen({
   todayLabel,
   unitLabel,
   data,
-  now,
 }: {
   initial: DashboardPreferences;
   todayLabel: string;
   unitLabel: string;
   data: DashboardData;
-  /** HH:MM in the PROPERTY's timezone, computed by the server — agd's clock */
-  now: string;
 }) {
   const [layout, setLayout] = useState<DashboardLayout>(initial.layout);
   const [hidden, setHidden] = useState<DashboardWindowId[]>(initial.hidden);
@@ -426,7 +422,6 @@ export function DashboardScreen({
                     id={id}
                     onHide={() => hideWindow(id)}
                     data={data}
-                    now={now}
                   />
                 ))}
               </SortableContext>
@@ -473,12 +468,10 @@ function SortableWindow({
   id,
   onHide,
   data,
-  now,
 }: {
   id: DashboardWindowId;
   onHide: () => void;
   data: DashboardData;
-  now: string;
 }) {
   const def = windowById(id);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
@@ -486,10 +479,9 @@ function SortableWindow({
 
   if (!def) return null;
 
-  // Eleven windows are live. tsk alone keeps the Phase 1 sentence that says
-  // what will go there — a window with no source renders the promise, never a
-  // fabricated row.
-  const live = liveContent(id, data, now);
+  // tsk alone keeps the Phase 1 sentence that says what will go there — a
+  // window with no source renders the promise, never a fabricated row.
+  const live = liveContent(id, data);
 
   return (
     <DashboardWindow
@@ -518,7 +510,6 @@ function SortableWindow({
 function liveContent(
   id: DashboardWindowId,
   data: DashboardData,
-  now: string,
 ): { subtitle?: React.ReactNode; body: React.ReactNode } | null {
   switch (id) {
     case "stk":
@@ -531,17 +522,6 @@ function liveContent(
         subtitle: data.payRows.length > 0 ? `${data.payRows.length} ממתינות` : undefined,
         body: <PayWindow rows={data.payRows} approvedId={data.approvedWorkflowStatusId} />,
       };
-    case "agd": {
-      const next = data.agenda.find((it) => it.time >= now);
-      return {
-        subtitle: next ? (
-          <>
-            הבא: <span className="ltr-num">{next.time}</span>
-          </>
-        ) : undefined,
-        body: <AgendaWindow items={data.agenda} now={now} />,
-      };
-    }
     case "iss": {
       const open = data.issues.filter(
         (r) => r.status !== "completed" && r.status !== "inspected",

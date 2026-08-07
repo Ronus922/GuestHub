@@ -185,7 +185,6 @@ const ICONS = {
   // four (notifications / build / cleaning_services / checklist).
   "arrivals-departures": "sync_alt",
   "chart-area": "show_chart",
-  agenda: "event_note",
   reviews: "reviews",
   forum: "forum",
   "smart-toy": "smart_toy",

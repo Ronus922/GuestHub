@@ -81,9 +81,9 @@ try {
 
   // ================= A. the window registry =================
   const ids = W.WINDOWS.map((w) => w.id);
-  assert.equal(ids.length, 13, "thirteen windows are registered");
-  assert.equal(new Set(ids).size, 13, "window ids are unique");
-  ok(`13 windows registered, ids unique: ${ids.join(", ")}`);
+  assert.equal(ids.length, 12, "twelve windows are registered");
+  assert.equal(new Set(ids).size, 12, "window ids are unique");
+  ok(`12 windows registered, ids unique: ${ids.join(", ")}`);
 
   // §8.1 — every registered window has a place, in its own column
   const placed = [...W.DEFAULT_LAYOUT.l, ...W.DEFAULT_LAYOUT.r];
@@ -97,7 +97,7 @@ try {
       assert.equal(W.defaultColumnOf(id), col, `${id} is placed in its DEFAULT column`);
   ok("DEFAULT_LAYOUT covers every window exactly once, each in its default column");
 
-  assert.deepEqual(W.DEFAULT_LAYOUT.l, ["arr", "rev", "hk", "agd"], "left column default order");
+  assert.deepEqual(W.DEFAULT_LAYOUT.l, ["arr", "rev", "hk"], "left column default order");
   assert.deepEqual(
     W.DEFAULT_LAYOUT.r,
     ["alr", "pay", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
@@ -124,7 +124,7 @@ try {
     "every registered window still appears — a stored layout must never be able to hide a new one",
   );
   assert.deepEqual(stale.layout.l.slice(0, 2), ["hk", "arr"], "the stored order is respected");
-  assert.deepEqual(stale.layout.l.slice(2), ["rev", "agd"], "unmentioned ids append in default order");
+  assert.deepEqual(stale.layout.l.slice(2), ["rev"], "unmentioned ids append in default order");
   assert.equal(stale.layout.r[0], "msg", "the stored right-column order is respected too");
   ok("a stale stored layout: unknown ids dropped, new ids appended, order preserved");
 
@@ -154,7 +154,7 @@ try {
   assert.deepEqual(
     [...dup.layout.l, ...dup.layout.r].sort(),
     [...ids].sort(),
-    "de-duplication still yields all 13 exactly once",
+    "de-duplication still yields all 12 exactly once",
   );
   ok("a cross-column duplicate: first occurrence wins, nothing is lost");
 
@@ -163,10 +163,10 @@ try {
     assert.deepEqual(
       [...out.layout.l, ...out.layout.r].sort(),
       [...ids].sort(),
-      `junk input ${JSON.stringify(junk)} still yields all 13 windows`,
+      `junk input ${JSON.stringify(junk)} still yields all 12 windows`,
     );
   }
-  ok("six malformed jsonb shapes each still yield all 13 windows");
+  ok("six malformed jsonb shapes each still yield all 12 windows");
 
   // ================= B. the donut =================
   const CIRC = 2 * Math.PI * 70;

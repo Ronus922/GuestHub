@@ -11,7 +11,7 @@ import { periodSpan } from "./period";
 
 // ============================================================
 // Dashboard Phase 2+ — the read side of the live surfaces (KPI, arr, inh, hk,
-// alr, rev, src, msg, rvw, stk, iss, agd). One module, one round of queries,
+// alr, rev, src, msg, rvw, stk, iss). One module, one round of queries,
 // all scoped to the property's own day. tsk alone still renders its promise.
 //
 // EVERY date here is the caller's `today`, which the page derives from
@@ -57,9 +57,6 @@ export type StayRow = {
   /** HH:MM or null */
   expectedArrival: string | null;
   checkOut: DateOnly;
-  /** the booking's planned times (defaults 15:00 / 11:00), HH:MM — agd's clock */
-  checkInTime: string | null;
-  checkOutTime: string | null;
 };
 
 export type HousekeepingRow = {
@@ -94,16 +91,6 @@ export type StuckSummary = {
   count: number;
   /** whole hours since the OLDEST unresolved revision arrived; null when count=0 */
   oldestHours: number | null;
-};
-
-export type AgendaItem = {
-  key: string;
-  /** HH:MM — the planned time, never the operator's click */
-  time: string;
-  kind: "departure" | "arrival";
-  title: string;
-  sub: string | null;
-  reservationId: string;
 };
 
 /** pay — a reservation whose check-in has arrived and whose deal was not yet
@@ -200,8 +187,6 @@ export type DashboardData = {
   kpi: KpiData;
   /** stk — the failed-ingest counter */
   stuck: StuckSummary;
-  /** agd — today's timeline, assembled from the rows already fetched */
-  agenda: AgendaItem[];
   /** iss — open maintenance tasks (+ today's fixed ones, for the chip) */
   issues: IssueRow[];
   /** pay — due, unapproved reservations, oldest check-in first */
@@ -248,8 +233,6 @@ function stayRows(tenantId: string, where: ReturnType<typeof sql>) {
            (rr.check_out - rr.check_in)::int AS nights,
            res.status,
            res.expected_arrival_time::text AS expected_arrival_time,
-           res.check_in_time::text AS check_in_time,
-           res.check_out_time::text AS check_out_time,
            rr.check_out::text AS check_out
       FROM guesthub.reservation_rooms rr
       JOIN guesthub.reservations res ON res.id = rr.reservation_id AND res.tenant_id = rr.tenant_id
@@ -271,8 +254,6 @@ const toStay = (r: Record<string, unknown>): StayRow => ({
   status: r.status as string,
   expectedArrival: hhmm((r.expected_arrival_time as string) ?? null),
   checkOut: r.check_out as DateOnly,
-  checkInTime: hhmm((r.check_in_time as string) ?? null),
-  checkOutTime: hhmm((r.check_out_time as string) ?? null),
 });
 
 export async function getDashboardData(tenantId: string, today: DateOnly): Promise<DashboardData> {
@@ -652,40 +633,11 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
   const arrivals = arrivalRows.map(toStay);
   const departures = departureRows.map(toStay);
 
-  // agd — assembled from the rows ALREADY fetched, no extra query. The design
-  // also lists "חיוב" (scheduled charge stages — dropped with migration 078,
-  // no source exists) and "משימה" (only tasks WITH a target hour — the table
-  // has due_date but no hour column, so the set is empty by construction).
-  // Departures before arrivals on an equal minute: the room empties first.
-  const agenda: AgendaItem[] = [
-    ...departures.map((d) => ({
-      key: `dep-${d.rrId}`,
-      time: d.checkOutTime ?? "11:00",
-      kind: "departure" as const,
-      title: d.guestName,
-      sub: d.roomNumber ? `חדר ${d.roomNumber}` : null,
-      reservationId: d.reservationId,
-    })),
-    ...arrivals.map((a) => ({
-      key: `arr-${a.rrId}`,
-      time: a.expectedArrival ?? a.checkInTime ?? "15:00",
-      kind: "arrival" as const,
-      title: a.guestName,
-      sub: a.roomNumber ? `חדר ${a.roomNumber}` : null,
-      reservationId: a.reservationId,
-    })),
-  ].sort(
-    (x, y) =>
-      x.time.localeCompare(y.time) ||
-      (x.kind === y.kind ? 0 : x.kind === "departure" ? -1 : 1),
-  );
-
   return {
     stuck: {
       count: stuckRows[0]?.c ?? 0,
       oldestHours: (stuckRows[0]?.c ?? 0) > 0 ? (stuckRows[0]?.oldest_hours ?? 0) : null,
     },
-    agenda,
     issues: issueRows.map((r) => ({
       taskId: r.task_id as string,
       title: (r.title as string) || "תקלה",
