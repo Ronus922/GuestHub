@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Icon } from "@/components/shared/Icon";
 import { formatVatRate, includedVatForReservation } from "@/lib/vat";
 import { formatBalance } from "@/lib/inventory-rules";
 import { spreadTotalOverNights, type DiscountMode, type PriceMode } from "@/lib/pricing/totals";
@@ -298,33 +299,52 @@ export function BalanceBoxes({
 // ---- currency selector (mock: מטבע ₪ ILS · $ USD · € EUR) ----
 const CURRENCY_SIGNS: Record<string, string> = { ILS: "₪", USD: "$", EUR: "€", GBP: "£" };
 
-// ---- conditional payment-method windows (both MDs: ביט/פייבוקס → שדה מספר
-// עסקה/אסמכתא (לא חובה); העברה בנקאית → בנק, סניף, מספר חשבון; מזומן/PayPal →
-// ללא חלון נוסף). GRAPHIC SHELL: the values live in local state only.
-// TODO(wire-up): persist the reference / bank details with the payment.
-// Method keys are tenant-defined lookup_items (an operator-added פייבוקס may
-// carry a generated key), so the match falls back to the visible label.
+// ---- conditional payment-method windows. מזומן → no block at all (the
+// callers also hide the card box for every non-credit method); ביט/פייבוקס/
+// אפליקציה → a single optional "מספר אישור" field; העברה בנקאית → a block in
+// the card-box style (בנק, סניף, מס' חשבון, שם בעל החשבון prefilled from the
+// guest name); צ'ק → שם הבנק, סניף, מספר חשבון, מספר צ'ק.
+// GRAPHIC SHELL: the values live in local state only.
+// TODO(wire-up): persist the reference / bank / cheque details with the payment.
+// Method keys are tenant-defined lookup_items (an operator-added פייבוקס or
+// אפליקציה may carry a generated key), so the match falls back to the visible
+// label — a method added later in Settings picks its window up automatically.
 export function PaymentMethodExtras({
   methodKey,
   methodLabel,
+  guestName,
 }: {
   methodKey: string;
   methodLabel?: string;
+  guestName?: string;
 }) {
   const [reference, setReference] = useState("");
   const [bank, setBank] = useState("");
   const [branch, setBranch] = useState("");
   const [account, setAccount] = useState("");
+  const [chequeNo, setChequeNo] = useState("");
+  // שם בעל החשבון — prefilled from the guest name typed in the guest step and
+  // editable; once edited by hand, later guest-name changes never overwrite it
+  const [holder, setHolder] = useState(guestName ?? "");
+  const holderTouched = useRef(false);
+  useEffect(() => {
+    if (!holderTouched.current) setHolder(guestName ?? "");
+  }, [guestName]);
   const label = methodLabel ?? "";
   const isRefMethod =
-    methodKey === "bit" || methodKey === "paybox" || label === "ביט" || label === "פייבוקס";
+    methodKey === "bit" ||
+    methodKey === "paybox" ||
+    label === "ביט" ||
+    label === "פייבוקס" ||
+    label === "אפליקציה";
   const isBankTransfer = methodKey === "bank_transfer" || label === "העברה בנקאית";
+  const isCheque = methodKey === "cheque" || methodKey === "check" || /צ['׳]ק/.test(label);
   if (isRefMethod) {
     return (
       <div className="bw-grid2 mt-4">
         <label className="field">
           <span className="field-label">
-            מספר עסקה / אסמכתא <span className="field-hint">(לא חובה)</span>
+            מספר אישור <span className="field-hint">(לא חובה)</span>
           </span>
           <input
             className="field-input ltr-num"
@@ -338,29 +358,93 @@ export function PaymentMethodExtras({
   }
   if (isBankTransfer) {
     return (
-      <div className="bw-grid3 mt-4">
-        <label className="field">
-          <span className="field-label">בנק</span>
-          <input className="field-input" value={bank} onChange={(e) => setBank(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="field-label">סניף</span>
-          <input
-            className="field-input ltr-num"
-            dir="ltr"
-            value={branch}
-            onChange={(e) => setBranch(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">מספר חשבון</span>
-          <input
-            className="field-input ltr-num"
-            dir="ltr"
-            value={account}
-            onChange={(e) => setAccount(e.target.value)}
-          />
-        </label>
+      <div className="bw-metabox">
+        <div className="bw-cc-top">
+          <Icon name="finance" size={20} />
+          פרטי העברה בנקאית
+        </div>
+        <div className="bw-grid2">
+          <label className="field">
+            <span className="field-label">בנק</span>
+            <input className="field-input" value={bank} onChange={(e) => setBank(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">סניף</span>
+            <input
+              className="field-input ltr-num"
+              dir="ltr"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="bw-grid2 mt-4">
+          <label className="field">
+            <span className="field-label">מס׳ חשבון</span>
+            <input
+              className="field-input ltr-num"
+              dir="ltr"
+              value={account}
+              onChange={(e) => setAccount(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">שם בעל החשבון</span>
+            <input
+              className="field-input"
+              value={holder}
+              onChange={(e) => {
+                holderTouched.current = true;
+                setHolder(e.target.value);
+              }}
+            />
+          </label>
+        </div>
+      </div>
+    );
+  }
+  if (isCheque) {
+    return (
+      <div className="bw-metabox">
+        <div className="bw-cc-top">
+          <Icon name="documents" size={20} />
+          פרטי צ׳ק
+        </div>
+        <div className="bw-grid2">
+          <label className="field">
+            <span className="field-label">שם הבנק</span>
+            <input className="field-input" value={bank} onChange={(e) => setBank(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">סניף</span>
+            <input
+              className="field-input ltr-num"
+              dir="ltr"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="bw-grid2 mt-4">
+          <label className="field">
+            <span className="field-label">מספר חשבון</span>
+            <input
+              className="field-input ltr-num"
+              dir="ltr"
+              value={account}
+              onChange={(e) => setAccount(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">מספר צ׳ק</span>
+            <input
+              className="field-input ltr-num"
+              dir="ltr"
+              value={chequeNo}
+              onChange={(e) => setChequeNo(e.target.value)}
+            />
+          </label>
+        </div>
       </div>
     );
   }

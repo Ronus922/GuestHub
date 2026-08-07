@@ -13,7 +13,7 @@ import {
 import { BookingDocuments } from "./BookingDocuments";
 import { normalizePan, parseExpiry } from "@/lib/card-rules";
 import { statusTintPalette } from "@/lib/colors";
-import { paymentTriplet } from "@/lib/status-colors";
+import { paymentTriplet, STATUS_COLORS } from "@/lib/status-colors";
 import {
   createReservationAction,
   searchGuestsAction,
@@ -1183,35 +1183,40 @@ export function BookingPanel({
                     </b>
                   </Field>
                 </div>
-                {/* conditional method windows (MD ש'26): ביט/פייבוקס → אסמכתא;
-                    העברה בנקאית → בנק/סניף/חשבון. keyed so switching methods
-                    starts the shell fields clean */}
+                {/* conditional method windows: ביט/פייבוקס/אפליקציה → מספר
+                    אישור; העברה בנקאית → בנק/סניף/חשבון/בעל החשבון; צ'ק →
+                    בנק/סניף/חשבון/מספר צ'ק. keyed so switching methods starts
+                    the shell fields clean */}
                 <PaymentMethodExtras
                   key={method}
                   methodKey={method}
                   methodLabel={paymentMethods.find((m) => m.key === method)?.label}
+                  guestName={guestFullName}
                 />
-                {/* manual card entry (D77 §15) — the area is always visible but
-                    activates (white/enabled/focusable) ONLY when the selected
-                    payment method is credit card; otherwise grey + disabled */}
-                {canSaveCard ? (
-                  <CardFields
-                    value={cc}
-                    showErrors={showErrors}
-                    onChange={(updater) =>
-                      setCc((prev) => {
-                        const next = updater(prev);
-                        if (next.holder !== prev.holder) holderTouched.current = true;
-                        return next;
-                      })
-                    }
-                    chargeAmount={Math.max(0, total - paid)}
-                    disabled={method !== "credit_card"}
-                    showSaveMark
-                  />
-                ) : (
-                  <p className="field-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
-                )}
+                {/* the card box renders ONLY while אמצעי תשלום = כרטיס אשראי
+                    (MD ש'115 + this PR's prompt: for every other method —
+                    including מזומן — the block is hidden entirely, not shown
+                    disabled). Switching away clears the draft (§15 above), so
+                    nothing survives hidden. */}
+                {method === "credit_card" &&
+                  (canSaveCard ? (
+                    <CardFields
+                      value={cc}
+                      showErrors={showErrors}
+                      onChange={(updater) =>
+                        setCc((prev) => {
+                          const next = updater(prev);
+                          if (next.holder !== prev.holder) holderTouched.current = true;
+                          return next;
+                        })
+                      }
+                      chargeAmount={Math.max(0, total - paid)}
+                      disabled={method !== "credit_card"}
+                      showSaveMark
+                    />
+                  ) : (
+                    <p className="field-hint mt-4">אין הרשאה לשמירת פרטי כרטיס אשראי</p>
+                  ))}
               </BookingCard>
             </>
           )}
@@ -1506,12 +1511,16 @@ export function PayChip({
   title?: string;
   onClick?: () => void;
 }) {
-  const t = paymentTriplet(state);
+  // "שולם חלקית" wears the approved ORANGE (approval) family inside the
+  // booking windows — the MD paints it כתום (הקמה ש'111); the global §3.1
+  // partial (green) is untouched on every other screen. LOCAL variant only:
+  // the tokens still come from status-colors, nothing is re-typed here.
+  const t = state === "partial" ? STATUS_COLORS.approval : paymentTriplet(state);
   // "ממתין לאישור" is BLUE in the booking windows (both MDs: הקמה ש'111 —
   // "(כחול)"; עריכה ש'43 — "אותם צבעים כמו בהקמה"): the canonical brand chip,
   // not the shared pending→approval orange (which the calendar keeps).
   const chipOn = state === "pending" ? "chip-brand" : t.chip;
-  const dotOff = state === "pending" ? "var(--brand)" : t.dot;
+  const dot = state === "pending" ? "var(--brand)" : t.dot;
   return (
     <button
       type="button"
@@ -1519,9 +1528,11 @@ export function PayChip({
       aria-pressed={on}
       disabled={disabled}
       title={title}
+      // תגית נבחרת — מסגרת בצבע הנקודה שלה (the demo's acceptance criterion)
+      style={on ? { borderColor: dot } : undefined}
       onClick={onClick}
     >
-      <span className="dot" style={on ? undefined : { background: dotOff }} />
+      <span className="dot" style={on ? undefined : { background: dot }} />
       {label}
     </button>
   );
@@ -1539,8 +1550,11 @@ const PAYMENT_LABEL: Record<PaymentState, string> = {
 };
 
 export function PaymentBadge({ state }: { state: PaymentState }) {
+  // the same local partial→orange mapping as PayChip above (MD: כתום), so the
+  // rail badge and the chips row can never disagree inside the windows
+  const t = state === "partial" ? STATUS_COLORS.approval : paymentTriplet(state);
   return (
-    <span className={`chip ${paymentTriplet(state).chip}`}>
+    <span className={`chip ${t.chip}`}>
       <span className="dot" />
       {PAYMENT_LABEL[state]}
     </span>

@@ -1119,13 +1119,15 @@ export function EditReservationPanel({
                   </Field>
                 </div>
               )}
-              {/* conditional method windows (edit MD §3.3): ביט/פייבוקס →
-                  אסמכתא; העברה בנקאית → בנק/סניף/חשבון (graphic shell) */}
+              {/* conditional method windows: ביט/פייבוקס/אפליקציה → מספר אישור;
+                  העברה בנקאית → בנק/סניף/חשבון/בעל החשבון; צ'ק → בנק/סניף/
+                  חשבון/מספר צ'ק (graphic shell) */}
               {canEditNow && !replacingCard && (
                 <PaymentMethodExtras
                   key={method}
                   methodKey={method}
                   methodLabel={paymentMethods.find((m) => m.key === method)?.label}
+                  guestName={`${guest.firstName} ${guest.lastName}`.trim()}
                 />
               )}
               {/* ---- channel collection metadata (D77 §13/§14, D86): who
@@ -1196,9 +1198,12 @@ export function EditReservationPanel({
                    channel guarantee, manual entry, or the empty state. Card
                    entry is governed by the section's own mode; the payment-
                    method selector above additionally OPENS manual entry when
-                   "כרטיס אשראי" is chosen with nothing stored (D108) — it
-                   never locks or hides these fields. ---- */}
-              {showCardSection && (
+                   "כרטיס אשראי" is chosen with nothing stored (D108), and —
+                   per this PR's prompt — the whole block is HIDDEN while a
+                   non-card method is drafted in the adjustment row (no method
+                   drafted keeps the stored card visible). The fields are never
+                   disabled by the selector. ---- */}
+              {showCardSection && (!method || method === "credit_card") && (
                 <>
                   {cardError && (
                     <p role="alert" className="mb-2 rounded-xl bg-status-danger-050 px-4 py-2.5 text-sm font-semibold text-status-danger">
