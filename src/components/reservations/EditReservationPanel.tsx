@@ -1319,7 +1319,7 @@ export function EditReservationPanel({
 
             {/* מסמכים להזמנה (edit MD §3.4) — the shared documents shell;
                 TODO(wire-up): load stored booking_documents by booking_id */}
-            <BookingCard icon="documents" title="מסמכים להזמנה">
+            <BookingCard icon="folder" title="מסמכים להזמנה">
               <BookingDocuments />
             </BookingCard>
 

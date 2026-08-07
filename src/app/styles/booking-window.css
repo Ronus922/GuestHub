@@ -806,26 +806,38 @@
    SHELL: rows exist only in local component state.
    TODO(wire-up): booking_documents persistence + loading.
    ============================================================ */
+/* the demo screenshot (booking-docs-step): a tall light dropzone with a
+   periwinkle dashed frame, a centered blue upload icon, a bold ink main line
+   and a muted sub-line. Values not measurable off the screenshot stay on the
+   canonical tokens (documented in the PR). */
 .bw-drop {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 26px 20px;
-  border: 1.5px dashed var(--line);
-  border-radius: var(--r-md);
+  padding: 44px 20px;
+  border: 1.5px dashed var(--brand-line);
+  border-radius: var(--r-lg);
   background: var(--field-bg);
-  color: var(--muted);
-  font-size: 13.5px;
-  font-weight: 600;
+  color: var(--brand); /* the upload icon */
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.bw-drop-main {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.bw-drop-sub {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
 }
 .bw-drop:hover,
 .bw-drop.drag {
   border-color: var(--brand);
   background: var(--brand-soft);
-  color: var(--brand);
 }
 .bw-doc-list {
   display: flex;
@@ -836,28 +848,42 @@
 .bw-doc {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 11px 13px;
+  gap: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
 }
+/* the demo's file-type tag: a tinted rounded square (image=bluish, PDF=reddish) */
 .bw-doc-ic {
   flex: none;
+  /* ds-allow: 48px tag square as measured off the demo screenshot (booking-docs-step) */
+  width: 48px;
+  height: 48px; /* ds-allow: the same 48px demo tag square */
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .bw-doc-ic.pdf {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, #fff);
 }
 .bw-doc-ic.img {
   color: var(--brand);
+  background: var(--brand-soft);
 }
-/* file base-name hugs the RIGHT (RTL start), extension hidden (MD).
-   A plain-text button: clicking the row name opens the viewer. */
-.bw-doc-name {
+/* the demo stacks the row text: bold name over a muted size sub-line, both
+   hugging the RIGHT (RTL start); extension hidden (MD). */
+.bw-doc-txt {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* a plain-text button: clicking the row name opens the viewer */
+.bw-doc-name {
   min-width: 0;
   border: none;
   background: none;
@@ -865,7 +891,7 @@
   font-family: inherit;
   cursor: pointer;
   text-align: start;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--ink);
   overflow: hidden;
@@ -873,36 +899,35 @@
   white-space: nowrap;
 }
 .bw-doc-name-input {
-  flex: 1;
   min-width: 0;
   border: none;
   border-bottom: 1.5px solid var(--brand);
   background: transparent;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--ink);
   outline: none;
   padding: 0 2px;
 }
 .bw-doc-size {
-  flex: none;
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 600;
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+  text-align: start;
 }
 /* three ADJACENT plain icons (no buttons, no text — MD) at the row's left */
 .bw-doc-acts {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
 }
 .bw-doc-act {
   border: none;
   background: none;
-  padding: 4px;
+  padding: 8px;
   cursor: pointer;
   color: var(--muted);
   display: flex;
