@@ -35,6 +35,7 @@ import { InHouseWindow } from "./windows/InHouseWindow";
 import { HousekeepingWindow } from "./windows/HousekeepingWindow";
 import { AlertsWindow } from "./windows/AlertsWindow";
 import { StuckWindow } from "./windows/StuckWindow";
+import { PayWindow } from "./windows/PayWindow";
 import { AgendaWindow } from "./windows/AgendaWindow";
 import { IssuesWindow } from "./windows/IssuesWindow";
 import { RevenueWindow } from "./windows/RevenueWindow";
@@ -524,6 +525,11 @@ function liveContent(
       return {
         subtitle: data.stuck.count > 0 ? `${data.stuck.count} תקועות` : undefined,
         body: <StuckWindow stuck={data.stuck} />,
+      };
+    case "pay":
+      return {
+        subtitle: data.payRows.length > 0 ? `${data.payRows.length} ממתינות` : undefined,
+        body: <PayWindow rows={data.payRows} approvedId={data.approvedWorkflowStatusId} />,
       };
     case "agd": {
       const next = data.agenda.find((it) => it.time >= now);
