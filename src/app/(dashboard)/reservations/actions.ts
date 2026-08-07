@@ -12,6 +12,7 @@ import {
   INVENTORY_BLOCKING_STATUSES,
 } from "@/lib/inventory";
 import { listAvailableRooms, type AvailableRoom } from "@/lib/reservations/available-rooms";
+import { moveAttachedDocumentFiles } from "@/lib/reservations/documents";
 import {
   priceReservationStays,
   StayPricingError,
@@ -400,6 +401,17 @@ export async function createReservationAction(
       // paid_amount/balance derive from the payments LEDGER (D51)
       await recomputePaymentAggregates(tx, actor.tenantId, res.id);
 
+      // attach the wizard's pre-created documents (booking_id NULL) to this
+      // reservation — tenant-scoped, unattached + live rows only. The disk
+      // move out of bookings/pending/ happens AFTER the transaction commits.
+      if (input.documentIds && input.documentIds.length > 0) {
+        await tx`
+          UPDATE guesthub.booking_documents
+          SET booking_id = ${res.id}
+          WHERE tenant_id = ${actor.tenantId} AND id = ANY(${input.documentIds})
+            AND booking_id IS NULL AND deleted_at IS NULL`;
+      }
+
       await writeAudit(actor, {
         entityType: "reservation",
         entityId: res.id,
@@ -442,6 +454,13 @@ export async function createReservationAction(
       }
       return { reservationId: res.id, reservationNumber: number };
     });
+
+    // best-effort disk move of the freshly-attached documents (fs is not
+    // transactional; a failure leaves the rows on their pending paths, still
+    // fully servable — moveAttachedDocumentFiles logs and never throws)
+    if (input.documentIds && input.documentIds.length > 0) {
+      await moveAttachedDocumentFiles(sql, actor.tenantId, result.reservationId, input.documentIds);
+    }
 
     revalidatePath("/calendar");
     revalidatePath("/reservations");

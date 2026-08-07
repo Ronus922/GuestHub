@@ -1317,10 +1317,11 @@ export function EditReservationPanel({
               )}
             </BookingCard>
 
-            {/* מסמכים להזמנה (edit MD §3.4) — the shared documents shell;
-                TODO(wire-up): load stored booking_documents by booking_id */}
+            {/* מסמכים להזמנה (edit MD §3.4) — WIRED: loads the stored
+                booking_documents on open; upload / rename / delete act
+                against the reservation immediately */}
             <BookingCard icon="folder" title="מסמכים להזמנה">
-              <BookingDocuments />
+              <BookingDocuments bookingId={detail.id} />
             </BookingCard>
 
             {/* notes + expected arrival time — separate fields; the arrival

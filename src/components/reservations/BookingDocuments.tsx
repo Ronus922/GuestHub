@@ -1,32 +1,43 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
+import {
+  deleteBookingDocumentAction,
+  listBookingDocumentsAction,
+  renameBookingDocumentAction,
+  type BookingDocumentView,
+} from "@/app/(dashboard)/reservations/document-actions";
 
 // ============================================================
 // מסמכים להזמנה — the documents block both booking MDs order (הקמת הזמנה
-// §"שלב 4 — מסמכים" ש'28-33; עריכת הזמנה §3.4 ש'49-53): a drag&drop /
-// click-to-pick zone (JPG/PNG/PDF only), a row per document — type glyph
-// (PDF=danger, image=brand), base name hugging the right WITHOUT its
-// extension, size, and exactly three adjacent plain icons (pencil = inline
-// rename that preserves the extension, eye = view, trash = remove) — plus an
-// internal view-only modal (no download affordance).
+// §"שלב 4 — מסמכים" ש'28-33; עריכת הזמנה §3.4 ש'49-53), WIRED to real
+// storage: rows in guesthub.booking_documents, files in the durable uploads
+// store, serving through the authenticated /uploads/bookings route.
 //
-// GRAPHIC SHELL ONLY: rows live in local component state for the lifetime of
-// the panel; nothing is uploaded, fetched or persisted.
-// TODO(wire-up): booking_documents storage + loading (the table does not
-// exist yet) — save picked files on the reservation and list stored ones.
+// bookingId === null → the create wizard: every pick uploads IMMEDIATELY
+// (booking_id NULL, file under bookings/pending/); the panel collects the ids
+// via onIdsChange and attaches them inside the creation transaction. A
+// discarded wizard soft-deletes its orphans (the panel's discard path).
+// bookingId set → the edit window: the stored documents load on mount, and
+// upload / rename / delete act against the reservation instantly.
+//
+// Rename edits the BASE name only — the extension is enforced server-side.
+// Delete is SOFT (deleted_at); nothing here ever removes a disk file.
 // ============================================================
 
-type LocalDoc = {
+type DocRow = {
   id: string;
-  /** base name (editable inline); the extension is kept behind the scenes */
+  /** display base name (editable inline); the extension is server-owned */
   base: string;
   ext: string;
   size: number;
   kind: "pdf" | "image";
-  /** client-side object URL for the view-only modal — never sent anywhere */
+  /** preview URL: an object URL for fresh picks, the authenticated /uploads URL for stored rows */
   url: string;
+  /** object URLs are client memory and must be revoked */
+  isObjectUrl: boolean;
 };
 
 const ACCEPT = ".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf";
@@ -42,54 +53,132 @@ function fmtSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-export function BookingDocuments() {
-  const [docs, setDocs] = useState<LocalDoc[]>([]);
+function viewToRow(v: BookingDocumentView): DocRow {
+  const { base, ext } = splitName(v.fileName);
+  return {
+    id: v.id,
+    base,
+    ext,
+    size: v.sizeBytes,
+    kind: v.kind,
+    url: v.url ?? "",
+    isObjectUrl: false,
+  };
+}
+
+export function BookingDocuments({
+  bookingId = null,
+  onIdsChange,
+}: {
+  /** the reservation the documents belong to; null in the create wizard (pre-create uploads) */
+  bookingId?: string | null;
+  /** reports the CURRENT document ids — the wizard's attach + discard bookkeeping */
+  onIdsChange?: (ids: string[]) => void;
+}) {
+  const [docs, setDocs] = useState<DocRow[]>([]);
   const [drag, setDrag] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [viewId, setViewId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const docsRef = useRef<LocalDoc[]>([]);
+  const docsRef = useRef<DocRow[]>([]);
   docsRef.current = docs;
 
   // object URLs are client memory — release them when the block unmounts
   useEffect(() => {
     return () => {
-      for (const d of docsRef.current) URL.revokeObjectURL(d.url);
+      for (const d of docsRef.current) if (d.isObjectUrl) URL.revokeObjectURL(d.url);
     };
   }, []);
 
+  // the edit window opens on a reservation that may already carry documents
+  useEffect(() => {
+    if (!bookingId) return;
+    let alive = true;
+    void listBookingDocumentsAction(bookingId).then((res) => {
+      if (!alive) return;
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      setDocs((res.data ?? []).map(viewToRow));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [bookingId]);
+
+  useEffect(() => {
+    onIdsChange?.(docs.map((d) => d.id));
+  }, [docs, onIdsChange]);
+
   const addFiles = (files: FileList | null) => {
-    if (!files) return;
-    const next: LocalDoc[] = [];
-    for (const f of Array.from(files)) {
-      const isPdf = f.type === "application/pdf";
-      const isImg = f.type === "image/jpeg" || f.type === "image/png";
-      if (!isPdf && !isImg) continue; // JPG/PNG/PDF only (MD)
-      const { base, ext } = splitName(f.name);
-      next.push({
-        id: Math.random().toString(36).slice(2, 10),
-        base,
-        ext,
-        size: f.size,
-        kind: isPdf ? "pdf" : "image",
-        url: URL.createObjectURL(f),
-      });
-    }
-    if (next.length) setDocs((all) => [...all, ...next]);
+    if (!files || files.length === 0 || uploading) return;
+    const picked = Array.from(files);
+    setUploading(true);
+    void (async () => {
+      try {
+        for (const f of picked) {
+          const isPdf = f.type === "application/pdf";
+          const isImg = f.type === "image/jpeg" || f.type === "image/png";
+          if (!isPdf && !isImg) continue; // JPG/PNG/PDF only (MD)
+          const fd = new FormData();
+          fd.append("file", f);
+          if (bookingId) fd.append("bookingId", bookingId);
+          const resp = await fetch("/api/reservations/documents", { method: "POST", body: fd });
+          const json = (await resp.json().catch(() => null)) as
+            | { document?: { id: string; file_name: string; mime_type: string; size_bytes: number }; error?: string }
+            | null;
+          if (!resp.ok || !json?.document) {
+            toast.error(json?.error ?? "העלאת המסמך נכשלה");
+            continue;
+          }
+          const { base, ext } = splitName(json.document.file_name);
+          const row: DocRow = {
+            id: json.document.id,
+            base,
+            ext,
+            size: json.document.size_bytes,
+            kind: isPdf ? "pdf" : "image",
+            // the freshly-picked file previews from client memory — no round-trip
+            url: URL.createObjectURL(f),
+            isObjectUrl: true,
+          };
+          setDocs((all) => [...all, row]);
+        }
+      } finally {
+        setUploading(false);
+      }
+    })();
   };
 
   const remove = (id: string) => {
-    const doc = docs.find((d) => d.id === id);
-    if (doc) URL.revokeObjectURL(doc.url);
-    setDocs((all) => all.filter((d) => d.id !== id));
-    if (viewId === id) setViewId(null);
+    void deleteBookingDocumentAction(id).then((res) => {
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      const doc = docsRef.current.find((d) => d.id === id);
+      if (doc?.isObjectUrl) URL.revokeObjectURL(doc.url);
+      setDocs((all) => all.filter((d) => d.id !== id));
+      setViewId((v) => (v === id ? null : v));
+    });
   };
 
   const rename = (id: string, base: string) => {
-    const clean = base.trim();
-    // the rename edits the BASE name only — the extension cannot change (MD)
-    if (clean) setDocs((all) => all.map((d) => (d.id === id ? { ...d, base: clean } : d)));
     setRenamingId(null);
+    const clean = base.trim();
+    const current = docsRef.current.find((d) => d.id === id);
+    if (!clean || !current || clean === current.base) return;
+    void renameBookingDocumentAction({ docId: id, base: clean }).then((res) => {
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+      // the server owns the final name (extension enforced there)
+      const next = splitName(res.data?.fileName ?? `${clean}${current.ext}`);
+      setDocs((all) => all.map((d) => (d.id === id ? { ...d, base: next.base, ext: next.ext } : d)));
+    });
   };
 
   const viewed = viewId ? docs.find((d) => d.id === viewId) : null;
@@ -110,6 +199,7 @@ export function BookingDocuments() {
       <div
         role="button"
         tabIndex={0}
+        aria-busy={uploading}
         className={`bw-drop${drag ? " drag" : ""}`}
         onClick={() => inputRef.current?.click()}
         onKeyDown={(e) => {
@@ -127,13 +217,11 @@ export function BookingDocuments() {
         }}
       >
         <Icon name="upload" size={36} />
-        <span className="bw-drop-main">גררו לכאן מסמכים או לחצו לבחירה</span>
-        {/* the demo's sub-line, with its saved-with-the-reservation promise
-            swapped for the SHELL truth (no persistence yet) — the demo text
-            returns at wire-up */}
+        <span className="bw-drop-main">
+          {uploading ? "מעלה…" : "גררו לכאן מסמכים או לחצו לבחירה"}
+        </span>
         <span className="bw-drop-sub">
-          תמונות (JPG/PNG) או PDF · שמירת המסמכים על ההזמנה תחובר בהמשך — קבצים
-          שנבחרו מוצגים בינתיים בחלון זה בלבד
+          תמונות (JPG/PNG) או PDF · המסמכים נשמרים תמיד יחד עם ההזמנה
         </span>
       </div>
 
@@ -144,9 +232,6 @@ export function BookingDocuments() {
               <span className={`bw-doc-ic ${d.kind === "pdf" ? "pdf" : "img"}`}>
                 <Icon name={d.kind === "pdf" ? "pdf" : "image"} size={26} />
               </span>
-              {/* the demo stacks the row text: bold name over a muted sub-line
-                  (size only — the demo's "· שמור בהזמנה" is a persistence
-                  promise the shell must not make; back at wire-up) */}
               <div className="bw-doc-txt">
                 {renamingId === d.id ? (
                   <input
@@ -174,7 +259,9 @@ export function BookingDocuments() {
                     {d.base}
                   </button>
                 )}
-                <span className="bw-doc-size ltr-num">{fmtSize(d.size)}</span>
+                <span className="bw-doc-size">
+                  <bdi className="ltr-num">{fmtSize(d.size)}</bdi> · שמור בהזמנה
+                </span>
               </div>
               <span className="bw-doc-acts">
                 <button
@@ -212,7 +299,7 @@ export function BookingDocuments() {
 
       {/* internal viewer — a centered view-only modal (the MD's explicit
           order for this block); no download affordance is rendered */}
-      {viewed && (
+      {viewed && viewed.url && (
         <div className="bw-docv" role="dialog" aria-label={`צפייה: ${viewed.base}`}>
           <div className="bw-docv-box">
             <div className="bw-docv-hd">
