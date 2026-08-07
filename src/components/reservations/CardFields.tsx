@@ -20,7 +20,6 @@ import {
   type StoredCardInput,
 } from "@/lib/card-rules";
 import {
-  chargeReservationCardAction,
   recordExternalPaymentAction,
   revealReservationCardAction,
   type StoredCardMeta,
@@ -135,6 +134,8 @@ export function CardFields({
   onPaymentRecorded,
   deleting = false,
   showErrors = false,
+  lastCharge = null,
+  showSaveMark = false,
 }: {
   /** red the empty required card fields when a partial card blocks create */
   showErrors?: boolean;
@@ -169,11 +170,18 @@ export function CardFields({
   onDelete?: () => void;
   onPaymentRecorded?: (p: RecordedPayment) => void;
   deleting?: boolean;
+  /** the last recorded credit-card payment (edit window) — turns the
+   *  "סלוק עכשיו" button into the MD's red already-charged state */
+  lastCharge?: { amount: number; at: string | null } | null;
+  /** wizard only (MD ש'116): render the "שמור פרטי כרטיס" affordance */
+  showSaveMark?: boolean;
 }) {
   const [revealed, setRevealed] = useState<RevealedCardInput | null>(null);
   const [revealing, startReveal] = useTransition();
-  const [charging, startCharge] = useTransition();
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // wizard "שמור פרטי כרטיס" (MD ש'116) — a local confirmation mark; the real
+  // vault save runs on create through the guarded action (existing flow)
+  const [markedSaved, setMarkedSaved] = useState(false);
 
   // "record payment collected externally" inline form (NOT a GuestHub charge)
   const [payOpen, setPayOpen] = useState(false);
@@ -192,6 +200,12 @@ export function CardFields({
       setRevealed(null);
     };
   }, [storedId]);
+
+  // the ✓ mark is per-draft: editing the card back out of a valid state
+  // (or clearing it on a method switch) withdraws the confirmation
+  useEffect(() => {
+    if (cardDraftState(value) !== "valid") setMarkedSaved(false);
+  }, [value]);
 
   // ONE view model → ONE field set. Missing values stay empty, never invented.
   const view = resolveCardView({
@@ -251,14 +265,6 @@ export function CardFields({
         return;
       }
       setRevealed(res.data);
-    });
-
-  const charge = () =>
-    startCharge(async () => {
-      if (!storedId) return;
-      const res = await chargeReservationCardAction({ cardId: storedId, amount: chargeAmount });
-      if (!res.success) toast.error(res.error);
-      else toast.success("החיוב בוצע");
     });
 
   const openPay = () => {
@@ -450,23 +456,34 @@ export function CardFields({
           )
         )}
 
-        {view.origin === "stored" && canCharge && (
-          /* live charge stays VISIBLE but DISABLED until a PSP is wired
-             (chargeReservationCardAction is fail-closed) */
-          <span className="flex items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled
-              onClick={charge}
-              title={NO_GATEWAY_MESSAGE}
-            >
-              <Icon name="finance" size={17} />
-              {charging ? "מחייב…" : `סליקה · ₪${Math.round(Math.max(0, chargeAmount)).toLocaleString()}`}
+        {/* "סלוק עכשיו · ₪<יתרה>" (both MDs) — green while a balance is
+            chargeable, disabled at 0; when a card payment is already recorded
+            (edit window) it renders the MD's RED already-charged state from
+            the REAL payments data. The click itself is a graphic shell:
+            TODO(wire-up): no PSP terminal is configured
+            (chargeReservationCardAction is fail-closed), so pressing it
+            performs nothing — the helper text says so honestly. */}
+        {(view.editable || (view.origin === "stored" && canCharge)) &&
+          (lastCharge ? (
+            <button type="button" className="btn bw-charge-done" disabled={chargeAmount <= 0}>
+              <Icon name="warning" size={17} />
+              בוצע חיוב של ₪{Math.round(lastCharge.amount).toLocaleString()}
+              {lastCharge.at ? ` ב-${lastCharge.at.slice(8, 10)}/${lastCharge.at.slice(5, 7)}/${lastCharge.at.slice(0, 4)}` : ""} · לחיצה נוספת תחייב שוב
             </button>
-            <span className="text-xs font-semibold text-muted">{NO_GATEWAY_MESSAGE}</span>
-          </span>
-        )}
+          ) : (
+            <span className="flex items-center gap-2">
+              <button
+                type="button"
+                className="btn bw-charge"
+                disabled={chargeAmount <= 0}
+                title={NO_GATEWAY_MESSAGE}
+              >
+                <Icon name="finance" size={17} />
+                סלוק עכשיו · ₪{Math.round(Math.max(0, chargeAmount)).toLocaleString()}
+              </button>
+              <span className="text-xs font-semibold text-muted">{NO_GATEWAY_MESSAGE}</span>
+            </span>
+          ))}
 
         {canRecordPayment && reservationId && !payOpen && (
           <button type="button" className="btn btn-secondary" onClick={openPay}>
@@ -501,6 +518,29 @@ export function CardFields({
           </button>
         )}
 
+        {/* wizard MD ש'116: "שמור פרטי כרטיס" — disabled until every required
+            field is filled; after the click a ✓ confirmation shows. The mark is
+            LOCAL: the actual vault save runs on create through the guarded
+            action (the existing flow) — TODO(wire-up): an immediate pre-create
+            vault save has no reservation to attach to yet. */}
+        {showSaveMark && view.editable && !entryOff && (
+          markedSaved && cardDraftState(value) === "valid" ? (
+            <span className="bw-cc-hint">
+              <Icon name="check" size={17} />
+              פרטי הכרטיס נשמרו להזמנה ✓
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={cardDraftState(value) !== "valid"}
+              onClick={() => setMarkedSaved(true)}
+            >
+              <Icon name="check" size={17} />
+              שמור פרטי כרטיס
+            </button>
+          )
+        )}
         {view.editable && !entryOff && (
           <span className="bw-cc-hint">
             <Icon name="check" size={17} />

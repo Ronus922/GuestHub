@@ -121,7 +121,7 @@
 }
 .bw-stp-line {
   position: absolute;
-  top: 21px; /* centre of the 44px step circle */
+  top: 19px; /* centre of the 40px step circle */
   inset-inline: 12.5%;
   height: 2px;
   background: var(--line);
@@ -129,7 +129,7 @@
 }
 .bw-stp-fill {
   position: absolute;
-  top: 21px;
+  top: 19px;
   inset-inline-start: 12.5%;
   height: 2px;
   background: var(--brand);
@@ -151,8 +151,10 @@
   cursor: pointer;
 }
 .bw-stp-num {
-  width: 44px;
-  height: 44px;
+  /* the wizard MD §2: 40px numbered circles (overrides the §4 44px default) */
+  width: 40px;
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'34 */
+  height: 40px;
   border-radius: 50%;
   background: var(--surface);
   border: 2px solid var(--line);
@@ -674,6 +676,45 @@
   gap: 5px;
 }
 
+/* מסך הצלחה (wizard MD ש'127) — big green ✓ + title + summary line */
+.bw-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 320px;
+  padding: 40px 26px;
+  text-align: center;
+}
+.bw-success-ic {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bw-success-t {
+  font-size: 21px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.bw-success-n {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.bw-success-s {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* footer step label (wizard) */
 .bw-ft-step {
   font-size: 13.5px;
@@ -694,6 +735,262 @@
 }
 .bw-btn-cancel:hover:not(:disabled) {
   background: var(--color-status-danger-050);
+}
+
+/* ============================================================
+   wizard header action cluster (חלון הקמת הזמנה MD §1 ש'14-15): 40px
+   buttons, white at .12, hover .24 — a SHELL cluster (TODO(wire-up): none
+   of these actions exists before the reservation is created).
+   ============================================================ */
+.bw-hd-btn {
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'14 (40px) */
+  height: 40px;
+  width: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  transition: background-color 0.15s ease;
+}
+.bw-hd-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+.bw-hd-btn:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 1px;
+}
+/* the room-closure icon — door_front with a small filled lock badge in the
+   bottom corner (MD ש'15) */
+.bw-close-room {
+  position: relative;
+  overflow: visible;
+}
+.bw-cr-badge {
+  position: absolute;
+  bottom: -3px;
+  inset-inline-end: -3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'15 (#1C2E9A) */
+  background: #1c2e9a;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* the wizard guest-search field (MD §4 ש'52): a LARGE 54px search box */
+.field-input.bw-search {
+  height: 54px;
+  font-size: 15px;
+}
+
+/* per-window "סה"כ לתשלום" amount sizes — the wizard MD says 26px (ש'107),
+   the edit MD says 24px (ש'41); both override the 21px scale value above. */
+.bw-new .bw-price-total .bw-amt {
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'107 */
+  font-size: 26px;
+}
+.bw-edit .bw-price-total .bw-amt {
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון עריכת הזמנה.md ש'41 */
+  font-size: 24px;
+}
+
+/* ============================================================
+   documents block (both MDs) — dropzone, rows, inline rename. A GRAPHIC
+   SHELL: rows exist only in local component state.
+   TODO(wire-up): booking_documents persistence + loading.
+   ============================================================ */
+.bw-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 20px;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.bw-drop:hover,
+.bw-drop.drag {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.bw-doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+.bw-doc {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.bw-doc-ic {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bw-doc-ic.pdf {
+  color: var(--danger);
+}
+.bw-doc-ic.img {
+  color: var(--brand);
+}
+/* file base-name hugs the RIGHT (RTL start), extension hidden (MD).
+   A plain-text button: clicking the row name opens the viewer. */
+.bw-doc-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: start;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bw-doc-name-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  border-bottom: 1.5px solid var(--brand);
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  outline: none;
+  padding: 0 2px;
+}
+.bw-doc-size {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+/* three ADJACENT plain icons (no buttons, no text — MD) at the row's left */
+.bw-doc-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.bw-doc-act {
+  border: none;
+  background: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  border-radius: var(--r-xs);
+}
+.bw-doc-act:hover {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.bw-doc-act.del:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+}
+
+/* the internal view-only document viewer — the MD orders a centered MODAL
+   (חלון הקמת הזמנה ש'31 / עריכה ש'53), view without download */
+.bw-docv {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(15, 23, 42, 0.55);
+}
+.bw-docv-box {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 100%);
+  max-height: 100%;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+}
+.bw-docv-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+}
+.bw-docv-bd {
+  flex: 1;
+  min-height: 240px;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--field-bg);
+  padding: 16px;
+}
+.bw-docv-bd img {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: var(--r-sm);
+}
+.bw-docv-bd iframe {
+  width: 100%;
+  height: 70vh;
+  border: none;
+}
+
+/* "סלוק עכשיו" (both MDs) — green while a balance is chargeable; the RED
+   done-state renders from a real recorded card payment (edit window). The
+   click itself is TODO(wire-up): no PSP terminal is configured. */
+.bw-charge {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+.bw-charge:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ok) 82%, var(--ink));
+  border-color: color-mix(in srgb, var(--ok) 82%, var(--ink));
+}
+.bw-charge-done {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.bw-charge-done:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 82%, var(--ink));
+  border-color: color-mix(in srgb, var(--danger) 82%, var(--ink));
 }
 
 /* payment progress (wizard step 3) — "שולם X מתוך Y" over the ok token */
@@ -720,6 +1017,29 @@
   color: var(--color-status-danger);
 }
 
+/* both booking MDs §1: rounded 18px on the RIGHT side only (inline-start in
+   RTL) — overrides the utility rounded-s-2xl on the panel itself.
+   ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'10 +
+   חלון עריכת הזמנה.md ש'10 (18px is outside the §1 radii on purpose) */
+aside.bw-win {
+  border-start-start-radius: 18px;
+  border-end-start-radius: 18px;
+}
+
+/* the X is part of the 40px header cluster both MDs order (הקמה ש'14,
+   עריכה ש'19) — scoped to the booking windows only. */
+.bw-win .dw-close {
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון עריכת הזמנה.md ש'19 (40px) */
+  height: 40px;
+  width: 40px;
+}
+
+/* wizard MD §1 ש'13: the header subtitle is white at .82 (the edit MD names
+   no value, so only the wizard overrides the canonical .75) */
+.bw-new .dw-sub {
+  color: rgba(255, 255, 255, 0.82);
+}
+
 /* the vertical divider between the header toolbar and the close X —
    the documented V2 chrome divider (1×26, white at .28) */
 .bk-tb-div {
@@ -744,10 +1064,12 @@
   align-items: center;
   gap: 6px;
 }
-/* icon button on the brand header: §4 geometry (36×36 / r10 / 20px icon) */
+/* icon button on the brand header — the edit-window MD §2 orders 40px action
+   buttons (overrides the §4 36px header geometry). */
 .bk-tb-btn {
-  height: 36px;
-  width: 36px;
+  /* ds-allow: prompts/הוראות לקלוד קוד - חלון עריכת הזמנה.md ש'19 */
+  height: 40px;
+  width: 40px;
   display: grid;
   place-items: center;
   border-radius: 10px;

@@ -7,7 +7,8 @@ import { Icon, type IconName } from "@/components/shared/Icon";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import { paymentState, formatBalance } from "@/lib/inventory-rules";
 import { computeReservationTotals, type DiscountMode, type PriceMode } from "@/lib/pricing/totals";
-import { DiscountControls, StayPriceModeControls, VatToggleRow } from "./PricingControls";
+import { DiscountControls, PaymentMethodExtras, StayPriceModeControls, VatToggleRow } from "./PricingControls";
+import { BookingDocuments } from "./BookingDocuments";
 import { normalizePan, parseExpiry, resolveCardMode } from "@/lib/card-rules";
 import { describeCancellationTier } from "@/lib/commercial/cancellation";
 import { normalizeVisibleChannel, statusTintPalette } from "@/lib/colors";
@@ -519,10 +520,13 @@ export function EditReservationPanel({
       onClose={requestClose}
       title="עריכת הזמנה"
       /* wide shell for the editor: 60% width (900–1200px), flat app-background
-         body, no title icon. Typography/spacing are the canonical tokens — this
-         panel has no scale of its own. */
-      widthClassName="bw-win w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
+         body, no title icon. bw-win scopes the booking chrome (18px corner,
+         40px X, X-hover) and bw-edit the edit-only values (24px total). */
+      widthClassName="bw-win bw-edit w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
       bodyClassName="bg-appbg p-0"
+      /* MD §1: slide from -108% in .45s cubic-bezier(.32,.72,.24,1) over the
+         rgba(15,23,42,.45)+blur overlay — the booking visual variant */
+      visualVariant="booking"
       subtitle={
         detail
           ? `נוצרה ${fmtDate(detail.created_at)}${
@@ -721,10 +725,10 @@ export function EditReservationPanel({
                 booking with a Beds24 id and the operator holds
                 reservations.channel_report. */}
             <BookingComReportsCard detail={detail} onOpen={setReportAction} />
-            {/* guest. "סטטוס שהות" (the manual lifecycle select) is RETIRED —
-                hidden product-wide and never editable; the lifecycle itself
-                still changes only through the validated quick actions
-                (check-in/out) and the cancellation flow. */}
+            {/* guest. The edit MD (§3.1) restores a "סטטוס שהות" select as a
+                DISPLAY of the real lifecycle; writing it stays exclusive to
+                the validated quick actions (check-in/out) and cancellation —
+                the select itself commits nothing (see its TODO(wire-up)). */}
             <BookingCard
               icon="employees"
               title="פרטי אורח"
@@ -746,7 +750,11 @@ export function EditReservationPanel({
                   <input className="field-input" value={guest.lastName} disabled={!canEditNow}
                     onChange={(e) => setGuest({ ...guest, lastName: e.target.value })} />
                 </Field>
-                <Field label="טלפון">
+                {/* the edit MD (ש'24) stars the phone; enforcement stays
+                    server-side truth (phone is optional there — an OTA booking
+                    may arrive without one), so the star is the MD's visual
+                    contract. TODO(wire-up): required-phone validation. */}
+                <Field label="טלפון" required>
                   <div className="bw-fld-wrap">
                     <Icon name="phone" size={17} className="bw-fi" />
                     <input className="field-input bw-ic ltr-num" dir="ltr" value={guest.phone} disabled={!canEditNow}
@@ -759,6 +767,29 @@ export function EditReservationPanel({
                     <input className="field-input bw-ic" dir="ltr" type="email" value={guest.email} disabled={!canEditNow}
                       onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
                   </div>
+                </Field>
+                <Field label="סטטוס שהות">
+                  {/* the edit MD (§3.1 ש'25) orders this select back. It shows
+                      the REAL lifecycle value; changing it is a GRAPHIC SHELL —
+                      the lifecycle still moves only through the validated quick
+                      actions (בצע צ'ק-אין/אאוט in the sidebar) and cancellation.
+                      TODO(wire-up): route a selection through those same
+                      validated actions (check:status-default stays intact). */}
+                  <select
+                    className="field-input"
+                    value={
+                      detail.status === "checked_in"
+                        ? "checked_in"
+                        : detail.status === "checked_out"
+                          ? "checked_out"
+                          : "reserved"
+                    }
+                    onChange={() => undefined}
+                  >
+                    <option value="reserved">מוזמן</option>
+                    <option value="checked_in">צ׳ק-אין</option>
+                    <option value="checked_out">צ׳ק-אאוט</option>
+                  </select>
                 </Field>
                 <Field label="מקור הזמנה">
                   <select className="field-input" value={sourceId} disabled={!canEditNow} onChange={(e) => setSourceId(e.target.value)}>
@@ -1088,6 +1119,15 @@ export function EditReservationPanel({
                   </Field>
                 </div>
               )}
+              {/* conditional method windows (edit MD §3.3): ביט/פייבוקס →
+                  אסמכתא; העברה בנקאית → בנק/סניף/חשבון (graphic shell) */}
+              {canEditNow && !replacingCard && (
+                <PaymentMethodExtras
+                  key={method}
+                  methodKey={method}
+                  methodLabel={paymentMethods.find((m) => m.key === method)?.label}
+                />
+              )}
               {/* ---- channel collection metadata (D77 §13/§14, D86): who
                    collects, which method, the channel's own reservation code.
                    NO card data lives here — brand/number/expiry/holder belong to
@@ -1210,6 +1250,12 @@ export function EditReservationPanel({
                       )
                     }
                     deleting={cardBusy}
+                    /* edit MD §3.5 (ש'45): a recorded card payment paints the
+                       "סלוק עכשיו" button red already on open — real data only */
+                    lastCharge={(() => {
+                      const cardPay = detail.payments.find((p) => p.method === "credit_card");
+                      return cardPay ? { amount: cardPay.amount, at: cardPay.paid_at } : null;
+                    })()}
                   />
                   {/* the guarded save action — only reachable from the two
                       EDITABLE modes (explicit manual replacement / genuinely
@@ -1266,6 +1312,12 @@ export function EditReservationPanel({
               )}
             </BookingCard>
 
+            {/* מסמכים להזמנה (edit MD §3.4) — the shared documents shell;
+                TODO(wire-up): load stored booking_documents by booking_id */}
+            <BookingCard icon="documents" title="מסמכים להזמנה">
+              <BookingDocuments />
+            </BookingCard>
+
             {/* notes + expected arrival time — separate fields; the arrival
                 time is never folded into the notes text (D80 §6). Notes sit
                 ABOVE the cancellation policy (complaint 11 / SPEC step 4). */}
@@ -1289,9 +1341,8 @@ export function EditReservationPanel({
                   )}
                 </Field>
               </div>
-              {/* enlarged notes — ~2× a standard multiline field, per the
-                  approved layout; do not shrink back */}
-              <textarea className="field-input min-h-[184px]" value={notes} disabled={!canEditNow}
+              {/* the edit MD (§3.5 ש'56) sizes the notes at ~150px */}
+              <textarea className="field-input min-h-[150px]" value={notes} disabled={!canEditNow}
                 placeholder="בקשות מיוחדות…" onChange={(e) => setNotes(e.target.value)} />
             </BookingCard>
 

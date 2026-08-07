@@ -190,6 +190,12 @@ const ICONS = {
   "smart-toy": "smart_toy",
   donut: "donut_large",
   "night-shelter": "night_shelter",
+  // --- booking windows (prompts/הוראות לקלוד קוד — שני חלונות ההזמנה) — the
+  // three ligatures the wizard header + documents block need: the room-closure
+  // door, the PDF row/type glyph, and the upload dropzone glyph.
+  "door-front": "door_front",
+  pdf: "picture_as_pdf",
+  upload: "upload_file",
 } as const;
 
 export type IconName = keyof typeof ICONS;
