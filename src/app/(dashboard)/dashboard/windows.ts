@@ -84,6 +84,13 @@ export const WINDOWS = [
     empty: "כאן יופיעו ההזמנות והתשלומים שדורשים התייחסות.",
   },
   {
+    id: "pay",
+    defaultCol: "r",
+    icon: "credit-card",
+    title: "כרטיסי אשראי לחיוב",
+    empty: "כאן יופיעו ההזמנות שהגיע מועדן וטרם אושרה עסקתן.",
+  },
+  {
     id: "stk",
     defaultCol: "r",
     icon: "warning",
@@ -157,7 +164,7 @@ export type DashboardPreferences = {
 // id, or a right-column window listed under `l`.
 const DEFAULT_ORDER = {
   l: ["arr", "rev", "hk", "agd"],
-  r: ["alr", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
+  r: ["alr", "pay", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
 } as const satisfies { l: readonly WindowOf<"l">[]; r: readonly WindowOf<"r">[] };
 
 // COMPILE-TIME §8.1: every registered window must appear in DEFAULT_ORDER.

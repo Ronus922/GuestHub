@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { sourceColor } from "@/lib/colors";
 import { addDays, formatDayMonth, type DateOnly } from "@/lib/dates";
 import { connectionHealth } from "@/lib/channel/connection-health";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
@@ -105,6 +106,24 @@ export type AgendaItem = {
   reservationId: string;
 };
 
+/** pay — a reservation whose check-in has arrived and whose deal was not yet
+    approved (D89: workflow key 'approved' IS the paid marker) */
+export type PayRow = {
+  reservationId: string;
+  guestName: string;
+  /** resolved SERVER-side: the source's own hex, or the palette at the row's
+      taxonomy rank — the same resolution the sources donut renders */
+  sourceDotColor: string;
+  /** first room of the booking — a doorplate, not an inventory claim */
+  roomNumber: string | null;
+  checkIn: DateOnly;
+  /** THE canonical balance (D52 §6): total − paid, not floored — negative is
+      a customer credit and must render as one, never as debt */
+  balance: number;
+  /** whole days since check_in (0 = arrived today) — drives the severity tone */
+  daysSince: number;
+};
+
 export type IssueRow = {
   taskId: string;
   title: string;
@@ -181,6 +200,12 @@ export type DashboardData = {
   agenda: AgendaItem[];
   /** iss — open maintenance tasks (+ today's fixed ones, for the chip) */
   issues: IssueRow[];
+  /** pay — due, unapproved reservations, oldest check-in first */
+  payRows: PayRow[];
+  /** the ACTIVE lookup id whose key is the D89 paid marker — resolved fresh
+      every read, never hardcoded; null when the tenant deactivated it, which
+      disables the window's button rather than guessing */
+  approvedWorkflowStatusId: string | null;
   /** rev — the last CHART_MONTHS calendar months */
   monthly: MonthlyRevenuePoint[];
   /** src — the CURRENT month, the same call the drawer makes */
@@ -262,6 +287,8 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     hkRows,
     stuckRows,
     issueRows,
+    payRowsRaw,
+    approvedLookup,
     revenue,
     alerts,
     monthly,
@@ -376,6 +403,54 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
          )
        ORDER BY (h.status IN ('completed', 'inspected')),
                 (h.priority = 'high') DESC, h.created_at`,
+
+    // ---- pay: due, unapproved reservations ---------------------------------
+    // D89: the ONLY approval marker is the workflow lookup key — the same
+    // predicate the reservations list's unpaid tabs compile. No lower bound and
+    // no LIMIT, deliberately: a booking stays here until someone approves it,
+    // and hiding the tail would hide exactly the oldest debt. The source rank
+    // is row_number over the WHOLE taxonomy (sources-breakdown.ts's query) —
+    // never the index of a filtered array, or the dot's colour would change
+    // whenever an unrelated source drops out of the result.
+    sql<Record<string, unknown>[]>`
+      WITH src_rank AS (
+        SELECT id, color,
+               (row_number() OVER (ORDER BY sort_order, key) - 1)::int AS rank
+          FROM guesthub.lookup_items
+         WHERE tenant_id = ${tenantId} AND category = 'booking_sources'
+      )
+      SELECT res.id, COALESCE(g.full_name, 'אורח') AS guest_name,
+             res.check_in::text AS check_in,
+             (${today}::date - res.check_in)::int AS days_since,
+             res.balance::float8 AS balance,
+             sr.color AS source_color, sr.rank AS source_rank,
+             (SELECT count(*)::int FROM src_rank) AS source_total,
+             room.room_number
+        FROM guesthub.reservations res
+        LEFT JOIN guesthub.guests g ON g.id = res.primary_guest_id AND g.tenant_id = res.tenant_id
+        LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
+        LEFT JOIN src_rank sr ON sr.id = res.source_id
+        LEFT JOIN LATERAL (
+          SELECT rm.room_number
+            FROM guesthub.reservation_rooms rr
+            JOIN guesthub.rooms rm ON rm.id = rr.room_id AND rm.tenant_id = rr.tenant_id
+           WHERE rr.tenant_id = res.tenant_id AND rr.reservation_id = res.id
+           ORDER BY rm.room_number
+           LIMIT 1) room ON true
+       WHERE res.tenant_id = ${tenantId}
+         AND res.check_in <= ${today}
+         AND COALESCE(wf.key, '') <> 'approved'
+         AND res.status NOT IN ('cancelled', 'draft')
+       ORDER BY res.check_in`,
+
+    // pay — the id the button writes, resolved by KEY on every read (a
+    // hardcoded uuid would break the moment the lookup row is reseeded).
+    // Inactive → null → the window disables its button instead of assigning a
+    // status Settings has retired (setWorkflowStatusAction would reject it).
+    sql<{ id: string }[]>`
+      SELECT id FROM guesthub.lookup_items
+       WHERE tenant_id = ${tenantId} AND category = 'workflow_statuses'
+         AND key = 'approved' AND is_active`,
 
     // ---- KPI 4: expected revenue tonight ----------------------------------
     nightlyRevenue(tenantId, today, tomorrow),
@@ -604,6 +679,21 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
       priority: (r.priority as string) ?? "normal",
       status: r.status as string,
     })),
+    payRows: payRowsRaw.map((r) => ({
+      reservationId: r.id as string,
+      guestName: (r.guest_name as string) ?? "אורח",
+      // a reservation with no source takes the palette's tail — the same slot
+      // the donut's "לא צוין" bucket paints (sources-breakdown.ts:170)
+      sourceDotColor:
+        r.source_rank === null || r.source_rank === undefined
+          ? sourceColor(null, Number(r.source_total ?? 0))
+          : sourceColor((r.source_color as string) ?? null, Number(r.source_rank)),
+      roomNumber: (r.room_number as string) ?? null,
+      checkIn: r.check_in as DateOnly,
+      balance: Number(r.balance ?? 0),
+      daysSince: Number(r.days_since ?? 0),
+    })),
+    approvedWorkflowStatusId: approvedLookup[0]?.id ?? null,
     kpi: {
       occupied,
       sellable,

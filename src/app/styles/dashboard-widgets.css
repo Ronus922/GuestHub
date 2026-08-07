@@ -72,6 +72,81 @@
   color: var(--ok);
 }
 
+/* ---- pay — credit cards to charge ---- */
+.pay-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+.pay-row.done {
+  opacity: 0.6;
+}
+/* the 0-days tone — arrived today, no alarm yet */
+.pay-neutral {
+  background: var(--field-bg);
+  color: var(--muted);
+}
+.pay-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--r-md);
+}
+.pay-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the source dot — the SAME resolved colour the sources donut paints */
+.pay-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+.pay-sub {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pay-amount {
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  font-weight: 800;
+  flex: none;
+}
+.pay-credit {
+  color: var(--ok);
+  font-weight: 700;
+}
+.pay-zero {
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.pay-foot {
+  margin-top: 4px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 /* ---- agd — the timeline ---- */
 .agd-row {
   display: flex;
