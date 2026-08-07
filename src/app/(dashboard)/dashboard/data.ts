@@ -122,6 +122,10 @@ export type PayRow = {
   balance: number;
   /** whole days since check_in (0 = arrived today) — drives the severity tone */
   daysSince: number;
+  /** lifecycle 'cancelled' — the row renders a distinct tag so it is not read
+      as an in-house guest; it still LISTS (D139: a cancellation under a
+      no-cancellation policy entitles full payment, so it does not settle) */
+  cancelled: boolean;
 };
 
 export type IssueRow = {
@@ -406,12 +410,22 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
 
     // ---- pay: due, unapproved reservations ---------------------------------
     // D89: the ONLY approval marker is the workflow lookup key — the same
-    // predicate the reservations list's unpaid tabs compile. No lower bound and
-    // no LIMIT, deliberately: a booking stays here until someone approves it,
-    // and hiding the tail would hide exactly the oldest debt. The source rank
-    // is row_number over the WHOLE taxonomy (sources-breakdown.ts's query) —
-    // never the index of a filtered array, or the dot's colour would change
-    // whenever an unrelated source drops out of the result.
+    // predicate the reservations list's unpaid tabs compile. D139: there is NO
+    // status whitelist — every lifecycle status, present or future, is in
+    // until the deal is approved; 'approved' is the single way out. cancelled
+    // is in DELIBERATELY (a no-cancellation policy entitles full payment —
+    // the debt easiest to miss); the one exception is draft, and for a
+    // different reason entirely (D140: a draft is not an unpaid booking, it
+    // is a booking not yet made). No lower bound and no LIMIT, deliberately:
+    // a booking stays here until someone approves it, and hiding the tail
+    // would hide exactly the oldest debt. The WHOLE template below — and the
+    // bare .map() shape of the payRows mapping — is frozen verbatim by
+    // check:pay-widget-no-status-whitelist: any edit here updates its
+    // CANONICAL_TEMPLATE in the same commit, or fails the suite. The source
+    // rank is row_number over the WHOLE taxonomy
+    // (sources-breakdown.ts's query) — never the index of a filtered array,
+    // or the dot's colour would change whenever an unrelated source drops out
+    // of the result.
     sql<Record<string, unknown>[]>`
       WITH src_rank AS (
         SELECT id, color,
@@ -423,6 +437,7 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
              res.check_in::text AS check_in,
              (${today}::date - res.check_in)::int AS days_since,
              res.balance::float8 AS balance,
+             (res.status = 'cancelled') AS cancelled,
              sr.color AS source_color, sr.rank AS source_rank,
              (SELECT count(*)::int FROM src_rank) AS source_total,
              room.room_number
@@ -440,7 +455,7 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
        WHERE res.tenant_id = ${tenantId}
          AND res.check_in <= ${today}
          AND COALESCE(wf.key, '') <> 'approved'
-         AND res.status NOT IN ('cancelled', 'draft')
+         AND res.status <> 'draft'
        ORDER BY res.check_in`,
 
     // pay — the id the button writes, resolved by KEY on every read (a
@@ -692,6 +707,7 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
       checkIn: r.check_in as DateOnly,
       balance: Number(r.balance ?? 0),
       daysSince: Number(r.days_since ?? 0),
+      cancelled: r.cancelled === true,
     })),
     approvedWorkflowStatusId: approvedLookup[0]?.id ?? null,
     kpi: {

@@ -112,7 +112,8 @@
     "check:code-documentation": "node scripts/check-code-documentation.mjs",
     "check:nightly-revenue": "node scripts/check-nightly-revenue.mjs",
     "check:mark-clean-permission": "node scripts/check-mark-clean-permission.mjs",
-    "check:sources-breakdown": "node scripts/check-sources-breakdown.mjs"
+    "check:sources-breakdown": "node scripts/check-sources-breakdown.mjs",
+    "check:pay-widget-no-status-whitelist": "node scripts/check-pay-widget-no-status-whitelist.mjs"
   },
   "engines": {
     "node": ">=20 <21"
