@@ -104,18 +104,6 @@ export function todayInTz(timeZone: string): DateOnly {
   return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
 }
 
-// The current wall-clock time in the property's timezone, "HH:MM". Same
-// rationale as todayInTz: the server runs in UTC, and a naive new Date()
-// renders the wrong hour for every property east of Greenwich.
-export function nowHHMMInTz(timeZone: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date());
-}
-
 // 0=Sunday … 6=Saturday (timezone-independent for date-only values).
 export function dayOfWeek(d: DateOnly): number {
   return toUtcNoon(d).getUTCDay();
