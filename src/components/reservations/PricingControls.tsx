@@ -181,8 +181,20 @@ export function DiscountControls({
   disabled?: boolean;
 }) {
   // "מחיר מלא" is the none state: unit selected with value 0 ⇔ none (SPEC ס-2).
-  // The none-state default unit is the MD's first segment (₪ ללילה).
-  const unit = mode === "none" ? "amount_per_night" : mode;
+  // The unit TABS are free-standing UI state so they are ALWAYS clickable —
+  // unit first, value later, exactly like the price-mode segmented. (The old
+  // `value > 0 ? u : "none"` alone swallowed the click while the field was
+  // empty/0: mode stayed "none" and the tab visibly never moved.) The none⇔0
+  // pact with the parent is untouched — mode still carries a unit only while
+  // value > 0 — so the live feedback and every computed total are unchanged.
+  const [uiUnit, setUiUnit] = useState<Exclude<DiscountMode, "none">>(
+    mode === "none" ? "amount_per_night" : mode,
+  );
+  // an outside mode change (a loaded reservation's stored unit) re-syncs the tabs
+  useEffect(() => {
+    if (mode !== "none") setUiUnit(mode);
+  }, [mode]);
+  const unit = mode === "none" ? uiUnit : mode;
   // legacy passthrough: a stored ₪-להזמנה discount keeps its segment visible
   const units =
     unit === "amount_total" ? [...DISCOUNT_UNITS, LEGACY_AMOUNT_TOTAL] : DISCOUNT_UNITS;
@@ -194,7 +206,13 @@ export function DiscountControls({
         ariaLabel="יחידת הנחה"
         options={units.map((u) => ({ value: u.value, label: u.label }))}
         value={unit}
-        onChange={(u) => onChange(value > 0 ? u : "none", value)}
+        onChange={(u) => {
+          setUiUnit(u);
+          // with a value the existing #180-era behavior is kept verbatim
+          // (the unit switches, the number stays); with 0 the parent keeps
+          // "none" and only the visible tab moves
+          onChange(value > 0 ? u : "none", value);
+        }}
         disabled={disabled}
       />
       <label className="flex items-center gap-2 text-sm">

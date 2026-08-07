@@ -1007,6 +1007,96 @@
   transition: width 0.25s ease;
 }
 
+/* payment-status chips — the demo's .paychip 1:1 (design-ref/
+   booking-window-v2.html, decoded source ש'266-274), local to the booking
+   windows; the global §3.1 .chip family is untouched. Values with no scale
+   slot carry ds-allow with the demo line as source. */
+.bw-win .bw-paychip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  /* ds-allow: the demo pins the chip at 44px ("height:44px", דמו ש'267) */
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  /* ds-allow: the demo's chip ink ("color:#4B5266", דמו ש'267) */
+  color: #4b5266;
+  cursor: pointer;
+}
+.bw-win .bw-paychip .pd {
+  /* ds-allow: the demo's 9px dot ("width:9px;height:9px", דמו ש'268) */
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.bw-win .bw-paychip:hover:not(:disabled) {
+  /* ds-allow: the demo's hover fill ("background:#F5F7FB", דמו ש'269) */
+  background: #f5f7fb;
+}
+.bw-win .bw-paychip.on {
+  border-width: 2px;
+}
+/* לא שולם — demo ש'271 */
+.bw-win .bw-pc-unpaid .pd {
+  /* ds-allow: "background:#DC2626" (דמו ש'271) */
+  background: #dc2626;
+}
+.bw-win .bw-paychip.on.bw-pc-unpaid {
+  /* ds-allow: "border-color:#DC2626;background:#FDECEC;color:#B4231F" (דמו ש'271) */
+  border-color: #dc2626;
+  background: #fdecec; /* ds-allow: "background:#FDECEC" (דמו ש'271) */
+  color: #b4231f; /* ds-allow: "color:#B4231F" (דמו ש'271) */
+}
+/* שולם חלקית — demo ש'272 */
+.bw-win .bw-pc-partial .pd {
+  /* ds-allow: "background:#EA9314" (דמו ש'272) */
+  background: #ea9314;
+}
+.bw-win .bw-paychip.on.bw-pc-partial {
+  /* ds-allow: "border-color:#EA9314;background:#FDF2E1;color:#B4670A" (דמו ש'272) */
+  border-color: #ea9314;
+  background: #fdf2e1; /* ds-allow: "background:#FDF2E1" (דמו ש'272) */
+  color: #b4670a; /* ds-allow: "color:#B4670A" (דמו ש'272) */
+}
+/* שולם מלא — demo ש'273 */
+.bw-win .bw-pc-paid .pd {
+  /* ds-allow: "background:#16A34A" (דמו ש'273) */
+  background: #16a34a;
+}
+.bw-win .bw-paychip.on.bw-pc-paid {
+  /* ds-allow: "border-color:#16A34A;background:#E7F6EC;color:#15803D" (דמו ש'273) */
+  border-color: #16a34a;
+  background: #e7f6ec; /* ds-allow: "background:#E7F6EC" (דמו ש'273) */
+  color: #15803d; /* ds-allow: "color:#15803D" (דמו ש'273) */
+}
+/* ממתין לאישור — demo ש'274 (the demo's brand tokens map to ours) */
+.bw-win .bw-pc-pending .pd {
+  background: var(--brand);
+}
+.bw-win .bw-paychip.on.bw-pc-pending {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+/* שולם ביתר — no demo/MD row; the approved §3.1 purple family in the same
+   geometry (colors as in design-system.css .chip-transfer) */
+.bw-win .bw-pc-overpaid .pd {
+  /* ds-allow: §3.1 transfer dot (design-system.css .chip-transfer .dot) */
+  background: #8b5cf6;
+}
+.bw-win .bw-paychip.on.bw-pc-overpaid {
+  /* ds-allow: §3.1 transfer triplet (design-system.css .chip-transfer) */
+  border-color: #8b5cf6;
+  background: #f2ecfd; /* ds-allow: §3.1 transfer bg (design-system.css) */
+  color: #6b27d6; /* ds-allow: §3.1 transfer text (design-system.css) */
+}
+
 } /* @layer components */
 
 /* on the booking windows (.bw-win marker via widthClassName) the header X

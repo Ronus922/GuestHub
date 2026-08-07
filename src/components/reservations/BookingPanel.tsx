@@ -1511,28 +1511,23 @@ export function PayChip({
   title?: string;
   onClick?: () => void;
 }) {
-  // "שולם חלקית" wears the approved ORANGE (approval) family inside the
-  // booking windows — the MD paints it כתום (הקמה ש'111); the global §3.1
-  // partial (green) is untouched on every other screen. LOCAL variant only:
-  // the tokens still come from status-colors, nothing is re-typed here.
-  const t = state === "partial" ? STATUS_COLORS.approval : paymentTriplet(state);
-  // "ממתין לאישור" is BLUE in the booking windows (both MDs: הקמה ש'111 —
-  // "(כחול)"; עריכה ש'43 — "אותם צבעים כמו בהקמה"): the canonical brand chip,
-  // not the shared pending→approval orange (which the calendar keeps).
-  const chipOn = state === "pending" ? "chip-brand" : t.chip;
-  const dot = state === "pending" ? "var(--brand)" : t.dot;
+  // The chips are the demo's .paychip 1:1 (design-ref/booking-window-v2.html,
+  // decoded source lines 266-274): 44px pills, white fill, colored 9px dot,
+  // and a selected state wearing the dot-colored 2px border over a tinted
+  // fill. Colors per the MD (הקמה ש'111): אדום/כתום/ירוק/כחול — the local
+  // .bw-pc-* classes in booking-window.css; the global §3.1 .chip family is
+  // untouched everywhere else. overpaid has no demo/MD row — it keeps the
+  // approved purple family in the same geometry.
   return (
     <button
       type="button"
-      className={`chip ${on ? chipOn : "chip-neutral"} cursor-pointer disabled:cursor-not-allowed disabled:opacity-60`}
+      className={`bw-paychip bw-pc-${state}${on ? " on" : ""} disabled:cursor-not-allowed disabled:opacity-60`}
       aria-pressed={on}
       disabled={disabled}
       title={title}
-      // תגית נבחרת — מסגרת בצבע הנקודה שלה (the demo's acceptance criterion)
-      style={on ? { borderColor: dot } : undefined}
       onClick={onClick}
     >
-      <span className="dot" style={on ? undefined : { background: dot }} />
+      <span className="pd" />
       {label}
     </button>
   );
