@@ -64,8 +64,10 @@ for (const [name, s] of [["EditReservationPanel", editor], ["BookingActions", co
   assert.ok(!/green-api|twilio|gmail\.googleapis|api\.twilio/.test(s), `${name}: no provider-specific logic in the booking editor`);
 }
 
-// ---- toolbar: the 5 actions with Hebrew tooltips ----
-assert.ok(/שליחת מייל/.test(composer) && /שליחת WhatsApp/.test(composer) && /הורדת PDF/.test(composer) && /הדפסת הזמנה/.test(composer), "toolbar tooltips: mail/whatsapp/pdf/print");
+// ---- toolbar: the 5 actions with Hebrew tooltips (the booking-window MD's
+// names, 2026-08-07: מייל לאורח · שליחת הודעה · הורדת אישור הזמנה · הדפסה —
+// same actions, the owner's labels) ----
+assert.ok(/מייל לאורח/.test(composer) && /שליחת הודעה/.test(composer) && /הורדת אישור הזמנה/.test(composer) && /הדפסת הזמנה/.test(composer), "toolbar tooltips: mail/message/confirmation-download/print");
 assert.ok(/כתיבת הודעה חדשה/.test(composer) && /בחירה מתבנית/.test(composer), "composer offers custom + template modes");
 
 // ---- unsaved-changes guard before send/print/pdf ----

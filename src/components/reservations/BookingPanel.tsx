@@ -452,6 +452,9 @@ export function BookingPanel({
       title="הקמת הזמנה חדשה"
       subtitle="אורח · שהות · תמחור · אישור"
       icon="reservations"
+      /* the MD shell: 60% width bounded to 900–1200px (same bounds as the edit
+         window); bw-win scopes the header-X hover treatment to these panels */
+      widthClassName="bw-win w-[60%] min-w-[min(900px,100%)] max-w-[1200px]"
       bodyClassName="bg-appbg p-0"
       band={
         /* stepper band (reference .stp) — RTL: step 1 rightmost */
@@ -519,14 +522,16 @@ export function BookingPanel({
                 <Icon name="chevron-right" size={20} />
               </button>
             )}
-            <button type="button" className="btn btn-tertiary" onClick={requestClose}>
-              ביטול
-            </button>
             <span className="flex-1" />
             <span className="bw-ft-step">
               <Icon name="info" size={17} />
               שלב {step + 1} מתוך {STEPS.length}
             </span>
+            {/* the MD footer order (right→left): ביטול · שלב X · הקודם · הבא —
+                .dw-ft is row-reverse, so the LAST child sits at the far right */}
+            <button type="button" className="btn bw-btn-cancel" onClick={requestClose}>
+              ביטול
+            </button>
           </>
         )
       }
@@ -634,24 +639,30 @@ export function BookingPanel({
                     />
                   </Field>
                   <Field label="טלפון" required>
-                    <input
-                      className={`field-input ltr-num${guestErr.phone ? " field-error" : ""}`}
-                      aria-invalid={guestErr.phone || undefined}
-                      placeholder="050-0000000"
-                      dir="ltr"
-                      value={guest.phone}
-                      onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
-                    />
+                    <div className="bw-fld-wrap">
+                      <Icon name="phone" size={17} className="bw-fi" />
+                      <input
+                        className={`field-input bw-ic ltr-num${guestErr.phone ? " field-error" : ""}`}
+                        aria-invalid={guestErr.phone || undefined}
+                        placeholder="050-0000000"
+                        dir="ltr"
+                        value={guest.phone}
+                        onChange={(e) => setGuest({ ...guest, phone: e.target.value })}
+                      />
+                    </div>
                   </Field>
                   <Field label="אימייל">
-                    <input
-                      className="field-input"
-                      placeholder="email@example.com"
-                      dir="ltr"
-                      type="email"
-                      value={guest.email}
-                      onChange={(e) => setGuest({ ...guest, email: e.target.value })}
-                    />
+                    <div className="bw-fld-wrap">
+                      <Icon name="mail" size={17} className="bw-fi" />
+                      <input
+                        className="field-input bw-ic"
+                        placeholder="email@example.com"
+                        dir="ltr"
+                        type="email"
+                        value={guest.email}
+                        onChange={(e) => setGuest({ ...guest, email: e.target.value })}
+                      />
+                    </div>
                   </Field>
                   <Field label="ת.ז / דרכון">
                     <input
@@ -668,10 +679,12 @@ export function BookingPanel({
                       value={guest.language}
                       onChange={(e) => setGuest({ ...guest, language: e.target.value })}
                     >
+                      {/* the MD's order; Français predates the spec and was not
+                          ordered removed — it stays last */}
                       <option>עברית</option>
                       <option>English</option>
-                      <option>Русский</option>
                       <option>العربية</option>
+                      <option>Русский</option>
                       <option>Français</option>
                     </select>
                   </Field>
@@ -778,29 +791,33 @@ export function BookingPanel({
                             <span className="text-xs text-muted">
                               <span className="ltr-num">{nights}</span> לילות
                             </span>
-                            {ratePlans.length > 0 && (
-                              <select
-                                className="field-input w-40"
-                                aria-label="תוכנית תעריף"
-                                value={s.ratePlanId ?? ""}
-                                onChange={(e) =>
-                                  setStays((all) =>
-                                    all.map((x) =>
-                                      x.key === s.key
-                                        ? { ...x, ratePlanId: e.target.value || null, priceMode: "auto", isManualRate: false, ratePerNight: undefined, manualTotal: null }
-                                        : x,
-                                    ),
-                                  )
-                                }
-                              >
-                                <option value="">מחיר בסיס</option>
-                                {ratePlans.map((p) => (
-                                  <option key={p.id} value={p.id}>{p.name}</option>
-                                ))}
-                              </select>
-                            )}
                           </div>
                           <StayPriceModeControls
+                            /* the "מחיר מקורי" mode's ONE field (MD): the
+                               rate-plan select — same state, same handler */
+                            autoField={
+                              ratePlans.length > 0 ? (
+                                <select
+                                  className="field-input w-40"
+                                  aria-label="תוכנית תעריף"
+                                  value={s.ratePlanId ?? ""}
+                                  onChange={(e) =>
+                                    setStays((all) =>
+                                      all.map((x) =>
+                                        x.key === s.key
+                                          ? { ...x, ratePlanId: e.target.value || null, priceMode: "auto", isManualRate: false, ratePerNight: undefined, manualTotal: null }
+                                          : x,
+                                      ),
+                                    )
+                                  }
+                                >
+                                  <option value="">מחיר בסיס</option>
+                                  {ratePlans.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                              ) : undefined
+                            }
                             mode={mode}
                             onMode={(m) =>
                               /* switching mode keeps every entered value (SPEC
@@ -864,6 +881,23 @@ export function BookingPanel({
                       setDiscountValue(v);
                     }}
                   />
+                  {/* live discount feedback (MD): amount · share of full price ·
+                      per-night — warn-toned while a discount is in effect */}
+                  {totals.discountAmount > 0 && (
+                    <p className="mt-2 text-sm font-bold text-status-warning tabular-nums">
+                      −₪<bdi className="ltr-num">{totals.discountAmount.toLocaleString()}</bdi> ·{" "}
+                      <bdi className="ltr-num">
+                        {totals.roomsTotal > 0
+                          ? Math.round((totals.discountAmount / totals.roomsTotal) * 100)
+                          : 0}
+                      </bdi>
+                      % מהמחיר המלא · ₪
+                      <bdi className="ltr-num">
+                        {totalNights > 0 ? Math.round(totals.discountAmount / totalNights).toLocaleString() : 0}
+                      </bdi>{" "}
+                      ללילה
+                    </p>
+                  )}
                 </div>
                 <div className="bw-price-line mt-3">
                   <span className="bw-plr">מחיר מלא</span>
@@ -885,15 +919,42 @@ export function BookingPanel({
                   <span>סה״כ לתשלום</span>
                   <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
                 </div>
+                {/* the currency list is Settings-owned (D107) — said where the
+                    selector is offered, at the card's foot per the MD */}
+                {enabledCurrencies.length > 1 && (
+                  <p className="field-hint mt-3">
+                    רשימת המטבעות נקבעת בהגדרות ← מטבעות להזמנות.
+                  </p>
+                )}
               </BookingCard>
 
               <BookingCard icon="finance" title="סטטוס תשלום">
+                {/* payment progress (MD): שולם X מתוך Y + אחוז, over the ok token */}
+                {total > 0 && (
+                  <div className="mb-4">
+                    <div className="mb-1.5 flex items-center justify-between text-sm font-bold">
+                      <span>
+                        שולם ₪<bdi className="ltr-num">{paid.toLocaleString()}</bdi> מתוך ₪
+                        <bdi className="ltr-num">{total.toLocaleString()}</bdi>
+                      </span>
+                      <span className="ltr-num text-status-success">
+                        {Math.min(100, Math.round((paid / total) * 100))}%
+                      </span>
+                    </div>
+                    <div className="bw-payprog">
+                      <span
+                        className="bw-payprog-fill block"
+                        style={{ width: `${Math.min(100, (paid / total) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {/* the chips drive REAL fields only: paid amount / draft
                     status — the shown state is always the derived one */}
                 <div className="flex flex-wrap gap-2.5">
                   <PayChip
                     state="unpaid"
-                    label="ממתין לתשלום"
+                    label="לא שולם"
                     on={!asDraft && payState === "unpaid"}
                     onClick={() => {
                       setAsDraft(false);
@@ -1080,9 +1141,10 @@ export function BookingPanel({
                 <span>סה״כ לתשלום</span>
                 <span className="bw-amt ltr-num">₪{total.toLocaleString()}</span>
               </div>
-              {/* requirement 4 + SPEC step 4: the balance strip at confirm time */}
+              {/* requirement 4 + SPEC step 4: the balance strip at confirm time —
+                  the MD's three cubes, the status badge as the third */}
               <div className="mt-3">
-                <BalanceBoxes total={total} paid={paid} />
+                <BalanceBoxes total={total} paid={paid} statusChip={<PaymentBadge state={payState} />} />
               </div>
             </BookingCard>
           )}
@@ -1272,8 +1334,10 @@ export function PayChip({
 
 // Payment badge — the same §3.1 triplet as the chip above and as the calendar
 // bar (unpaid / partial / paid / overpaid = fully paid + a customer credit).
+// "לא שולם" is the canonical §3.1 name of the unpaid state (both booking MDs
+// use it); the workflow status "ממתין לתשלום" is a different axis entirely.
 const PAYMENT_LABEL: Record<PaymentState, string> = {
-  unpaid: "ממתין לתשלום",
+  unpaid: "לא שולם",
   partial: "שולם חלקית",
   paid: "שולם מלא",
   overpaid: "שולם ביתר",
