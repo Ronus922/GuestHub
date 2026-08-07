@@ -24,6 +24,14 @@ import type { PayRow } from "../data";
 // exactly what setWorkflowStatusAction rejects, so the window does not offer
 // it.
 //
+// D139: the list has NO status whitelist — every lifecycle status is in
+// until the deal is approved, and a CANCELLED booking is in deliberately (a
+// no-cancellation policy entitles full payment — the debt easiest to miss).
+// It carries a "בוטלה" tag so the row is not read as an in-house guest;
+// sort, severity and the amount branches treat it like any other row. The
+// one exception is draft (D140: not an unpaid booking — a booking not yet
+// made).
+//
 // BALANCE IS DISPLAY ONLY (D52 §6 — the derived cache, total − paid, not
 // floored). A zero balance still lists — the condition is the approval, not
 // the money — and renders "0 — לאישור בלבד" with an unemphasized button. A
@@ -102,6 +110,7 @@ export function PayWindow({
               <span className="pay-title">
                 <span className="pay-dot" style={{ background: r.sourceDotColor }} aria-hidden />
                 {r.guestName}
+                {r.cancelled && <span className="chip pay-tag-cxl">בוטלה</span>}
               </span>
               <span className="pay-sub">
                 {r.roomNumber ? `חדר ${r.roomNumber} · ` : ""}
