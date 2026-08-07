@@ -34,6 +34,7 @@ const ICONS = {
   "my-requests": "description",
   "approve-requests": "fact_check",
   documents: "description",
+  folder: "folder_open",
   finance: "account_balance_wallet",
   "credit-card": "credit_card",
   suppliers: "local_shipping",

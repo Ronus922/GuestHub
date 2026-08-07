@@ -1224,7 +1224,7 @@ export function BookingPanel({
           {/* ---- step 4: documents (MD §"שלב 4 — מסמכים") — a graphic shell,
                see BookingDocuments ---- */}
           {step === 3 && (
-            <BookingCard icon="documents" title="מסמכים">
+            <BookingCard icon="folder" title="מסמכים להזמנה">
               <BookingDocuments />
             </BookingCard>
           )}

@@ -126,48 +126,56 @@ export function BookingDocuments() {
           addFiles(e.dataTransfer.files);
         }}
       >
-        <Icon name="upload" size={24} />
-        <span>גררו לכאן קבצים או לחצו לבחירה — תמונות (JPG/PNG) ו-PDF בלבד</span>
+        <Icon name="upload" size={36} />
+        <span className="bw-drop-main">גררו לכאן מסמכים או לחצו לבחירה</span>
+        {/* the demo's sub-line, with its saved-with-the-reservation promise
+            swapped for the SHELL truth (no persistence yet) — the demo text
+            returns at wire-up */}
+        <span className="bw-drop-sub">
+          תמונות (JPG/PNG) או PDF · שמירת המסמכים על ההזמנה תחובר בהמשך — קבצים
+          שנבחרו מוצגים בינתיים בחלון זה בלבד
+        </span>
       </div>
-      {/* honest shell state — the storage side is not connected yet */}
-      <p className="field-hint mt-2">
-        שמירת המסמכים על ההזמנה תחובר בהמשך — קבצים שנבחרו מוצגים בינתיים בחלון זה בלבד.
-      </p>
 
       {docs.length > 0 && (
         <ul className="bw-doc-list">
           {docs.map((d) => (
             <li key={d.id} className="bw-doc">
               <span className={`bw-doc-ic ${d.kind === "pdf" ? "pdf" : "img"}`}>
-                <Icon name={d.kind === "pdf" ? "pdf" : "image"} size={24} />
+                <Icon name={d.kind === "pdf" ? "pdf" : "image"} size={26} />
               </span>
-              {renamingId === d.id ? (
-                <input
-                  className="bw-doc-name-input"
-                  autoFocus
-                  defaultValue={d.base}
-                  aria-label="שינוי שם קובץ"
-                  onBlur={(e) => rename(d.id, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      rename(d.id, e.currentTarget.value);
-                    } else if (e.key === "Escape") {
-                      setRenamingId(null);
-                    }
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="bw-doc-name"
-                  title="צפייה במסמך"
-                  onClick={() => setViewId(d.id)}
-                >
-                  {d.base}
-                </button>
-              )}
-              <span className="bw-doc-size ltr-num">{fmtSize(d.size)}</span>
+              {/* the demo stacks the row text: bold name over a muted sub-line
+                  (size only — the demo's "· שמור בהזמנה" is a persistence
+                  promise the shell must not make; back at wire-up) */}
+              <div className="bw-doc-txt">
+                {renamingId === d.id ? (
+                  <input
+                    className="bw-doc-name-input"
+                    autoFocus
+                    defaultValue={d.base}
+                    aria-label="שינוי שם קובץ"
+                    onBlur={(e) => rename(d.id, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        rename(d.id, e.currentTarget.value);
+                      } else if (e.key === "Escape") {
+                        setRenamingId(null);
+                      }
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="bw-doc-name"
+                    title="צפייה במסמך"
+                    onClick={() => setViewId(d.id)}
+                  >
+                    {d.base}
+                  </button>
+                )}
+                <span className="bw-doc-size ltr-num">{fmtSize(d.size)}</span>
+              </div>
               <span className="bw-doc-acts">
                 <button
                   type="button"
@@ -176,7 +184,7 @@ export function BookingDocuments() {
                   aria-label="שינוי שם"
                   onClick={() => setRenamingId(d.id)}
                 >
-                  <Icon name="edit" size={17} />
+                  <Icon name="edit" size={20} />
                 </button>
                 <button
                   type="button"
@@ -185,7 +193,7 @@ export function BookingDocuments() {
                   aria-label="צפייה"
                   onClick={() => setViewId(d.id)}
                 >
-                  <Icon name="eye" size={17} />
+                  <Icon name="eye" size={20} />
                 </button>
                 <button
                   type="button"
@@ -194,7 +202,7 @@ export function BookingDocuments() {
                   aria-label="הסרה"
                   onClick={() => remove(d.id)}
                 >
-                  <Icon name="trash" size={17} />
+                  <Icon name="trash" size={20} />
                 </button>
               </span>
             </li>
