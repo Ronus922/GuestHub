@@ -82,6 +82,10 @@ export type AlertRow = {
   /** set on approval rows whose lifecycle is still draft — the inline "אישור"
       button approves exactly this reservation (draft → confirmed) */
   approveReservationId: string | null;
+  /** lifecycle 'cancelled' on money rows — same law as pay (D139): a
+      cancellation under a no-cancellation policy entitles full payment, so
+      the debt still lists, tagged so the row is not read as a live guest */
+  cancelled?: boolean;
 };
 
 /** stk — channel bookings whose auto-ingest failed (import_status quarantined/failed) */
@@ -761,12 +765,12 @@ async function dashboardAlerts(tenantId: string, today: DateOnly): Promise<Alert
   const [money, cards, approvals, messages, connections] = await Promise.all([
     sql<Record<string, unknown>[]>`
       SELECT res.id, res.reservation_number, COALESCE(g.full_name, 'אורח') AS guest_name,
-             res.total_price::float8 AS total_price, res.paid_amount::float8 AS paid_amount
+             res.total_price::float8 AS total_price, res.paid_amount::float8 AS paid_amount,
+             (res.status = 'cancelled') AS cancelled
         FROM guesthub.reservations res
         LEFT JOIN guesthub.guests g ON g.id = res.primary_guest_id AND g.tenant_id = res.tenant_id
         LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id
        WHERE res.tenant_id = ${tenantId}
-         AND res.status <> 'cancelled'
          AND res.total_price > 0
          AND res.paid_amount < res.total_price
          AND COALESCE(wf.key, '') <> 'approved'
@@ -843,6 +847,7 @@ async function dashboardAlerts(tenantId: string, today: DateOnly): Promise<Alert
         : `שולם חלקית · יתרה ₪${Math.round(Number(r.total_price ?? 0) - paid).toLocaleString("he-IL")}`,
       href: `/reservations?open=${r.id as string}`,
       approveReservationId: null,
+      cancelled: r.cancelled === true,
     });
   }
   for (const r of cards) {

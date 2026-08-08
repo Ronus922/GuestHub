@@ -118,11 +118,17 @@
 }
 /* the cancelled tag (D139) — a cancellation does not settle the deal; the
    tag keeps the row from reading as an in-house guest. Tone derived from the
-   tokens exactly like .stk-red — no new surface tokens. */
-.pay-tag-cxl {
+   tokens exactly like .stk-red — no new surface tokens. alr's unpaid rows
+   carry the same debt for the same reason, so they share the tag. */
+.pay-tag-cxl,
+.alr-tag-cxl {
   flex: none;
   background: color-mix(in srgb, var(--danger) 10%, #fff);
   color: color-mix(in srgb, var(--danger) 82%, var(--ink));
+}
+/* .alr-title is not a flex row (no gap) — the margin stands in for pay's 7px */
+.alr-tag-cxl {
+  margin-inline-start: 7px;
 }
 .pay-sub {
   font-size: 13.5px;
