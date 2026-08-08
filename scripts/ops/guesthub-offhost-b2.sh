@@ -33,9 +33,10 @@
 # roughly one nightly set (~64MB) per day (~1.9GB/month).
 set -euo pipefail
 
-B2_KEY_ID="0033adeb8c0d9230000000001"
+B2_KEY_ID="0033adeb8c0d9230000000002"
 B2_BUCKET="guesthub-backup"
-AGE_RECIPIENT="age122df9ymyeaf94r4lsw0qnj7lqf4yd8sefqt439wzuqpf6g8h8pzs3j5gmg"
+# rotated 2026-08-08: the previous keypair's private half was pasted into a chat
+AGE_RECIPIENT="age1zrwnpfm79dt42j6vutvz2nyufue7l4eq9wj35cg76qvca3whu52su69a3y"
 
 SRC="${1:?usage: guesthub-offhost-b2.sh <file>}"
 [ -s "$SRC" ] || { echo "OFFHOST FAIL: source ${SRC} is missing or empty" >&2; exit 1; }

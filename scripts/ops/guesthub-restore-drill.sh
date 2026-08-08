@@ -25,7 +25,7 @@ KEY_FILE="${BACKUP_KEY_FILE:-/home/ubuntu/.guesthub-backup-key}"
 AGE_KEY_FILE="${AGE_KEY_FILE:-/home/ubuntu/.guesthub-backup-age.key}"
 RC="${RESTORE_CONTAINER:-guesthub-testdb}"
 RDB="${RESTORE_DB:-guesthub_restore_drill}"
-B2_KEY_ID="0033adeb8c0d9230000000001"
+B2_KEY_ID="0033adeb8c0d9230000000002"
 B2_BUCKET="guesthub-backup"
 
 SOURCE_LEG="local"
