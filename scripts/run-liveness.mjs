@@ -11,6 +11,12 @@
 //              must carry at least one production marker (the same list
 //              run-checks.mjs refuses). Anything else is refused before a
 //              single probe runs.
+//   IDENTITY   D142 — markers are a first-pass string filter; the BINDING
+//              check is the cluster fingerprint: pg_control_system().
+//              system_identifier, read on the preflight connection, must
+//              equal PROD_CLUSTER_FINGERPRINT (pinned in this file, under
+//              version control). Mismatch, query failure — refused, exit 2,
+//              before any probe.
 //   READ-ONLY  every probe connection opens with
 //              default_transaction_read_only=on at SESSION level, added as a
 //              startup parameter on the DSN handed to the probes (postgres.js
@@ -46,12 +52,23 @@ if (!DSN) {
 }
 // SAFETY INVERSION of run-checks.mjs: the suite refuses these markers, this
 // runner REQUIRES one. Keep the list in sync with run-checks.mjs.
+// D142: this string filter is the FIRST PASS only — a marker can be composed
+// (any DSN with ":5432/" passes, including a docker-internal IP), a cluster
+// identity cannot. The BINDING check is the fingerprint below, verified on a
+// real connection before any probe runs.
 const PRODUCTION_MARKERS = ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"];
 if (!PRODUCTION_MARKERS.some((m) => DSN.includes(m))) {
   console.error(`REFUSED: LIVENESS_DB_URL carries no production marker (${PRODUCTION_MARKERS.join(", ")}).`);
   console.error("Liveness measures the live system only — to measure code, run the suite (pnpm suite).");
   process.exit(2);
 }
+
+// D142 — the production cluster's pg_control_system().system_identifier,
+// pinned UNDER VERSION CONTROL on purpose: it is public identity, not a
+// secret (an env var could drift per machine; the repo is the record).
+// Measured 2026-08-08 via supabase_admin on supabase-db. testdb and staging
+// carry different identifiers (verified distinct on the same date).
+const PROD_CLUSTER_FINGERPRINT = "7623660179909357606";
 
 // session-level read-only, as a startup parameter on the DSN every probe gets
 const url = new URL(DSN);
@@ -60,23 +77,42 @@ const RO_DSN = url.toString();
 
 // preflight: prove the GUC actually landed on a real connection (fail-closed —
 // a pooler that strips startup parameters would otherwise silently hand the
-// probes a writable session).
+// probes a writable session), then prove the cluster IS production (D142):
+// markers → connect → read-only → fingerprint → probes, in that order.
 {
   const require_ = createRequire(import.meta.url);
   const postgres = require_("postgres");
   const sql = postgres(RO_DSN, { prepare: false, max: 1 });
   let ro = "";
+  let fp = "";
+  let preflightErr = null;
   try {
     const [row] = await sql`SELECT current_setting('default_transaction_read_only') AS ro`;
     ro = row.ro;
+    const [ctl] = await sql`SELECT system_identifier::text AS fp FROM pg_control_system()`;
+    fp = ctl.fp;
+  } catch (e) {
+    preflightErr = e;
   } finally {
     await sql.end({ timeout: 5 });
+  }
+  if (preflightErr) {
+    console.error(`REFUSED: preflight query failed before any probe ran (${preflightErr.code ?? preflightErr.name ?? "error"}) — fail-closed; an unverifiable target is not production.`);
+    process.exit(2);
   }
   if (ro !== "on") {
     console.error(`REFUSED: session read-only did not land (default_transaction_read_only=${JSON.stringify(ro)}) — the target dropped the startup parameter.`);
     process.exit(2);
   }
   console.log("# read-only preflight: default_transaction_read_only=on (session)");
+  // D142 — the BINDING identity check. The markers filter above is a first
+  // pass a composed string can satisfy; a cluster identifier cannot.
+  if (fp !== PROD_CLUSTER_FINGERPRINT) {
+    console.error(`REFUSED: cluster fingerprint mismatch — found ${JSON.stringify(fp)}, expected ${PROD_CLUSTER_FINGERPRINT} (production's pg_control_system().system_identifier, D142).`);
+    console.error("The target passed the marker filter but is NOT the production cluster. Liveness runs against production and nothing else.");
+    process.exit(2);
+  }
+  console.log(`# cluster fingerprint: ${fp} — matches the pinned production identity (D142)`);
 }
 
 // ---- args ----

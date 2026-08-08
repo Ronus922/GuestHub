@@ -211,9 +211,12 @@ for (const [label, oldText, newText] of MUTANTS) {
 // Anchors carry pay-query-local context because '<> approved' legitimately
 // appears in other queries in the same file.
 const LINK_MUTANTS = [
+  // anchors carry the check_in line for uniqueness: since D141 the alerts
+  // money query holds the same approved+draft pair, but only the pay query
+  // gates on res.check_in <= ${today}.
   ["widget drops the draft exclusion (D140 revised, lists diverge)",
-    "AND COALESCE(wf.key, '') <> 'approved'\n         AND res.status <> 'draft'",
-    "AND COALESCE(wf.key, '') <> 'approved'"],
+    "AND res.check_in <= ${today}\n         AND COALESCE(wf.key, '') <> 'approved'\n         AND res.status <> 'draft'",
+    "AND res.check_in <= ${today}\n         AND COALESCE(wf.key, '') <> 'approved'"],
   ["widget drops the approved exclusion (D139 revised, lists diverge)",
     "AND res.check_in <= ${today}\n         AND COALESCE(wf.key, '') <> 'approved'",
     "AND res.check_in <= ${today}"],

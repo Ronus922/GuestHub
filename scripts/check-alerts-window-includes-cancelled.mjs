@@ -1,16 +1,19 @@
 // check:alerts-window-includes-cancelled — a cancelled reservation with a debt
 // stays in the alerts window's money list.
 //
-// THE RULE (#187, D139's law applied to the alerts window): the "דורש טיפול"
-// money query lists EVERY reservation with total_price > 0 and
-// paid_amount < total_price whose workflow key is not 'approved'. cancelled is
-// in DELIBERATELY — a no-cancellation policy entitles full payment, and a
-// cancelled booking's debt is the debt easiest to miss. #187 DELETED
-// `res.status <> 'cancelled'` from this query and added the בוטלה tag instead
-// (a tag, never a filter). Nothing else stood between a future edit and that
-// line quietly coming back — this guard is that fence. The ONLY exclusion is
-// 'approved'; there is NO status whitelist, so a future lifecycle status is in
-// by construction.
+// THE RULE (#187 + D141, D139's law applied to the alerts window): the
+// "דורש טיפול" money query lists EVERY reservation with total_price > 0 and
+// paid_amount < total_price, with the SAME two exits as the pay window and
+// nothing else — the workflow axis leaves via 'approved' (D139), the
+// lifecycle axis via 'draft' (D141, resolved 2026-08-08: both windows speak
+// one rule; a draft is not an unpaid booking, and its home in this window is
+// the approvals list). cancelled is in DELIBERATELY — a no-cancellation
+// policy entitles full payment, and a cancelled booking's debt is the debt
+// easiest to miss. #187 DELETED `res.status <> 'cancelled'` from this query
+// and added the בוטלה tag instead (a tag, never a filter). Nothing else stood
+// between a future edit and that line quietly coming back — this guard is
+// that fence. There is NO status whitelist, so a future lifecycle status is
+// in by construction.
 //
 // HOW — FULL FREEZE, the check:pay-widget-no-status-whitelist mechanism: the
 // ENTIRE money template (interpolations included, whitespace collapsed) must
@@ -59,6 +62,7 @@ const CANONICAL_TEMPLATE = `
          AND res.total_price > 0
          AND res.paid_amount < res.total_price
          AND COALESCE(wf.key, '') <> 'approved'
+         AND res.status <> 'draft'
        ORDER BY res.check_in
        LIMIT 20`;
 
@@ -67,7 +71,12 @@ const CANONICAL_WHERE = [
   "res.total_price > 0",
   "res.paid_amount < res.total_price",
   "COALESCE(wf.key, '') <> 'approved'",
+  "res.status <> 'draft'",
 ];
+// D141: the draft exclusion, verbatim, on the SAME axis and in the SAME
+// phrasing as the pay widget's (res.status, not wf.key) — the two windows are
+// readable as one rule, not two rules that happen to agree.
+const DRAFT_EXCLUSION = "AND res.status <> 'draft'";
 
 // ---- locate the money query (fail-closed) ----------------------------------
 const extractMoneyQuery = (source) => {
@@ -98,11 +107,16 @@ const validateFile = (source) => {
   if (cancelledCount !== 2) // the flag line: `(res.status = 'cancelled') AS cancelled` — one match per word
     errs.push(`'cancelled' must appear exactly twice in the money query (the flag expression and its alias), found ${cancelledCount} — an extra appearance is a filter coming back`);
 
-  // B. res.status may be touched exactly once — inside the flag. A comparison
-  //    in the WHERE, a JOIN's ON or a derived table adds a second touch.
+  // B. res.status is touched exactly twice — the tag flag and the draft
+  //    exclusion (D141), nothing more. A third touch is a filter coming back
+  //    through a comparison, a JOIN's ON or a derived table.
   const statusCount = (q.match(/\bstatus\b/g) ?? []).length;
-  if (statusCount !== 1)
-    errs.push(`the lifecycle axis (status) must be touched exactly once (the tag flag), found ${statusCount} touches — cancelled rows must be tagged, never filtered (#187)`);
+  if (statusCount !== 2)
+    errs.push(`the lifecycle axis (status) must be touched exactly twice (the tag flag + the draft exclusion), found ${statusCount} touches — cancelled rows must be tagged, never filtered (#187/D141)`);
+  // D141's dedicated assert: a guard that lets the draft exclusion vanish
+  // quietly does not close D141.
+  if (!q.includes(DRAFT_EXCLUSION))
+    errs.push(`the draft exclusion (\`${DRAFT_EXCLUSION}\`) is missing from the money query — D141 aligned both windows on the same rule; removing it re-opens the draft gap`);
 
   // C. no IN-list anywhere, any case — a whitelist is the other door.
   if (/\bIN\s*\(/i.test(q) || /\bNOT\s+IN\b/i.test(q))
@@ -131,7 +145,7 @@ const validateFile = (source) => {
       if (!conds.includes(c)) errs.push(`missing canonical condition: ${c}`);
     for (const c of conds)
       if (!CANONICAL_WHERE.includes(c))
-        errs.push(`extra/altered condition in the money WHERE: "${c}" — the only exclusion is <> 'approved'; cancelled stays in (#187)`);
+        errs.push(`extra/altered condition in the money WHERE: "${c}" — the only exits are <> 'approved' (D139) and <> 'draft' (D141); cancelled stays in (#187)`);
   }
 
   // F. THE FREEZE — the whole template, verbatim. Closes the derived-table /
@@ -174,25 +188,29 @@ const validateFile = (source) => {
 const liveErrs = validateFile(src);
 assert.equal(liveErrs.length, 0,
   `${DATA} violates the #187 rule:\n    - ${liveErrs.join("\n    - ")}`);
-ok("money template is verbatim the frozen shape; WHERE is tenant · debt · <> 'approved' — cancelled is IN, tagged via the flag");
-ok("workflow axis touched once outside the bare-id JOIN; lifecycle axis touched once (the tag); rows reach the window unfiltered");
+ok("money template is verbatim the frozen shape; WHERE is tenant · debt · <> 'approved' · <> 'draft' (D141) — cancelled is IN, tagged via the flag");
+ok("workflow axis touched once outside the bare-id JOIN; lifecycle axis touched twice (the tag + the draft exit); rows reach the window unfiltered");
 
 // ---- 2. B2 — the guard falls when the filter comes back, in ANY phrasing ---
 // [label, old, new] over the FILE text. Every `old` must exist exactly once
 // (a stale battery proves nothing), and every mutant must be REJECTED.
-const TAIL = "AND COALESCE(wf.key, '') <> 'approved'\n       ORDER BY res.check_in\n       LIMIT 20";
+const TAIL = "AND COALESCE(wf.key, '') <> 'approved'\n         AND res.status <> 'draft'\n       ORDER BY res.check_in\n       LIMIT 20";
 const MONEY_JOIN = "LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id\n       WHERE res.tenant_id = ${tenantId}\n         AND res.total_price > 0";
 const FLAG_FROM = "(res.status = 'cancelled') AS cancelled\n        FROM guesthub.reservations res";
-const refilter = (cond) => `AND COALESCE(wf.key, '') <> 'approved'\n         ${cond}\n       ORDER BY res.check_in\n       LIMIT 20`;
+const refilter = (cond) => `AND COALESCE(wf.key, '') <> 'approved'\n         AND res.status <> 'draft'\n         ${cond}\n       ORDER BY res.check_in\n       LIMIT 20`;
 
 const MUTANTS = [
+  ["D141 regression: the draft exclusion removed", TAIL,
+    "AND COALESCE(wf.key, '') <> 'approved'\n       ORDER BY res.check_in\n       LIMIT 20"],
+  ["semantic neutralization: draft comparison wrapped OR-true, markers intact", TAIL,
+    "AND COALESCE(wf.key, '') <> 'approved'\n         AND (res.status <> 'draft' OR true)\n       ORDER BY res.check_in\n       LIMIT 20"],
   ["original filter re-added: AND res.status <> 'cancelled'", TAIL, refilter("AND res.status <> 'cancelled'")],
   ["rephrased: AND res.status NOT IN ('cancelled')", TAIL, refilter("AND res.status NOT IN ('cancelled')")],
   ["rephrased: AND res.status != 'cancelled'", TAIL, refilter("AND res.status != 'cancelled'")],
   ["rephrased, lowercase: and res.status not in ('cancelled')", TAIL, refilter("and res.status not in ('cancelled')")],
   ["rephrased via the flag: AND NOT (res.status = 'cancelled')", TAIL, refilter("AND NOT (res.status = 'cancelled')")],
   ["whitelist regression: AND res.status IN ('confirmed', 'checked_in')", TAIL, refilter("AND res.status IN ('confirmed', 'checked_in')")],
-  ["approved exclusion dropped: the single exit vanishes", TAIL, "ORDER BY res.check_in\n       LIMIT 20"],
+  ["approved exclusion dropped: the workflow exit vanishes", TAIL, "AND res.status <> 'draft'\n       ORDER BY res.check_in\n       LIMIT 20"],
   ["JOIN smuggle: the wf ON grows AND res.status <> 'cancelled'",
     MONEY_JOIN,
     "LEFT JOIN guesthub.lookup_items wf ON wf.id = res.workflow_status_id AND res.status <> 'cancelled'\n       WHERE res.tenant_id = ${tenantId}\n         AND res.total_price > 0"],

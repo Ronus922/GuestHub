@@ -191,7 +191,10 @@ ok("workflow axis touched exactly once outside the bare-id JOIN; no IN-list (any
 // (a stale battery proves nothing), and every mutant must be REJECTED.
 // Mutants 1-4 are the spec's mandated neutralizations (structural markers
 // kept); the rest are the red-team's verified bypasses of the first draft.
-const PAIR = "AND COALESCE(wf.key, '') <> 'approved'\n         AND res.status <> 'draft'";
+// PAIR carries the check_in line for uniqueness: since D141 the alerts money
+// query holds the same approved+draft pair, but only the pay query gates on
+// res.check_in <= ${today}.
+const PAIR = "AND res.check_in <= ${today}\n         AND COALESCE(wf.key, '') <> 'approved'\n         AND res.status <> 'draft'";
 const TAIL = "AND res.status <> 'draft'\n       ORDER BY res.check_in`";
 const FROMLINE = "room.room_number\n        FROM guesthub.reservations res";
 const WHERETOP = "WHERE res.tenant_id = ${tenantId}\n         AND res.check_in <= ${today}\n         AND COALESCE";
@@ -200,11 +203,11 @@ const MUTANTS = [
   ["operator flip: <> 'approved' → = 'approved'",
     PAIR, PAIR.replace("<>", "=")],
   ["OR-true wrap: the comparison remains, vacuously",
-    PAIR, "AND (COALESCE(wf.key, '') <> 'approved' OR true)\n         AND res.status <> 'draft'"],
+    PAIR, "AND res.check_in <= ${today}\n         AND (COALESCE(wf.key, '') <> 'approved' OR true)\n         AND res.status <> 'draft'"],
   ["COALESCE default flip: NULL-workflow rows read as approved and vanish",
     PAIR, PAIR.replace("COALESCE(wf.key, '')", "COALESCE(wf.key, 'approved')")],
   ["dropped comparison: the 'approved' line deleted outright",
-    PAIR, "AND res.status <> 'draft'"],
+    PAIR, "AND res.check_in <= ${today}\n         AND res.status <> 'draft'"],
   ["whitelist regression: res.status NOT IN ('cancelled', 'draft')",
     TAIL, "AND res.status NOT IN ('cancelled', 'draft')\n       ORDER BY res.check_in`"],
   ["lowercase whitelist: res.status not in (…) — keywords are case-insensitive in SQL",

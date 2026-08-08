@@ -762,6 +762,11 @@ function addOneDay(d: DateOnly): DateOnly {
 // when it matters.
 // ============================================================
 async function dashboardAlerts(tenantId: string, today: DateOnly): Promise<AlertRow[]> {
+  // money — the SAME two exits as the pay window, on the same axes (D141):
+  // the workflow axis leaves via 'approved' (D139), the lifecycle axis via
+  // 'draft' (D140: a draft is not an unpaid booking; its home here is the
+  // approvals list below). cancelled stays IN and is tagged, never filtered
+  // (#187). Frozen by check:alerts-window-includes-cancelled.
   const [money, cards, approvals, messages, connections] = await Promise.all([
     sql<Record<string, unknown>[]>`
       SELECT res.id, res.reservation_number, COALESCE(g.full_name, 'אורח') AS guest_name,
@@ -774,6 +779,7 @@ async function dashboardAlerts(tenantId: string, today: DateOnly): Promise<Alert
          AND res.total_price > 0
          AND res.paid_amount < res.total_price
          AND COALESCE(wf.key, '') <> 'approved'
+         AND res.status <> 'draft'
        ORDER BY res.check_in
        LIMIT 20`,
     sql<Record<string, unknown>[]>`
