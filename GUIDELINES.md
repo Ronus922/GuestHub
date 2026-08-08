@@ -249,10 +249,21 @@
 4. **ה-probes יורשים את ה-DSN מהראנר**, לא מ-`.env.local`: run-liveness דורס
    את `DATABASE_URL` בסביבת כל probe (משתנה סביבה אמיתי גובר על `--env-file`
    ב-Node ≥20.6). אין להריץ `pnpm liveness:*` בודדים ישירות מול פרוד —
-   בלי הראנר אין preflight של read-only ואין אימות סמני פרודקשן.
+   בלי הראנר אין preflight של read-only, אין אימות סמני פרודקשן ואין בדיקת
+   טביעת אצבע.
+5. **טביעת האצבע היא התנאי המחייב (D142, הוכרע 2026-08-08):** אחרי החיבור
+   ולפני כל probe הראנר קורא `pg_control_system().system_identifier` ומשווה
+   ל-`PROD_CLUSTER_FINGERPRINT` המוצמד ב-`scripts/run-liveness.mjs`. סמני
+   ה-DSN הם מסננת ראשונית בלבד — DSN עם `:5432/` שמצביע לקלאסטר אחר יעבור
+   אותם ו**ייחסם על הטביעה** (סירוב exit 2, אפס probes). אם פרוד אי-פעם
+   ישוחזר לקלאסטר חדש (system_identifier נולד ב-initdb) — הטביעה המוצמדת
+   מתעדכנת בקומיט, לא עוקפים אותה. שומר: `check:liveness-cluster-fingerprint`.
 
-דוגמה (ה-IP — מה-inspect של אותו רגע):
+דוגמה (ה-IP — מה-inspect של אותו רגע; שתי שורות ה-`#` הראשונות בפלט חייבות
+להיות אישור ה-read-only ואישור הטביעה):
 
 ```bash
 LIVENESS_DB_URL="postgres://guesthub_app:<PW>@172.18.0.4:5432/postgres" pnpm liveness
+# read-only preflight: default_transaction_read_only=on (session)
+# cluster fingerprint: 7623660179909357606 — matches the pinned production identity (D142)
 ```
