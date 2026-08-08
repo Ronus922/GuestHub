@@ -222,15 +222,17 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                 <button
                   type="button"
                   className={`icon-btn ws-star ${row.isDefault ? "on" : ""}`}
-                  disabled={pending || row.isDefault || !row.isActive || row.key === "approved"}
+                  disabled={pending || row.isDefault || !row.isActive || row.key === "approved" || row.key === "draft"}
                   title={
                     row.isDefault
                       ? "ברירת המחדל"
                       : row.key === "approved"
                         ? "סטטוס זה מסמן תשלום בפועל ואינו יכול לשמש כברירת מחדל לייבוא."
-                        : !row.isActive
-                          ? "הפעל את הסטטוס לפני קביעתו כברירת מחדל"
-                          : "קבע כברירת מחדל"
+                        : row.key === "draft"
+                          ? "חלון התשלומים מחריג טיוטות (D140), ולכן סטטוס זה אינו יכול לשמש כברירת מחדל לייבוא."
+                          : !row.isActive
+                            ? "הפעל את הסטטוס לפני קביעתו כברירת מחדל"
+                            : "קבע כברירת מחדל"
                   }
                   onClick={() =>
                     startTransition(async () =>
@@ -244,7 +246,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                     label={
                       row.isDefault
                         ? `${row.label} — ברירת מחדל`
-                        : row.key === "approved"
+                        : row.key === "approved" || row.key === "draft"
                           ? `${row.label} — אינו זמין כברירת מחדל לייבוא`
                           : `קבע את ${row.label} כברירת מחדל`
                     }
