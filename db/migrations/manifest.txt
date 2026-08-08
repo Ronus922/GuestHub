@@ -85,3 +85,4 @@
 077_guest_ingest_grants.sql
 078_drop_payment_policies.sql
 079_booking_documents.sql
+080_grant_app_select.sql

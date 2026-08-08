@@ -115,7 +115,8 @@
     "check:mark-clean-permission": "node scripts/check-mark-clean-permission.mjs",
     "check:sources-breakdown": "node scripts/check-sources-breakdown.mjs",
     "check:pay-widget-no-status-whitelist": "node scripts/check-pay-widget-no-status-whitelist.mjs",
-    "check:alerts-window-includes-cancelled": "node scripts/check-alerts-window-includes-cancelled.mjs"
+    "check:alerts-window-includes-cancelled": "node scripts/check-alerts-window-includes-cancelled.mjs",
+    "check:grants": "node scripts/check-grants.mjs"
   },
   "engines": {
     "node": ">=20 <21"
