@@ -82,7 +82,10 @@ export function AlertsWindow({ rows }: { rows: AlertRow[] }) {
               <Icon name={ICON[a.kind]} size={20} />
             </span>
             <span className="alr-body">
-              <span className="alr-title">{a.title}</span>
+              <span className="alr-title">
+                {a.title}
+                {a.cancelled && <span className="chip alr-tag-cxl">בוטלה</span>}
+              </span>
               <span className="alr-sub">{a.detail}</span>
             </span>
           </>
