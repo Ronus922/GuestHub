@@ -90,7 +90,7 @@
     "check:channels-fullsync-ui": "node scripts/check-channels-fullsync-ui.mjs",
     "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs",
     "check:status-default": "node scripts/check-status-default.mjs",
-    "check:no-approved-as-default": "node scripts/check-no-approved-as-default.mjs",
+    "check:no-approved-or-draft-as-default": "node scripts/check-no-approved-or-draft-as-default.mjs",
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:calendar-departure-edge": "node scripts/check-calendar-departure-edge.mjs",
     "check:design": "node scripts/check-design-system.mjs",
@@ -114,7 +114,9 @@
     "check:nightly-revenue": "node scripts/check-nightly-revenue.mjs",
     "check:mark-clean-permission": "node scripts/check-mark-clean-permission.mjs",
     "check:sources-breakdown": "node scripts/check-sources-breakdown.mjs",
-    "check:pay-widget-no-status-whitelist": "node scripts/check-pay-widget-no-status-whitelist.mjs"
+    "check:pay-widget-no-status-whitelist": "node scripts/check-pay-widget-no-status-whitelist.mjs",
+    "check:alerts-window-includes-cancelled": "node scripts/check-alerts-window-includes-cancelled.mjs",
+    "check:grants": "node scripts/check-grants.mjs"
   },
   "engines": {
     "node": ">=20 <21"

@@ -211,9 +211,18 @@ export async function setDefaultWorkflowStatusAction(input: {
       // D89: the 'approved' workflow key IS the paid marker, and the star is
       // what the importer stamps on every new OTA booking — starring it would
       // sign every import as paid and hide it from the pay window (D139).
+      // D140: 'draft' is the pay window's one lifecycle exception — starring
+      // it would hide every import from the same window through the second
+      // door. The keys refused here mirror the pay widget's exclusion list
+      // (D139/D140, data.ts); if that list ever changes,
+      // check:no-approved-or-draft-as-default points at the mismatch.
       if (target.key === "approved")
         throw new AuthorizationError(
-          "סטטוס זה מסמן תשלום בפועל ואינו יכול לשמש כברירת מחדל לייבוא",
+          "הסטטוס 'approved' נדחה: הוא מסמן תשלום בפועל (D89), וקביעתו כברירת מחדל תסמן כל ייבוא כשולם ותסתיר אותו מחלון התשלומים (D139)",
+        );
+      if (target.key === "draft")
+        throw new AuthorizationError(
+          "הסטטוס 'draft' נדחה: חלון התשלומים מחריג טיוטות (D140), וקביעתו כברירת מחדל תסתיר כל ייבוא מחלון התשלומים",
         );
       // clear-then-set inside one transaction keeps exactly one default
       await tx`
