@@ -9,9 +9,17 @@
 // rebuilt-from-source schema silently diverged from production — 58 of 71
 // tables unreadable on replay before migration 080. This guard measures the
 // replayed truth: after the chain runs, EVERY table (and view) in guesthub
-// carries SELECT for guesthub_app, schema USAGE included, and the
-// schema_migrations ledger stays read-only (SELECT yes, write NO — a writable
-// ledger is a corruptible record of what ran).
+// carries SELECT for guesthub_app, schema USAGE included, and the TWO FROZEN
+// EXCEPTIONS of the D144 decision (migration 082) hold:
+//   · schema_migrations stays read-only (SELECT yes, write NO — a writable
+//     ledger is a corruptible record of what ran);
+//   · the audit class (audit_logs, bulk_rate_update_logs,
+//     bulk_rate_update_items) keeps INSERT and has NO DELETE — the app
+//     writes evidence and can never erase it. Both directions matter: DELETE
+//     appearing means evidence is erasable; INSERT disappearing means the
+//     audit trail silently stopped being written.
+// A guard that would let either exception quietly reopen voids the whole
+// point of the D144 decision — hence the mutants below.
 //
 // WHERE IT RUNS: inside the suite (run-checks.mjs hands it DATABASE_URL for a
 // clone built from manifest order) — it measures CODE, i.e. what the
@@ -24,12 +32,20 @@
 // pass is a guard failure; this skip is impossible to mistake for a verdict.
 // A DSN that is present but unreachable is a FAILURE (exit 1), fail-closed.
 //
-// B2 — THE GUARD PROVES ITSELF, EVERY RUN, against the real database:
-//   · REVOKE mutant: inside a rolled-back transaction, SELECT is revoked from
-//     one real table — the scan MUST report it, or the guard is not a guard.
-//   · coverage-removal mutant: the enumeration is re-run with one table
-//     filtered out (simulating a future edit that narrows the query) — the
-//     independent cross-count MUST flag the mismatch.
+// B2 — THE GUARD PROVES ITSELF, EVERY RUN, against the real database (state
+// mutants run inside transactions that ALWAYS roll back; list mutants run on
+// in-memory copies — the real state is never left mutated):
+//   · REVOKE mutant: SELECT revoked from one real table — the scan MUST
+//     report it, or the guard is not a guard.
+//   · coverage-removal mutant: the enumeration re-run with one table
+//     filtered out — the independent cross-count MUST flag the mismatch.
+//   · ledger-write mutant: INSERT granted on schema_migrations — MUST fail.
+//   · audit-delete mutant: DELETE granted on audit_logs — MUST fail.
+//   · audit-insert-loss mutant: INSERT revoked from audit_logs — MUST fail
+//     (a frozen exception that also freezes the app OUT is a dead audit).
+//   · semantic neutralization: the frozen-exception scan pointed at a
+//     misspelled table name — MUST fail (a freeze naming a phantom table
+//     verifies nothing while looking intact).
 // Usage: DATABASE_URL=<non-production DSN> node scripts/check-grants.mjs
 // ============================================================
 import { createRequire } from "node:module";
@@ -114,17 +130,50 @@ try {
   assert.equal(usage, true, `${APP_ROLE} lacks USAGE on schema guesthub — every table SELECT above is unreachable (080 grants it; production has carried it since before the migrations)`);
   ok(`${APP_ROLE} holds USAGE on schema guesthub — the table grants are actually reachable`);
 
-  // ---- 3. the ledger stays read-only --------------------------------------
-  // Decided 2026-08-08: SELECT only, never INSERT/UPDATE/DELETE — the ledger
-  // is written by the migration runner alone; app-side write access would
-  // open a path to corrupting the record of what ran.
-  const [led] = await sql`
+  // ---- 3. the two frozen exceptions of D144 (migration 082) ----------------
+  // The D144 widening made write the DEFAULT; these two carve-outs are the
+  // entire cost of that decision, and they are load-bearing: a guard that
+  // lets either reopen silently voids the decision.
+  //   exception 1 — the ledger: SELECT only, never INSERT/UPDATE/DELETE (the
+  //     record of what ran is written by the runner alone);
+  //   exception 2 — the audit class: DELETE absent AND INSERT present (the
+  //     app writes evidence, never erases it — and if INSERT vanishes, the
+  //     audit trail dies just as silently as it would by deletion).
+  const AUDIT_TABLES = ["audit_logs", "bulk_rate_update_logs", "bulk_rate_update_items"];
+  const scanLedger = (tx) => tx`
     SELECT has_table_privilege(${APP_ROLE}, 'guesthub.schema_migrations', 'INSERT') AS ins,
            has_table_privilege(${APP_ROLE}, 'guesthub.schema_migrations', 'UPDATE') AS upd,
            has_table_privilege(${APP_ROLE}, 'guesthub.schema_migrations', 'DELETE') AS del`;
-  assert.equal(led.ins || led.upd || led.del, false,
-    `${APP_ROLE} holds WRITE on guesthub.schema_migrations (insert=${led.ins} update=${led.upd} delete=${led.del}) — the ledger must be SELECT-only for the app role`);
-  ok("guesthub.schema_migrations is SELECT-only for the app role — the ledger cannot be rewritten from the app");
+  // to_regclass keeps a renamed/dropped table from erroring the query — it
+  // surfaces as present=false, which validateExceptions treats as a FAILURE:
+  // a freeze pointing at a phantom table verifies nothing.
+  const scanAudit = (tx, tables) => tx`
+    SELECT t.name,
+           to_regclass('guesthub.' || t.name) IS NOT NULL AS present,
+           has_table_privilege(${APP_ROLE}, to_regclass('guesthub.' || t.name), 'INSERT') AS ins,
+           has_table_privilege(${APP_ROLE}, to_regclass('guesthub.' || t.name), 'DELETE') AS del
+      FROM unnest(${tables}::text[]) AS t(name)`;
+  const validateExceptions = (led, auditRows, expectedNames) => {
+    const errs = [];
+    if (led.ins || led.upd || led.del)
+      errs.push(`guesthub.schema_migrations is app-writable (insert=${led.ins} update=${led.upd} delete=${led.del}) — the ledger must stay SELECT-only (082 exception 1)`);
+    if (auditRows.length !== expectedNames.length)
+      errs.push(`audit-class scan returned ${auditRows.length} rows for ${expectedNames.length} frozen names — the exception list and the scan diverged`);
+    for (const r of auditRows) {
+      if (!r.present) { errs.push(`guesthub.${r.name} does not exist — the audit-class freeze names a phantom table and verifies nothing (renamed? update the frozen list AND migration 082)`); continue; }
+      if (r.del === true)
+        errs.push(`guesthub.${r.name} has DELETE for ${APP_ROLE} — the app can erase evidence (082 exception 2 broken)`);
+      if (r.ins !== true)
+        errs.push(`guesthub.${r.name} has NO INSERT for ${APP_ROLE} — the app can no longer write its own audit trail (the freeze must not freeze the app out)`);
+    }
+    return errs;
+  };
+  const [ledReal] = await scanLedger(sql);
+  const auditReal = await scanAudit(sql, AUDIT_TABLES);
+  const excErrs = validateExceptions(ledReal, auditReal, AUDIT_TABLES);
+  assert.equal(excErrs.length, 0, `the D144 frozen exceptions are broken:\n  - ${excErrs.join("\n  - ")}`);
+  ok(`exception 1 holds: guesthub.schema_migrations is SELECT-only for the app role — the ledger cannot be rewritten from the app`);
+  ok(`exception 2 holds: audit class (${AUDIT_TABLES.join(", ")}) — INSERT present, DELETE absent for ${APP_ROLE}`);
 
   // ---- 4. B2 — the guard proves itself against the live catalog -----------
   // (a) REVOKE mutant, inside a transaction that always rolls back: a real
@@ -152,9 +201,45 @@ try {
   assert.ok(narrowedErrs.some((e) => e.includes("independent catalog count")),
     `B2: coverage-removal mutant PASSED — guesthub.${victim} was dropped from the enumeration and the cross-count did not flag it`);
   console.log(`  ✓ B2 mutant rejected: guesthub.${victim} filtered out of the enumeration → cross-count mismatch flagged`);
-  ok("B2: both mutants rejected — a real missing grant surfaces, and a narrowed scan cannot read as full coverage");
 
-  console.log(`\nall ${n} grants checks passed — a rebuilt guesthub schema is fully readable by ${APP_ROLE}, and the ledger stays read-only`);
+  // (c)–(e) exception-state mutants, each inside a transaction that ALWAYS
+  //     rolls back: the D144 freeze must catch every way it can be reopened.
+  const STATE_MUTANTS = [
+    ["INSERT granted on the ledger — the record of what ran becomes app-writable",
+      `GRANT INSERT ON guesthub.schema_migrations TO ${APP_ROLE}`, "SELECT-only"],
+    ["DELETE granted on audit_logs — evidence becomes erasable",
+      `GRANT DELETE ON guesthub.audit_logs TO ${APP_ROLE}`, "erase evidence"],
+    ["INSERT revoked from audit_logs — the audit trail silently stops being written",
+      `REVOKE INSERT ON guesthub.audit_logs FROM ${APP_ROLE}`, "NO INSERT"],
+  ];
+  for (const [label, mutation, expectMark] of STATE_MUTANTS) {
+    await sql.begin(async (tx) => {
+      await tx.unsafe(mutation);
+      const verdicts = validateExceptions((await scanLedger(tx))[0], await scanAudit(tx, AUDIT_TABLES), AUDIT_TABLES);
+      assert.ok(verdicts.some((e) => e.includes(expectMark)),
+        `B2: exception mutant PASSED — "${label}" did not surface in the frozen-exception scan; the D144 freeze is not frozen`);
+      console.log(`  ✓ B2 mutant rejected: ${label} (in-txn) → scan reports it → rolled back`);
+      throw Object.assign(new Error("b2-rollback"), { b2: true });
+    }).catch((e) => { if (!e.b2) throw e; });
+  }
+  const [after] = await sql`
+    SELECT has_table_privilege(${APP_ROLE}, 'guesthub.schema_migrations', 'INSERT') AS led_ins,
+           has_table_privilege(${APP_ROLE}, 'guesthub.audit_logs', 'DELETE') AS aud_del,
+           has_table_privilege(${APP_ROLE}, 'guesthub.audit_logs', 'INSERT') AS aud_ins`;
+  assert.ok(after.led_ins === false && after.aud_del === false && after.aud_ins === true,
+    `B2 rollback failed — the exception mutants leaked into the real state (ledger insert=${after.led_ins}, audit delete=${after.aud_del}, audit insert=${after.aud_ins}); restore it before trusting anything`);
+
+  // (f) semantic neutralization, on an in-memory COPY of the frozen list: a
+  //     misspelled exception name must read as FAILURE, not as vacuous green.
+  const phantomList = ["audit_logs_v2", ...AUDIT_TABLES.slice(1)];
+  const phantomErrs = validateExceptions(ledReal, await scanAudit(sql, phantomList), phantomList);
+  assert.ok(phantomErrs.some((e) => e.includes("phantom")),
+    "B2: semantic-neutralization mutant PASSED — a frozen list naming a nonexistent table produced no failure; the freeze can silently point at nothing");
+  console.log(`  ✓ B2 mutant rejected: frozen-exception list pointed at "audit_logs_v2" (nonexistent) → phantom flagged, not vacuous green`);
+
+  ok("B2: all 6 mutants rejected — a missing grant surfaces, a narrowed scan cannot read as coverage, and the D144 exceptions cannot reopen, die, or dangle silently");
+
+  console.log(`\nall ${n} grants checks passed — a rebuilt guesthub schema is fully readable by ${APP_ROLE}, the ledger stays read-only, and the audit class stays append-only (D144)`);
 } finally {
   await sql.end({ timeout: 5 });
 }

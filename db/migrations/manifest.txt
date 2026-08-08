@@ -87,3 +87,4 @@
 079_booking_documents.sql
 080_grant_app_select.sql
 081_grant_reports_write.sql
+082_default_privileges_write.sql

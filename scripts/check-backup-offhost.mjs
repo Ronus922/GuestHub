@@ -26,8 +26,20 @@
 // failure downgraded to a warning, encryption removed (plaintext upload),
 // a swallowed upload (|| true), the drill's remote pull removed, the backup
 // hook removed, the key requirement dropped. Every rejection is printed.
+//
+// PLAINTEXT DUMPS (final H4 closure, 2026-08-08): the backups directory
+// holds NO unencrypted SQL dump — ever. The pre-H4 nightly wrote plaintext
+// guesthub_db_*.sql files, and the CURRENT retention (guesthub-backup.sh)
+// rotates only the new names (guesthub_full_*.sql.enc, guesthub_uploads_
+// *.tar.gz) — so old-format plaintext survived FOREVER, unnoticed: 19 dumps
+// of guest PII sat on disk for a month. This section is the fence: any bare
+// *.sql under the backups dir (recursively — one hid in stage1/), or any
+// file whose CONTENT is a plaintext pg_dump under whatever name, fails the
+// guard. The pipeline's only legitimate plaintext (guesthub-backup.sh's
+// $RAW) lives for ~2s mid-run before encrypt+rm — a leftover after a crash
+// is exactly the leak this must catch.
 // Usage: node scripts/check-backup-offhost.mjs
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, openSync, readSync, closeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
@@ -165,4 +177,72 @@ for (const [label, target, oldText, newText] of MUTANTS) {
 }
 ok(`B2: all ${MUTANTS.length} mutants rejected — the off-host promise cannot be neutralized, softened, or unwired without this guard failing`);
 
-console.log(`\nall ${n} backup-offhost checks passed — encrypted, verified, fail-loud, and drilled from the remote (H4)`);
+// ---- 4. plaintext dumps — the backups directory holds NO unencrypted .sql --
+// Entries: [{rel, head}] — path relative to the backups dir + first 512
+// bytes. Pure function so the B2 battery below can feed it synthetic
+// directory states without touching the real one.
+const PLAINTEXT_DUMP = /PostgreSQL database dump|^\\restrict |^--\n--/m;
+const plaintextDumpViolations = (entries) => {
+  const errs = [];
+  for (const { rel, head } of entries) {
+    if (/\.sql$/.test(rel))
+      errs.push(`${rel}: bare *.sql in the backups dir — the old nightly's plaintext format; retention never rotates it, so it lives forever`);
+    else if (PLAINTEXT_DUMP.test(head))
+      errs.push(`${rel}: CONTENT is a plaintext pg_dump under a non-.sql name — an encrypted-looking filename must not smuggle plaintext PII`);
+  }
+  return errs;
+};
+
+const readHead = (path) => {
+  const buf = Buffer.alloc(512);
+  const fd = openSync(path, "r");
+  const bytes = readSync(fd, buf, 0, 512, 0);
+  closeSync(fd);
+  return buf.subarray(0, bytes).toString("latin1");
+};
+const scanBackupsDir = (dir, prefix = "") =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? scanBackupsDir(join(dir, e.name), `${prefix}${e.name}/`)
+    : e.isFile() ? [{ rel: `${prefix}${e.name}`, head: readHead(join(dir, e.name)) }]
+    : []);
+
+const BACKUPS_DIR = process.env.BACKUPS_DIR || "/home/ubuntu/guesthub-backups";
+if (existsSync(BACKUPS_DIR)) {
+  const entries = scanBackupsDir(BACKUPS_DIR);
+  const leaks = plaintextDumpViolations(entries);
+  assert.equal(leaks.length, 0,
+    `unencrypted SQL dump(s) in ${BACKUPS_DIR} — guest PII in plaintext on disk (the pre-H4 format retention never rotates):\n  - ${leaks.join("\n  - ")}`);
+  ok(`no plaintext SQL dump under ${BACKUPS_DIR} (${entries.length} files scanned, recursively, by name AND content)`);
+} else {
+  console.log(`  ! backups dir ${BACKUPS_DIR} absent on this host — plaintext-dump scan did NOT run here (expected on dev/CI; the suite still proves the validator below)`);
+}
+
+// B2 — synthetic directory states, in-memory only; the real dir is never
+// touched. A clean fixture passes; each hostile state must be rejected.
+const CLEAN_FIXTURE = [
+  { rel: "guesthub_full_20990101T000000.sql.enc", head: "Salted__\x07\xad\xe2" },
+  { rel: "guesthub_uploads_20990101T000000.tar.gz", head: "\x1f\x8b\x08" },
+];
+assert.equal(plaintextDumpViolations(CLEAN_FIXTURE).length, 0,
+  "B2: the clean fixture (encrypted dump + uploads tar) was flagged — the validator is crying wolf");
+
+const DUMP_HEAD = "--\n-- PostgreSQL database dump\n--\n";
+const DIR_MUTANTS = [
+  ["plaintext dump at top level (the classic pre-H4 leftover)",
+    { rel: "guesthub_db_20990101T000000.sql", head: DUMP_HEAD }],
+  ["plaintext dump hidden in a subdirectory (the stage1/ case)",
+    { rel: "stage1/guesthub_db_stage1_20990101T000000.sql", head: DUMP_HEAD }],
+  ["semantic neutralization: plaintext pg_dump CONTENT under an encrypted name (.sql.enc) — a name-only filter reads it as safe",
+    { rel: "guesthub_full_20990101T000000.sql.enc", head: DUMP_HEAD }],
+  ["encrypted content under a bare .sql name — the old format must stay banned even when the bytes happen to be ciphertext",
+    { rel: "guesthub_db_20990101T000000.sql", head: "Salted__\x07\xad\xe2" }],
+];
+for (const [label, entry] of DIR_MUTANTS) {
+  const verdicts = plaintextDumpViolations([...CLEAN_FIXTURE, entry]);
+  assert.ok(verdicts.length > 0,
+    `B2: directory mutant "${label}" PASSED the plaintext-dump validator — the guard is not a guard`);
+  if (verdicts.length > 0) console.log(`  ✓ B2 mutant rejected: ${label}`);
+}
+ok(`B2: all ${DIR_MUTANTS.length} plaintext-dump mutants rejected — no name, no directory depth, and no extension smuggles a plaintext dump past this guard`);
+
+console.log(`\nall ${n} backup-offhost checks passed — encrypted, verified, fail-loud, drilled from the remote, and free of plaintext dumps (H4)`);
