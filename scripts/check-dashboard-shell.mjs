@@ -213,7 +213,7 @@ try {
   assert.equal(donutArcs([]).arcs.length, 0, "an empty donut has no arcs");
   ok("an empty donut renders the track ring alone");
 
-  console.log(`\nDASHBOARD SHELL: ${n} PASSED`);
+  console.log(`\nDASHBOARD SHELL: ${n} ASSERTIONS PASSED · ${W.WINDOWS.length} WINDOWS`);
 } catch (e) {
   console.error(`\nDASHBOARD SHELL FAILED: ${e.message}`);
   process.exitCode = 1;
