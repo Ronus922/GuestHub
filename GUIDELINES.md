@@ -231,3 +231,28 @@
 אסור להדפיס למפעיל ערך (סטטוס, קוד, שם שדה) שלא הופיע על התשובה עצמה — מחרוזת
 קבועה שמתחזה לסטטוס אסורה. טקסט טכני של הספק **כן** מוצג במסכי מפעיל פנימיים;
 משטחי אורח אינם מושפעים. שומר: `check:beds24-failure-evidence`.
+
+## 14. הרצת liveness — חיבור ה-DB הנכון (D142, כלל קבוע)
+
+`pnpm liveness` מודד את **המערכת החיה** (D138) ודורש `LIVENESS_DB_URL` מפורש.
+הידע הבא נמדד ואינו משוחזר מהקוד — אל תגלה אותו מחדש:
+
+1. **לא דרך ה-pooler.** `localhost:5432` הוא Supavisor והוא **משמיט פרמטרי
+   startup** (נמדד עם `default_transaction_read_only`; אותה מחלקה כמו
+   `search_path`, ראה lib/db.ts). ה-preflight של run-liveness נכשל-סגור
+   ויסרב — זו התנהגות נכונה, לא תקלה.
+2. **היעד הוא ה-backend הישיר** — קונטיינר `supabase-db`, שאינו ממופה לפורט
+   על ה-host. הכתובת היא ה-IP בגשר ה-docker: `docker inspect supabase-db`
+   (נכון ל-2026-08-08: `172.18.0.4`; עלול להשתנות ב-restart).
+3. **פורמט המשתמש תלוי-מסלול:** דרך ה-pooler המשתמש הוא tenant בפורמט
+   `guesthub_app.bios-vps`; בחיבור ישיר — `guesthub_app` **נקי**, בלי סיומת.
+4. **ה-probes יורשים את ה-DSN מהראנר**, לא מ-`.env.local`: run-liveness דורס
+   את `DATABASE_URL` בסביבת כל probe (משתנה סביבה אמיתי גובר על `--env-file`
+   ב-Node ≥20.6). אין להריץ `pnpm liveness:*` בודדים ישירות מול פרוד —
+   בלי הראנר אין preflight של read-only ואין אימות סמני פרודקשן.
+
+דוגמה (ה-IP — מה-inspect של אותו רגע):
+
+```bash
+LIVENESS_DB_URL="postgres://guesthub_app:<PW>@172.18.0.4:5432/postgres" pnpm liveness
+```
