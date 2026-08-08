@@ -3231,3 +3231,79 @@ trigger ברמת ה-DB — SQL ישיר כ-admin עדיין יכול לסמן `i
   קורא את הכוכב) — נקודת אכיפה אחת, מכוסה גארד עם B2.
 
 אם ייווסף אי-פעם מסלול כתיבה שני ל-`is_default`, ההחלטה הזאת נפתחת מחדש.
+
+## D144 — הרשאות כתיבה לטבלאות עתידיות בסכימה guesthub (2026-08-08)
+
+**סטטוס: פתוח להכרעה — רישום בלבד, בלי תיקון ובלי מיגרציה.**
+
+**הרקע:** מיגרציה 080 סגרה את פער ה-SELECT‏ (`GRANT USAGE ON SCHEMA` +
+`GRANT SELECT ON ALL TABLES` + `ALTER DEFAULT PRIVILEGES FOR ROLE
+supabase_admin`). אחרי הפריסה אומת בפרוד: שתי הטבלאות קריאות, אפס טבלאות
+חסרות SELECT, ‏82 שורות בלדג'ר.
+
+**הממצא:** ברירת המחדל תחת `supabase_admin` מעניקה ל-`guesthub_app` **קריאה
+בלבד**, בעוד שתחת `postgres` היא מעניקה `arwdDxt` מלא. על sequences
+ו-functions תחת `supabase_admin`,‏ `guesthub_app` אינו מופיע כלל. הפלט המלא
+של `pg_default_acl` לסכימה, כפי שנמדד בפרוד ב-2026-08-08:
+
+```text
+    grantor     | objtype |                        defaclacl
+----------------+---------+---------------------------------------------------------------------
+ postgres       | S       | {service_role=rwU/postgres,guesthub_app=rwU/postgres}
+ postgres       | f       | {service_role=X/postgres}
+ postgres       | r       | {service_role=arwdDxt/postgres,guesthub_app=arwdDxt/postgres}
+ supabase_admin | S       | {service_role=rwU/supabase_admin}
+ supabase_admin | f       | {service_role=X/supabase_admin}
+ supabase_admin | r       | {service_role=arwdDxt/supabase_admin,guesthub_app=r/supabase_admin}
+```
+
+מכיוון שראנר המיגרציות רץ כ-`supabase_admin`, טבלה שתיווצר במיגרציה 081+
+תיוולד קריאה-אך-לא-כתיבה עבור האפליקציה. טבלה עם `identity`/`serial` תיצור
+בנוסף sequence בלי `USAGE` — כלומר `INSERT` ייכשל גם אם הרשאת הטבלה תתוקן.
+
+**חומרה:** `check:grants` בודק SELECT בלבד ויעבור ירוק. הכשל יתגלה בזמן
+ריצה בפרוד כ-`permission denied` על כתיבה — מאוחר יותר מהכשל המקביל של
+076→077, שהתגלה בקריאה.
+
+**מצב נמדד (פרוד, 2026-08-08):**
+
+- טבלאות ללא `INSERT` ל-`guesthub_app`: **2** — כלומר הפער **כבר פעיל, לא
+  עתידי**:
+  - `schema_migrations` — **מכוון** (הכרעת 080: הלדג'ר SELECT-בלבד, כתיבה
+    רק לראנר). אינו חלק מהפער.
+  - `booking_channel_reports` — **פער פעיל**: קוד האפליקציה מריץ
+    `INSERT INTO guesthub.booking_channel_reports`
+    (‏booking-com-reports-core.ts:164, מסלול `submitBookingComReport`) תחת
+    `guesthub_app`, וההרשאה חסרה. הטבלה מונה 0 שורות בפרוד — עקבי עם מסלול
+    כתיבה שמעולם לא הצליח (או לא הופעל). ‏080 העניקה לה SELECT בלבד, לפי
+    ההכרעה שהוגבלה במפורש ל-SELECT.
+- ‏sequences ללא `USAGE`: **0** מתוך 2 (‏`channel_dirty_revision_seq`,‏
+  `ttlock_ops_id_seq` — שתיהן עם GRANT מפורש מהמיגרציה היוצרת). החלק הזה
+  של הפער עתידי בלבד.
+
+**שתי האפשרויות:**
+
+*(א) הרחבת ברירת המחדל* — `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES`
++ `GRANT USAGE, SELECT ON SEQUENCES` תחת `FOR ROLE supabase_admin`.
+יתרון: טבלה חדשה שמישה מיידית, אין מה לזכור.
+חיסרון: מרחיב הרשאות בשקט לכל טבלה עתידית, כולל טבלאות שלא נועדו לאפליקציה
+(לוגים, audit, טבלאות פנימיות של הראנר — הלדג'ר עצמו יידרש REVOKE מפורש
+כדי לשמר את הכרעת 080). המודל הופך רחב-כברירת-מחדל ומצומצם-בחריגה, כלומר
+לא ניתן לצמצם בלי לזכור לצמצם.
+
+*(ב) קריאה בלבד כברירת מחדל + `GRANT` מפורש בכל מיגרציה שיוצרת טבלה
+שהאפליקציה כותבת אליה* (המוסכמה הקיימת של 045/047/077).
+יתרון: כל הרשאת כתיבה נראית בדיף ובהיסטוריה; מודל מצומצם כברירת מחדל.
+חיסרון: נשכח בקלות — ‏076→077 הוכיחו זאת, ו-`booking_channel_reports` הוא
+מופע חי שני — והכשל מתגלה רק בפרוד. **דורש הרחבת `check:grants`** לבדוק גם
+כתיבה מול רשימת טבלאות מוצהרת בריפו — אחרת (ב) גרועה מ-(א), כי היא מוסיפה
+חובת זכירה בלי מנגנון שתופס שכחה.
+
+**הערה על עקביות:** הפער בין `postgres` ל-`supabase_admin`
+ב-`pg_default_acl` הוא עצמו שריד היסטורי. ההכרעה צריכה להתייחס גם לשאלה אם
+להשוות ביניהם או להשאיר את הפיצול, כדי ש-replay-from-zero וקלאסטר פרוד
+יתנהגו זהה — הדרישה שנקבעה ב-D136.
+
+**ההכרעה:** ממתין להכרעת רונן. (בלי קשר להכרעה — הפער הפעיל של
+`booking_channel_reports` יצטרך תיקון נקודתי משלו: מיגרציה עם GRANT מפורש,
+או הכרעה שהמסלול מוסר.)
