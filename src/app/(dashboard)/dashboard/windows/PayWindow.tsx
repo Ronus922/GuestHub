@@ -63,20 +63,34 @@ export function PayWindow({
 
   const markCharged = (r: PayRow) => {
     if (!approvedId) return;
+    const revert = () =>
+      setCharged((d) => {
+        const next = { ...d };
+        delete next[r.reservationId];
+        return next;
+      });
     setCharged((d) => ({ ...d, [r.reservationId]: true }));
     start(async () => {
-      const res = await setWorkflowStatusAction({
-        reservationId: r.reservationId,
-        workflowStatusId: approvedId,
-      });
-      if (res.success) toast.success(`ההזמנה של ${r.guestName} סומנה כחויבה`);
-      else {
-        setCharged((d) => {
-          const next = { ...d };
-          delete next[r.reservationId];
-          return next;
+      // The awaited action can THROW — not only return {success:false}: a
+      // deploy that replaced the server-action id ("Failed to find Server
+      // Action", one per open tab per deploy), a dropped connection, an auth
+      // redirect. An uncaught throw here used to leave the optimistic
+      // "חויב ✓" chip lying — no write, no toast, no revert, no log. Both
+      // failure shapes now revert the chip and surface the error.
+      try {
+        const res = await setWorkflowStatusAction({
+          reservationId: r.reservationId,
+          workflowStatusId: approvedId,
         });
-        toast.error(res.error);
+        if (res.success) toast.success(`ההזמנה של ${r.guestName} סומנה כחויבה`);
+        else {
+          revert();
+          toast.error(res.error);
+        }
+      } catch (e) {
+        revert();
+        console.error("[pay] markCharged failed", e);
+        toast.error("הסימון לא נשמר — רענן את הדף ונסה שוב");
       }
     });
   };
