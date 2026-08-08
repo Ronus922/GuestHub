@@ -201,13 +201,20 @@ export async function setDefaultWorkflowStatusAction(input: {
     const actor = await getActor();
     requirePermission(actor, "settings.edit");
     await sql.begin(async (tx) => {
-      const [target] = await tx<{ id: string; is_active: boolean }[]>`
-        SELECT id, is_active FROM guesthub.lookup_items
+      const [target] = await tx<{ id: string; key: string; is_active: boolean }[]>`
+        SELECT id, key, is_active FROM guesthub.lookup_items
         WHERE id = ${input.id} AND tenant_id = ${actor.tenantId} AND category = ${CATEGORY}
         FOR UPDATE`;
       if (!target) throw new AuthorizationError("סטטוס לא נמצא");
       if (!target.is_active)
         throw new AuthorizationError("לא ניתן לקבוע סטטוס מושבת כברירת מחדל");
+      // D89: the 'approved' workflow key IS the paid marker, and the star is
+      // what the importer stamps on every new OTA booking — starring it would
+      // sign every import as paid and hide it from the pay window (D139).
+      if (target.key === "approved")
+        throw new AuthorizationError(
+          "סטטוס זה מסמן תשלום בפועל ואינו יכול לשמש כברירת מחדל לייבוא",
+        );
       // clear-then-set inside one transaction keeps exactly one default
       await tx`
         UPDATE guesthub.lookup_items
