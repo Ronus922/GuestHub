@@ -1,7 +1,8 @@
 import { randomInt } from "node:crypto";
 import type { Sql } from "postgres";
-import { ttlockAuthedRequest, TTLockError, type TTLockRegion } from "./http";
+import { ttlockAuthedRequest, TTLockError, TTLOCK_QUOTA_ERRCODES, type TTLockRegion } from "./http";
 import { resolveTTLockAccessToken, TTLockNotConfiguredError, type TTLockConnectionRow } from "./token";
+import { CLOSED, onCircuitFailure, type CircuitConfig, type CircuitState } from "@/lib/channel/circuit-breaker";
 
 // ============================================================
 // TTLock passcodes — sync, rotation and the delete outbox (D124).
@@ -44,6 +45,18 @@ const MAX_CODE_DRAWS = 20;
 const MAX_OP_ATTEMPTS = 5;
 const BACKOFF_BASE_SEC = 30;
 
+/** Breaker tuning for TTLock: three consecutive failures trip it for 5 minutes,
+ *  doubling up to an hour. A quota errcode trips it IMMEDIATELY for a full
+ *  hour — the monthly budget is spent and only time fixes that, so the honest
+ *  cadence is one probe an hour (~24 wasted calls on the worst day) rather than
+ *  modelling TTLock's reset clock. */
+const TTLOCK_CIRCUIT: CircuitConfig = {
+  failureThreshold: 3,
+  baseCooldownMs: 5 * 60_000,
+  maxCooldownMs: 60 * 60_000,
+};
+const TTLOCK_QUOTA_COOLDOWN_MS = 60 * 60_000;
+
 export type PasscodeRole = "manager" | "apartment" | "other";
 export type PasscodeState = "active" | "rotating" | "revoking" | "revoked" | "missing";
 
@@ -60,7 +73,14 @@ export type RotateResult = {
   oldStillActive: boolean;
 };
 
-export type DrainResult = { claimed: number; done: number; failed: number; exhausted: number };
+export type DrainResult = {
+  claimed: number;
+  done: number;
+  failed: number;
+  exhausted: number;
+  /** true = the circuit was open and the drain returned without touching TTLock */
+  skippedCircuitOpen?: boolean;
+};
 
 /** The only representation of a code allowed outside this module's callers. */
 export function maskCode(code: string | null | undefined): string {
@@ -640,6 +660,65 @@ async function markOpDone(db: Sql, tenantId: string, opId: string, passcodeId: s
 }
 
 // ---------------------------------------------------------------
+// circuit breaker bookkeeping
+// ---------------------------------------------------------------
+
+/**
+ * Record one TTLock outcome on the connection row — the breaker state shared by
+ * the PM2 worker (drain) and the Next.js server actions (manual sync / rotate),
+ * and what the /locks amber banner reads. `e === null` means success and fully
+ * closes the breaker. Errors that are not TTLockError (our own config, a
+ * missing key) are not the circuit's business and are ignored.
+ *
+ * Bookkeeping only: it never throws, so it can never fail an operation that
+ * succeeded. Read-modify-write in two statements is fine here — one worker
+ * instance plus rare manual actions, and the worst race costs one probe.
+ */
+export async function recordTTLockCircuitOutcome(
+  tenantId: string,
+  db: Sql,
+  e: unknown,
+): Promise<CircuitState | null> {
+  try {
+    if (e === null) {
+      await db`
+        UPDATE guesthub.ttlock_connections
+        SET circuit_open_until = NULL, circuit_failures = 0, last_errcode = NULL, updated_at = now()
+        WHERE tenant_id = ${tenantId}
+          AND (circuit_failures > 0 OR circuit_open_until IS NOT NULL OR last_errcode IS NOT NULL)`;
+      return CLOSED;
+    }
+    if (!(e instanceof TTLockError)) return null;
+
+    const [row] = await db<{ circuit_failures: number; circuit_open_until: string | null }[]>`
+      SELECT circuit_failures, circuit_open_until::text AS circuit_open_until
+      FROM guesthub.ttlock_connections
+      WHERE tenant_id = ${tenantId}`;
+    const prev: CircuitState = {
+      consecutiveFailures: row?.circuit_failures ?? 0,
+      openUntil: row?.circuit_open_until ? new Date(row.circuit_open_until).getTime() : null,
+    };
+    const next = onCircuitFailure(
+      prev,
+      TTLOCK_QUOTA_ERRCODES.has(e.errcode) ? "rate_limited" : "other",
+      Date.now(),
+      { retryAfterMs: TTLOCK_QUOTA_COOLDOWN_MS, config: TTLOCK_CIRCUIT },
+    );
+    await db`
+      UPDATE guesthub.ttlock_connections
+      SET circuit_failures = ${next.consecutiveFailures},
+          circuit_open_until = ${next.openUntil === null ? null : new Date(next.openUntil)},
+          last_errcode = ${e.errcode},
+          last_failure_at = now(),
+          updated_at = now()
+      WHERE tenant_id = ${tenantId}`;
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------
 // outbox drain
 // ---------------------------------------------------------------
 
@@ -685,9 +764,32 @@ export async function drainTTLockOps(
 
   if (ops.length === 0) return result;
 
-  const connection = await readConnection(tenantId, db);
-  const accessToken = await resolveTTLockAccessToken(db, connection);
+  // Circuit gate: an exhausted quota is probed once the cooldown lapses, not
+  // hammered every 20s cycle. The waiting ops are left exactly as they are —
+  // run_after and attempts untouched — so sitting out the breaker costs them
+  // nothing; they simply run when the circuit closes. Checked only when ops
+  // exist: the idle path stays at zero extra queries.
+  const [cb] = await db<{ open: boolean }[]>`
+    SELECT (circuit_open_until IS NOT NULL AND circuit_open_until > now()) AS open
+    FROM guesthub.ttlock_connections
+    WHERE tenant_id = ${tenantId}`;
+  if (cb?.open) {
+    result.skippedCircuitOpen = true;
+    return result;
+  }
+
+  let connection: TTLockConnectionRow;
+  let accessToken: string;
+  try {
+    connection = await readConnection(tenantId, db);
+    accessToken = await resolveTTLockAccessToken(db, connection);
+  } catch (e) {
+    // A failed token mint is an upstream failure too (quota applies to it).
+    await recordTTLockCircuitOutcome(tenantId, db, e);
+    throw e;
+  }
   result.claimed = ops.length;
+  let recordedSuccess = false;
 
   for (const op of ops) {
     if (Date.now() - startedAt > budgetMs) break;
@@ -704,6 +806,10 @@ export async function drainTTLockOps(
       await deleteRemote(connection, accessToken, op.ttlock_lock_id, op.ttlock_passcode_id);
       await markOpDone(db, tenantId, op.id, op.passcode_id);
       result.done += 1;
+      if (!recordedSuccess) {
+        recordedSuccess = true;
+        await recordTTLockCircuitOutcome(tenantId, db, null);
+      }
     } catch (e) {
       const attempts = op.attempts + 1;
       const category = errorCategory(e);
@@ -728,6 +834,10 @@ export async function drainTTLockOps(
           WHERE id = ${op.id}::bigint AND tenant_id = ${tenantId}`;
         result.failed += 1;
       }
+      // One outage is one failure: the moment the breaker opens, stop the
+      // loop instead of counting the same dead upstream 25 times.
+      const state = await recordTTLockCircuitOutcome(tenantId, db, e);
+      if (state?.openUntil != null && state.openUntil > Date.now()) break;
     }
   }
 

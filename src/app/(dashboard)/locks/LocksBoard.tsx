@@ -294,6 +294,16 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
         ? "נוצר קוד חדש — הקוד הישן עדיין פעיל על הדלת והמערכת תנסה למחוק אותו שוב"
         : `הקוד הוחלף · ${forDisplay(res.data!.newCode)}`,
     );
+    // Targeted refresh — one listKeyboardPwd call for THIS door — so the screen
+    // verifies against the door what we ourselves just changed, without any
+    // polling. Deliberately silent on failure: the rotation already succeeded
+    // and is in the DB, the screen is right without it, and an error toast here
+    // would bury the new code the operator has to read out.
+    try {
+      await syncPasscodesAction([lock.id]);
+    } catch {
+      /* soft-fail on purpose */
+    }
     router.refresh();
   }
 
@@ -342,6 +352,16 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
       else toast.error(`${r.label}: ${r.error}`);
     }
     toast.success(`הקוד הוחלף ב-${succeeded} מתוך ${total} דירות`);
+    // Same targeted post-rotate refresh as onRotate: ONE action call, one
+    // upstream call per rotated door, silent on failure.
+    const okIds = results.filter((r) => r.ok).map((r) => r.lockId);
+    if (okIds.length > 0) {
+      try {
+        await syncPasscodesAction(okIds);
+      } catch {
+        /* soft-fail on purpose */
+      }
+    }
     router.refresh();
   }
 
@@ -389,9 +409,21 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
       </div>
 
       <p className="lk-desc">
-        המנעולים החכמים של הנכס, ושיוך כל מנעול לחדר. הסנכרון מושך את רשימת המנעולים
-        מ-TTLock; השיוך לחדר נקבע כאן בלבד ואינו נדרס על ידי סנכרון.
+        המנעולים החכמים של הנכס, ושיוך כל מנעול לחדר. הנתונים מתעדכנים בלחיצה על
+        סנכרון; שינויים שבוצעו באפליקציית TTLock ייראו כאן רק לאחר סנכרון. השיוך
+        לחדר נקבע כאן בלבד ואינו נדרס על ידי סנכרון.
       </p>
+
+      {initial.ttlockAlert && (
+        <div className="lk-alert">
+          <div className="lk-note">
+            <Icon name="warning" size={20} />
+            {initial.ttlockAlert === "quota"
+              ? "מכסת הקריאות החודשית של TTLock מוצתה. סנכרון והחלפת קודים ייכשלו כנראה עד לאיפוס המכסה — נסו שוב מאוחר יותר. הנתונים במסך משקפים את הסנכרון האחרון שהצליח."
+              : "קריאות אחרונות ל-TTLock נכשלו ברציפות. אפשר לנסות לסנכרן שוב — הצלחה תסיר הודעה זו."}
+          </div>
+        </div>
+      )}
 
       {!initial.connectionConfigured ? (
         <NoConnection />

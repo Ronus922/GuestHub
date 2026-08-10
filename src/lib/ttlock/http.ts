@@ -85,9 +85,19 @@ export class TTLockError extends Error {
   }
 }
 
+/** errcodes that mean "the API-call quota is exhausted". 30007 ("exceeded the
+ *  monthly limit for API calls") was measured from production on 2026-08-10,
+ *  after the 5-minute poll burned the MONTHLY budget in eight days. Drives the
+ *  quota wording here, the /locks amber banner, and the circuit breaker's
+ *  immediate-open path in passcodes.ts. */
+export const TTLOCK_QUOTA_ERRCODES: ReadonlySet<number> = new Set([30007]);
+
 // Operator-facing Hebrew. The upstream errmsg is NEVER echoed — it is Chinese,
 // and for 10001 it is actively misleading about which half is wrong.
 export function hebrewMessageFor(errcode: number): string {
+  if (TTLOCK_QUOTA_ERRCODES.has(errcode)) {
+    return "מכסת הקריאות החודשית של TTLock מוצתה — נסו לסנכרן שוב מאוחר יותר";
+  }
   switch (errcode) {
     case 10001:
       return "מזהה האפליקציה או הסוד שגויים, או שהאפליקציה רשומה באזור אחר";

@@ -7,11 +7,11 @@ import { writeAudit, auditRequestContext } from "@/lib/audit";
 import { sql } from "@/lib/db";
 import { syncLocks } from "@/lib/ttlock/locks";
 import {
-  syncPasscodes, rotateApartmentCode, maskCode,
+  syncPasscodes, rotateApartmentCode, maskCode, recordTTLockCircuitOutcome,
   TTLockNoGatewayError, TTLockCodeRejectedError,
 } from "@/lib/ttlock/passcodes";
 import { TTLockNotConfiguredError } from "@/lib/ttlock/token";
-import { TTLockError, hebrewMessageFor } from "@/lib/ttlock/http";
+import { TTLockError, hebrewMessageFor, TTLOCK_QUOTA_ERRCODES } from "@/lib/ttlock/http";
 import { ttlockSecretsConfigured } from "@/lib/ttlock/crypto";
 import type { ActionResult } from "../calendar/types";
 import type {
@@ -56,6 +56,24 @@ async function requireLocks(permission: "locks.view" | "locks.map" | "locks.rota
   const actor = await getActor();
   requirePermission(actor, permission);
   return actor;
+}
+
+/**
+ * Run one upstream-touching call and keep the shared breaker state honest:
+ * success closes the circuit, a TTLockError advances it (recordTTLockCircuitOutcome
+ * ignores everything else). Manual actions are never BLOCKED by an open
+ * circuit — the operator pressing the button is the natural half-open probe —
+ * they only report into it, which is what keeps the /locks banner current.
+ */
+async function recordingOutcome<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    const result = await fn();
+    await recordTTLockCircuitOutcome(tenantId, sql, null);
+    return result;
+  } catch (e) {
+    await recordTTLockCircuitOutcome(tenantId, sql, e);
+    throw e;
+  }
 }
 
 /**
@@ -134,8 +152,10 @@ export async function listLocksAction(): Promise<ActionResult<LocksScreenView>> 
   try {
     const actor = await requireLocks("locks.view");
 
-    const [connection] = await sql<{ configured: boolean }[]>`
-      SELECT (secret_ciphertext IS NOT NULL) AS configured
+    const [connection] = await sql<{ configured: boolean; circuit_open: boolean; last_errcode: number | null }[]>`
+      SELECT (secret_ciphertext IS NOT NULL) AS configured,
+             (circuit_open_until IS NOT NULL AND circuit_open_until > now()) AS circuit_open,
+             last_errcode
       FROM guesthub.ttlock_connections
       WHERE tenant_id = ${actor.tenantId}`;
 
@@ -232,7 +252,20 @@ export async function listLocksAction(): Promise<ActionResult<LocksScreenView>> 
 
     return {
       success: true,
-      data: { connectionConfigured: Boolean(connection?.configured), locks, rooms, lastSyncedAt },
+      data: {
+        connectionConfigured: Boolean(connection?.configured),
+        locks,
+        rooms,
+        lastSyncedAt,
+        // The breaker is open right now: "quota" when the recorded errcode is
+        // the measured monthly-limit one, "errors" for any other repeated
+        // upstream failure. Auto-clears once circuit_open_until lapses.
+        ttlockAlert: connection?.circuit_open
+          ? connection.last_errcode != null && TTLOCK_QUOTA_ERRCODES.has(connection.last_errcode)
+            ? "quota"
+            : "errors"
+          : null,
+      },
     };
   } catch (e) {
     return failFrom(e);
@@ -245,7 +278,7 @@ export async function syncLocksAction(): Promise<ActionResult<SyncLocksSummary>>
     const actor = await requireLocks("locks.map");
     if (!ttlockSecretsConfigured()) return { success: false, error: SECRETS_KEY_MISSING };
 
-    const result = await syncLocks(actor.tenantId, sql);
+    const result = await recordingOutcome(actor.tenantId, () => syncLocks(actor.tenantId, sql));
 
     await audit(actor, "ttlock.locks.sync", null, {
       total: result.total,
@@ -280,7 +313,9 @@ export async function syncPasscodesAction(lockIds?: string[]): Promise<ActionRes
     const parsedIds = lockIds ? z.array(uuid).min(1).max(200).safeParse(lockIds) : null;
     if (parsedIds && !parsedIds.success) return { success: false, error: "מזהה שגוי" };
 
-    const result = await syncPasscodes(actor.tenantId, sql, parsedIds?.data);
+    const result = await recordingOutcome(actor.tenantId, () =>
+      syncPasscodes(actor.tenantId, sql, parsedIds?.data),
+    );
 
     await audit(actor, "ttlock.passcodes.sync", null, {
       locks: result.locks,
@@ -334,7 +369,9 @@ export async function rotateApartmentCodeAction(lockId: string): Promise<ActionR
       ORDER BY updated_at DESC LIMIT 1`;
     const previousMasked = previous ? maskCode(previous.code) : null;
 
-    const result = await rotateApartmentCode({ tenantId: actor.tenantId, lockRowId: parsed.data, db: sql });
+    const result = await recordingOutcome(actor.tenantId, () =>
+      rotateApartmentCode({ tenantId: actor.tenantId, lockRowId: parsed.data, db: sql }),
+    );
 
     await audit(
       actor,
@@ -426,12 +463,14 @@ export async function bulkRotateApartmentCodesAction(
           ORDER BY updated_at DESC LIMIT 1`;
         const previousMasked = previous ? maskCode(previous.code) : null;
 
-        const res = await rotateApartmentCode({
-          tenantId: actor.tenantId,
-          lockRowId: item.lockId,
-          db: sql,
-          requestedCode: item.code,
-        });
+        const res = await recordingOutcome(actor.tenantId, () =>
+          rotateApartmentCode({
+            tenantId: actor.tenantId,
+            lockRowId: item.lockId,
+            db: sql,
+            requestedCode: item.code,
+          }),
+        );
 
         await audit(
           actor,
