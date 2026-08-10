@@ -67,6 +67,12 @@ export type LocksScreenView = {
   rooms: LockRoomView[];
   /** last successful sync across this tenant's locks; null = never synced */
   lastSyncedAt: string | null;
+  /**
+   * The TTLock circuit breaker is open right now: "quota" = the monthly API
+   * quota is exhausted, "errors" = repeated upstream failures of another kind,
+   * null = healthy. Drives the amber banner; carries no upstream body.
+   */
+  ttlockAlert: "quota" | "errors" | null;
 };
 
 export type SyncLocksSummary = {

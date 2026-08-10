@@ -63,6 +63,13 @@
   max-width: 980px;
   text-wrap: pretty;
 }
+/* Section wrapper for the circuit/quota .lk-note under the header — the screen
+   spaces its children by per-section padding, not gap, so the banner gets the
+   same 24px inset as .lk-desc. */
+.lk-alert {
+  padding: 12px 24px 0;
+  max-width: 980px;
+}
 
 /* The reference's .pill — a count badge, distinct from the app's .chip
    (which carries a status dot and a different height). */

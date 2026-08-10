@@ -1,6 +1,6 @@
 import type { Sql } from "postgres";
-import { syncLocks } from "./locks";
-import { syncPasscodes, drainTTLockOps } from "./passcodes";
+import { drainTTLockOps } from "./passcodes";
+import { TTLockError } from "./http";
 
 // ============================================================
 // The TTLock worker tick (D124) — WORKER-GRAPH-SAFE.
@@ -15,42 +15,27 @@ import { syncPasscodes, drainTTLockOps } from "./passcodes";
 // outbox rows, and a cron would mean TTLock traffic continuing after the worker
 // was deliberately stopped.
 //
-// TWO CADENCES, ON PURPOSE:
+// ONE JOB ONLY: the DRAIN, every cycle (~20s). It retries the deletes that did
+// not land inline — codes still physically on doors that should not be — and it
+// reaches TTLock only when such an op is actually queued.
 //
-//  · The DRAIN runs every cycle (~20s). It retries deletes that did not land
-//    inline — codes still physically on doors that should not be. Nothing about
-//    that should wait five minutes.
-//  · The SYNC runs every 5 minutes. It is a read of every door's code list, so
-//    its cost scales with the lock count (12 doors = 12 upstream calls), and
-//    nothing it discovers is urgent: a code changed in the TTLock app is
-//    information, not an incident.
-//
-// The 5-minute gate is held IN MEMORY, deliberately. A restart re-syncs
-// immediately, which is the behaviour you want after a deploy; the alternative
-// (a persisted last_run) buys nothing and adds a row to lose.
+// The periodic SYNC was REMOVED on purpose, not slowed. The screen is used
+// weekly; every read of the doors' code lists is operator-initiated from /locks
+// ("סנכרון מנעולים", the selection-bar sync, or the post-rotate refresh). The
+// old 5-minute poll cost ~3,700 upstream calls/day and exhausted TTLock's
+// MONTHLY API quota (errcode 30007) in eight days; the idle profile now is
+// ~0 calls/day. A quota circuit breaker (columns on ttlock_connections, pure
+// logic from src/lib/channel/circuit-breaker.ts) gates the drain so an
+// exhausted quota is probed about once an hour, not hammered every cycle.
 // ============================================================
-
-export const TTLOCK_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 export type TTLockTickSummary = {
   tenants: number;
-  synced: number;
-  locksAdded: number;
-  passcodesAdded: number;
-  passcodesMissing: number;
   opsDone: number;
   opsFailed: number;
   opsExhausted: number;
+  opsSkippedCircuit: number;
 };
-
-/** Last successful sync per tenant, this process only. See header. */
-const lastSyncAt = new Map<string, number>();
-
-/** Test seam: the tick's 5-minute gate is process state, and a test that cannot
- *  clear it can only ever exercise the first sync. */
-export function resetTTLockTickState(): void {
-  lastSyncAt.clear();
-}
 
 type ConnectedTenant = { tenant_id: string };
 
@@ -80,19 +65,16 @@ async function loadConnectedTenants(db: Sql): Promise<ConnectedTenant[]> {
  * own loop must keep running whatever TTLock does.
  *
  * NO CODE VALUE IS EVER LOGGED. The log line carries counts and nothing else;
- * failures are logged by error NAME, never by message, because a message can
- * carry an upstream body.
+ * failures are logged by error NAME plus the numeric errcode, never by message,
+ * because a message can carry an upstream body.
  */
 export async function runTTLockTick(db: Sql, log: (msg: string) => void = () => {}): Promise<TTLockTickSummary> {
   const summary: TTLockTickSummary = {
     tenants: 0,
-    synced: 0,
-    locksAdded: 0,
-    passcodesAdded: 0,
-    passcodesMissing: 0,
     opsDone: 0,
     opsFailed: 0,
     opsExhausted: 0,
+    opsSkippedCircuit: 0,
   };
 
   let tenants: ConnectedTenant[];
@@ -104,8 +86,6 @@ export async function runTTLockTick(db: Sql, log: (msg: string) => void = () => 
   }
   summary.tenants = tenants.length;
 
-  const now = Date.now();
-
   for (const { tenant_id: tenantId } of tenants) {
     // ---- every cycle: retire the codes a rotation superseded ----
     try {
@@ -113,39 +93,24 @@ export async function runTTLockTick(db: Sql, log: (msg: string) => void = () => 
       summary.opsDone += drained.done;
       summary.opsFailed += drained.failed;
       summary.opsExhausted += drained.exhausted;
+      if (drained.skippedCircuitOpen) summary.opsSkippedCircuit += 1;
     } catch (e) {
-      log(`ttlock drain failed for one tenant (${e instanceof Error ? e.name : "error"})`);
-    }
-
-    // ---- every 5 minutes: refresh what the doors actually hold ----
-    const last = lastSyncAt.get(tenantId) ?? 0;
-    if (now - last < TTLOCK_SYNC_INTERVAL_MS) continue;
-
-    try {
-      // Locks first: a passcode row needs a lock row to hang on, and this is
-      // also what keeps battery and alias current on the board.
-      const locks = await syncLocks(tenantId, db);
-      summary.locksAdded += locks.added;
-
-      const codes = await syncPasscodes(tenantId, db);
-      summary.passcodesAdded += codes.added;
-      summary.passcodesMissing += codes.missing;
-
-      // Stamped only on success: a failed sync must be retried on the next
-      // cycle, not five minutes later.
-      lastSyncAt.set(tenantId, Date.now());
-      summary.synced += 1;
-    } catch (e) {
-      log(`ttlock sync failed for one tenant (${e instanceof Error ? e.name : "error"})`);
+      // The NUMERIC errcode only — policy-compliant (rule 11 bans code VALUES
+      // in logs, and the message/errmsg may carry an upstream body).
+      const errcodeSuffix = e instanceof TTLockError ? ` errcode ${e.errcode}` : "";
+      log(`ttlock drain failed for one tenant (${e instanceof Error ? e.name : "error"}${errcodeSuffix})`);
     }
   }
 
-  if (summary.synced > 0 || summary.opsDone > 0 || summary.opsFailed > 0 || summary.opsExhausted > 0) {
+  if (summary.opsDone > 0 || summary.opsFailed > 0 || summary.opsExhausted > 0) {
     log(
-      `ttlock tick: ${summary.synced}/${summary.tenants} synced · ` +
-        `+${summary.locksAdded} locks · +${summary.passcodesAdded} codes · ` +
-        `${summary.passcodesMissing} missing · ops ${summary.opsDone} done/${summary.opsFailed} retry/${summary.opsExhausted} exhausted`,
+      `ttlock tick: ops ${summary.opsDone} done/${summary.opsFailed} retry/${summary.opsExhausted} exhausted`,
     );
+  }
+  if (summary.opsSkippedCircuit > 0) {
+    // Exactly one line per cycle, however many ops are waiting behind the
+    // breaker — the whole point is to stop the noise, not to relocate it.
+    log(`ttlock drain skipped (circuit open)`);
   }
 
   return summary;
