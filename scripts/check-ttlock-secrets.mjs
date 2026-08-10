@@ -905,4 +905,50 @@ assert.ok(
 );
 ok("RULE 17 — operator-typed and randomly-drawn codes pass identical validation before reaching a door");
 
+// ============================================================
+// RULE 18 — the entry stale-sync never fires while the breaker is open.
+//
+// /locks fires ONE background full sync from page.tsx when the tenant's
+// snapshot is older than the stale threshold. An open circuit — ttlockAlert
+// !== null, i.e. the monthly quota is exhausted (30007) or the upstream is
+// failing repeatedly — must SKIP that sync and leave the amber banner as the
+// answer: otherwise every screen entry hammers a dead quota 13 calls at a
+// time, which is the exact behaviour the breaker exists to stop.
+//
+// Verified by breaking (B2): removing the ttlockAlert term from the gate goes
+// red here. The page keeps the gate as ONE parenthesis-free condition so this
+// rule can parse it; a refactor that changes that shape must update both.
+// ============================================================
+const locksPage = code("src/app/(dashboard)/locks/page.tsx");
+assert.ok(
+  /\bafter\s*\(/.test(locksPage),
+  "RULE 18: /locks page fires its background stale-sync through after(...)",
+);
+const staleGate = locksPage.match(/if\s*\(([^)]+)\)\s*\{[^}]*?\bafter\s*\(/);
+assert.ok(
+  staleGate,
+  "RULE 18: the after(...) stale-sync must be wrapped in a single guarding if with a parenthesis-free condition",
+);
+if (staleGate) {
+  assert.ok(
+    /ttlockAlert\s*===\s*null/.test(staleGate[1]),
+    `RULE 18: the stale-sync gate must require ttlockAlert === null (breaker closed) — got: ${staleGate[1].trim().slice(0, 120)}`,
+  );
+  assert.ok(
+    /\bstale\b/.test(staleGate[1]),
+    `RULE 18: the stale-sync gate must include the staleness check — got: ${staleGate[1].trim().slice(0, 120)}`,
+  );
+  assert.ok(
+    /connectionConfigured/.test(staleGate[1]),
+    `RULE 18: the stale-sync gate must require a configured connection — got: ${staleGate[1].trim().slice(0, 120)}`,
+  );
+}
+// The sync body must record its outcome into the shared breaker state — a
+// failing entry-sync trips the circuit instead of retrying on every entry.
+assert.ok(
+  /recordTTLockCircuitOutcome/.test(locksPage),
+  "RULE 18: the entry sync records its outcome into the breaker (recordTTLockCircuitOutcome)",
+);
+ok("RULE 18 — the entry stale-sync is breaker-gated: an open circuit skips it and shows the banner instead");
+
 console.log(`\ncheck-ttlock-secrets: all ${n} groups passed ✓`);
