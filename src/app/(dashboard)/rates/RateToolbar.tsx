@@ -85,7 +85,11 @@ export function RateToolbar({
             {allCollapsed ? "הרחב הכול" : "כווץ הכול"}
           </button>
         </div>
-        <div className="flex items-center gap-2">
+        {/* The outer row wraps, but this date-nav cluster did not: segment +
+            range box + "היום" measured ~514px and forced the whole /rates page
+            region to scroll sideways from 390px all the way up to 768px. It is
+            three independent controls, so wrapping them costs nothing. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <div className="cb-seg">
             <button className={view === "2w" ? "on" : ""} onClick={() => onNavigate(state.from, "2w")}>שבועיים</button>
             <button className={view === "month" ? "on" : ""} onClick={() => onNavigate(state.from, "month")}>חודש</button>

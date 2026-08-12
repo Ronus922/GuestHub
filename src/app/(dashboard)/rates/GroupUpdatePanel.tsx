@@ -248,7 +248,9 @@ export function GroupUpdatePanel({
       title="עדכון חדרים קבוצתי"
       subtitle="עדכון מחיר, זמינות ומגבלות לילות במספר חדרים ותאריכים בבת אחת"
       icon="bulk-update"
-      widthClassName="w-[60vw] max-w-[calc(100vw-48px)] max-sm:max-w-none"
+      /* Same ladder as the default; the max-w guard it already carried is now
+         redundant below lg and is kept only for the desktop 60% step. */
+      widthClassName="w-full md:w-[85%] lg:w-[60vw] lg:max-w-[calc(100vw-48px)]"
       visualVariant="group-update"
       bodyClassName="gu-body"
     >

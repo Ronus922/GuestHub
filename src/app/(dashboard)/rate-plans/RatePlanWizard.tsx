@@ -314,7 +314,6 @@ export function RatePlanWizard({
       title={detail ? `עריכת תוכנית — ${detail.name}` : "תוכנית תעריף חדשה"}
       subtitle="הגדרת תמחור, הגבלות ושיוך חדרים"
       icon="tags"
-      widthClassName="w-[60vw]"
       bodyClassName="p-4"
       band={<StepsBar step={step} onStep={setStep} />}
       footer={

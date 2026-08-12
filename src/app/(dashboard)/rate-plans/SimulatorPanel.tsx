@@ -539,7 +539,6 @@ export function SimulatorPanel({
       title="סימולטור תמחור"
       subtitle="בדיקת חישוב מנוע התמחור — כלי תפעולי"
       icon="calculator"
-      widthClassName="w-[60vw]"
     >
       <div className="flex flex-col gap-4">
         {/* form card */}

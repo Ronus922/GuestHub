@@ -17,6 +17,7 @@ import type { ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import { RoomWizard } from "./RoomWizard";
 import { AreaPanel } from "./AreaPanel";
 import { updateAreaStatusAction, updateRoomBoardStatusAction } from "./actions";
+import { clampPopoverLeft } from "@/lib/popover";
 
 // ============================================================
 // Rooms & Areas board — ported 1:1 from ref/html/RoomsAndAreas.html +
@@ -173,12 +174,14 @@ export function RoomsScreen({
   const openPopover = (e: React.MouseEvent, p: PopoverSeed) => {
     if (!can.edit) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // §8: 316px popover, clamped to the viewport with a 12px margin. X clamps
-    // against the KNOWN .popover width; Y is clamped inside StatusPopover
-    // against the popover's MEASURED height — the room menu (7 rows) and the
-    // area menu (5 rows) differ, and a hardcoded height constant went stale
-    // here once and pushed the last row off-screen.
-    const x = Math.max(12, Math.min(rect.left, window.innerWidth - 328));
+    // §8 geometry comes from @/lib/popover, which is also what the CSS mirrors —
+    // this used to be a bare `window.innerWidth - 328` (316 + 12 folded together,
+    // so the relationship was invisible) and it no longer holds anyway now that
+    // .popover caps its width against narrow viewports. Y is clamped inside
+    // StatusPopover against the popover's MEASURED height — the room menu (7 rows)
+    // and the area menu (5 rows) differ, and a hardcoded height constant went
+    // stale here once and pushed the last row off-screen.
+    const x = clampPopoverLeft(rect.left, window.innerWidth);
     setPop({ ...p, x, y: rect.bottom + 6 });
   };
 

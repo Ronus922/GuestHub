@@ -179,7 +179,15 @@ export function SidePanel({
             aria-modal="true"
             aria-label={title}
             tabIndex={-1}
-            className={`absolute inset-y-0 left-0 flex h-full ${widthClassName ?? "w-[60%]"} ${isGroupUpdate ? "gu-side-panel" : ""} flex-col overflow-hidden rounded-s-2xl bg-surface shadow-pop outline-none max-sm:w-full`}
+            /* Width ladder, not a single number. `w-[60%] max-sm:w-full` left the
+               whole 640-1023px band as a 60% sliver — a 700px tablet got a 420px
+               panel with a useless, inert page beside it. Below md the panel IS
+               the screen; md-lg it takes almost all of it; only on a real desktop
+               does the 60% split earn its keep.
+               .vh-fill rather than h-full: the parent is `fixed inset-0`, which on
+               iOS resolves against the LARGE viewport, so the footer sat under the
+               browser chrome. */
+            className={`vh-fill absolute inset-y-0 left-0 flex ${widthClassName ?? "w-full md:w-[85%] lg:w-[60%]"} ${isGroupUpdate ? "gu-side-panel" : ""} flex-col overflow-hidden rounded-s-2xl bg-surface shadow-pop outline-none`}
           >
             <header className="dw-hd shrink-0">
               {avatar ??

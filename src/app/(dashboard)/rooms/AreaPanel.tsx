@@ -112,7 +112,9 @@ export function AreaPanel({
       title={area ? `עריכת אזור · ${area.name}` : "אזור חדש"}
       subtitle="הוספת אזור תפעולי · חדרים ואזורים"
       icon="building"
-      widthClassName="w-[45vw] max-lg:w-[70%]"
+      /* Deliberately narrower than the default ladder — an area is a short form.
+         Full width below md all the same: 70% of a 390px phone is a 273px column. */
+      widthClassName="w-full md:w-[70%] lg:w-[45vw]"
       bodyClassName="p-4"
       footer={
         /* §7 footer — DIRECT children of .dw-ft (row-reverse): the PRIMARY is

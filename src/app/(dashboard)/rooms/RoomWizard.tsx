@@ -377,7 +377,6 @@ export function RoomWizard({
       title={roomId ? `עריכת חדר ${base.room_number}` : "הקמת חדר"}
       subtitle="הגדרת פרטי חדר, איבזור ותוכן"
       icon="rooms"
-      widthClassName="w-[60vw]"
       bodyClassName="p-4"
       band={<StepsBar step={step} onStep={(s) => (roomId ? setStep(s) : s === 1 && setStep(1))} />}
       footer={

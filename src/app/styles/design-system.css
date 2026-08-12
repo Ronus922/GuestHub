@@ -586,6 +586,10 @@
     align-items: center;
     gap: 10px;
     padding: 16px 24px;
+    /* The drawer runs the full height of the viewport, so its footer — which
+       holds the PRIMARY action — sits directly on the home indicator. max() so
+       the 16px stays the floor on every device that has no inset (all desktops). */
+    padding-block-end: max(16px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
     background: var(--surface);
   }

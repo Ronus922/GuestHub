@@ -1220,6 +1220,16 @@ aside.bw-win {
   top: calc(100% + 6px);
   z-index: 2;
   min-width: 200px;
+  /* The trigger sits in the panel header, close to the panel's inline-start
+     edge, and the menu opens from that edge with no flip logic — on a narrow
+     panel it ran past the edge and was clipped. Capping against the panel's own
+     width keeps it inside without needing measurement, and the height cap plus
+     scroll keeps the last item reachable when the action list is long. */
+  max-width: calc(100vw - 24px);
+  max-height: 60vh;
+  max-height: 60dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px;
   display: flex;
   flex-direction: column;
