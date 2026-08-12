@@ -374,7 +374,7 @@ export function RatePlanWizard({
                 </F>
                 <F label="קוד התוכנית" required>
                   <input
-                    className="field-input text-right"
+                    className="field-input text-start"
                     dir="ltr"
                     placeholder="FLEX-BB"
                     value={d.code}

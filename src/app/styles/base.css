@@ -89,6 +89,21 @@ a:focus-visible {
   box-shadow: 0 0 0 3px rgba(37, 64, 200, 0.12);
 }
 
+/* Bidi: every free-text field resolves its OWN base direction.
+   The document is RTL, so an English word, an email address or a URL typed into
+   a Hebrew form inherited RTL and jumped to the wrong side with its punctuation
+   detached — the single most visible RTL bug an end user hits. `unicode-bidi:
+   plaintext` is the CSS spelling of `dir="auto"`: the browser picks the base
+   direction per VALUE from its first strong character, so Hebrew stays RTL and
+   Latin becomes LTR, in the same field.
+   One rule instead of a `dir="auto"` attribute on 176 inputs — and `:not([dir])`
+   means any field that deliberately forces a direction (a PAN, a phone number)
+   keeps saying so and wins. Excluded input types have no free text to align. */
+input:not([dir]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="date"]):not([type="time"]),
+textarea:not([dir]) {
+  unicode-bidi: plaintext;
+}
+
 /* Slim, unobtrusive scrollbars (contained board scroll comes later). */
 .thin-scroll {
   scrollbar-width: thin;

@@ -84,10 +84,14 @@ assert.ok(!/rl-otacode|rv-otacode/.test(screen),
   "the secondary OTA-code line must not return");
 const headerCount = screen.split("מס׳ הזמנה").length - 1;
 assert.equal(headerCount, 1, "exactly ONE reservation-number column header");
-// desktop and mobile render through the SAME row markup — the helper is called
-// once for sorting and once in the single number cell.
+// Was 2 while desktop and mobile shared one row markup. Below `md` the screen now
+// renders a real card per reservation instead of scrolling an 1150px table
+// sideways, so there are three legitimate call sites: sorting, the desktop number
+// cell, and the mobile card — each resolving the value ONCE and reusing it. The
+// rule being enforced is unchanged and is what lines 79-84 above actually pin: the
+// helper is the only source of the visible number, never a re-derived fallback.
 const calls = screen.split("getVisibleReservationNumber(").length - 1;
-assert.equal(calls, 2, "one sort usage + one visible cell — no duplicated fallback logic");
+assert.equal(calls, 3, "sort + desktop cell + mobile card, one resolve each — no duplicated fallback logic");
 ok("one מס׳ הזמנה column; helper is the only number source (desktop = mobile)");
 
 // ---- 4. the internal identity still drives everything ----

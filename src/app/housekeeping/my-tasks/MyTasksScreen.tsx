@@ -169,7 +169,7 @@ function TaskCard({
           <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-primary-050 text-lg font-bold text-primary">
             {task.roomNumber ?? <Icon name="cleaning" size={26} />}
           </span>
-          <div className="text-right">
+          <div className="text-start">
             <p className="text-base font-bold text-ink">{task.title ?? (task.roomNumber ? `חדר ${task.roomNumber}` : "משימה")}</p>
             <div className="mt-0.5 flex flex-row-reverse items-center gap-2">
               <span className="rounded-lg bg-field px-2 py-0.5 text-xs text-muted">{STATUS_LABEL[task.status] ?? task.status}</span>

@@ -581,10 +581,14 @@ function ReservationCardMobile({
 }) {
   const pill = LIFECYCLE_PILL[row.status] ?? { label: row.status, cls: "chip-refunded" };
   const owes = row.balance > 0 && row.payment !== "paid" && row.status !== "cancelled";
+  // resolved once — the helper is the only source of the visible number (D-…),
+  // and calling it twice in one component is exactly the duplication
+  // check:reservations-ui exists to prevent
+  const visibleNumber = getVisibleReservationNumber(row);
   return (
     <MobileRecordCard
       onActivate={onOpen}
-      activateLabel={`פתיחת הזמנה ${getVisibleReservationNumber(row)} · ${row.guest_name}`}
+      activateLabel={`פתיחת הזמנה ${visibleNumber} · ${row.guest_name}`}
       title={
         <>
           {row.guest_name}
@@ -598,7 +602,7 @@ function ReservationCardMobile({
       }
       subtitle={
         <>
-          <span className="ltr-num">{getVisibleReservationNumber(row)}</span>
+          <span className="ltr-num">{visibleNumber}</span>
           {" · "}
           <bdi>{row.source_label ?? (row.is_ota ? row.ota_name : "ישיר")}</bdi>
         </>
