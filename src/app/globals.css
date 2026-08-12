@@ -17,3 +17,5 @@
 @import "./styles/check-in-check-out.css";
 @import "./styles/communications.css";
 @import "./styles/locks.css";
+/* last — the cross-cutting mobile layer overrides the canonical primitives */
+@import "./styles/responsive.css";

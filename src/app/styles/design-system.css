@@ -565,6 +565,14 @@
   .md-bd {
     padding: 24px;
     background: var(--surface);
+    /* The body is the part of a modal that scrolls: .modal caps its height and
+       clips, .md-hd and .md-ft stay pinned, so the close button and the confirm
+       action are on screen however long the content runs. ConfirmDialog carried
+       this inline; canonical here means MoveConfirmDialog and the
+       communications Dialog inherit it instead of each rediscovering it. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-height: 0;
   }
   .dw-ft,
   .md-ft {
@@ -586,6 +594,12 @@
     border-radius: var(--r-lg);
     box-shadow: var(--shadow-float);
     width: min(520px, calc(100vw - 24px));
+    /* The width was already viewport-relative; the HEIGHT was not, so a long
+       dialog simply ran off the bottom of a phone — and `overflow: hidden` meant
+       nothing could be scrolled back into view, leaving the confirm/cancel
+       actions permanently unreachable. .md-bd below is what scrolls instead. */
+    max-height: 92vh;
+    max-height: 92dvh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -597,6 +611,15 @@
   .popover {
     position: fixed;
     width: 316px;
+    /* A flat 316px overflowed every viewport narrower than ~340px, and 320px
+       phones are still shipping; the cap keeps §8's own 12px viewport margin on
+       both sides. The height cap + internal scroll matter just as much — a long
+       menu had no way to reach its last item. */
+    max-width: calc(100vw - 24px);
+    max-height: 70vh;
+    max-height: 70dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);

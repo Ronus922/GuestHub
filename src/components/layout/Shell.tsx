@@ -9,6 +9,7 @@ import { RealtimeProvider } from "@/components/providers/RealtimeProvider";
 import { NewReservationProvider } from "@/components/reservations/NewReservationProvider";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type { ActorContext } from "@/lib/auth/actor";
+import { BELOW_MD_QUERY, matchesBelowMd } from "@/lib/breakpoints";
 import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 
@@ -42,7 +43,7 @@ export function Shell({
   const pathname = usePathname();
 
   useEffect(() => {
-    const query = window.matchMedia("(max-width: 767px)");
+    const query = window.matchMedia(BELOW_MD_QUERY);
     const sync = () => setIsMobile(query.matches);
     sync();
     query.addEventListener("change", sync);
@@ -70,7 +71,7 @@ export function Shell({
   }, [mobileOpen]);
 
   const toggleSidebar = () => {
-    if (window.matchMedia("(max-width: 767px)").matches) {
+    if (matchesBelowMd()) {
       setMobileOpen((open) => !open);
       return;
     }
@@ -87,7 +88,11 @@ export function Shell({
       <NuqsAdapter>
         <RealtimeProvider>
         <NewReservationProvider {...newReservation}>
-          <div className="flex h-screen overflow-hidden bg-appbg">
+          {/* .app-shell = 100vh with a 100dvh override (responsive.css). With plain
+              h-screen the shell was one address-bar taller than the visible area on
+              iOS, and `overflow-hidden` meant nothing could scroll the lost strip
+              back into view. */}
+          <div className="app-shell safe-inline flex overflow-hidden bg-appbg">
             {/* Sidebar — צד ימין ב-RTL (הילד הראשון) */}
             {mobileOpen && (
               <button

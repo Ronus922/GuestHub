@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Assistant } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
@@ -23,6 +23,22 @@ export const metadata: Metadata = {
   title: "GuestHub",
   description:
     "Multi-tenant PMS for aparthotels and vacation rentals — reservations, occupancy, rates, guests, housekeeping.",
+};
+
+// Until this existed, Next emitted only its default `width=device-width,
+// initial-scale=1` — no `viewport-fit`, so every `env(safe-area-inset-*)` in the
+// app resolved to 0 and content sat under the notch / home indicator.
+// `viewportFit: "cover"` is what makes those insets real; app/styles/responsive.css
+// then spends them.
+//
+// Deliberately NO `maximumScale` / `userScalable: false`: pinch-zoom is an
+// accessibility affordance and must never be disabled. The iOS zoom-on-focus
+// problem is solved at the source instead — .field-input carries a 17px font on
+// touch viewports (§2's closed set), so Safari has no reason to zoom.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

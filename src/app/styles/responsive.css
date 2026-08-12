@@ -1,0 +1,100 @@
+/* ============================================================
+   responsive.css — the cross-cutting mobile layer.
+
+   Imported LAST from globals.css so it can override the canonical primitives
+   without editing them (design-system.css is over the 1500-line cap and accepts
+   no new sections — iron rule #7).
+
+   Nothing here restyles anything. It only supplies the three things the app was
+   missing entirely, all of which are structural rather than visual:
+     1. a viewport-height unit that survives mobile browser chrome (dvh/svh)
+     2. safe-area insets (real only because layout.tsx now sets viewportFit:cover)
+     3. a 17px touch font on form controls, so iOS Safari stops zooming on focus
+
+   THE BREAKPOINT LADDER (single source of truth — mirrors Tailwind v4 defaults):
+     sm  640px   md  768px   lg 1024px   xl 1280px   2xl 1536px
+   The JS half of the ladder lives in src/lib/breakpoints.ts. `md` (768) is the
+   one that matters: it is where the sidebar becomes an off-canvas drawer and
+   where every dense table swaps to its card representation. A raw pixel value
+   in a new @media block should be treated as a bug unless it carries a measured
+   comment explaining why the ladder does not fit.
+   ============================================================ */
+
+@layer components {
+  /* ---- 1. viewport height ----------------------------------------------
+     `100vh` on iOS Safari is the LARGE viewport: it includes the address bar
+     even while the address bar is drawn on top of the page. Paired with the
+     shell's `overflow-hidden` that made the bottom ~60-100px of the app
+     permanently unreachable — no scroll could bring it back. Two declarations,
+     so a browser without `dvh` still gets the old behaviour instead of nothing. */
+  .app-shell {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* Full-height floating surfaces (drawers) need the same treatment: they are
+     `position: fixed; inset: 0`, which on iOS also resolves against the large
+     viewport. */
+  .vh-fill {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* ---- 2. safe areas ----------------------------------------------------
+     Zero-valued on every desktop and on any device without a notch/home
+     indicator, so these are inert unless they are actually needed. */
+  .safe-inline {
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
+  }
+  .safe-block-end {
+    padding-block-end: env(safe-area-inset-bottom);
+  }
+
+  /* The off-canvas nav drawer runs to the bottom edge; its last item (logout)
+     would otherwise sit under the home indicator. */
+  #dashboard-sidebar {
+    padding-block-end: env(safe-area-inset-bottom);
+  }
+
+  /* The one toast surface (sonner, bottom-centre, offset 26). Lift it clear of
+     the home indicator so it never covers a bottom-anchored control. */
+  [data-sonner-toaster][data-y-position="bottom"] {
+    margin-block-end: env(safe-area-inset-bottom);
+  }
+
+  /* ---- 3. iOS zoom-on-focus -------------------------------------------
+     Safari zooms the page whenever a focused form control renders below 16px,
+     and .field-input is 15px — so EVERY input, select and textarea in the app
+     triggered it, on every screen. 17px (not 16px) because §2 defines a closed
+     set of font sizes and 17 is the member above 15; check:design rejects 16.
+     The desktop 15px is untouched.
+
+     Both conditions on purpose: `pointer: coarse` catches a tablet at 768px+
+     (which the width query would miss), the width query catches a narrow
+     desktop window and the audit harness. This is content-driven, not
+     device-name-driven. */
+  @media (pointer: coarse), (max-width: 767px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+    select,
+    textarea {
+      font-size: 17px;
+    }
+  }
+
+  /* NOTE: the viewport caps for .modal and .popover are NOT here. They are
+     canonical primitives, and check:design's duplicate-primitive rule
+     deliberately ignores every escape hatch — a primitive has exactly one
+     declaration. Their caps therefore live with them in design-system.css §8. */
+
+  /* ---- 4. media defaults ------------------------------------------------
+     A replaced element that was never explicitly sized must not be the reason a
+     page scrolls sideways. `svg` is deliberately excluded: the donut and the
+     revenue area chart are sized by their viewBox and a max-width would fight
+     their own geometry (Donut.tsx / area-path.ts). */
+  img,
+  video,
+  canvas {
+    max-width: 100%;
+  }
+}
