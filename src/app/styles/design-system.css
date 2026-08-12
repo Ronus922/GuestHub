@@ -1117,7 +1117,12 @@
   /* ---- arr: two inner columns ---- */
   .arr-cols {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* Two fixed columns split a 320px phone into ~130px each, which is narrower
+       than a single guest row can render — the names were clipped away inside the
+       window's `overflow: hidden`. auto-fit collapses to ONE column exactly when
+       there is no longer room for two, and is otherwise identical to `1fr 1fr`:
+       the breakpoint is the content's, not a device's. */
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 10px;
     min-width: 0;
   }

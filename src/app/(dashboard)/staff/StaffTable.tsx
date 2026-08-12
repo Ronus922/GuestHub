@@ -11,6 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { Icon } from "@/components/shared/Icon";
 import { Badge } from "@/components/ui/Badge";
+import { MobileRecordCard, MobileRecordList } from "@/components/shared/MobileRecordCard";
 import { roleMeta, AVATAR_TINT, initials } from "./role-meta";
 import type { StaffUser } from "./types";
 
@@ -155,7 +156,52 @@ export function StaffTable({
 
   return (
     <div className="card">
-      <div className="overflow-x-auto">
+      {/* phone: one card per user — the 880px table is unreadable at 390px */}
+      {users.length > 0 && (
+        <div className="p-4">
+          <MobileRecordList>
+            {users.map((u) => (
+              <MobileRecordCard
+                key={u.id}
+                title={u.full_name ?? u.username}
+                subtitle={u.email ? <bdi className="ltr-num">{u.email}</bdi> : undefined}
+                badge={
+                  u.is_active ? (
+                    <Badge tone="success" dot>
+                      פעיל
+                    </Badge>
+                  ) : (
+                    <Badge tone="muted" dot>
+                      מושבת
+                    </Badge>
+                  )
+                }
+                fields={[
+                  {
+                    label: "תפקיד",
+                    value: u.role_name ? (
+                      <Badge tone={roleMeta(u.role_key).tone}>{u.role_name}</Badge>
+                    ) : (
+                      "—"
+                    ),
+                  },
+                  { label: "טלפון", value: <bdi className="ltr-num">{u.phone || "—"}</bdi> },
+                  { label: "כניסה אחרונה", value: lastLogin(u.last_sign_in_at), wide: true },
+                ]}
+                actions={
+                  canUpdate ? (
+                    <button type="button" onClick={() => onEdit(u)} className="btn btn-secondary btn-sm">
+                      <Icon name="edit" size={20} label="" />
+                      עריכה
+                    </button>
+                  ) : undefined
+                }
+              />
+            ))}
+          </MobileRecordList>
+        </div>
+      )}
+      <div className="hidden overflow-x-auto md:block">
         <table className="w-full min-w-[880px] border-collapse text-sm">
           <thead>
             {table.getHeaderGroups().map((hg) => (

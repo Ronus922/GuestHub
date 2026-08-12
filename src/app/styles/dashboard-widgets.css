@@ -41,6 +41,13 @@
   flex-direction: column;
   gap: 2px;
 }
+.stk-title,
+.stk-sub {
+  /* A reservation number or an OTA code is one unbreakable token, so at 320px it
+     could not wrap and pushed straight out of the window, which clips. `anywhere`
+     lets those break; ordinary Hebrew words still wrap on spaces as before. */
+  overflow-wrap: anywhere;
+}
 .stk-title {
   font-size: 15px;
   font-weight: 700;
