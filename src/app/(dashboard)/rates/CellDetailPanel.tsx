@@ -146,21 +146,23 @@ export function CellDetailPanel({
           <p className="field-hint">תאריך שעבר — לא ניתן לעריכה מסחרית.</p>
         ) : (
           <div className="flex flex-col gap-2.5">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {/* the CURRENT state is signalled by aria-pressed + a check glyph (shape cue),
                   never by colour alone (WCAG 1.4.1) */}
-              <button type="button" aria-pressed={cell.commercialOpen} disabled={busy} onClick={() => apply({ stopSell: false })} className={`btn btn-secondary flex-1 ${cell.commercialOpen ? "text-status-success" : ""}`}>
+              <button type="button" aria-pressed={cell.commercialOpen} disabled={busy} onClick={() => apply({ stopSell: false })} className={`btn btn-secondary grow basis-40 ${cell.commercialOpen ? "text-status-success" : ""}`}>
                 {cell.commercialOpen && <Icon name="check" size={20} />}
                 פתוח למכירה
               </button>
-              <button type="button" aria-pressed={!cell.commercialOpen} disabled={busy} onClick={() => apply({ stopSell: true })} className={`btn btn-secondary flex-1 ${cell.commercialOpen ? "" : "text-status-danger"}`}>
+              <button type="button" aria-pressed={!cell.commercialOpen} disabled={busy} onClick={() => apply({ stopSell: true })} className={`btn btn-secondary grow basis-40 ${cell.commercialOpen ? "" : "text-status-danger"}`}>
                 {!cell.commercialOpen && <Icon name="check" size={20} />}
                 סגור למכירה
               </button>
             </div>
             <div className="field">
               <label className="field-label" htmlFor="rg-cell-price">מחיר ללילה</label>
-              <div className="flex items-center gap-2">
+              {/* wraps: the field and "שמור מחיר" together need ~390px, which the
+                  panel does not have on a phone, and the card clips the overflow */}
+              <div className="flex flex-wrap items-center gap-2">
                 <input
                   id="rg-cell-price" type="number" inputMode="numeric" dir="ltr"
                   value={priceInput} onChange={(e) => setPriceInput(e.target.value)}
@@ -173,7 +175,7 @@ export function CellDetailPanel({
             <Stepper label="מ׳ לילות בהגעה" value={cell.minStayArrival} disabled={busy} onSet={(v) => apply({ minStayArrival: v })} />
             <Stepper label="מינימום לילות בטווח" value={cell.minStayThrough} disabled={busy} onSet={(v) => apply({ minStayThrough: v })} />
             <Stepper label="מקסימום לילות" value={cell.maxStay} disabled={busy} onSet={(v) => apply({ maxStay: v })} />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Toggle label="סגור להגעה (CTA)" on={cell.closedToArrival} disabled={busy} onToggle={() => apply({ closedToArrival: !cell.closedToArrival })} />
               <Toggle label="סגור לעזיבה (CTD)" on={cell.closedToDeparture} disabled={busy} onToggle={() => apply({ closedToDeparture: !cell.closedToDeparture })} />
             </div>
@@ -213,12 +215,18 @@ function Box({ title, icon, children }: { title: string; icon: Parameters<typeof
     </section>
   );
 }
+// Three columns need ~110px each to hold a stat label. Inside a full-width panel
+// on a 390px phone the row is 308px, so the third tile fell outside the card and
+// the card clips — the number was simply gone. auto-fit drops to two columns
+// exactly when the third no longer fits and is identical to grid-cols-3 above it.
 function Grid({ children }: { children: React.ReactNode }) {
-  return <div className="grid grid-cols-3 gap-2.5">{children}</div>;
+  return <div className="grid grid-cols-[repeat(auto-fit,minmax(96px,1fr))] gap-2.5">{children}</div>;
 }
 function Stat({ label, value, strong }: { label: string; value: string | number; strong?: boolean }) {
   return (
-    <div className="rounded-[12px] bg-field p-2.5 text-center">
+    // min-w-0: a grid item's automatic minimum is its content, so without this the
+    // tile refuses to shrink and pushes the row out again
+    <div className="min-w-0 rounded-[12px] bg-field p-2.5 text-center">
       <div className={`text-[15px] font-extrabold tabular-nums ${strong ? "text-status-success" : "text-ink"}`}>{value}</div>
       <div className="t-label">{label}</div>
     </div>
@@ -250,7 +258,7 @@ function Toggle({ label, on, disabled, onToggle }: { label: string; on: boolean;
   return (
     <button
       type="button" aria-pressed={on} disabled={disabled} onClick={onToggle}
-      className={`btn btn-secondary flex-1 ${on ? "text-status-warning" : ""}`}
+      className={`btn btn-secondary grow basis-40 ${on ? "text-status-warning" : ""}`}
     >
       {label}: {on ? "פעיל" : "כבוי"}
     </button>

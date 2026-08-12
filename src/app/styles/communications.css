@@ -187,6 +187,17 @@
     width: 230px;
     max-width: 100%;
   }
+  /* The segmented control beside the select is itself a fixed row of labelled
+     buttons; at 320px the pair still measured 264px inside a 222px header. Let it
+     wrap and let each button shrink — the labels stay legible because they are
+     two short words. */
+  .gc-ph-f .gc-seg {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .gc-ph-f .gc-segb {
+    min-width: 0;
+  }
 
   /* segmented control */
   .gc-seg {

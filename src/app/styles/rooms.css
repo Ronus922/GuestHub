@@ -21,6 +21,18 @@
   padding: 14px 20px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+  /* Shared by RoomWizard and RatePlanWizard. The bar measures ~455px, so inside a
+     full-width panel on a 390px phone the last step fell outside the panel and the
+     panel clips — the wizard could not show you which step you were on or how many
+     were left. It is a progress indicator, not a layout: scrolling it inside its
+     own strip keeps every step reachable without touching the desktop rendering,
+     where it still centres with room to spare. */
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+}
+.rm-steps::-webkit-scrollbar {
+  display: none;
 }
 .rm-stp {
   display: flex;

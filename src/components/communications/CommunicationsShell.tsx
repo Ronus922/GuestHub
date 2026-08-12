@@ -470,7 +470,7 @@ function AutomationsPanel({
                 disabled={!permissions.activateAutomations || pending}
                 onClick={() => onToggle(row)}
               />
-              <div className="min-w-0 flex-1 basis-56">
+              <div className="min-w-0 grow basis-56">
                 <div className="flex flex-wrap items-center gap-2">
                   <b className="h4">{row.name}</b>
                   <span className={chipClass(row.status)}>{STATE_LABEL[row.status] ?? row.status}</span>
@@ -682,7 +682,7 @@ function ChannelsPanel({
         <div className="card-bd flex flex-col gap-3">
           <article className="flex flex-wrap items-center gap-4 rounded-xl border border-line p-4">
             <span className="gc-row-ic"><Icon name="mail" size={20} /></span>
-            <div className="min-w-0 flex-1 basis-40">
+            <div className="min-w-0 grow basis-40">
               <b className="h4">אימייל</b>
               <p className="t-secondary ltr-num">{data.channel.email.sender ?? "Gmail"}</p>
               <p className="t-label">
@@ -696,7 +696,7 @@ function ChannelsPanel({
           </article>
           <article className={`flex flex-wrap items-center gap-4 rounded-xl border border-line p-4${data.channel.whatsappAvailable ? "" : " opacity-70"}`}>
             <span className="gc-row-ic"><Icon name="whatsapp" size={20} /></span>
-            <div className="min-w-0 flex-1 basis-40">
+            <div className="min-w-0 grow basis-40">
               <b className="h4">WhatsApp</b>
               <p className="t-secondary ltr-num">
                 {data.channel.whatsapp.provider === "green_api" ? "GREEN-API"
@@ -716,7 +716,7 @@ function ChannelsPanel({
           </article>
           <article className="flex flex-wrap items-center gap-4 rounded-xl border border-line p-4 opacity-70">
             <span className="gc-row-ic"><Icon name="phone" size={20} /></span>
-            <div className="min-w-0 flex-1 basis-40">
+            <div className="min-w-0 grow basis-40">
               <b className="h4">SMS</b>
               <p className="t-label">אין ספק פעיל — לא מתבצעת שליחה בערוץ הזה, ואף הודעה לא תוצג כנשלחה.</p>
             </div>
