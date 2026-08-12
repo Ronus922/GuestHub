@@ -75,9 +75,17 @@
      desktop window and the audit harness. This is content-driven, not
      device-name-driven. */
   @media (pointer: coarse), (max-width: 767px) {
-    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
-    select,
-    textarea {
+    /* The `:root` prefix is load-bearing, not decoration. `.field-input` sets
+       15px with class specificity (0,1,0); a bare `select` / `textarea` selector
+       is (0,0,1) and LOSES, so an earlier version of this rule silently raised
+       only <input> and left every select and textarea at 15px — still zooming.
+       Measured on a touch context at 820px: 17px / 15px / 15px. `:root` is a
+       pseudo-class, so each selector becomes (0,1,1) and wins by one point,
+       without re-declaring the canonical primitive (which check:design's
+       duplicate-primitive rule forbids outright, escape hatches included). */
+    :root input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+    :root select,
+    :root textarea {
       font-size: 17px;
     }
   }

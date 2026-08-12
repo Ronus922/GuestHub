@@ -125,6 +125,14 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
     "responsive.css must carry a (pointer: coarse) block — a tablet at 768px+ is a touch device the width query would miss");
   assert.match(body, /font-size:\s*17px/,
     "responsive.css must raise form controls to 17px on touch — Safari zooms the page whenever a focused control renders below 16px, and .field-input is 15px. 17 (not 16) because §2's font-size set is closed and check:design rejects 16");
+  // A bare `select` / `textarea` selector is (0,0,1) and LOSES the cascade to
+  // `.field-input`'s (0,1,0), so the rule raised <input> only and every select and
+  // textarea kept zooming — measured, not theorised: 17px/15px/15px on a touch
+  // context at 820px. The `:root` prefix makes each selector (0,1,1).
+  for (const el of ["select", "textarea"]) {
+    assert.match(body, new RegExp(`:root\\s+${el}\\b`),
+      `the 17px touch rule must select ${el} with a specificity-raising prefix (\`:root ${el}\`) — a bare element selector is outranked by .field-input's 15px and silently does nothing`);
+  }
   const globals = read(join(SRC, "app/globals.css"));
   assert.match(globals, /@import\s+"\.\/styles\/responsive\.css"/,
     "globals.css must import responsive.css (last, so it can override the canonical primitives)");
