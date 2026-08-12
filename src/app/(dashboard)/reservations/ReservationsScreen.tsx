@@ -8,6 +8,7 @@ import { paymentTriplet, STATUS_COLORS } from "@/lib/status-colors";
 import { getVisibleReservationNumber } from "@/lib/reservations/visible-number";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import { DateRangeField } from "@/components/shared/DateRangeField";
+import { MobileRecordCard, MobileRecordList } from "@/components/shared/MobileRecordCard";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 import type { ListFilters, ListRow, ListTab, ReservationsListData } from "./data";
 
@@ -430,8 +431,27 @@ export function ReservationsScreen({
         })}
       </div>
 
+      {/* ---- phone: one card per reservation ----
+          Below md the 11-column table stops being readable: .rv-tbl is 1150px
+          wide, so on a 390px screen the guest name scrolls out of sight the
+          moment you reach the dates and there is no way to tell which row you
+          are reading. Both trees always render (md:hidden / hidden md:flex),
+          the same split CalendarScreen uses, so nothing flashes on hydration. */}
+      {pageRows.length > 0 && (
+        <MobileRecordList>
+          {pageRows.map((row) => (
+            <ReservationCardMobile
+              key={row.id}
+              row={row}
+              cancelledTab={cancelledTab}
+              onOpen={() => can.viewReservation && setPanelId(row.id)}
+            />
+          ))}
+        </MobileRecordList>
+      )}
+
       {/* ---- table card ---- */}
-      <div className="card rv-tblwrap thin-scroll">
+      <div className="card rv-tblwrap thin-scroll hidden md:flex">
         {pageRows.length === 0 ? (
           <div className="empty-state">
             <Icon name="search" size={24} />
@@ -542,6 +562,110 @@ export function ReservationsScreen({
         canChargeCard={can.chargeCard}
       />
     </div>
+  );
+}
+
+// The same row, as a card, for phone widths. Deliberately NOT every column: a
+// card that repeats all eleven cells is just a tall table. It carries the four
+// facts an operator scans a reservation list for — who, when, which room, what
+// is owed — plus the two status chips; everything else is one tap away in the
+// panel the card opens.
+function ReservationCardMobile({
+  row,
+  cancelledTab,
+  onOpen,
+}: {
+  row: ListRow;
+  cancelledTab: boolean;
+  onOpen: () => void;
+}) {
+  const pill = LIFECYCLE_PILL[row.status] ?? { label: row.status, cls: "chip-refunded" };
+  const owes = row.balance > 0 && row.payment !== "paid" && row.status !== "cancelled";
+  return (
+    <MobileRecordCard
+      onActivate={onOpen}
+      activateLabel={`פתיחת הזמנה ${getVisibleReservationNumber(row)} · ${row.guest_name}`}
+      title={
+        <>
+          {row.guest_name}
+          {row.is_vip && (
+            <>
+              {" "}
+              <Icon name="star" size={13.5} className="rv-vip" label="אורח VIP" />
+            </>
+          )}
+        </>
+      }
+      subtitle={
+        <>
+          <span className="ltr-num">{getVisibleReservationNumber(row)}</span>
+          {" · "}
+          <bdi>{row.source_label ?? (row.is_ota ? row.ota_name : "ישיר")}</bdi>
+        </>
+      }
+      badge={
+        <span className={`chip ${pill.cls}`}>
+          <span className="dot" />
+          {pill.label}
+        </span>
+      }
+      fields={[
+        {
+          label: "תאריכים",
+          value: (
+            <span className="ltr-num">
+              {ddmmyy(row.check_in)} – {ddmmyy(row.check_out)}
+            </span>
+          ),
+        },
+        { label: "לילות", value: <span className="ltr-num">{row.nights}</span> },
+        { label: "חדר", value: <bdi className="ltr-num">{row.rooms_label ?? "—"}</bdi> },
+        { label: "טלפון", value: <span className="ltr-num">{row.guest_phone ?? "—"}</span> },
+        {
+          label: cancelledTab ? "ביטול" : "סטטוס תפעולי",
+          wide: true,
+          value: cancelledTab ? (
+            <>
+              {CANCEL_ORIGIN_SHORT[row.cancellation_origin ?? ""] ?? "—"}
+              {row.cancelled_at
+                ? ` · ${ddmmyy(row.cancelled_at)} ${row.cancelled_at.slice(11, 16)}`
+                : ""}
+              {row.cancelled_by_name ? ` · ${row.cancelled_by_name}` : ""}
+            </>
+          ) : row.workflow_label ? (
+            <span
+              className="chip rl-wf"
+              style={(() => {
+                const t = statusTintPalette(row.workflow_color);
+                return { backgroundColor: t.bg, borderColor: t.bd, color: t.tx };
+              })()}
+            >
+              {row.workflow_label}
+            </span>
+          ) : (
+            "—"
+          ),
+        },
+        {
+          label: "תשלום",
+          wide: true,
+          value: (
+            <span className="flex flex-wrap items-center gap-2">
+              <span className={`chip ${paymentTriplet(row.payment).chip}`}>
+                <span className="dot" />
+                {PAY_LABEL[row.payment]}
+              </span>
+              {owes && (
+                /* §3.1 לא שולם TEXT token — the dot token fails AA at 12px */
+                <span style={{ color: STATUS_COLORS.unpaid.tx }}>
+                  יתרה: <bdi className="ltr-num">{money(row.balance, row.currency)}</bdi>
+                </span>
+              )}
+            </span>
+          ),
+        },
+      ]}
+    />
   );
 }
 

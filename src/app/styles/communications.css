@@ -166,14 +166,26 @@
     color: var(--muted);
   }
   .gc-ph-f {
-    flex: none;
+    /* Was `flex: none` with a 230px select inside, so the cluster could neither
+       shrink nor wrap. The card is `overflow: hidden`, so once the header ran out
+       of room the far end was simply swallowed: 524px of controls inside a 332px
+       card at 390px, and still 64px missing at a 768px viewport (the content
+       column is only 460px once the shell is accounted for). Sized by the
+       CONTAINER rather than a breakpoint for exactly that reason — the viewport
+       width was never what decided this.
+       `0 1 auto` keeps the desktop layout identical: it still refuses to grow and
+       still parks at the inline end, it just yields when there is nothing left. */
+    flex: 0 1 auto;
+    min-width: 0;
     margin-inline-start: auto;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
   .gc-ph-f .gc-select {
     width: 230px;
+    max-width: 100%;
   }
 
   /* segmented control */
