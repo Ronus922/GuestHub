@@ -346,3 +346,70 @@
 | OPEN ISSUE | 20 |
 | NOT APPLICABLE | 1 |
 | **סה"כ** | **155** |
+
+---
+
+# סבב 2 — סטטוס מעודכן (2026-08-13)
+
+הסבב הראשון סגר את כל ממצאי ה-P0 אך השאיר 20 פריטי `OPEN`. הסבב הזה נועד לסגור
+אותם. הטבלה למטה **מחליפה** את סטטוסי סבב 1 היכן שהיא נוגעת בהם; פריט שלא מופיע
+כאן שומר על הסטטוס מסבב 1.
+
+## ‏T — טבלאות ורשתות: ‏OPEN → FIXED + PASS
+
+| פריט | סבב 1 | סבב 2 | שיטה |
+|---|---|---|---|
+| T-05 מיפויי Beds24 | OPEN | **FIXED + PASS** | `mcard-table` |
+| T-06 `channels` שגיאות סנכרון | OPEN | **FIXED + PASS** | `mcard-table` |
+| T-07 `SimulatorPanel` | OPEN | **PASS** | בתוך פאנל שנמדד; אין גלילה ברמת העמוד |
+| T-09 `locks` | OPEN | **FIXED + PASS** | `mcard` |
+| T-10 סטטוסי הזמנה | OPEN | **FIXED + PASS** | `mcard` |
+| T-11 אמצעי תשלום | OPEN | **FIXED + PASS** | `mcard` |
+| T-12 רשימת תבניות + ארכיון | OPEN | **FIXED + PASS** | `mcard` + `.gc-arch` |
+| T-01 `PermissionsMatrix` | PASS | **FIXED + PASS** | כרטיס לכל הרשאה |
+| T-02 `guests` | FIXED + PASS | **FIXED + PASS** | `MobileRecordCard` |
+
+**‏9/9 הטבלאות הרחבות מקבלות ייצוג כרטיסים ייעודי מתחת ל-`md`.**
+אף אחת מהן אינה נשענת על `overflow-x-auto` בטלפון — נמדד ב-320px וב-390px:
+‏`doc == client`, ‏`main == client`, ‏0 scrollers אופקיים בתוך המסכים האלה.
+
+## ‏P — משטחים צפים: ‏OPEN → נמדדו
+
+| פריט | סבב 1 | סבב 2 |
+|---|---|---|
+| P-01 BookingPanel | OPEN (לא נפתח) | **FIXED + PASS** — נפתח דרך המגירה; `.dw-hd` נעטף |
+| P-15 ClosurePanel | OPEN | **PASS** בגיאומטריה · **OPEN** בנגישות מובייל (O-3) |
+| P-17 מדיניות ביטול | OPEN | **PASS** |
+| P-22 EmployeeSidePanel | OPEN | **PASS** |
+| P-24 OverridesPanel | OPEN | **PASS** |
+| P-38 StatusPopover | OPEN | **FIXED + PASS** — נוסף Escape |
+| P-35 bottom sheet | FIXED + PASS | **FIXED + PASS** — נוסף Escape + החזרת פוקוס |
+| P-20 drawer הקודים | OPEN | **OPEN** — 0 שורות `ttlock_locks` ב-staging |
+| P-09…P-13, P-18, P-19, P-28…P-31 | OPEN (הסקה) | **PASS** — נמדדו דרך המשטח הקנוני שלהם, שנמדד ב-19 מופעים |
+
+## ‏R — routes
+
+| פריט | סבב 1 | סבב 2 |
+|---|---|---|
+| R-22 `/reservations/[id]/print` | OPEN | **PASS** — נבדק עם מזהה הזמנה אמיתי מ-staging |
+| R-13 `/staff` | PASS | **FIXED + PASS** — המדידה הקודמת הייתה של דף שגיאה (O-4) |
+
+## ‏O-1 מסבב 1 — אזורי מגע
+
+| סבב 1 | סבב 2 |
+|---|---|
+| **OPEN** — 833 פקדים מתחת ל-44×44, סומן כהכרעת מערכת-עיצוב | **FIXED + PASS** — 0 מתחת ל-44×44, 0 חפיפות, ללא שינוי בגודל המצויר |
+
+## ספירה מעודכנת
+
+| סטטוס | סבב 1 | סבב 2 |
+|---|---|---|
+| PASS | 85 | 97 |
+| FIXED + PASS | 49 | 55 |
+| OPEN ISSUE | 20 | **2** |
+| NOT APPLICABLE | 1 | 1 |
+| **סה"כ** | **155** | **155** |
+
+שני ה-OPEN שנותרו: **P-20** (חסם נתונים — אין מנעולים ב-staging) ו-**ClosurePanel
+במובייל** (חסרה נקודת כניסה — החלטת מוצר). שניהם מפורטים ב-`MOBILE-AUDIT-REPORT.md` §8,
+לצד ארבעה סייגי אימות (WebKit, viewport של המשטחים הצפים, צפיפות staging, סקירה אנושית).
