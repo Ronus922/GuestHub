@@ -574,3 +574,36 @@
     inset-inline-end: 0;
   }
 }
+
+/* ============================================================
+   Wrapping chip rows: 8px of row-gap makes two 44px targets intersect.
+
+   A `.chip` is 28px tall (§4). The coarse-pointer rule projects it to a 44px
+   hit area, i.e. 8px above and 8px below the drawn chip. A wrapping row whose
+   `row-gap` is 8px therefore hands the SAME 8px band to both rows. Measured on
+   /staff at 390x844 with real hit-testing (`elementFromPoint`), not geometry:
+
+     chip row 1  y 293 → 321      chip row 2  y 329
+     7 overlapping expanded areas: 40x8, 66x8, 54x8 px …
+
+   28 + 16 = 44, so a 16px row-gap makes the two expanded areas meet exactly and
+   never intersect. This is scoped to rows that actually WRAP and actually
+   contain chips, under coarse pointers only — the drawn density on a pointer
+   device is unchanged.
+
+   An earlier round tried this and reverted it, because it did not move the
+   "boundary point owned by a neighbour" count (25, all between chips in
+   ADJACENT CARDS, which no row-gap governs). That was the right call for that
+   metric and the wrong conclusion for this one: overlap and ownership are
+   different measurements, and this rule is aimed at overlap.
+   ============================================================ */
+@media (pointer: coarse) {
+  .flex-wrap:has(> .chip) {
+    row-gap: 16px;
+    /* row-gap only governs rows INSIDE one container. On /staff the roles
+       filter and the status filter are two separate wrapping rows 8px apart
+       (measured: 345+28=373, next row at 381), so their expanded areas met in
+       the same 8px band. 4px on each container adds the missing 8. */
+    margin-block: 4px;
+  }
+}
