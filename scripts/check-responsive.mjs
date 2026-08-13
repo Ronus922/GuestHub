@@ -302,21 +302,30 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   // the rule self-limiting: a control already >=44 gets no expansion at all.
   const coarse = body.slice(body.indexOf("@media (pointer: coarse)"));
   assert.ok(coarse.length > 0, "responsive.css must carry a (pointer: coarse) block for touch targets");
-  assert.match(coarse, /::after[\s\S]{0,400}?min-width:\s*44px/,
+  assert.match(coarse, /::after[\s\S]{0,1400}?min-width:\s*44px/,
     "the coarse-pointer ::after must declare a 44px min-width — this is the mobile hit area");
-  assert.match(coarse, /::after[\s\S]{0,400}?min-height:\s*44px/,
+  assert.match(coarse, /::after[\s\S]{0,1400}?min-height:\s*44px/,
     "the coarse-pointer ::after must declare a 44px min-height");
-  assert.match(coarse, /::after[\s\S]{0,400}?width:\s*100%/,
+  assert.match(coarse, /::after[\s\S]{0,1400}?width:\s*100%/,
     "the ::after must also be width:100% — without it the rule would SHRINK controls that are already wider than 44px");
   // A disabled control must stay dead: no hit area, no expansion.
   assert.match(coarse, /:not\(:disabled\):not\(\[aria-disabled="true"\]\)::after/,
     "the hit area must be excluded for :disabled and [aria-disabled=true] — a disabled control must not become tappable");
   // The expansion is transparent by construction; a background here would be a
   // visible change to every small control in the app.
-  const afterBlock = coarse.slice(coarse.indexOf("::after"), coarse.indexOf("::after") + 700);
+  const afterBlock = coarse.slice(coarse.indexOf("::after"), coarse.indexOf("::after") + 1600);
   assert.doesNotMatch(afterBlock, /background:\s*(?!transparent)[a-z(#]/,
     "the touch hit area must stay transparent — it expands the target, it does not paint anything");
-  ok("touch targets reach 44x44 on a coarse pointer, transparently, and never on a disabled control");
+  // The centring MUST stay physical. `inset-inline-start: 50%` resolves to
+  // `right: 50%` in this RTL document while `translate` stays physical, so the
+  // pair pushed the hit area a full width to the left of the control. Hit-tested:
+  // elementFromPoint 21px above a 36px icon button returned something else, i.e.
+  // the 44px target did not exist where a thumb lands.
+  assert.match(coarse, /::after[\s\S]{0,1400}?left:\s*50%/,
+    "the hit area must be centred with PHYSICAL left/top — `inset-inline-start` becomes `right` in RTL and `translate` does not flip with it, which puts the target beside the control instead of on it");
+  assert.doesNotMatch(coarse.slice(coarse.indexOf("::after"), coarse.indexOf("::after") + 1600), /inset-inline-start:\s*50%/,
+    "the hit area must NOT anchor on inset-inline-start — see above; it inverts in RTL");
+  ok("touch targets reach 44x44 on a coarse pointer, transparently, centred physically, and never on a disabled control");
 }
 
 // ------------------------------------- 11. zoom is never disabled, restated

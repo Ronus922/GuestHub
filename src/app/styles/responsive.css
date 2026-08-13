@@ -297,8 +297,18 @@
   :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary):not(:disabled):not([aria-disabled="true"])::after {
     content: "";
     position: absolute;
-    inset-inline-start: 50%;
-    inset-block-start: 50%;
+    /* PHYSICAL left/top on purpose, and this is not a §11 slip.
+       `inset-inline-start: 50%` resolves to `right: 50%` in an RTL document, and
+       `translate` is physical and does NOT flip with it — so the pair pushed the
+       hit area a full width to the LEFT of the control instead of centring it.
+       Hit-tested, not assumed: elementFromPoint 21px above a 36px icon button
+       returned something else entirely, i.e. the 44px target did not exist where
+       a thumb would land. left/top + translate centres identically in both
+       directions, which is exactly why it is the standard centring idiom.
+       ds-allow: physical centring — a transform cannot mirror, so its anchor
+       must not either. */
+    left: 50%;
+    top: 50%;
     translate: -50% -50%;
     min-width: 44px;
     min-height: 44px;
