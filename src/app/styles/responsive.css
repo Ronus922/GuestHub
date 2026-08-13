@@ -485,3 +485,92 @@
     max-height: 70dvh;
   }
 }
+
+/* ============================================================
+   Drawer / modal footers: three actions do not fit on one phone line.
+
+   `.dw-ft` and `.md-ft` are `flex-direction: row-reverse` with no wrapping, so
+   a footer carrying more than two actions simply runs past the edge. Measured
+   on the reservation edit drawer at both 320 and 390:
+
+     שמור שינויים  left  24 → right 171   ✓
+     סגור          left 181 → right 252   ✓
+     בטל הזמנה     left 272 → right 415   ✗  outside a 390px viewport
+
+   The destructive action was the one off screen — the worst possible choice —
+   and no scroll could reach it, because the footer is a fixed-height sibling of
+   the scrolling body, not part of it.
+
+   Wrapping is the whole fix: the actions keep their real sizes and their DOM
+   order, the primary stays pinned to the left edge of the first line, and the
+   overflowing action starts a second line instead of leaving the screen. Above
+   `md` nothing changes — the footer has never been near full there.
+   ============================================================ */
+@media (max-width: 767px), (max-height: 600px) {
+  .dw-ft,
+  .md-ft {
+    flex-wrap: wrap;
+    /* wrapped lines need vertical air between them; the 10px gap was
+       horizontal-only by construction */
+    row-gap: 10px;
+  }
+}
+
+/* ============================================================
+   Touch: the drawer body must not carry a classic scrollbar track.
+
+   `.thin-scroll` (base.css) sets `scrollbar-width: thin`. On a pointer device
+   that is the intent — a slim, always-visible track. On a touch device the same
+   declaration OPTS OUT of the platform's overlay scrollbar and forces a
+   classic, space-taking one, which is what shows up in a phone screenshot of
+   the reservation drawer as a thin bar down the side of the form: it reads as
+   "the form has its own scroll area inside the page", and it takes real width
+   away from the fields next to it.
+
+   Under `pointer: coarse` the platform indicator is the right one. The element
+   still scrolls; only the permanent track goes away, so the drawer body reads
+   as one continuous surface under the thumb.
+
+   This does NOT remove a scroll container. The reservation drawer has exactly
+   one vertical scroller (`.dw-bd`) — measured at 320×568, 390×844, 667×375 and
+   844×390: 0 nested vertical scrollers inside it.
+   ============================================================ */
+@media (pointer: coarse) {
+  .thin-scroll {
+    scrollbar-width: none;
+  }
+  .thin-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+/* ============================================================
+   Booking toolbar overflow menu: it opened AWAY from the screen.
+
+   `.bk-tb-menu` is `position:absolute; inset-inline-start: 0` on a trigger that
+   lives in the drawer header's inline-END cluster (`ms-auto`), i.e. hard against
+   the physical LEFT edge in RTL. `inset-inline-start: 0` resolves to `right: 0`
+   there, so the 200px menu grows LEFTWARD — straight off the screen. Measured
+   with the menu open:
+
+     320x568   .bk-tb-menu   left  -90 → right 110
+     390x844   .bk-tb-menu   left  -22 → right 178
+
+   and because the menu widened the header's scroll box, the RTL scroll offset
+   dragged `.dw-hd` itself sideways too (68 → 388 at a 320px viewport): the
+   header appeared shifted, which is the second half of the same defect.
+
+   The previous round capped the menu's WIDTH (`max-width: calc(100vw - 24px)`),
+   which is necessary but not sufficient — a 200px box at left:-90 is still off
+   screen. Anchoring the opposite edge makes it grow INTO the panel instead, so
+   it cannot leave the viewport regardless of how narrow the panel is. Above md
+   the menu was measured on screen already (844x390: 0 offenders), so the rule
+   is scoped to where the defect exists and desktop alignment is untouched.
+   ============================================================ */
+@media (max-width: 767px), (max-height: 600px) {
+  .bk-tb-menu {
+    inset-inline-start: auto;
+    inset-inline-end: 0;
+  }
+}

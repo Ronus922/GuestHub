@@ -445,4 +445,68 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("room closure has an explicit mobile entry point, gated and wired to the one shared ClosurePanel");
 }
 
+// ---- 15. the reservation panels cannot regain the sideways-shift layout ----
+// Measured defect (2026-08-13): `.bw-main` is `display:flex` with
+// `align-items: flex-start`, which is right for the ROW layout. The <=1024px
+// query flips it to `flex-direction: column` — and `align-items` then governs
+// the HORIZONTAL axis, so each column was sized to max-content instead of the
+// container. At 390px `.bw-col-main` measured 443px inside a 338px box and the
+// whole edit body sat at left:-79, off the screen. This locks the counterpart.
+{
+  const css = read(join(SRC, "app/styles/booking-window.css"));
+  const at = css.indexOf("@media (max-width: 1024px)");
+  assert.ok(at > 0, "booking-window.css must keep the <=1024px stacking query");
+  const block = css.slice(at, css.indexOf("}\n\n", at));
+  assert.match(block, /\.bw-main\s*\{[^}]*flex-direction:\s*column/,
+    "the <=1024px query must still stack .bw-main into a column");
+  assert.match(block, /\.bw-main\s*\{[^}]*align-items:\s*stretch/,
+    "stacked .bw-main MUST set align-items: stretch — inherited flex-start sizes the "
+    + "columns to max-content and pushes the reservation body off the screen");
+  ok("stacked .bw-main stretches its columns — the sideways-shift layout cannot come back");
+}
+
+// ---- 16. drawer/modal footers wrap instead of leaving the screen ----
+// Three actions (שמור שינויים · סגור · בטל הזמנה) measured 409px of content in a
+// 390px viewport, and the DESTRUCTIVE one was the one outside it. The footer is
+// a fixed sibling of the scrolling body, so nothing could scroll it back.
+{
+  const css = read(join(SRC, "app/styles/responsive.css"));
+  const at = css.indexOf(".dw-ft,");
+  assert.ok(at > 0, "responsive.css must carry the phone footer rule");
+  const block = css.slice(at, at + 260);
+  assert.match(block, /flex-wrap:\s*wrap/,
+    ".dw-ft/.md-ft must wrap at phone widths — a third action otherwise sits outside the viewport");
+  assert.match(block, /row-gap/,
+    "a wrapping footer needs a row-gap; the 10px gap was horizontal-only by construction");
+  ok("drawer and modal footers wrap on phones — no action, least of all the destructive one, leaves the viewport");
+}
+
+// ---- 17. the booking toolbar menu opens INTO the panel ----
+// `.bk-tb-menu` is anchored to a trigger in the header's inline-END cluster, so
+// `inset-inline-start: 0` (= right:0 in RTL) grew the menu leftward, off screen:
+// measured left:-90 at 320 and left:-22 at 390. Capping its width was not enough.
+{
+  const css = read(join(SRC, "app/styles/responsive.css"));
+  const at = css.indexOf(".bk-tb-menu {");
+  assert.ok(at > 0, "responsive.css must carry the toolbar-menu anchor flip");
+  const block = css.slice(at, at + 200);
+  assert.match(block, /inset-inline-start:\s*auto/, ".bk-tb-menu must release its inline-start anchor on phones");
+  assert.match(block, /inset-inline-end:\s*0/,
+    ".bk-tb-menu must anchor inline-end on phones so it grows INTO the panel instead of off the screen");
+  ok("the booking toolbar overflow menu opens into the panel on phones, never past its edge");
+}
+
+// ---- 18. touch surfaces do not force a classic scrollbar track ----
+// `.thin-scroll` sets `scrollbar-width: thin`, which on a touch device opts OUT
+// of the platform overlay scrollbar and paints a permanent track down the side
+// of the drawer body — read (correctly) as "the form has its own scroll area".
+{
+  const css = read(join(SRC, "app/styles/responsive.css"));
+  const at = css.indexOf(".thin-scroll {");
+  assert.ok(at > 0, "responsive.css must neutralise the thin scrollbar under coarse pointers");
+  assert.match(css.slice(at, at + 120), /scrollbar-width:\s*none/,
+    "under pointer:coarse .thin-scroll must drop the classic track and use the platform indicator");
+  ok("coarse-pointer surfaces use the platform scroll indicator, not a permanent track");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);

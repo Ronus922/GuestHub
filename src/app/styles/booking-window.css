@@ -46,6 +46,15 @@
 @media (max-width: 1024px) {
   .bw-main {
     flex-direction: column;
+    /* THE displacement bug. `align-items: flex-start` above is correct for the
+       ROW layout — it stops the two columns stretching to equal height. The
+       moment the direction flips to column, the same declaration governs the
+       HORIZONTAL axis instead, so each column is sized to its max-content
+       width rather than the container's. Measured at 390px: .bw-col-main came
+       out 443px inside a 338px content box, dragging every card in the edit
+       panel to left:-79 — the body shifted sideways off the screen. Stretch is
+       what "column" needs; nothing here is a width override. */
+    align-items: stretch;
   }
   .bw-col-side {
     position: static;
