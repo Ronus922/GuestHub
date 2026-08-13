@@ -166,14 +166,37 @@
     color: var(--muted);
   }
   .gc-ph-f {
-    flex: none;
+    /* Was `flex: none` with a 230px select inside, so the cluster could neither
+       shrink nor wrap. The card is `overflow: hidden`, so once the header ran out
+       of room the far end was simply swallowed: 524px of controls inside a 332px
+       card at 390px, and still 64px missing at a 768px viewport (the content
+       column is only 460px once the shell is accounted for). Sized by the
+       CONTAINER rather than a breakpoint for exactly that reason — the viewport
+       width was never what decided this.
+       `0 1 auto` keeps the desktop layout identical: it still refuses to grow and
+       still parks at the inline end, it just yields when there is nothing left. */
+    flex: 0 1 auto;
+    min-width: 0;
     margin-inline-start: auto;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
   }
   .gc-ph-f .gc-select {
     width: 230px;
+    max-width: 100%;
+  }
+  /* The segmented control beside the select is itself a fixed row of labelled
+     buttons; at 320px the pair still measured 264px inside a 222px header. Let it
+     wrap and let each button shrink — the labels stay legible because they are
+     two short words. */
+  .gc-ph-f .gc-seg {
+    flex-wrap: wrap;
+    max-width: 100%;
+  }
+  .gc-ph-f .gc-segb {
+    min-width: 0;
   }
 
   /* segmented control */
@@ -1149,5 +1172,19 @@
       max-width: none;
       flex-basis: 100%;
     }
+  }
+}
+
+@layer components {
+  /* Archive list grid — extracted from an inline `style` on the row so the mobile
+     layer can override it. An inline style wins over every stylesheet rule, so
+     while `minWidth: 760` lived there the archive kept a 760px floor even after
+     the row became a card and the whole section scrolled sideways on a phone. */
+  .gc-arch {
+    grid-template-columns: 44px minmax(190px, 1.5fr) 100px 112px 1fr 168px;
+    min-width: 760px;
+  }
+  .gc-row.gc-arch {
+    cursor: default;
   }
 }

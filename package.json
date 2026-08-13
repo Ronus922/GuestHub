@@ -95,6 +95,7 @@
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:calendar-departure-edge": "node scripts/check-calendar-departure-edge.mjs",
     "check:design": "node scripts/check-design-system.mjs",
+    "check:responsive": "node scripts/check-responsive.mjs",
     "check:dashboard-shell": "node scripts/check-dashboard-shell.mjs",
     "check:connection-health": "node scripts/check-connection-health.mjs",
     "check:datepicker": "node scripts/check-datepicker.mjs",

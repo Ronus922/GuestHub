@@ -88,8 +88,56 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* three children now (jump / range / חסימת חדר) and at 320px they add up to
+     more than the 288px of content box, so the row wraps instead of pushing a
+     control off the edge. */
+  flex-wrap: wrap;
   gap: 9px;
   padding: 0 16px 12px;
+}
+/* The DESKTOP tree's touch-only twin. A landscape phone (844x390, 932x430) is
+   past `md`, so it renders the desktop calendar, whose closure entry point is a
+   right-click context menu — unreachable with a finger. Hidden for a mouse, so
+   the desktop layout is byte-identical to before; shown on a coarse pointer. */
+.cb-touch-close {
+  display: none;
+}
+@media (pointer: coarse) {
+  .cb-touch-close {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    color: #5b6478; /* ds-allow: reference muted-2 */
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+}
+
+/* the mobile entry point to ClosurePanel — same visual weight as .cb-m-nav's
+   buttons, since it sits in the same header stack */
+.cb-m-close {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: #5b6478; /* ds-allow: reference muted-2 */
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
 }
 /* jump-to-date button, mobile — same native-picker mechanism as desktop (§6) */
 .cb-datejump-m {
@@ -319,7 +367,17 @@
   border-radius: 20px 20px 0 0; /* ds-allow: reference sheet radius */
   z-index: 56;
   direction: rtl;
+  /* The sheet had NO height cap: a reservation with many facts grew past the top
+     of the screen, and `overflow: hidden` meant the overflowing part could not be
+     scrolled to — including, on the tallest cards, the sheet's own close control.
+     85svh (not vh) so the cap is measured against what is actually visible while
+     iOS Safari's chrome is showing. .cb-sheet-body below is what scrolls. */
+  max-height: 85vh;
+  max-height: 85svh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  padding-block-end: env(safe-area-inset-bottom);
   animation: cb-sh-up 0.24s cubic-bezier(0.2, 0.8, 0.3, 1);
   box-shadow: 0 -18px 50px rgba(16, 24, 40, 0.3); /* ds-allow: reference sheet shadow */
 }
@@ -329,6 +387,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: none; /* pinned: carries the close button */
 }
 .cb-sheet-av {
   width: 42px;
@@ -382,6 +441,10 @@
   display: flex;
   flex-direction: column;
   gap: 11px;
+  /* the only scrolling part of the sheet — header and footer stay reachable */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
 }
 .cb-sheet-badge {
   display: inline-flex;
@@ -426,6 +489,7 @@
   gap: 8px;
   padding: 12px 16px 18px;
   border-top: 1px solid #eef0f5; /* ds-allow: reference footer line */
+  flex: none; /* pinned: carries the primary action */
 }
 .cb-sheet-cancel {
   height: 44px;

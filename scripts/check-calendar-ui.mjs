@@ -359,7 +359,15 @@ const popRule = rule(".cb-pop");
 // GUIDELINES §8 fixes every popover at 316px and cites the calendar's as the
 // example — it supersedes the 366px once measured off InvitationCard.png. The
 // width may live on .cb-pop itself or come composed from the canonical .popover.
-assert.ok(/const POP_W = 316/.test(tooltip) || /width: 316px/.test(popRule),
+// The width used to be a `const POP_W = 316` literal inside ReservationTooltip.tsx,
+// one of THREE hand-kept copies (the CSS rule and a folded `innerWidth - 328` in
+// RoomsScreen.tsx were the others). It now comes from src/lib/popover.ts, which
+// both call sites import — so the check follows it there and, while it is at it,
+// pins the value itself rather than merely pinning a local alias of it.
+const popoverLib = src("src/lib/popover.ts");
+const sharedWidth = /export const POPOVER_WIDTH = 316\b/.test(popoverLib)
+  && /from "@\/lib\/popover"/.test(tooltip);
+assert.ok(/const POP_W = 316/.test(tooltip) || /width: 316px/.test(popRule) || sharedWidth,
   "the invitation card is the §8 canonical 316px popover");
 // GUIDELINES §1 supersedes the raw 18px measured off the PNG: the card wears the
 // nearest approved radius token (16px = --r-lg).

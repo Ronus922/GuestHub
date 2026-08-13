@@ -515,8 +515,8 @@ export function LocksBoard({ initial }: { initial: LocksScreenView }) {
               {locks.length === 0 ? (
                 <NeverSynced />
               ) : (
-                <div className="lk-gt">
-                  <div className="lk-head">
+                <div className="lk-gt mcard-rows">
+                  <div className="lk-head mcard-head">
                     <div className="lk-th c">
                       <button
                         type="button"
@@ -837,8 +837,8 @@ function LockRow({
   const unchanged = (lock.room?.roomId ?? "") === draft;
 
   return (
-    <div className={`lk-row${selected ? " sel" : ""}`}>
-      <div className="lk-td c">
+    <div className={`lk-row mcard-row${selected ? " sel" : ""}`}>
+      <div className="lk-td c" data-label="בחירה" data-mcard="inline">
         <button
           type="button"
           className={`lk-cb${selected ? " on" : ""}`}
@@ -850,7 +850,7 @@ function LockRow({
         </button>
       </div>
 
-      <div className="lk-td col">
+      <div className="lk-td col" data-label="מנעול">
         <span className="lk-lockid">{lock.alias}</span>
         <span className="lk-tt">
           <bdi className="ltr-num">{lock.ttlockLockId}</bdi>
@@ -863,11 +863,11 @@ function LockRow({
         )}
       </div>
 
-      <div className="lk-td">
+      <div className="lk-td" data-label="סוללה" data-mcard="inline">
         <BatteryCell battery={lock.battery} />
       </div>
 
-      <div className="lk-td">
+      <div className="lk-td" data-label="חדר">
         {editing ? (
           <div style={{ display: "flex", gap: "8px", alignItems: "center", minWidth: 0, flexWrap: "wrap" }}>
             <select
@@ -920,7 +920,7 @@ function LockRow({
         )}
       </div>
 
-      <div className="lk-td col">
+      <div className="lk-td col" data-label="קוד דירה">
         <CodeCell
           lock={lock}
           revealed={revealed}
@@ -933,11 +933,11 @@ function LockRow({
         />
       </div>
 
-      <div className="lk-td col">
+      <div className="lk-td col" data-label="קוד מנהל">
         <ManagerCell lock={lock} revealed={revealed} onToggleReveal={onToggleReveal} />
       </div>
 
-      <div className="lk-td col" style={{ gap: "2px" }}>
+      <div className="lk-td col" style={{ gap: "2px" }} data-label="סטטוס וסנכרון">
         <span className={`lk-badge ${STATUS_CLASS[status]}`}>
           <span className="d" />
           {STATUS_LABEL[status]}
@@ -949,7 +949,7 @@ function LockRow({
         )}
       </div>
 
-      <div className="lk-td c">
+      <div className="lk-td c" data-mcard="actions">
         <div className="lk-acts">
           {lock.room && !editing && (
             <button
@@ -977,7 +977,7 @@ function LockRow({
           )}
         </div>
       </div>
-      <div className="lk-td" />
+      <div className="lk-td" data-mcard="hide" />
     </div>
   );
 }

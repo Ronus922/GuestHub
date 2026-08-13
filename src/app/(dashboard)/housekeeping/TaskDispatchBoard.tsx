@@ -672,7 +672,7 @@ function UserColumn({
   return (
     <div className="flex w-[280px] min-w-[280px] shrink-0 flex-col">
       <div className="flex items-center justify-between rounded-t-2xl border-2 border-b-0 border-line bg-surface px-3 py-2.5">
-        <div className="flex flex-row-reverse items-center gap-2 text-right">
+        <div className="flex flex-row-reverse items-center gap-2 text-start">
           <span className="grid h-9 w-9 place-items-center rounded-lg bg-primary-050 text-primary">
             <Icon name="user" size={18} />
           </span>
@@ -843,7 +843,7 @@ function TaskCardBody({
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-050 text-sm font-bold text-primary">
           {task.roomNumber ?? <Icon name={TYPE_ICON[task.taskType] ?? "list-checks"} size={18} />}
         </span>
-        <div className="min-w-0 flex-1 text-right">
+        <div className="min-w-0 flex-1 text-start">
           <p className="truncate text-sm font-bold text-ink">{cardTitle(task)}</p>
           <div className="mt-0.5 flex flex-row-reverse flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="text-xs text-faint">{TYPE_LABEL[task.taskType] ?? task.taskType}</span>
@@ -991,7 +991,7 @@ function EditTaskPanel({
           </div>
         )}
 
-        <label className="flex flex-col gap-1 text-right">
+        <label className="flex flex-col gap-1 text-start">
           <span className="t-label">שיוך</span>
           <select
             className="input"
@@ -1008,7 +1008,7 @@ function EditTaskPanel({
           </select>
         </label>
 
-        <div className="flex flex-col gap-1 text-right">
+        <div className="flex flex-col gap-1 text-start">
           <span className="t-label">סטטוס</span>
           <div className="flex flex-row-reverse flex-wrap gap-2">
             {EDIT_STATUSES.map((s) => (
@@ -1039,7 +1039,7 @@ function EditTaskPanel({
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-right">
+          <label className="flex flex-col gap-1 text-start">
             <span className="t-label">עדיפות</span>
             <select
               className="input"
@@ -1051,13 +1051,13 @@ function EditTaskPanel({
               <option value="high">דחוף</option>
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-right">
+          <label className="flex flex-col gap-1 text-start">
             <span className="t-label">תאריך יעד</span>
             <input type="date" className="input" value={dueDate} disabled={!canManage} onChange={(e) => setDueDate(e.target.value)} />
           </label>
         </div>
 
-        <label className="flex flex-col gap-1 text-right">
+        <label className="flex flex-col gap-1 text-start">
           <span className="t-label">הערות</span>
           <textarea
             className="input min-h-[90px]"
@@ -1136,12 +1136,12 @@ function CreateTaskPanel({
       footer={footer}
     >
       <div className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1 text-right">
+        <label className="flex flex-col gap-1 text-start">
           <span className="t-label">כותרת</span>
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="תיאור המשימה" />
         </label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-right">
+          <label className="flex flex-col gap-1 text-start">
             <span className="t-label">חדר (רשות)</span>
             <select className="input" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
               <option value="">ללא חדר</option>
@@ -1152,19 +1152,19 @@ function CreateTaskPanel({
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-right">
+          <label className="flex flex-col gap-1 text-start">
             <span className="t-label">עדיפות</span>
             <select className="input" value={priority} onChange={(e) => setPriority(e.target.value as "normal" | "high")}>
               <option value="normal">רגיל</option>
               <option value="high">דחוף</option>
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-right">
+          <label className="flex flex-col gap-1 text-start">
             <span className="t-label">תאריך יעד</span>
             <input type="date" className="input" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
           </label>
         </div>
-        <label className="flex flex-col gap-1 text-right">
+        <label className="flex flex-col gap-1 text-start">
           <span className="t-label">הערות (רשות)</span>
           <textarea
             className="input min-h-[80px]"

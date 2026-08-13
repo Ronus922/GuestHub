@@ -16,6 +16,16 @@
       minmax(200px, 1.4fr) 132px minmax(170px, 1fr) 84px 84px 78px 72px 84px
       104px 104px 112px 112px;
     align-items: center;
+    /* Twelve columns cannot be squeezed below this and stay readable, so the row
+       keeps its width at EVERY viewport and .rl-twrap (overflow:auto) scrolls it.
+       It used to live inside `@media (max-width: 1200px)`, which meant the grid
+       got WIDER as the screen got narrower — the min-width only switched on once
+       the viewport had already dropped below it. Unconditional is both simpler
+       and correct; check:responsive rule 9 now bans the conditional form.
+       responsive-allow: scrolled by .rl-twrap (reservations-list.css) — this
+       screen rides the shared `rl-` list shell, so its scroll container is
+       declared one partial over. */
+    min-width: 1240px;
   }
   .gl-num {
     font-size: 15px;
@@ -43,10 +53,5 @@
   }
   .gl-money.due {
     color: var(--danger);
-  }
-  @media (max-width: 1200px) {
-    .gl-rowg {
-      min-width: 1240px;
-    }
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
@@ -17,6 +17,7 @@ import type { ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import { RoomWizard } from "./RoomWizard";
 import { AreaPanel } from "./AreaPanel";
 import { updateAreaStatusAction, updateRoomBoardStatusAction } from "./actions";
+import { clampPopoverLeft } from "@/lib/popover";
 
 // ============================================================
 // Rooms & Areas board — ported 1:1 from ref/html/RoomsAndAreas.html +
@@ -173,12 +174,14 @@ export function RoomsScreen({
   const openPopover = (e: React.MouseEvent, p: PopoverSeed) => {
     if (!can.edit) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // §8: 316px popover, clamped to the viewport with a 12px margin. X clamps
-    // against the KNOWN .popover width; Y is clamped inside StatusPopover
-    // against the popover's MEASURED height — the room menu (7 rows) and the
-    // area menu (5 rows) differ, and a hardcoded height constant went stale
-    // here once and pushed the last row off-screen.
-    const x = Math.max(12, Math.min(rect.left, window.innerWidth - 328));
+    // §8 geometry comes from @/lib/popover, which is also what the CSS mirrors —
+    // this used to be a bare `window.innerWidth - 328` (316 + 12 folded together,
+    // so the relationship was invisible) and it no longer holds anyway now that
+    // .popover caps its width against narrow viewports. Y is clamped inside
+    // StatusPopover against the popover's MEASURED height — the room menu (7 rows)
+    // and the area menu (5 rows) differ, and a hardcoded height constant went
+    // stale here once and pushed the last row off-screen.
+    const x = clampPopoverLeft(rect.left, window.innerWidth);
     setPop({ ...p, x, y: rect.bottom + 6 });
   };
 
@@ -446,6 +449,23 @@ function StatusPopover({
   const router = useRouter();
   const [saving, startSaving] = useTransition();
   const busy = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // §8 popovers dismiss on Escape like every other overlay. This one was the last
+  // floating surface in the app without a key handler: it could be opened from a
+  // room card and only a pointer could dismiss it. Capture + stopPropagation so
+  // the innermost surface answers and the event never reaches anything behind it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // §8: clamp Y against the popover's REAL rendered height (room menu = 7 rows,
   // area menu = 5 rows) with the 12px viewport margin — measured, not a

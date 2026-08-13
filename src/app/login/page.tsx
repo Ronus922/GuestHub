@@ -26,8 +26,10 @@ export default async function LoginPage({
 }) {
   const { error } = await searchParams;
   const initialError = error ? OAUTH_ERRORS[error] : undefined;
+  // min-h-svh, not min-h-screen: 100vh counts iOS Safari's address bar even while
+  // it is drawn over the page, so the column overshot the visible area.
   return (
-    <div className="flex min-h-screen bg-surface">
+    <div className="bg-surface safe-inline flex min-h-svh">
       {/* פאנל מותג — צד ימין בדסקטופ, מוסתר במובייל */}
       <aside className="relative hidden w-[55%] overflow-hidden bg-primary lg:flex">
         {/* decorative wash — derived from the brand token, never a new colour (§1) */}

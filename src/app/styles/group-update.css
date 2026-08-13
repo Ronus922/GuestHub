@@ -123,6 +123,11 @@
 }
 
 .gu-room-card {
+  /* A grid item's automatic minimum size is its CONTENT, so even after the
+     single-column rule below the card refused to go under ~454px and pushed out
+     of the panel, which clips. `min-width: 0` lets it take the column's width and
+     hand the overflow to the text, which truncates. */
+  min-width: 0;
   min-height: 58px;
   padding: 11px 12px;
   display: flex;

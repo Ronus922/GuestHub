@@ -1,0 +1,609 @@
+/* ============================================================
+   responsive.css — the cross-cutting mobile layer.
+
+   Imported LAST from globals.css so it can override the canonical primitives
+   without editing them (design-system.css is over the 1500-line cap and accepts
+   no new sections — iron rule #7).
+
+   Nothing here restyles anything. It only supplies the three things the app was
+   missing entirely, all of which are structural rather than visual:
+     1. a viewport-height unit that survives mobile browser chrome (dvh/svh)
+     2. safe-area insets (real only because layout.tsx now sets viewportFit:cover)
+     3. a 17px touch font on form controls, so iOS Safari stops zooming on focus
+
+   THE BREAKPOINT LADDER (single source of truth — mirrors Tailwind v4 defaults):
+     sm  640px   md  768px   lg 1024px   xl 1280px   2xl 1536px
+   The JS half of the ladder lives in src/lib/breakpoints.ts. `md` (768) is the
+   one that matters: it is where the sidebar becomes an off-canvas drawer and
+   where every dense table swaps to its card representation. A raw pixel value
+   in a new @media block should be treated as a bug unless it carries a measured
+   comment explaining why the ladder does not fit.
+   ============================================================ */
+
+@layer components {
+  /* ---- 1. viewport height ----------------------------------------------
+     `100vh` on iOS Safari is the LARGE viewport: it includes the address bar
+     even while the address bar is drawn on top of the page. Paired with the
+     shell's `overflow-hidden` that made the bottom ~60-100px of the app
+     permanently unreachable — no scroll could bring it back. Two declarations,
+     so a browser without `dvh` still gets the old behaviour instead of nothing. */
+  .app-shell {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* Full-height floating surfaces (drawers) need the same treatment: they are
+     `position: fixed; inset: 0`, which on iOS also resolves against the large
+     viewport. */
+  .vh-fill {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* ---- 2. safe areas ----------------------------------------------------
+     Zero-valued on every desktop and on any device without a notch/home
+     indicator, so these are inert unless they are actually needed. */
+  .safe-inline {
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
+  }
+  .safe-block-end {
+    padding-block-end: env(safe-area-inset-bottom);
+  }
+
+  /* The off-canvas nav drawer runs to the bottom edge; its last item (logout)
+     would otherwise sit under the home indicator. */
+  #dashboard-sidebar {
+    padding-block-end: env(safe-area-inset-bottom);
+  }
+
+  /* The one toast surface (sonner, bottom-centre, offset 26). Lift it clear of
+     the home indicator so it never covers a bottom-anchored control. */
+  [data-sonner-toaster][data-y-position="bottom"] {
+    margin-block-end: env(safe-area-inset-bottom);
+  }
+
+  /* ---- 3. iOS zoom-on-focus -------------------------------------------
+     Safari zooms the page whenever a focused form control renders below 16px,
+     and .field-input is 15px — so EVERY input, select and textarea in the app
+     triggered it, on every screen. 17px (not 16px) because §2 defines a closed
+     set of font sizes and 17 is the member above 15; check:design rejects 16.
+     The desktop 15px is untouched.
+
+     Both conditions on purpose: `pointer: coarse` catches a tablet at 768px+
+     (which the width query would miss), the width query catches a narrow
+     desktop window and the audit harness. This is content-driven, not
+     device-name-driven. */
+  @media (pointer: coarse), (max-width: 767px) {
+    /* The `:root` prefix is load-bearing, not decoration. `.field-input` sets
+       15px with class specificity (0,1,0); a bare `select` / `textarea` selector
+       is (0,0,1) and LOSES, so an earlier version of this rule silently raised
+       only <input> and left every select and textarea at 15px — still zooming.
+       Measured on a touch context at 820px: 17px / 15px / 15px. `:root` is a
+       pseudo-class, so each selector becomes (0,1,1) and wins by one point,
+       without re-declaring the canonical primitive (which check:design's
+       duplicate-primitive rule forbids outright, escape hatches included). */
+    :root input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+    :root select,
+    :root textarea {
+      font-size: 17px;
+    }
+  }
+
+  /* NOTE: the viewport caps for .modal and .popover are NOT here. They are
+     canonical primitives, and check:design's duplicate-primitive rule
+     deliberately ignores every escape hatch — a primitive has exactly one
+     declaration. Their caps therefore live with them in design-system.css §8. */
+
+  /* ---- 5. media defaults ------------------------------------------------
+     A replaced element that was never explicitly sized must not be the reason a
+     page scrolls sideways. `svg` is deliberately excluded as a BLANKET rule: the
+     donut and the revenue area chart are sized by their viewBox, and capping
+     every svg in the app would fight geometry that is deliberate
+     (Donut.tsx / area-path.ts). The one svg that measurably had to be capped —
+     the 280px donut inside a 236px drawer card at 320px — is capped by name at
+     the bottom of this file, with its numbers. */
+  img,
+  video,
+  canvas {
+    max-width: 100%;
+  }
+}
+
+/* ============================================================
+   row → card, DELIBERATELY UNLAYERED.
+
+   status-settings.css, payment-methods.css and locks.css declare their grids
+   OUTSIDE `@layer components`. In the cascade, unlayered rules beat every
+   layered one no matter how specific the layered selector is — so while these
+   rules lived inside @layer components they lost to `.ws-tbl { min-width: 830px }`
+   even though `.mcard-rows > .mcard-row` is the more specific selector. Measured:
+   the row still laid out in seven tracks and the section still scrolled 830px
+   inside a 336px card.
+
+   Unlayered here too, and last in globals.css's import order, so it wins on
+   ordering among equals. Same reason it can override a Tailwind utility such as
+   `overflow-x-auto` on the Beds24 wrapper — utilities are a layer as well.
+   ============================================================ */
+/* ---- 4. row → card, below md, with ONE DOM ---------------------------
+   Four of the dense screens (statuses, payment methods, locks, template list)
+   are CSS grids rather than <table>s, and every row carries live behaviour:
+   reorder arrows, active switches, a default-star with seven distinct disabled
+   reasons, two-step delete confirmation. Re-declaring that as a second mobile
+   component would mean two copies of the same handlers and two things to keep
+   in sync — the defect this rule exists to avoid.
+
+   So the row becomes a card in CSS instead. The markup change is one
+   `data-label` per cell (no logic, no state); below md the header row is
+   dropped, the row stops being a grid track and stacks, and each cell prints
+   its own label. Same nodes, same handlers, same disabled rules, same
+   `pending` set — a card, deliberately built, not a squeezed table row.
+
+   Opt in with: .mcard-rows on the container, .mcard-head on the header row,
+   .mcard-row on each row, data-label="…" on each labelled cell. */
+@media (max-width: 767px) {
+  .mcard-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    padding: 4px 0;
+  }
+  .mcard-rows > .mcard-head {
+    display: none;
+  }
+  .mcard-rows > .mcard-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    /* 20px, not 10: a row holding a 24px-tall switch projects a 44px touch area,
+       which would reach 10px into the neighbouring row. 24 + 20 = 44 exactly. */
+    gap: 20px;
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+  }
+  /* a cell keeps its own content and gains a label above it */
+  .mcard-rows > .mcard-row > * {
+    min-width: 0;
+  }
+  .mcard-rows > .mcard-row > [data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-block-end: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  /* cells whose label would be noise (the drag handle, the ordinal) drop out;
+     the actions row sits last and spreads */
+  .mcard-rows > .mcard-row > [data-mcard="hide"] {
+    display: none;
+  }
+  .mcard-rows > .mcard-row > [data-mcard="actions"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-block-start: 4px;
+    border-block-start: 1px solid var(--line);
+  }
+  /* an inline pair (label + control on one line) — used for switches/stars */
+  .mcard-rows > .mcard-row > [data-mcard="inline"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .mcard-rows > .mcard-row > [data-mcard="inline"][data-label]::before {
+    margin-block-end: 0;
+  }
+
+  /* Same idea for a real <table> (the Beds24 mapping grid). The elements have
+     to leave table layout entirely — a `display: table-cell` box cannot stack —
+     so tbody/tr/td become blocks and the row draws the card. */
+  table.mcard-table,
+  table.mcard-table > tbody,
+  table.mcard-table > tbody > tr,
+  table.mcard-table > tbody > tr > td {
+    display: block;
+    width: auto;
+    min-width: 0;
+  }
+  table.mcard-table > thead {
+    display: none;
+  }
+  table.mcard-table > tbody > tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-block-end: 12px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+  }
+  table.mcard-table > tbody > tr > td {
+    padding: 0;
+  }
+  table.mcard-table > tbody > tr > td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-block-end: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  table.mcard-table > tbody > tr > td[data-mcard="actions"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-block-start: 4px;
+    border-block-start: 1px solid var(--line);
+  }
+  /* the wrapper's own scroll must not survive the card layout */
+  .mcard-wrap {
+    overflow-x: visible;
+  }
+}
+
+/* ============================================================
+   Touch targets — 44×44 of HIT AREA without 44×44 of ink.
+
+   Measured baseline: 833 controls under 44×44 across the matrix, dominated by
+   §4's canonical sizes — `.icon-btn` at 36×36 (247 instances), `.btn-sm` at 36
+   tall, `.chip.clickable` at 28 tall, the calendar's `.cb-nav` at 36×36. Those
+   sizes are the design system, enforced as a closed set by check:design, so
+   growing the boxes would repaint every screen in the app.
+
+   Instead each control keeps its exact painted size and projects a centred
+   pseudo-element out to 44×44. The ::after is transparent, is not a layout box
+   (absolute), and inherits pointer events, so the tap lands on the button while
+   nothing moves and no icon changes size.
+
+   Deliberately UNLAYERED and scoped to `pointer: coarse`: a mouse does not need
+   it, so desktop density is untouched, and unlayered is what lets it reach the
+   controls declared outside @layer components (locks, statuses, payment
+   methods). Guarded by check:responsive rules 10-11.
+
+   Constraints honoured:
+   - `position: relative` only where the control is still `static`, so no
+     existing absolutely-positioned child is reparented.
+   - `:disabled` and `[aria-disabled="true"]` get NO hit area — a disabled
+     control must stay dead.
+   - z-index stays at the element's own level; the ::after cannot cover a
+     sibling's ink, only extend its own reach.
+   - Row gaps are ≥8px in the affected surfaces, so a ±4px expansion per side
+     meets but does not cross a neighbour. Verified by the overlap probe rather
+     than assumed — see the report.
+   ============================================================ */
+@media (pointer: coarse) {
+  /* Generic on purpose. An enumerated class list missed 325 permission
+     checkboxes (24×24), every Switch (44×24), the segmented-control buttons and
+     the search inputs — measured, not guessed. `:where()` keeps specificity at
+     zero so a control that is deliberately positioned (the absolutely-placed
+     calendar bars, the icon inside a field) keeps its own `position` and is
+     untouched.
+
+     .icon-btn and .btn-sm take `position: relative` at their canonical
+     declaration in design-system.css instead — check:design's
+     duplicate-primitive rule forbids re-declaring a primitive here. */
+  :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary) {
+    position: relative;
+  }
+
+  /* Self-limiting: `width/height: 100%` with a 44px floor means a control that is
+     already ≥44px gets an ::after exactly its own size — no expansion, no
+     overlap. Only the undersized ones grow, and only outward from their centre. */
+  :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary):not(:disabled):not([aria-disabled="true"])::after {
+    content: "";
+    position: absolute;
+    /* PHYSICAL left/top on purpose, and this is not a §11 slip.
+       `inset-inline-start: 50%` resolves to `right: 50%` in an RTL document, and
+       `translate` is physical and does NOT flip with it — so the pair pushed the
+       hit area a full width to the LEFT of the control instead of centring it.
+       Hit-tested, not assumed: elementFromPoint 21px above a 36px icon button
+       returned something else entirely, i.e. the 44px target did not exist where
+       a thumb would land. left/top + translate centres identically in both
+       directions, which is exactly why it is the standard centring idiom.
+       ds-allow: physical centring — a transform cannot mirror, so its anchor
+       must not either. */
+    left: 50%;
+    top: 50%;
+    translate: -50% -50%;
+    min-width: 44px;
+    min-height: 44px;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    pointer-events: auto;
+  }
+
+  /* A text field cannot use the ::after trick — an overlay would eat the caret
+     and text selection. The short search/filter inputs get real height instead;
+     .field-input is already 44px, so nothing canonical moves. */
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, textarea) {
+    min-height: 44px;
+  }
+
+  /* Gaps: two 36px buttons 4px apart would each expand to 44 and overlap by 4.
+     Widening the gap to 8px makes the expanded areas meet exactly and never
+     cross — the alternative (letting them overlap and relying on hit-test order)
+     is what the requirement rules out. These are the dense action clusters; the
+     value is the minimum that removes the overlap, not a redesign. */
+  .tb-actions,
+  .gc-acts,
+  .ws-acts,
+  .pm-acts,
+  .lk-acts,
+  .bk-tb,
+  .rv-pg {
+    gap: 8px;
+  }
+  /* A wrapping chip row: 28px chips at an 8px row-gap have a 36px pitch, so the
+     44px areas of two ROWS would overlap by 8. 16px row-gap makes the pitch 44.
+     Kept to these two named rows on purpose. Generalising it with
+     `:has(> .chip)` was tried and MEASURED: it lifted the /staff and /rate-plans
+     chip rows from 8px to 16px and the number of boundary points owned by a
+     neighbouring control did not move at all (25 before, 25 after), because the
+     remaining interceptions are between chips in ADJACENT CARDS, which no
+     row-gap governs. Spacing every chip row in the app on touch for no measured
+     gain is exactly the density inflation this pass is not allowed to do. */
+  .rm-quick,
+  .rg-filters {
+    row-gap: 16px;
+  }
+
+  /* Where a control is far below 44 AND sits in a tight cluster, a centred
+     overlay cannot help — two 16px-tall arrows 2px apart would each project 44px
+     and overlap by 42. These get a REAL 44px box instead, so flex/grid layout
+     accounts for the space and overlap is impossible by construction. The icon
+     inside is untouched; the button has no painted background, so the only
+     visible change is that the two arrows sit further apart on a phone. */
+  .ws-ord {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .ws-ord > button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ============================================================
+   Card header: let the title force a wrap instead of being crushed.
+
+   `.card-hd` wraps, but wrapping alone changed nothing and the measurement said
+   so: the title block is `flex-1` — `flex: 1 1 0%` — so its flex BASE is zero. It
+   always "fits", so it shrinks instead of pushing the action button to a second
+   row. At 320px it was 24px wide holding 81px of heading, and the section title
+   was clipped away.
+
+   `min-width` is what forces the wrap, and it has to be UNLAYERED: the same
+   element carries Tailwind's `min-w-0` utility, and utilities are a layer that
+   beats @layer components no matter how specific the rule there is.
+   ============================================================ */
+@media (max-width: 767px) {
+  .card-hd > .min-w-0 {
+    min-width: min(11rem, 100%);
+  }
+}
+
+/* ============================================================
+   Panel interiors at 320px.
+
+   The floating-surface walk originally ran at 390x844 only. Re-running it at
+   320x568 found seven boxes inside panels that could not fit and had nowhere to
+   scroll — every one of them a row that refuses to wrap or a flex item that
+   cannot shrink. Each rule below names the panel and the measured numbers, and
+   each applies below `md` only, where the panel is full-bleed.
+
+   The three fixes that belong to hand-built rows in one screen each (SidePanel's
+   header cluster, PolicyToolbar, the guest reservation row) are `flex-wrap` on
+   the element itself, in the TSX — not here.
+   ============================================================ */
+@media (max-width: 767px) {
+  /* RoomWizard, the markdown toolbar: 9 icon buttons + 2 separators = 301px in
+     a 246px field. They are 44px touch targets, so shrinking them is not an
+     option — the row wraps. */
+  .rm-rtb {
+    flex-wrap: wrap;
+  }
+
+  /* AreaPanel, the numeric stepper row: 40 + 46 + 40 = 126px of stepper in a
+     103px slot. The stepper is already at its floor (two 44px buttons and a
+     46px value), so the LINE wraps and the stepper keeps its size. */
+  .rm-swline {
+    flex-wrap: wrap;
+  }
+
+  /* GroupUpdatePanel, the date-range field: `.gu-range` is `flex: 1 1 100%`
+     with the default `min-width: auto`, so its 275px content could not shrink
+     into a 246px box. `min-width: 0` is the whole fix; the max-width cap above
+     md is untouched. */
+  .gu-range,
+  .gu-range .dp-cell {
+    min-width: 0;
+  }
+
+  /* SourcesDrawer: a 280px donut and a `min-width: 260px` legend inside a 236px
+     card content box. `.sd-main` already wraps, so the legend only needs a
+     minimum it can actually meet — and the donut's SVG needs to scale instead
+     of clipping.
+
+     `min-width: 0` was tried first and MEASURED as a regression at 390px: with
+     no floor the legend stopped forcing the wrap, sat on the donut's line, and
+     was squeezed from 260px to 2px. `min(260px, 100%)` keeps the wrap wherever
+     260 fits and falls back to the container only where it does not. */
+  .sd-legend {
+    min-width: min(260px, 100%);
+  }
+  .donut,
+  .donut-svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* ============================================================
+   RateGrid: the board must not collapse to zero rows.
+
+   `.rg-wrap` is `height: 100%` and `.rg-card` / `.rg-scroll` are `flex: 1;
+   min-height: 0`, so the board gets whatever vertical space the toolbar, the
+   filter row and the legend leave over. Measured on staging:
+
+     1280x800  → .rg-scroll 440px  (9 rows)
+     390x844   → 138px  (3 rows)
+     375x812   →  87px  (1 row)
+     320x568   →   0px  (NO rows — the card itself is 2px tall)
+     844x390   →   0px
+     568x320   →   0px
+
+   At those three the /rates screen showed no rates at all, and no amount of
+   scrolling could reach one: `min-height: 0` on a flex child means the
+   remainder is allowed to be nothing. It was invisible to the overflow probe
+   too — a zero-height box does not overflow anything.
+
+   Below md, or on any short viewport, the board stops being height-constrained
+   and the PAGE scrolls instead (main is already overflow:auto), with a floor of
+   six rows so the grid is always usable.
+   ============================================================ */
+@media (max-width: 767px), (max-height: 600px) {
+  .rg-wrap {
+    height: auto;
+    min-height: 100%;
+  }
+  /* A floor of six rows, and a ceiling so the board keeps its OWN scroller —
+     without the cap `flex: 1` in an auto-height wrapper let it grow to all 77
+     rows (3,582px), which works but drags the sticky day header off the top of
+     the screen with it. */
+  .rg-scroll {
+    min-height: calc(var(--rg-price-h) * 6);
+    max-height: 70vh;
+    max-height: 70dvh;
+  }
+}
+
+/* ============================================================
+   Drawer / modal footers: three actions do not fit on one phone line.
+
+   `.dw-ft` and `.md-ft` are `flex-direction: row-reverse` with no wrapping, so
+   a footer carrying more than two actions simply runs past the edge. Measured
+   on the reservation edit drawer at both 320 and 390:
+
+     שמור שינויים  left  24 → right 171   ✓
+     סגור          left 181 → right 252   ✓
+     בטל הזמנה     left 272 → right 415   ✗  outside a 390px viewport
+
+   The destructive action was the one off screen — the worst possible choice —
+   and no scroll could reach it, because the footer is a fixed-height sibling of
+   the scrolling body, not part of it.
+
+   Wrapping is the whole fix: the actions keep their real sizes and their DOM
+   order, the primary stays pinned to the left edge of the first line, and the
+   overflowing action starts a second line instead of leaving the screen. Above
+   `md` nothing changes — the footer has never been near full there.
+   ============================================================ */
+@media (max-width: 767px), (max-height: 600px) {
+  .dw-ft,
+  .md-ft {
+    flex-wrap: wrap;
+    /* wrapped lines need vertical air between them; the 10px gap was
+       horizontal-only by construction */
+    row-gap: 10px;
+  }
+}
+
+/* ============================================================
+   Touch: the drawer body must not carry a classic scrollbar track.
+
+   `.thin-scroll` (base.css) sets `scrollbar-width: thin`. On a pointer device
+   that is the intent — a slim, always-visible track. On a touch device the same
+   declaration OPTS OUT of the platform's overlay scrollbar and forces a
+   classic, space-taking one, which is what shows up in a phone screenshot of
+   the reservation drawer as a thin bar down the side of the form: it reads as
+   "the form has its own scroll area inside the page", and it takes real width
+   away from the fields next to it.
+
+   Under `pointer: coarse` the platform indicator is the right one. The element
+   still scrolls; only the permanent track goes away, so the drawer body reads
+   as one continuous surface under the thumb.
+
+   This does NOT remove a scroll container. The reservation drawer has exactly
+   one vertical scroller (`.dw-bd`) — measured at 320×568, 390×844, 667×375 and
+   844×390: 0 nested vertical scrollers inside it.
+   ============================================================ */
+@media (pointer: coarse) {
+  .thin-scroll {
+    scrollbar-width: none;
+  }
+  .thin-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+/* ============================================================
+   Booking toolbar overflow menu: it opened AWAY from the screen.
+
+   `.bk-tb-menu` is `position:absolute; inset-inline-start: 0` on a trigger that
+   lives in the drawer header's inline-END cluster (`ms-auto`), i.e. hard against
+   the physical LEFT edge in RTL. `inset-inline-start: 0` resolves to `right: 0`
+   there, so the 200px menu grows LEFTWARD — straight off the screen. Measured
+   with the menu open:
+
+     320x568   .bk-tb-menu   left  -90 → right 110
+     390x844   .bk-tb-menu   left  -22 → right 178
+
+   and because the menu widened the header's scroll box, the RTL scroll offset
+   dragged `.dw-hd` itself sideways too (68 → 388 at a 320px viewport): the
+   header appeared shifted, which is the second half of the same defect.
+
+   The previous round capped the menu's WIDTH (`max-width: calc(100vw - 24px)`),
+   which is necessary but not sufficient — a 200px box at left:-90 is still off
+   screen. Anchoring the opposite edge makes it grow INTO the panel instead, so
+   it cannot leave the viewport regardless of how narrow the panel is. Above md
+   the menu was measured on screen already (844x390: 0 offenders), so the rule
+   is scoped to where the defect exists and desktop alignment is untouched.
+   ============================================================ */
+@media (max-width: 767px), (max-height: 600px) {
+  .bk-tb-menu {
+    inset-inline-start: auto;
+    inset-inline-end: 0;
+  }
+}
+
+/* ============================================================
+   Wrapping chip rows: 8px of row-gap makes two 44px targets intersect.
+
+   A `.chip` is 28px tall (§4). The coarse-pointer rule projects it to a 44px
+   hit area, i.e. 8px above and 8px below the drawn chip. A wrapping row whose
+   `row-gap` is 8px therefore hands the SAME 8px band to both rows. Measured on
+   /staff at 390x844 with real hit-testing (`elementFromPoint`), not geometry:
+
+     chip row 1  y 293 → 321      chip row 2  y 329
+     7 overlapping expanded areas: 40x8, 66x8, 54x8 px …
+
+   28 + 16 = 44, so a 16px row-gap makes the two expanded areas meet exactly and
+   never intersect. This is scoped to rows that actually WRAP and actually
+   contain chips, under coarse pointers only — the drawn density on a pointer
+   device is unchanged.
+
+   An earlier round tried this and reverted it, because it did not move the
+   "boundary point owned by a neighbour" count (25, all between chips in
+   ADJACENT CARDS, which no row-gap governs). That was the right call for that
+   metric and the wrong conclusion for this one: overlap and ownership are
+   different measurements, and this rule is aimed at overlap.
+   ============================================================ */
+@media (pointer: coarse) {
+  .flex-wrap:has(> .chip) {
+    row-gap: 16px;
+    /* row-gap only governs rows INSIDE one container. On /staff the roles
+       filter and the status filter are two separate wrapping rows 8px apart
+       (measured: 345+28=373, next row at 381), so their expanded areas met in
+       the same 8px band. 4px on each container adds the missing 8. */
+    margin-block: 4px;
+  }
+}

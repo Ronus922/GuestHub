@@ -7,6 +7,7 @@ import { CHANNEL_CONFIG, resolveChannelBadge } from "@/lib/colors";
 import { nightsBetween, HEBREW_MONTHS } from "@/lib/dates";
 import { formatBalance } from "@/lib/inventory-rules";
 import { STATUS_COLORS } from "@/lib/status-colors";
+import { clampPopoverLeft, popoverWidth, POPOVER_MARGIN } from "@/lib/popover";
 import { PAY_STYLE } from "./CalendarGrid";
 import type { CalendarRoom, CalendarStay } from "./types";
 
@@ -29,11 +30,11 @@ export type TooltipTarget = {
   anchor: { x: number; top: number; bottom: number };
 };
 
-// §8: the ONE canonical popover width (.popover in design-system.css). The
-// caret/clamp math below derives from this constant, so it MUST mirror the CSS.
-const POP_W = 316;
+// §8 geometry lives in @/lib/popover — width and margin are shared with
+// RoomsScreen and mirrored by the `.popover` rule, instead of three hand-kept
+// copies of 316 and 12. popoverWidth() is a function now because `.popover` caps
+// its width on narrow viewports, so 316 is no longer the answer everywhere.
 const GAP = 10; // px gap between the pill edge and the tooltip (§1: 8–12px)
-const MARGIN = 12; // §8 viewport margin
 
 function hebDayMonth(d: string): string {
   return `${Number(d.slice(8, 10))} ב${HEBREW_MONTHS[Number(d.slice(5, 7)) - 1]}`;
@@ -65,25 +66,23 @@ export function ReservationTooltip({
     const h = ref.current.offsetHeight;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const left = Math.min(
-      Math.max(target.anchor.x - POP_W / 2, MARGIN),
-      vw - POP_W - MARGIN,
-    );
+    const popW = popoverWidth(vw);
+    const left = clampPopoverLeft(target.anchor.x - popW / 2, vw);
     // above = the whole card fits in the gap above the pill top
     const above = target.anchor.top - h - GAP;
     let place: "above" | "below";
     let top: number;
-    if (above >= MARGIN) {
+    if (above >= POPOVER_MARGIN) {
       place = "above";
       top = above;
     } else {
       place = "below";
-      top = Math.min(target.anchor.bottom + GAP, vh - h - MARGIN);
+      top = Math.min(target.anchor.bottom + GAP, vh - h - POPOVER_MARGIN);
     }
     // the speech-bubble pointer stays under the pill it belongs to, even after
     // the card is clamped away from the viewport edge (kept off the rounded
     // corners)
-    const caret = Math.min(Math.max(target.anchor.x - left, 26), POP_W - 26);
+    const caret = Math.min(Math.max(target.anchor.x - left, 26), popW - 26);
     setPos({ top, left, place, caret });
   }, [target]);
 

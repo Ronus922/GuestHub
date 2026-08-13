@@ -49,7 +49,7 @@ export function TopBar({
       </div>
 
       {/* אשכול פעולות — נדחף לצד שמאל (inline-end ב-RTL) */}
-      <div className="ms-auto flex items-center gap-1">
+      <div className="tb-actions ms-auto flex items-center gap-1">
         <IconButton icon="languages" label="שפה" />
         <IconButton icon="bell" label="התראות" />
         <IconButton icon="moon" label="מצב כהה" />

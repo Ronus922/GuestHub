@@ -36,6 +36,17 @@ export function MobileCalendar({
     [data.from, days],
   );
 
+  // The loader fetches a whole window (3 weeks / a month); the mobile timeline
+  // only SLICES 3/5/7 days out of it (§4). Bars were rendered for the entire
+  // fetched set regardless, and barGeometry happily returned a start of 370% for
+  // a stay three weeks out — so those buttons were laid out several hundred px
+  // outside the card and were invisible only because .cb-m-card clips. They were
+  // still real, focusable controls: Tab walked onto reservations nobody could
+  // see, and they inflated the card's scroll width by ~660px at 390px wide.
+  // Rendering only what the slice actually shows fixes both.
+  const lastVisible = dates[dates.length - 1] ?? data.from;
+  const inWindow = (start: DateOnly, end: DateOnly) => start <= lastVisible && end >= data.from;
+
   // group rooms by floor, preserving the number-sorted order within each floor
   const floors = useMemo(() => {
     const groups: { key: string; label: string; rooms: CalendarRoom[] }[] = [];
@@ -100,11 +111,15 @@ export function MobileCalendar({
                     );
                   })}
                   {/* closures — dashed neutral block (non-interactive) */}
-                  {(closuresByRoom.get(room.id) ?? []).map((c) => (
+                  {(closuresByRoom.get(room.id) ?? [])
+                    .filter((c) => inWindow(c.start_date, c.end_date))
+                    .map((c) => (
                     <ClosureBlock key={c.id} closure={c} from={data.from} days={days} />
                   ))}
                   {/* reservation bars */}
-                  {(staysByRoom.get(room.id) ?? []).map((stay) => (
+                  {(staysByRoom.get(room.id) ?? [])
+                    .filter((stay) => inWindow(stay.check_in, stay.check_out))
+                    .map((stay) => (
                     <StayBarMobile
                       key={stay.rr_id}
                       stay={stay}

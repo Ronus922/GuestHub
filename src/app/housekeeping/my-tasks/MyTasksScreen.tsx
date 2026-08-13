@@ -68,8 +68,11 @@ export function MyTasksScreen({ initial }: { initial: string }) {
   const active = tasks.filter((t) => t.status === "pending" || t.status === "in_progress");
   const done = tasks.filter((t) => t.status === "completed" || t.status === "inspected");
 
+  // min-h-svh, not min-h-screen: 100vh counts iOS Safari's address bar even while
+  // it covers the page, so the column was ~90px taller than the screen and every
+  // phone got a dead scroll strip under the last task.
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col bg-appbg">
+    <div className="bg-appbg safe-block-end mx-auto flex min-h-svh w-full max-w-md flex-col">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-primary px-4 py-4 text-white">
         <div className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/20 text-[15px] font-bold">
@@ -166,7 +169,7 @@ function TaskCard({
           <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-primary-050 text-lg font-bold text-primary">
             {task.roomNumber ?? <Icon name="cleaning" size={26} />}
           </span>
-          <div className="text-right">
+          <div className="text-start">
             <p className="text-base font-bold text-ink">{task.title ?? (task.roomNumber ? `חדר ${task.roomNumber}` : "משימה")}</p>
             <div className="mt-0.5 flex flex-row-reverse items-center gap-2">
               <span className="rounded-lg bg-field px-2 py-0.5 text-xs text-muted">{STATUS_LABEL[task.status] ?? task.status}</span>

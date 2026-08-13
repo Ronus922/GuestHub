@@ -362,11 +362,17 @@
   .btn-sm {
     height: 36px;
     padding: 0 14px;
+    /* containing block for the touch hit-area ::after in responsive.css. §4's
+       36px is the painted size and stays exactly 36px; only the tappable region
+       grows, and only on a coarse pointer. */
+    position: relative;
   }
   /* icon-only button: 36×36, radius 10, 20px icon (§4) */
   .icon-btn {
     width: 36px;
     height: 36px;
+    /* see .btn-sm — containing block for the coarse-pointer hit area */
+    position: relative;
     border-radius: 10px;
     display: inline-flex;
     align-items: center;
@@ -483,6 +489,15 @@
   .card-hd {
     display: flex;
     align-items: center;
+    /* The header is icon + title block + a `shrink-0` action button. At 320px the
+       button refuses to shrink and the title block was left 24px wide, so the
+       section heading was clipped away entirely. Wrapping costs nothing on a wide
+       card (there is room, so it stays on one row) and gives the title a full line
+       when there is not. */
+    flex-wrap: wrap;
+    /* the child rule that makes this wrap actually happen lives in
+       responsive.css — it has to beat Tailwind's `min-w-0` utility, and a
+       layered rule cannot. */
     gap: 10px;
     padding: 15px 20px;
     border-bottom: 1px solid var(--line);
@@ -501,9 +516,16 @@
   .md-hd {
     display: flex;
     align-items: center;
+    /* The booking window's header carries an icon, a title, header chips and an
+       action toolbar. On a full-width phone panel that measured 428px inside a
+       390px drawer and the drawer clips — the toolbar's last control, and on the
+       new-reservation panel the close X, were simply gone. Wrapping is the only
+       thing that changes; on a desktop drawer there is room, so it never wraps. */
+    flex-wrap: wrap;
     gap: 12px;
     padding: 18px 24px;
     background: var(--brand);
+    min-width: 0;
   }
   .dw-icon,
   .md-icon {
@@ -565,6 +587,14 @@
   .md-bd {
     padding: 24px;
     background: var(--surface);
+    /* The body is the part of a modal that scrolls: .modal caps its height and
+       clips, .md-hd and .md-ft stay pinned, so the close button and the confirm
+       action are on screen however long the content runs. ConfirmDialog carried
+       this inline; canonical here means MoveConfirmDialog and the
+       communications Dialog inherit it instead of each rediscovering it. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    min-height: 0;
   }
   .dw-ft,
   .md-ft {
@@ -578,6 +608,10 @@
     align-items: center;
     gap: 10px;
     padding: 16px 24px;
+    /* The drawer runs the full height of the viewport, so its footer — which
+       holds the PRIMARY action — sits directly on the home indicator. max() so
+       the 16px stays the floor on every device that has no inset (all desktops). */
+    padding-block-end: max(16px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
@@ -586,6 +620,12 @@
     border-radius: var(--r-lg);
     box-shadow: var(--shadow-float);
     width: min(520px, calc(100vw - 24px));
+    /* The width was already viewport-relative; the HEIGHT was not, so a long
+       dialog simply ran off the bottom of a phone — and `overflow: hidden` meant
+       nothing could be scrolled back into view, leaving the confirm/cancel
+       actions permanently unreachable. .md-bd below is what scrolls instead. */
+    max-height: 92vh;
+    max-height: 92dvh;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -597,6 +637,15 @@
   .popover {
     position: fixed;
     width: 316px;
+    /* A flat 316px overflowed every viewport narrower than ~340px, and 320px
+       phones are still shipping; the cap keeps §8's own 12px viewport margin on
+       both sides. The height cap + internal scroll matter just as much — a long
+       menu had no way to reach its last item. */
+    max-width: calc(100vw - 24px);
+    max-height: 70vh;
+    max-height: 70dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
@@ -1090,7 +1139,12 @@
   /* ---- arr: two inner columns ---- */
   .arr-cols {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    /* Two fixed columns split a 320px phone into ~130px each, which is narrower
+       than a single guest row can render — the names were clipped away inside the
+       window's `overflow: hidden`. auto-fit collapses to ONE column exactly when
+       there is no longer room for two, and is otherwise identical to `1fr 1fr`:
+       the breakpoint is the content's, not a device's. */
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 10px;
     min-width: 0;
   }
