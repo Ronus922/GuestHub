@@ -88,8 +88,56 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* three children now (jump / range / חסימת חדר) and at 320px they add up to
+     more than the 288px of content box, so the row wraps instead of pushing a
+     control off the edge. */
+  flex-wrap: wrap;
   gap: 9px;
   padding: 0 16px 12px;
+}
+/* The DESKTOP tree's touch-only twin. A landscape phone (844x390, 932x430) is
+   past `md`, so it renders the desktop calendar, whose closure entry point is a
+   right-click context menu — unreachable with a finger. Hidden for a mouse, so
+   the desktop layout is byte-identical to before; shown on a coarse pointer. */
+.cb-touch-close {
+  display: none;
+}
+@media (pointer: coarse) {
+  .cb-touch-close {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1.5px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    color: #5b6478; /* ds-allow: reference muted-2 */
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+}
+
+/* the mobile entry point to ClosurePanel — same visual weight as .cb-m-nav's
+   buttons, since it sits in the same header stack */
+.cb-m-close {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: #5b6478; /* ds-allow: reference muted-2 */
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
 }
 /* jump-to-date button, mobile — same native-picker mechanism as desktop (§6) */
 .cb-datejump-m {

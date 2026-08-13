@@ -340,7 +340,14 @@
     gap: 8px;
   }
   /* A wrapping chip row: 28px chips at an 8px row-gap have a 36px pitch, so the
-     44px areas of two ROWS would overlap by 8. 16px row-gap makes the pitch 44. */
+     44px areas of two ROWS would overlap by 8. 16px row-gap makes the pitch 44.
+     Kept to these two named rows on purpose. Generalising it with
+     `:has(> .chip)` was tried and MEASURED: it lifted the /staff and /rate-plans
+     chip rows from 8px to 16px and the number of boundary points owned by a
+     neighbouring control did not move at all (25 before, 25 after), because the
+     remaining interceptions are between chips in ADJACENT CARDS, which no
+     row-gap governs. Spacing every chip row in the app on touch for no measured
+     gain is exactly the density inflation this pass is not allowed to do. */
   .rm-quick,
   .rg-filters {
     row-gap: 16px;

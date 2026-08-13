@@ -149,6 +149,26 @@ export function CalendarScreen({
               <Icon name="chevron-left" size={17} />
             </button>
           </div>
+          {/* A landscape phone is 844x390 — WIDER than md, so it gets this
+              desktop tree, where the only way to close a room is a right-click
+              menu that a finger cannot open. This button is display:none for a
+              mouse (desktop is unchanged, pixel for pixel) and appears only on a
+              coarse pointer. Same handler, same panel, same prefill shape. */}
+          {can.close && (
+            <button
+              type="button"
+              className="cb-touch-close"
+              onClick={() =>
+                setPanel({
+                  kind: "closure",
+                  prefill: { startDate: data.from, endDate: addDays(data.from, 1) },
+                })
+              }
+            >
+              <Icon name="circle-slash" size={17} />
+              חסימת חדר
+            </button>
+          )}
           <DateJumpButton value={data.from} onPick={navigate} />
           <div className="cb-jumpbox">
             {DESKTOP_JUMPS.map((n) =>
@@ -284,6 +304,28 @@ export function CalendarScreen({
               {formatDayHebMonth(data.from)} – {formatDayHebMonth(mobileEnd)}{" "}
               {mobileEnd.slice(0, 4)}
             </span>
+            {/* Closing a room was reachable ONLY from the desktop grid's
+                right-click menu, and that grid is `hidden md:flex` — so on a
+                phone the action did not exist at all. This is an explicit,
+                labelled control (never a long-press), and it opens the SAME
+                ClosurePanel with the same prefill shape the desktop menu
+                sends; the room is chosen in the panel's own <select> because a
+                header button has no row context to prefill from. */}
+            {can.close && (
+              <button
+                type="button"
+                className="cb-m-close"
+                onClick={() =>
+                  setPanel({
+                    kind: "closure",
+                    prefill: { startDate: data.from, endDate: addDays(data.from, 1) },
+                  })
+                }
+              >
+                <Icon name="circle-slash" size={17} />
+                חסימת חדר
+              </button>
+            )}
           </div>
         </div>
 

@@ -399,4 +399,50 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("all nine dense tables keep a mobile card representation, and the row→card layer order is preserved");
 }
 
+// ------------------------- 14. room closure is reachable without a mouse
+{
+  // Closing a room was reachable only from CalendarGrid's right-click menu, and
+  // that grid is `hidden md:flex` — so the action did not exist on a phone at
+  // all. The mobile header now carries an explicit labelled trigger. This pins
+  // three things: the trigger exists, it drives the SAME panel state the desktop
+  // menu drives, and the closure logic was not forked for mobile.
+  const screen = read(join(SRC, "app/(dashboard)/calendar/CalendarScreen.tsx"));
+  assert.match(screen, /className="cb-m-close"/,
+    "CalendarScreen must render the mobile closure trigger (.cb-m-close) — without it 'סגור חדר' is desktop-only and a phone cannot block a room");
+  assert.match(screen, /חסימת חדר/,
+    "the mobile closure trigger must be explicitly labelled — a long-press or other hidden gesture is not a discoverable entry point");
+  // A landscape phone is 844x390 — past `md`, so it renders the DESKTOP tree,
+  // whose only closure entry point is a right-click menu no finger can open.
+  // The desktop tree therefore carries a coarse-pointer-only twin.
+  assert.match(screen, /className="cb-touch-close"/,
+    "the desktop calendar must carry the coarse-pointer closure trigger (.cb-touch-close) — a landscape phone at 844px renders the desktop tree, where closure is otherwise right-click-only");
+  const cal = read(join(SRC, "app/styles/calendar-mobile.css"));
+  assert.match(cal, /\.cb-touch-close\s*\{\s*display:\s*none/,
+    ".cb-touch-close must be display:none by default — desktop with a mouse stays exactly as it was");
+  assert.match(cal, /@media\s*\(pointer:\s*coarse\)\s*\{\s*\.cb-touch-close/,
+    ".cb-touch-close must be revealed by (pointer: coarse), not by a width query — the whole point is that this viewport is wide");
+  // The trigger must live in the md:hidden subtree, i.e. after the desktop block
+  // closes. Cheap structural proof: it appears after `md:hidden` and before the
+  // shared panel block.
+  const mobileAt = screen.indexOf("md:hidden");
+  const triggerAt = screen.indexOf('className="cb-m-close"');
+  const panelAt = screen.indexOf("<ClosurePanel");
+  assert.ok(mobileAt > 0 && triggerAt > mobileAt && panelAt > triggerAt,
+    "the mobile closure trigger must sit inside the md:hidden subtree, above the shared panel — otherwise it also renders on desktop and duplicates the context menu");
+  // One ClosurePanel instance, shared by both trees. A second instance would be
+  // a second copy of the closure state.
+  assert.equal(screen.split("<ClosurePanel").length - 1, 1,
+    "there must be exactly ONE <ClosurePanel> — a mobile-only second instance forks the closure state");
+  // And no mobile component may call the server action directly.
+  for (const f of ["MobileCalendar.tsx", "MobileDetailSheet.tsx"]) {
+    assert.doesNotMatch(read(join(SRC, "app/(dashboard)/calendar", f)), /createClosureAction/,
+      `${f} must not call createClosureAction — mobile reuses ClosurePanel, it does not re-implement closure`);
+  }
+  // Permission parity: the desktop menu item is behind can.close, so the mobile
+  // trigger must be too.
+  assert.match(screen, /can\.close\s*&&\s*\(?\s*<button/,
+    "the mobile closure trigger must be gated on can.close, exactly as the desktop menu item is");
+  ok("room closure has an explicit mobile entry point, gated and wired to the one shared ClosurePanel");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);
