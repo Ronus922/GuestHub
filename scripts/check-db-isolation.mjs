@@ -63,5 +63,35 @@ const hasLedger = q(`select count(*) from pg_tables where schemaname='guesthub' 
 if (hasLedger !== "1") { fail++; console.log("✗ guesthub.schema_migrations ledger missing"); }
 else console.log("✓ migration ledger present");
 
+// the staff last-sign-in grant (roles.sql §3b) must actually be in place, and
+// must be COLUMN-level. roles.sql's grant is guarded by `IF EXISTS (auth
+// schema)`, so provisioning a fresh environment before GoTrue bootstraps skips
+// it permanently and silently — which is exactly what happened on staging, where
+// /staff served its error boundary and every browser measurement of that route
+// was measuring an error page. Asserting the end state here turns undocumented
+// manual database state into a checked invariant.
+const hasAuth = q(`select count(*) from pg_namespace where nspname='auth'`) === "1";
+if (!hasAuth) {
+  console.log("• auth schema absent (dedicated DB without GoTrue) — staff last-sign-in grant not applicable");
+} else {
+  const cols = q(
+    `select coalesce(string_agg(attname, ',' order by attname), '')
+     from pg_attribute
+     where attrelid='auth.users'::regclass and attacl is not null
+       and array_to_string(attacl,',') like '%guesthub_app=r%'`);
+  const missing = ["id", "last_sign_in_at"].filter((c) => !cols.split(",").includes(c));
+  if (missing.length) {
+    fail++;
+    console.log(`✗ guesthub_app is missing column SELECT on auth.users(${missing.join(", ")}) — /staff LEFT JOINs auth.users and will render its error boundary. Re-run db/roles/roles.sql`);
+  } else console.log(`✓ staff last-sign-in grant present (auth.users columns: ${cols})`);
+  // And it must stay column-level: a table-wide SELECT would hand the app the
+  // password hash and every token column in auth.users.
+  const wide = q(`select coalesce(relacl::text,'') from pg_class where oid='auth.users'::regclass`);
+  if (/guesthub_app=[^/]*r/.test(wide)) {
+    fail++;
+    console.log("✗ guesthub_app holds a TABLE-wide grant on auth.users — that exposes encrypted_password and the token columns. roles.sql grants three columns and nothing else");
+  } else console.log("✓ the auth.users grant is column-level only (no table-wide SELECT)");
+}
+
 console.log(fail ? `\ncheck:db-isolation FAILED (${fail})` : "\ncheck:db-isolation PASSED — database is dedicated to GuestHub");
 process.exit(fail ? 1 : 0);

@@ -62,11 +62,20 @@ ALTER DEFAULT PRIVILEGES FOR ROLE guesthub_owner IN SCHEMA guesthub GRANT EXECUT
 -- last_sign_in_at (src/app/(dashboard)/staff/page.tsx). Column-level only:
 -- never the password hash or token columns. No-op on a dedicated DB without
 -- GoTrue (schema absent) — guarded so the script stays idempotent everywhere.
+-- ORDERING TRAP (measured on staging, 2026-08-12): this block is a one-shot. If
+-- roles.sql runs BEFORE GoTrue has bootstrapped its schema — the natural order
+-- when a new environment is provisioned from an empty database — the guard is
+-- false, the grant never happens, and nothing says so. /staff then renders its
+-- error boundary with `permission denied for schema auth`, and every browser
+-- check of that route silently measures an error page. Re-run roles.sql after
+-- GoTrue's first start; check:db-isolation asserts the end state either way.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='auth') THEN
     GRANT USAGE ON SCHEMA auth TO guesthub_app;
     GRANT SELECT (id, last_sign_in_at, created_at) ON auth.users TO guesthub_app;
+  ELSE
+    RAISE WARNING 'auth schema absent — the staff last-sign-in grant was SKIPPED. Re-run db/roles/roles.sql after GoTrue has created its schema, or /staff will fail with "permission denied for schema auth".';
   END IF;
 END $$;
 
