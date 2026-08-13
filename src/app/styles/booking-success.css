@@ -1,0 +1,148 @@
+/* ============================================================
+   מסך הצלחה של אשף ההזמנה (wizard MD ש'127) — the celebration state.
+   Prefix: bw-success- / bw-confetti-. Split out of booking-window.css so
+   that file stays under the 1500-line partial ceiling (iron rule #7).
+
+   Nothing here is a new primitive: the mark is the --ok token, every confetti
+   colour is a §1 status/brand token, and the whole layer is decoration — see
+   the prefers-reduced-motion block at the bottom, which renders the screen in
+   its finished state with no motion at all.
+   ============================================================ */
+
+@layer components {
+
+/* big drawn ✓ + title + summary line. Fills the drawer body and centres in it:
+   the old fixed 320px min-height pinned the block to the TOP of a body that is
+   a whole viewport tall. */
+.bw-success {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 100%;
+  padding: 40px 26px;
+  text-align: center;
+}
+.bw-success-ic {
+  position: relative;
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 18px 44px rgba(22, 163, 74, 0.28);
+  margin-bottom: 18px;
+  animation: bw-success-pop 0.6s cubic-bezier(0.2, 0.9, 0.28, 1.35) both;
+}
+/* two outward pulses — the mark lands, then breathes once */
+.bw-success-ic::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid var(--ok);
+  animation: bw-success-ring 1.15s ease-out 0.3s 2 both;
+}
+.bw-success-check {
+  width: 62px;
+  height: 62px;
+}
+/* the ✓ draws itself: 40 covers the path's ~36 user-unit length */
+.bw-success-check path {
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: bw-success-draw 0.42s cubic-bezier(0.65, 0, 0.35, 1) 0.34s forwards;
+}
+.bw-success-t {
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.25;
+  color: var(--ink);
+  animation: bw-success-rise 0.45s ease-out 0.42s both;
+}
+.bw-success-n {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  animation: bw-success-rise 0.45s ease-out 0.52s both;
+}
+.bw-success-s {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 4px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  animation: bw-success-rise 0.45s ease-out 0.62s both;
+}
+
+/* one-shot confetti burst — fires from behind the mark, never loops, never
+   intercepts a click. Every piece carries its own vector as custom props. */
+.bw-success-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.bw-confetti-p {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: var(--w);
+  height: var(--h);
+  border-radius: var(--r);
+  background: var(--c);
+  opacity: 0;
+  animation: bw-confetti-burst var(--t) cubic-bezier(0.22, 0.62, 0.36, 1) var(--d) forwards;
+}
+
+@keyframes bw-success-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes bw-success-ring {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes bw-success-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes bw-success-rise {
+  0% { transform: translateY(10px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes bw-confetti-burst {
+  0% { transform: translate(-50%, -50%) scale(0.4) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  45% {
+    transform: translate(calc(-50% + var(--mx)), calc(-50% + var(--my))) scale(1) rotate(calc(var(--rot) / 2));
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.9) rotate(var(--rot));
+    opacity: 0;
+  }
+}
+
+/* the whole celebration is decoration: with reduced motion the screen renders
+   in its FINAL state — drawn ✓, visible text, no confetti at all */
+@media (prefers-reduced-motion: reduce) {
+  .bw-success-confetti { display: none; }
+  .bw-success-ic,
+  .bw-success-ic::after,
+  .bw-success-t,
+  .bw-success-n,
+  .bw-success-s { animation: none; }
+  .bw-success-ic::after { opacity: 0; }
+  .bw-success-check path { animation: none; stroke-dashoffset: 0; }
+}
+
+}

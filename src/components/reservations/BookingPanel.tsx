@@ -26,6 +26,7 @@ import { CancellationSnapshotView } from "./EditReservationPanel";
 import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
+import { BookingSuccess, type BookingCreated } from "./BookingSuccess";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
 // The canonical new-reservation flow (הקמת הזמנה חדשה) — the reference
@@ -186,14 +187,7 @@ export function BookingPanel({
   const [policyChoice, setPolicyChoice] = useState(CANCEL_POLICY_OPTIONS[0].value);
   // מסך הצלחה (MD ש'127): after a successful create the panel shows the green
   // ✓ summary instead of closing straight away
-  const [created, setCreated] = useState<null | {
-    number: number | string;
-    guest: string;
-    rooms: number;
-    total: number;
-    paid: number;
-    balance: number;
-  }>(null);
+  const [created, setCreated] = useState<BookingCreated | null>(null);
 
   // guest search
   const [query, setQuery] = useState("");
@@ -661,20 +655,9 @@ export function BookingPanel({
     >
       {created ? (
         /* מסך הצלחה (MD ש'127): ✓ ירוק גדול + "ההזמנה נוצרה בהצלחה" + שורת
-           תקציר (אורח · חדרים · סה"כ · שולם · יתרה) */
-        <div className="bw-success">
-          <span className="bw-success-ic">
-            <Icon name="check" size={24} />
-          </span>
-          <p className="bw-success-t">ההזמנה נוצרה בהצלחה</p>
-          <p className="bw-success-n ltr-num">הזמנה #{created.number}</p>
-          <p className="bw-success-s">
-            {created.guest || "אורח"} · {created.rooms === 1 ? "חדר אחד" : `${created.rooms} חדרים`} · סה״כ ₪
-            <bdi className="ltr-num">{created.total.toLocaleString()}</bdi> · שולם ₪
-            <bdi className="ltr-num">{created.paid.toLocaleString()}</bdi> · יתרה ₪
-            <bdi className="ltr-num">{Math.max(0, created.balance).toLocaleString()}</bdi>
-          </p>
-        </div>
+           תקציר (אורח · חדרים · סה"כ · שולם · יתרה) — centred in the body,
+           with the drawn ✓ and the one-shot confetti burst */
+        <BookingSuccess created={created} />
       ) : (
       <div className="bw-main">
         <div className="bw-col-main">
