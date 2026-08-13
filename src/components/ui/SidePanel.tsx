@@ -210,7 +210,15 @@ export function SidePanel({
               </div>
 
               {/* left header cluster: action toolbar (RTL: right→left) + close X */}
-              <div className="ms-auto flex shrink-0 items-center gap-1.5">
+              {/* shrink-0 is deliberate — the icons must never squash. That
+                  makes WRAPPING the only way out: measured at 320px inside
+                  BookingPanel this cluster was 340px wide in a 272px content
+                  box, so 44px of it (including the close X) sat off-screen.
+                  flex-wrap ALONE did nothing, and the re-measurement said so:
+                  with `shrink-0` the item's base size is its max-content width,
+                  so the line is never constrained and the children never wrap.
+                  `max-w-full` is what caps it and makes the wrap engage. */}
+              <div className="ms-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1.5">
                 {headerActions}
                 <button
                   type="button"

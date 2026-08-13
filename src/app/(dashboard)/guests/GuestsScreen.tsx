@@ -378,7 +378,10 @@ export function GuestsScreen({
                     <li key={r.id}>
                       <button
                         type="button"
-                        className="flex w-full items-center gap-3 rounded-xl border border-line p-3 text-start hover:bg-hover"
+                        /* flex-wrap: six children on one line do not fit a
+                           320px panel — the workflow chip was crushed from
+                           94px to 22px and its label became unreadable. */
+                        className="flex w-full flex-wrap items-center gap-3 rounded-xl border border-line p-3 text-start hover:bg-hover"
                         onClick={() => can.viewReservation && setReservationId(r.id)}
                       >
                         <span className="rl-resno ltr-num">#{r.reservation_number}</span>

@@ -97,9 +97,12 @@
 
   /* ---- 5. media defaults ------------------------------------------------
      A replaced element that was never explicitly sized must not be the reason a
-     page scrolls sideways. `svg` is deliberately excluded: the donut and the
-     revenue area chart are sized by their viewBox and a max-width would fight
-     their own geometry (Donut.tsx / area-path.ts). */
+     page scrolls sideways. `svg` is deliberately excluded as a BLANKET rule: the
+     donut and the revenue area chart are sized by their viewBox, and capping
+     every svg in the app would fight geometry that is deliberate
+     (Donut.tsx / area-path.ts). The one svg that measurably had to be capped —
+     the 280px donut inside a 236px drawer card at 320px — is capped by name at
+     the bottom of this file, with its numbers. */
   img,
   video,
   canvas {
@@ -385,5 +388,100 @@
 @media (max-width: 767px) {
   .card-hd > .min-w-0 {
     min-width: min(11rem, 100%);
+  }
+}
+
+/* ============================================================
+   Panel interiors at 320px.
+
+   The floating-surface walk originally ran at 390x844 only. Re-running it at
+   320x568 found seven boxes inside panels that could not fit and had nowhere to
+   scroll — every one of them a row that refuses to wrap or a flex item that
+   cannot shrink. Each rule below names the panel and the measured numbers, and
+   each applies below `md` only, where the panel is full-bleed.
+
+   The three fixes that belong to hand-built rows in one screen each (SidePanel's
+   header cluster, PolicyToolbar, the guest reservation row) are `flex-wrap` on
+   the element itself, in the TSX — not here.
+   ============================================================ */
+@media (max-width: 767px) {
+  /* RoomWizard, the markdown toolbar: 9 icon buttons + 2 separators = 301px in
+     a 246px field. They are 44px touch targets, so shrinking them is not an
+     option — the row wraps. */
+  .rm-rtb {
+    flex-wrap: wrap;
+  }
+
+  /* AreaPanel, the numeric stepper row: 40 + 46 + 40 = 126px of stepper in a
+     103px slot. The stepper is already at its floor (two 44px buttons and a
+     46px value), so the LINE wraps and the stepper keeps its size. */
+  .rm-swline {
+    flex-wrap: wrap;
+  }
+
+  /* GroupUpdatePanel, the date-range field: `.gu-range` is `flex: 1 1 100%`
+     with the default `min-width: auto`, so its 275px content could not shrink
+     into a 246px box. `min-width: 0` is the whole fix; the max-width cap above
+     md is untouched. */
+  .gu-range,
+  .gu-range .dp-cell {
+    min-width: 0;
+  }
+
+  /* SourcesDrawer: a 280px donut and a `min-width: 260px` legend inside a 236px
+     card content box. `.sd-main` already wraps, so the legend only needs a
+     minimum it can actually meet — and the donut's SVG needs to scale instead
+     of clipping.
+
+     `min-width: 0` was tried first and MEASURED as a regression at 390px: with
+     no floor the legend stopped forcing the wrap, sat on the donut's line, and
+     was squeezed from 260px to 2px. `min(260px, 100%)` keeps the wrap wherever
+     260 fits and falls back to the container only where it does not. */
+  .sd-legend {
+    min-width: min(260px, 100%);
+  }
+  .donut,
+  .donut-svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* ============================================================
+   RateGrid: the board must not collapse to zero rows.
+
+   `.rg-wrap` is `height: 100%` and `.rg-card` / `.rg-scroll` are `flex: 1;
+   min-height: 0`, so the board gets whatever vertical space the toolbar, the
+   filter row and the legend leave over. Measured on staging:
+
+     1280x800  → .rg-scroll 440px  (9 rows)
+     390x844   → 138px  (3 rows)
+     375x812   →  87px  (1 row)
+     320x568   →   0px  (NO rows — the card itself is 2px tall)
+     844x390   →   0px
+     568x320   →   0px
+
+   At those three the /rates screen showed no rates at all, and no amount of
+   scrolling could reach one: `min-height: 0` on a flex child means the
+   remainder is allowed to be nothing. It was invisible to the overflow probe
+   too — a zero-height box does not overflow anything.
+
+   Below md, or on any short viewport, the board stops being height-constrained
+   and the PAGE scrolls instead (main is already overflow:auto), with a floor of
+   six rows so the grid is always usable.
+   ============================================================ */
+@media (max-width: 767px), (max-height: 600px) {
+  .rg-wrap {
+    height: auto;
+    min-height: 100%;
+  }
+  /* A floor of six rows, and a ceiling so the board keeps its OWN scroller —
+     without the cap `flex: 1` in an auto-height wrapper let it grow to all 77
+     rows (3,582px), which works but drags the sticky day header off the top of
+     the screen with it. */
+  .rg-scroll {
+    min-height: calc(var(--rg-price-h) * 6);
+    max-height: 70vh;
+    max-height: 70dvh;
   }
 }

@@ -12,7 +12,9 @@ import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
 export function PolicyToolbar({ title, subtitle, onAdd }: { title: string; subtitle: string; onAdd: () => void }) {
   return (
-    <div className="mb-4 flex items-center justify-between gap-3">
+    /* flex-wrap: at 320px the "הוסף מדיניות" button squeezed the title group to
+       13px, so "מדיניות ביטול" rendered as a sliver. */
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
           <Icon name="documents" size={20} />
