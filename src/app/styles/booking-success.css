@@ -27,16 +27,16 @@
 }
 .bw-success-ic {
   position: relative;
-  width: 116px;
-  height: 116px;
+  width: 168px;
+  height: 168px;
   border-radius: 50%;
   background: var(--ok);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 18px 44px rgba(22, 163, 74, 0.28);
-  margin-bottom: 18px;
+  box-shadow: 0 22px 56px rgba(22, 163, 74, 0.3);
+  margin-bottom: 24px;
   animation: bw-success-pop 0.6s cubic-bezier(0.2, 0.9, 0.28, 1.35) both;
 }
 /* two outward pulses — the mark lands, then breathes once */
@@ -45,12 +45,12 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  border: 3px solid var(--ok);
+  border: 4px solid var(--ok);
   animation: bw-success-ring 1.15s ease-out 0.3s 2 both;
 }
 .bw-success-check {
-  width: 62px;
-  height: 62px;
+  width: 96px;
+  height: 96px;
 }
 /* the ✓ draws itself: 40 covers the path's ~36 user-unit length */
 .bw-success-check path {
@@ -83,24 +83,34 @@
   animation: bw-success-rise 0.45s ease-out 0.62s both;
 }
 
-/* one-shot confetti burst — fires from behind the mark, never loops, never
-   intercepts a click. Every piece carries its own vector as custom props. */
+/* one-shot confetti — TWO layers behind the mark: `bw-confetti-r` rains down
+   the full width of the panel (the background), `bw-confetti-p` bursts out of
+   the mark itself. Neither loops and neither intercepts a click. Every piece
+   carries its own vector as custom props. */
 .bw-success-confetti {
   position: absolute;
   inset: 0;
   overflow: hidden;
   pointer-events: none;
 }
-.bw-confetti-p {
+.bw-confetti-p,
+.bw-confetti-r {
   position: absolute;
-  top: 50%;
-  left: 50%;
   width: var(--w);
   height: var(--h);
   border-radius: var(--r);
   background: var(--c);
   opacity: 0;
+}
+.bw-confetti-p {
+  top: 50%;
+  left: 50%;
   animation: bw-confetti-burst var(--t) cubic-bezier(0.22, 0.62, 0.36, 1) var(--d) forwards;
+}
+.bw-confetti-r {
+  top: 0;
+  left: var(--x);
+  animation: bw-confetti-rain var(--t) cubic-bezier(0.34, 0.4, 0.5, 1) var(--d) forwards;
 }
 
 @keyframes bw-success-pop {
@@ -130,6 +140,13 @@
     transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.9) rotate(var(--rot));
     opacity: 0;
   }
+}
+
+@keyframes bw-confetti-rain {
+  0% { transform: translate3d(0, -9vh, 0) rotate(0deg); opacity: 0; }
+  6% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translate3d(var(--sway), 104vh, 0) rotate(var(--rot)); opacity: 0; }
 }
 
 /* the whole celebration is decoration: with reduced motion the screen renders

@@ -26,27 +26,50 @@ const hash = (i: number, salt: number) => {
 const between = (i: number, salt: number, min: number, max: number) => min + hash(i, salt) * (max - min);
 
 const CONFETTI_COLORS = ["var(--brand)", "var(--ok)", "var(--warn)", "var(--info)", "var(--vip)", "var(--danger)"];
-const PIECE_COUNT = 48;
+const BURST_COUNT = 64;
+const RAIN_COUNT = 72;
 
-// Each piece flies out of the centre on its own angle, peaks, then falls —
+// BURST — each piece flies out of the mark on its own angle, peaks, then falls,
 // hence a mid-point (mx/my) and an end-point (dx/dy) rather than one vector.
-const PIECES = Array.from({ length: PIECE_COUNT }, (_, i) => {
-  const angle = (i / PIECE_COUNT) * Math.PI * 2 + between(i, 1, -0.12, 0.12);
-  const reach = between(i, 2, 150, 400);
+const BURST = Array.from({ length: BURST_COUNT }, (_, i) => {
+  const angle = (i / BURST_COUNT) * Math.PI * 2 + between(i, 1, -0.14, 0.14);
+  const reach = between(i, 2, 190, 620);
   const round = i % 3 === 0;
-  const w = between(i, 7, 7, 12);
+  const w = between(i, 7, 8, 15);
   return {
-    mx: `${Math.round(Math.cos(angle) * reach * 0.62)}px`,
-    my: `${Math.round(-Math.abs(Math.sin(angle)) * reach * 0.55 - 40)}px`,
-    dx: `${Math.round(Math.cos(angle) * reach * 1.4)}px`,
-    dy: `${Math.round(between(i, 3, 300, 620))}px`,
-    rot: `${Math.round(between(i, 4, 200, 900))}deg`,
-    delay: `${between(i, 5, 0, 0.22).toFixed(2)}s`,
-    duration: `${between(i, 6, 1.5, 2.4).toFixed(2)}s`,
-    w: `${w.toFixed(1)}px`,
-    h: `${(round ? w : w * between(i, 8, 1.2, 1.9)).toFixed(1)}px`,
-    radius: round ? "50%" : "2px",
-    color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+    style: {
+      "--mx": `${Math.round(Math.cos(angle) * reach * 0.62)}px`,
+      "--my": `${Math.round(-Math.abs(Math.sin(angle)) * reach * 0.55 - 60)}px`,
+      "--dx": `${Math.round(Math.cos(angle) * reach * 1.45)}px`,
+      "--dy": `${Math.round(between(i, 3, 340, 760))}px`,
+      "--rot": `${Math.round(between(i, 4, 200, 1000))}deg`,
+      "--d": `${between(i, 5, 0, 0.3).toFixed(2)}s`,
+      "--t": `${between(i, 6, 1.6, 2.7).toFixed(2)}s`,
+      "--w": `${w.toFixed(1)}px`,
+      "--h": `${(round ? w : w * between(i, 8, 1.2, 2)).toFixed(1)}px`,
+      "--r": round ? "50%" : "2px",
+      "--c": CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+    } as React.CSSProperties,
+  };
+});
+
+// RAIN — the background layer: pieces drop across the FULL width of the panel,
+// staggered, so the celebration fills the screen instead of hugging the mark.
+const RAIN = Array.from({ length: RAIN_COUNT }, (_, i) => {
+  const round = i % 4 === 0;
+  const w = between(i, 12, 7, 13);
+  return {
+    style: {
+      "--x": `${between(i, 10, 1, 99).toFixed(1)}%`,
+      "--sway": `${Math.round(between(i, 11, -90, 90))}px`,
+      "--rot": `${Math.round(between(i, 13, 240, 1100))}deg`,
+      "--d": `${between(i, 14, 0, 2.1).toFixed(2)}s`,
+      "--t": `${between(i, 15, 2.6, 4.4).toFixed(2)}s`,
+      "--w": `${w.toFixed(1)}px`,
+      "--h": `${(round ? w : w * between(i, 16, 1.2, 2)).toFixed(1)}px`,
+      "--r": round ? "50%" : "2px",
+      "--c": CONFETTI_COLORS[(i + 2) % CONFETTI_COLORS.length],
+    } as React.CSSProperties,
   };
 });
 
@@ -63,26 +86,11 @@ export function BookingSuccess({ created }: { created: BookingCreated }) {
   return (
     <div className="bw-success" role="status" aria-live="polite">
       <div className="bw-success-confetti" aria-hidden="true">
-        {PIECES.map((p, i) => (
-          <span
-            key={i}
-            className="bw-confetti-p"
-            style={
-              {
-                "--mx": p.mx,
-                "--my": p.my,
-                "--dx": p.dx,
-                "--dy": p.dy,
-                "--rot": p.rot,
-                "--d": p.delay,
-                "--t": p.duration,
-                "--w": p.w,
-                "--h": p.h,
-                "--r": p.radius,
-                "--c": p.color,
-              } as React.CSSProperties
-            }
-          />
+        {RAIN.map((p, i) => (
+          <span key={`r${i}`} className="bw-confetti-r" style={p.style} />
+        ))}
+        {BURST.map((p, i) => (
+          <span key={`b${i}`} className="bw-confetti-p" style={p.style} />
         ))}
       </div>
 
@@ -90,10 +98,10 @@ export function BookingSuccess({ created }: { created: BookingCreated }) {
         {/* drawn, not a glyph: the stroke animates from 0 to full length */}
         <svg className="bw-success-check" viewBox="0 0 52 52" aria-hidden="true">
           <path
-            d="M14 27.5 22.5 36 38.5 18"
+            d="M13 27 22 36 39 17"
             fill="none"
             stroke="currentColor"
-            strokeWidth="5"
+            strokeWidth="5.5"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
