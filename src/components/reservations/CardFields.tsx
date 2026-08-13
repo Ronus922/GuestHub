@@ -76,10 +76,12 @@ export const EMPTY_CARD: CardDraft = {
 };
 
 // "empty" → nothing entered; "valid" → save-ready; "invalid" → block submit.
+// holder לבדו לעולם לא הופך טיוטה ל"לא ריקה": BookingPanel ממלא אותו אוטומטית
+// משם האורח, ולכן הזמנה ללא כרטיס חייבת להישאר "empty". רק שדות שהמשתמש באמת
+// הקליד ככרטיס (number/exp/cvv/idNum) מוציאים את הטיוטה ממצב ריק.
 // source/billingNotes never make a card "non-empty" on their own.
 export function cardDraftState(c: CardDraft): "empty" | "valid" | "invalid" {
-  if (!c.holder.trim() && !c.number.trim() && !c.exp.trim() && !c.cvv.trim() && !c.idNum.trim())
-    return "empty";
+  if (!c.number.trim() && !c.exp.trim() && !c.cvv.trim() && !c.idNum.trim()) return "empty";
   const pan = normalizePan(c.number);
   const exp = parseExpiry(c.exp);
   const ok =
