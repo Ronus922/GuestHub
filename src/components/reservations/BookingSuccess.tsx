@@ -94,19 +94,14 @@ export function BookingSuccess({ created }: { created: BookingCreated }) {
         ))}
       </div>
 
-      <span className="bw-success-ic">
-        {/* drawn, not a glyph: the stroke animates from 0 to full length */}
-        <svg className="bw-success-check" viewBox="0 0 52 52" aria-hidden="true">
-          <path
-            d="M13 27 22 36 39 17"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="5.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </span>
+      {/* the supplied success mark (public/success-animation.gif) — it draws its
+          OWN circle and ✓ over 37 frames / 1.48s, so it brings no green disc,
+          no ring and no pop of ours behind it. The file's NETSCAPE2.0 loop
+          extension was stripped in the repo copy: it plays exactly once and
+          settles on the finished mark instead of redrawing forever.
+          eslint-disable: next/image would re-encode the animation to a still. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="bw-success-ic" src="/success-animation.gif" alt="" aria-hidden="true" />
 
       <p className="bw-success-t">ההזמנה נוצרה בהצלחה</p>
       <p className="bw-success-n ltr-num">הזמנה #{created.number}</p>

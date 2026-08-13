@@ -3,15 +3,17 @@
    Prefix: bw-success- / bw-confetti-. Split out of booking-window.css so
    that file stays under the 1500-line partial ceiling (iron rule #7).
 
-   Nothing here is a new primitive: the mark is the --ok token, every confetti
-   colour is a §1 status/brand token, and the whole layer is decoration — see
-   the prefers-reduced-motion block at the bottom, which renders the screen in
-   its finished state with no motion at all.
+   The mark itself is the supplied asset (public/success-animation.gif) — it
+   draws its own circle and ✓, so no disc, ring or glyph of ours sits behind it.
+   Nothing else here is a new primitive: every confetti colour is a §1
+   status/brand token. The whole layer is decoration — see the
+   prefers-reduced-motion block at the bottom, which renders the screen in its
+   finished state with no motion of ours at all.
    ============================================================ */
 
 @layer components {
 
-/* big drawn ✓ + title + summary line. Fills the drawer body and centres in it:
+/* the mark + title + summary line. Fills the drawer body and centres in it:
    the old fixed 320px min-height pinned the block to the TOP of a body that is
    a whole viewport tall. */
 .bw-success {
@@ -26,37 +28,15 @@
   text-align: center;
 }
 .bw-success-ic {
-  position: relative;
-  width: 168px;
-  height: 168px;
-  border-radius: 50%;
-  background: var(--ok);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 22px 56px rgba(22, 163, 74, 0.3);
-  margin-bottom: 24px;
-  animation: bw-success-pop 0.6s cubic-bezier(0.2, 0.9, 0.28, 1.35) both;
-}
-/* two outward pulses — the mark lands, then breathes once */
-.bw-success-ic::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 4px solid var(--ok);
-  animation: bw-success-ring 1.15s ease-out 0.3s 2 both;
-}
-.bw-success-check {
-  width: 96px;
-  height: 96px;
-}
-/* the ✓ draws itself: 40 covers the path's ~36 user-unit length */
-.bw-success-check path {
-  stroke-dasharray: 40;
-  stroke-dashoffset: 40;
-  animation: bw-success-draw 0.42s cubic-bezier(0.65, 0, 0.35, 1) 0.34s forwards;
+  width: 340px;
+  height: 340px;
+  /* The mark draws itself inside the file, so nothing of ours sits behind it.
+     The file carries 21.4% transparent padding on every side (measured content
+     bbox 214..791 of 1000), i.e. ~73px at this size: the negative block margins
+     cancel most of it, so the mark reads ~196px and lands ~25px above the
+     title instead of floating in dead pixels. */
+  margin: -48px 0;
+  animation: bw-success-in 0.4s ease-out both;
 }
 .bw-success-t {
   font-size: 30px;
@@ -113,17 +93,9 @@
   animation: bw-confetti-rain var(--t) cubic-bezier(0.34, 0.4, 0.5, 1) var(--d) forwards;
 }
 
-@keyframes bw-success-pop {
-  0% { transform: scale(0.3); opacity: 0; }
-  60% { transform: scale(1.08); opacity: 1; }
+@keyframes bw-success-in {
+  0% { transform: scale(0.86); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
-}
-@keyframes bw-success-ring {
-  0% { transform: scale(1); opacity: 0.5; }
-  100% { transform: scale(1.7); opacity: 0; }
-}
-@keyframes bw-success-draw {
-  to { stroke-dashoffset: 0; }
 }
 @keyframes bw-success-rise {
   0% { transform: translateY(10px); opacity: 0; }
@@ -154,12 +126,9 @@
 @media (prefers-reduced-motion: reduce) {
   .bw-success-confetti { display: none; }
   .bw-success-ic,
-  .bw-success-ic::after,
   .bw-success-t,
   .bw-success-n,
   .bw-success-s { animation: none; }
-  .bw-success-ic::after { opacity: 0; }
-  .bw-success-check path { animation: none; stroke-dashoffset: 0; }
 }
 
 }
