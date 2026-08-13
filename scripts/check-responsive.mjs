@@ -291,4 +291,42 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("no min-width that exceeds the max-width of its own media query");
 }
 
+
+// -------------------------------------------- 10. touch targets are 44x44
+{
+  const body = stripCss(read(join(SRC, "app/styles/responsive.css")));
+  // The measured baseline was 833 controls under 44x44, dominated by §4's own
+  // canonical sizes (.icon-btn 36, .btn-sm 36, .chip 28). Those sizes are the
+  // design system, so the HIT AREA is expanded with a centred transparent
+  // ::after instead of the painted box — 44px floor, 100% otherwise, which makes
+  // the rule self-limiting: a control already >=44 gets no expansion at all.
+  const coarse = body.slice(body.indexOf("@media (pointer: coarse)"));
+  assert.ok(coarse.length > 0, "responsive.css must carry a (pointer: coarse) block for touch targets");
+  assert.match(coarse, /::after[\s\S]{0,400}?min-width:\s*44px/,
+    "the coarse-pointer ::after must declare a 44px min-width — this is the mobile hit area");
+  assert.match(coarse, /::after[\s\S]{0,400}?min-height:\s*44px/,
+    "the coarse-pointer ::after must declare a 44px min-height");
+  assert.match(coarse, /::after[\s\S]{0,400}?width:\s*100%/,
+    "the ::after must also be width:100% — without it the rule would SHRINK controls that are already wider than 44px");
+  // A disabled control must stay dead: no hit area, no expansion.
+  assert.match(coarse, /:not\(:disabled\):not\(\[aria-disabled="true"\]\)::after/,
+    "the hit area must be excluded for :disabled and [aria-disabled=true] — a disabled control must not become tappable");
+  // The expansion is transparent by construction; a background here would be a
+  // visible change to every small control in the app.
+  const afterBlock = coarse.slice(coarse.indexOf("::after"), coarse.indexOf("::after") + 700);
+  assert.doesNotMatch(afterBlock, /background:\s*(?!transparent)[a-z(#]/,
+    "the touch hit area must stay transparent — it expands the target, it does not paint anything");
+  ok("touch targets reach 44x44 on a coarse pointer, transparently, and never on a disabled control");
+}
+
+// ------------------------------------- 11. zoom is never disabled, restated
+{
+  // Belt and braces next to the touch rule: raising hit areas is the sanctioned
+  // fix, taking pinch-zoom away is not.
+  const layout = read(join(SRC, "app/layout.tsx"));
+  assert.doesNotMatch(layout.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""),
+    /user-scalable\s*=\s*no/, "viewport must never contain user-scalable=no");
+  ok("pinch-zoom is never disabled anywhere in the viewport declaration");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);

@@ -140,8 +140,8 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
       </header>
 
       <div className="pm-scroll">
-        <div className="pm-tbl">
-          <div className="pm-thead">
+        <div className="pm-tbl mcard-rows">
+          <div className="pm-thead mcard-head">
             <span className="c" aria-hidden="true" />
             <span className="c">#</span>
             <span>אמצעי תשלום</span>
@@ -157,7 +157,7 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
             return (
               <div
                 key={row.id}
-                className={`pm-trow select-none ${row.isActive ? "" : "off"} ${dragId === row.id ? "dragging" : ""}`}
+                className={`pm-trow mcard-row select-none ${row.isActive ? "" : "off"} ${dragId === row.id ? "dragging" : ""}`}
                 draggable={armedId === row.id}
                 onDragStart={(e) => onDragStart(e, row)}
                 onDragOver={(e) => onDragOver(e, row)}
@@ -165,7 +165,7 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
                 onDragEnd={onDragEnd}
                 onDoubleClick={(e) => rowDoubleClick(e, row)}
               >
-                <span className="c">
+                <span className="c" data-label="גרירה לשינוי סדר" data-mcard="inline">
                   <span
                     className="pm-handle"
                     title="גרירה לשינוי סדר"
@@ -174,15 +174,15 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
                     <Icon name="drag" size={20} label="גרירה לשינוי סדר" />
                   </span>
                 </span>
-                <span className="c pm-cnt ltr-num">{i + 1}</span>
-                <span className="pm-name">{row.label}</span>
-                <span>
+                <span className="c pm-cnt ltr-num" data-mcard="hide">{i + 1}</span>
+                <span className="pm-name" data-label="אמצעי תשלום">{row.label}</span>
+                <span data-label="מפתח">
                   <span className="chip chip-neutral ltr-num">{row.key}</span>
                 </span>
-                <span className="pm-cnt">
+                <span className="pm-cnt" data-label="שימוש">
                   <b className="ltr-num">{row.paymentsCount}</b> תשלומים
                 </span>
-                <span className="c">
+                <span className="c" data-label="פעיל" data-mcard="inline">
                   <Switch
                     checked={row.isActive}
                     disabled={pending}
@@ -198,7 +198,7 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
                     }
                   />
                 </span>
-                <span className="pm-acts">
+                <span className="pm-acts" data-mcard="actions">
                   {confirmDelete === row.id ? (
                     <>
                       <button

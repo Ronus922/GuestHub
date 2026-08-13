@@ -1174,3 +1174,17 @@
     }
   }
 }
+
+@layer components {
+  /* Archive list grid — extracted from an inline `style` on the row so the mobile
+     layer can override it. An inline style wins over every stylesheet rule, so
+     while `minWidth: 760` lived there the archive kept a 760px floor even after
+     the row became a card and the whole section scrolled sideways on a phone. */
+  .gc-arch {
+    grid-template-columns: 44px minmax(190px, 1.5fr) 100px 112px 1fr 168px;
+    min-width: 760px;
+  }
+  .gc-row.gc-arch {
+    cursor: default;
+  }
+}

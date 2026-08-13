@@ -265,8 +265,8 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                 ) : undefined}
               />
             ) : (
-              <div className="gc-tw">
-                <div className="gc-thead">
+              <div className="gc-tw mcard-rows">
+                <div className="gc-thead mcard-head">
                   <span />
                   <span>תבנית</span><span>ערוץ</span><span>שלב</span><span>שפה</span>
                   <span>סטטוס</span><span>גרסה</span><span>בשימוש</span>
@@ -275,7 +275,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                 {templates.map((template) => (
                   <div
                     key={template.id}
-                    className="gc-row"
+                    className="gc-row mcard-row"
                     role="button"
                     tabIndex={0}
                     onClick={() => openTemplate(template)}
@@ -284,14 +284,14 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                     }}
                     aria-label={`פתיחת ${template.name}`}
                   >
-                    <span className="gc-row-ic"><Icon name={template.channel === "whatsapp" ? "whatsapp" : "mail"} size={20} /></span>
-                    <span className="gc-row-n">{template.name}</span>
-                    <span>{channelChip(template.channel)}</span>
-                    <span>{STAGE_LABELS[template.category] ?? template.category}</span>
-                    <span>{template.language === "en" ? "English" : "עברית"}</span>
-                    <span><span className={chipClass(template.state)}>{STATE_LABEL[template.state]}</span></span>
-                    <span className="ltr-num">{template.version ? `v${template.version}` : "—"}</span>
-                    <span>
+                    <span className="gc-row-ic" data-mcard="hide"><Icon name={template.channel === "whatsapp" ? "whatsapp" : "mail"} size={20} /></span>
+                    <span className="gc-row-n" data-label="תבנית">{template.name}</span>
+                    <span data-label="ערוץ" data-mcard="inline">{channelChip(template.channel)}</span>
+                    <span data-label="שלב" data-mcard="inline">{STAGE_LABELS[template.category] ?? template.category}</span>
+                    <span data-label="שפה" data-mcard="inline">{template.language === "en" ? "English" : "עברית"}</span>
+                    <span data-label="סטטוס" data-mcard="inline"><span className={chipClass(template.state)}>{STATE_LABEL[template.state]}</span></span>
+                    <span className="ltr-num" data-label="גרסה" data-mcard="inline">{template.version ? `v${template.version}` : "—"}</span>
+                    <span data-label="בשימוש" data-mcard="inline">
                       {template.usedBy > 0 ? (
                         <Link className="gc-link" href="/communications/automations" onClick={(e) => e.stopPropagation()}>
                           {usageLabel(template.usedBy)}
@@ -300,10 +300,10 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                         <span className="gc-row-m">לא בשימוש</span>
                       )}
                     </span>
-                    <span className="gc-row-m">
+                    <span className="gc-row-m" data-label="עודכן · ע״י">
                       {dateLine(template.updatedAt)}{template.updatedBy ? ` · ${template.updatedBy}` : ""}
                     </span>
-                    <span className="gc-acts" onClick={(e) => e.stopPropagation()}>
+                    <span className="gc-acts" data-mcard="actions" onClick={(e) => e.stopPropagation()}>
                       <button type="button" className="icon-btn gc-ib" title="תצוגה מקדימה — כפי שהאורח יראה"
                         onClick={() => openTemplate(template)}>
                         <Icon name="eye" size={17} label="תצוגה מקדימה" />
@@ -341,18 +341,21 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
           {archived.length === 0 ? (
             <Empty icon="archive" title="הארכיון ריק" text="תבניות שתעבירו לארכיון יופיעו כאן ויישארו ניתנות לשחזור." />
           ) : (
-            <div className="gc-tw">
-              <div className="gc-thead" style={{ gridTemplateColumns: "44px minmax(190px,1.5fr) 100px 112px 1fr 168px", minWidth: 760 }}>
+            <div className="gc-tw mcard-rows">
+              {/* the archive grid template lives in communications.css (.gc-arch) rather
+                  than inline: an inline style cannot be overridden by the mobile layer,
+                  so the 760px min-width would have survived the card layout */}
+              <div className="gc-thead gc-arch mcard-head">
                 <span /><span>תבנית</span><span>ערוץ</span><span>שלב</span><span>עודכן</span><span>פעולות</span>
               </div>
               {archived.map((template) => (
-                <div key={template.id} className="gc-row" style={{ gridTemplateColumns: "44px minmax(190px,1.5fr) 100px 112px 1fr 168px", minWidth: 760, cursor: "default" }}>
-                  <span className="gc-row-ic"><Icon name={template.channel === "whatsapp" ? "whatsapp" : "mail"} size={20} /></span>
-                  <span className="gc-row-n">{template.name}</span>
-                  <span>{channelChip(template.channel)}</span>
-                  <span>{STAGE_LABELS[template.category] ?? template.category}</span>
-                  <span className="gc-row-m">{dateLine(template.updatedAt)}</span>
-                  <span className="gc-acts">
+                <div key={template.id} className="gc-row gc-arch mcard-row">
+                  <span className="gc-row-ic" data-mcard="hide"><Icon name={template.channel === "whatsapp" ? "whatsapp" : "mail"} size={20} /></span>
+                  <span className="gc-row-n" data-label="תבנית">{template.name}</span>
+                  <span data-label="ערוץ" data-mcard="inline">{channelChip(template.channel)}</span>
+                  <span data-label="שלב" data-mcard="inline">{STAGE_LABELS[template.category] ?? template.category}</span>
+                  <span className="gc-row-m" data-label="עודכן">{dateLine(template.updatedAt)}</span>
+                  <span className="gc-acts" data-mcard="actions">
                     <button type="button" className="btn btn-secondary btn-sm"
                       disabled={!permissions.editTemplates || pending}
                       onClick={() => run(() => archiveTemplateAction(template.id, true))}>

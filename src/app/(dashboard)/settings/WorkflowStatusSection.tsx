@@ -156,8 +156,8 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
       )}
 
       <div className="ws-scroll">
-        <div className="ws-tbl">
-          <div className="ws-thead">
+        <div className="ws-tbl mcard-rows">
+          <div className="ws-thead mcard-head">
             <span className="c">סדר</span>
             <span className="c">#</span>
             <span>סטטוס</span>
@@ -168,8 +168,8 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
           </div>
 
           {rows.map((row, i) => (
-            <div key={row.id} className={`ws-trow ${row.isActive ? "" : "off"}`}>
-              <span className="c">
+            <div key={row.id} className={`ws-trow mcard-row ${row.isActive ? "" : "off"}`}>
+              <span className="c" data-label="סדר" data-mcard="inline">
                 <span className="ws-ord">
                   <button
                     type="button"
@@ -189,14 +189,14 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                   </button>
                 </span>
               </span>
-              <span className="c ws-cnt ltr-num">{i + 1}</span>
-              <span>
+              <span className="c ws-cnt ltr-num" data-mcard="hide">{i + 1}</span>
+              <span data-label="סטטוס">
                 <StatusChip label={row.label} color={row.color} />
               </span>
-              <span className="ws-cnt">
+              <span className="ws-cnt" data-label="הזמנות">
                 <b className="ltr-num">{row.usedCount}</b> הזמנות
               </span>
-              <span className="c">
+              <span className="c" data-label="פעיל" data-mcard="inline">
                 <Switch
                   checked={row.isActive}
                   disabled={pending || row.isDefault}
@@ -218,7 +218,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                   }
                 />
               </span>
-              <span className="c">
+              <span className="c" data-label="ברירת מחדל" data-mcard="inline">
                 <button
                   type="button"
                   className={`icon-btn ws-star ${row.isDefault ? "on" : ""}`}
@@ -253,7 +253,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                   />
                 </button>
               </span>
-              <span className="ws-acts">
+              <span className="ws-acts" data-mcard="actions">
                 {confirmDelete === row.id ? (
                   <>
                     <button

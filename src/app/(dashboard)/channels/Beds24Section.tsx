@@ -422,8 +422,8 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
             </p>
           )}
 
-          <div className="overflow-x-auto rounded-xl border border-line">
-            <table className="w-full min-w-[1080px] text-sm">
+          <div className="mcard-wrap overflow-x-auto rounded-xl border border-line">
+            <table className="mcard-table w-full min-w-[1080px] text-sm">
               <thead>
                 <tr className="border-b border-line bg-hover/40">
                   <th className="t-label px-4 py-3 text-start text-faint">חדר</th>
@@ -465,21 +465,21 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
                       : "—";
                   return (
                     <tr key={r.roomId} className="border-b border-line last:border-0">
-                      <td className="px-4 py-3 text-ink">
+                      <td data-label="חדר" className="px-4 py-3 text-ink">
                         <bdi className="ltr-num font-bold">{r.roomNumber}</bdi>
                       </td>
-                      <td className="px-4 py-3 text-text2">{r.categoryName ?? "—"}</td>
-                      <td className="px-4 py-3 text-muted">
+                      <td data-label="קטגוריה" className="px-4 py-3 text-text2">{r.categoryName ?? "—"}</td>
+                      <td data-label="קומה" className="px-4 py-3 text-muted">
                         <bdi className="ltr-num">{r.floor ?? "—"}</bdi>
                       </td>
-                      <td className="px-4 py-3">
+                      <td data-label="נכס Beds24" className="px-4 py-3">
                         <span className="text-ink">
                           {editing
                             ? (selectedProperty?.name ?? (dPropertyId || "—"))
                             : (mapping?.beds24PropertyName ?? mapping?.beds24PropertyId ?? "—")}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td data-label="חדר Beds24" className="px-4 py-3">
                         {editing ? (
                           properties ? (
                             <select
@@ -521,10 +521,10 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
                           </p>
                         )}
                       </td>
-                      <td className="px-4 py-3">
+                      <td data-label="מזהים" className="px-4 py-3">
                         <bdi className="ltr-num font-mono text-text2">{idsShown}</bdi>
                       </td>
-                      <td className="px-4 py-3">
+                      <td data-label="תוכנית תעריף" className="px-4 py-3">
                         {editing ? (
                           <select
                             className="field-input min-w-[180px]"
@@ -544,19 +544,19 @@ export function Beds24Section({ initial }: { initial: Beds24ConnectionView }) {
                           <span className="text-text2">{planName}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-muted">
+                      <td data-label="מטבע" className="px-4 py-3 text-muted">
                         <bdi className="ltr-num">
                           {selectedProperty?.currency ?? mapping?.currency ?? "—"}
                         </bdi>
                       </td>
-                      <td className="px-4 py-3">
+                      <td data-label="סטטוס" className="px-4 py-3">
                         <span className={`chip ${statusMeta.cls}`}>
                           <span className="dot" />
                           {statusMeta.label}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-muted">{fmt(mapping?.updatedAt ?? null)}</td>
-                      <td className="px-4 py-3">
+                      <td data-label="עודכן" className="px-4 py-3 text-muted">{fmt(mapping?.updatedAt ?? null)}</td>
+                      <td data-mcard="actions" className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           {editing ? (
                             <>

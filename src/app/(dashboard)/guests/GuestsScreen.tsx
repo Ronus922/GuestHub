@@ -8,6 +8,7 @@ import { statusTintPalette } from "@/lib/colors";
 import { STATUS_COLORS } from "@/lib/status-colors";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
+import { MobileRecordCard, MobileRecordList } from "@/components/shared/MobileRecordCard";
 import { getGuestProfileAction, type GuestProfile } from "./actions";
 import type { GuestsListData } from "./data";
 
@@ -135,7 +136,58 @@ export function GuestsScreen({
         </label>
       </div>
 
-      <div className="card rl-card">
+      {/* phone: one card per guest. The 12-column grid is 1240px wide — scrolling
+          it sideways in a 390px window loses the name column, which is the only
+          thing that says whose row you are reading. */}
+      {data.rows.length > 0 && (
+        <MobileRecordList>
+          {data.rows.map((g) => (
+            <MobileRecordCard
+              key={g.id}
+              onActivate={() => setProfileId(g.id)}
+              activateLabel={`פתיחת פרופיל האורח ${g.full_name}`}
+              title={
+                <>
+                  {g.full_name}
+                  {g.is_vip && <Icon name="star" size={13.5} className="rl-star" label="אורח VIP" />}
+                </>
+              }
+              subtitle={<span className="ltr-num">{g.phone ?? "—"}</span>}
+              badge={g.is_blocked ? <span className="chip chip-unpaid">חסום</span> : undefined}
+              fields={[
+                { label: "אימייל", value: <bdi className="ltr-num">{g.email ?? "—"}</bdi>, wide: true },
+                { label: "הזמנות", value: <span className="ltr-num">{g.total_reservations}</span> },
+                { label: "פעילות", value: <span className="ltr-num">{g.active_reservations}</span> },
+                { label: "שהות אחרונה", value: <span className="ltr-num">{ddmmyy(g.last_stay)}</span> },
+                { label: "שהות הבאה", value: <span className="ltr-num">{ddmmyy(g.next_stay)}</span> },
+                {
+                  label: "שולם",
+                  value: (
+                    <>
+                      <span className="ltr-num">{money(g.total_paid, data.currency)}</span>
+                      {/* foreign-currency bookings are never summed into the
+                          tenant-currency totals — flagged instead of faked */}
+                      {g.foreign_currency_count > 0 && (
+                        <span className="rl-otacode"> +{g.foreign_currency_count} במט״ח</span>
+                      )}
+                    </>
+                  ),
+                },
+                {
+                  label: "יתרה",
+                  value: (
+                    <span className={`ltr-num ${g.outstanding > 0 ? "gl-money due" : ""}`}>
+                      {money(g.outstanding, data.currency)}
+                    </span>
+                  ),
+                },
+              ]}
+            />
+          ))}
+        </MobileRecordList>
+      )}
+
+      <div className="card rl-card hidden md:flex">
         <div className="rl-twrap thin-scroll">
           <div className="rl-thead gl-rowg">
             <div className="rl-th start">אורח</div>

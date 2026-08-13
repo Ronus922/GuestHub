@@ -362,11 +362,17 @@
   .btn-sm {
     height: 36px;
     padding: 0 14px;
+    /* containing block for the touch hit-area ::after in responsive.css. §4's
+       36px is the painted size and stays exactly 36px; only the tappable region
+       grows, and only on a coarse pointer. */
+    position: relative;
   }
   /* icon-only button: 36×36, radius 10, 20px icon (§4) */
   .icon-btn {
     width: 36px;
     height: 36px;
+    /* see .btn-sm — containing block for the coarse-pointer hit area */
+    position: relative;
     border-radius: 10px;
     display: inline-flex;
     align-items: center;
@@ -483,6 +489,12 @@
   .card-hd {
     display: flex;
     align-items: center;
+    /* The header is icon + title block + a `shrink-0` action button. At 320px the
+       button refuses to shrink and the title block was left 24px wide, so the
+       section heading was clipped away entirely. Wrapping costs nothing on a wide
+       card (there is room, so it stays on one row) and gives the title a full line
+       when there is not. */
+    flex-wrap: wrap;
     gap: 10px;
     padding: 15px 20px;
     border-bottom: 1px solid var(--line);

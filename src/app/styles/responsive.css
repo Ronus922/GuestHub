@@ -95,7 +95,7 @@
      deliberately ignores every escape hatch — a primitive has exactly one
      declaration. Their caps therefore live with them in design-system.css §8. */
 
-  /* ---- 4. media defaults ------------------------------------------------
+  /* ---- 5. media defaults ------------------------------------------------
      A replaced element that was never explicitly sized must not be the reason a
      page scrolls sideways. `svg` is deliberately excluded: the donut and the
      revenue area chart are sized by their viewBox and a max-width would fight
@@ -104,5 +104,250 @@
   video,
   canvas {
     max-width: 100%;
+  }
+}
+
+/* ============================================================
+   row → card, DELIBERATELY UNLAYERED.
+
+   status-settings.css, payment-methods.css and locks.css declare their grids
+   OUTSIDE `@layer components`. In the cascade, unlayered rules beat every
+   layered one no matter how specific the layered selector is — so while these
+   rules lived inside @layer components they lost to `.ws-tbl { min-width: 830px }`
+   even though `.mcard-rows > .mcard-row` is the more specific selector. Measured:
+   the row still laid out in seven tracks and the section still scrolled 830px
+   inside a 336px card.
+
+   Unlayered here too, and last in globals.css's import order, so it wins on
+   ordering among equals. Same reason it can override a Tailwind utility such as
+   `overflow-x-auto` on the Beds24 wrapper — utilities are a layer as well.
+   ============================================================ */
+/* ---- 4. row → card, below md, with ONE DOM ---------------------------
+   Four of the dense screens (statuses, payment methods, locks, template list)
+   are CSS grids rather than <table>s, and every row carries live behaviour:
+   reorder arrows, active switches, a default-star with seven distinct disabled
+   reasons, two-step delete confirmation. Re-declaring that as a second mobile
+   component would mean two copies of the same handlers and two things to keep
+   in sync — the defect this rule exists to avoid.
+
+   So the row becomes a card in CSS instead. The markup change is one
+   `data-label` per cell (no logic, no state); below md the header row is
+   dropped, the row stops being a grid track and stacks, and each cell prints
+   its own label. Same nodes, same handlers, same disabled rules, same
+   `pending` set — a card, deliberately built, not a squeezed table row.
+
+   Opt in with: .mcard-rows on the container, .mcard-head on the header row,
+   .mcard-row on each row, data-label="…" on each labelled cell. */
+@media (max-width: 767px) {
+  .mcard-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    padding: 4px 0;
+  }
+  .mcard-rows > .mcard-head {
+    display: none;
+  }
+  .mcard-rows > .mcard-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    /* 20px, not 10: a row holding a 24px-tall switch projects a 44px touch area,
+       which would reach 10px into the neighbouring row. 24 + 20 = 44 exactly. */
+    gap: 20px;
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+  }
+  /* a cell keeps its own content and gains a label above it */
+  .mcard-rows > .mcard-row > * {
+    min-width: 0;
+  }
+  .mcard-rows > .mcard-row > [data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-block-end: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  /* cells whose label would be noise (the drag handle, the ordinal) drop out;
+     the actions row sits last and spreads */
+  .mcard-rows > .mcard-row > [data-mcard="hide"] {
+    display: none;
+  }
+  .mcard-rows > .mcard-row > [data-mcard="actions"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-block-start: 4px;
+    border-block-start: 1px solid var(--line);
+  }
+  /* an inline pair (label + control on one line) — used for switches/stars */
+  .mcard-rows > .mcard-row > [data-mcard="inline"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .mcard-rows > .mcard-row > [data-mcard="inline"][data-label]::before {
+    margin-block-end: 0;
+  }
+
+  /* Same idea for a real <table> (the Beds24 mapping grid). The elements have
+     to leave table layout entirely — a `display: table-cell` box cannot stack —
+     so tbody/tr/td become blocks and the row draws the card. */
+  table.mcard-table,
+  table.mcard-table > tbody,
+  table.mcard-table > tbody > tr,
+  table.mcard-table > tbody > tr > td {
+    display: block;
+    width: auto;
+    min-width: 0;
+  }
+  table.mcard-table > thead {
+    display: none;
+  }
+  table.mcard-table > tbody > tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-block-end: 12px;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+  }
+  table.mcard-table > tbody > tr > td {
+    padding: 0;
+  }
+  table.mcard-table > tbody > tr > td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-block-end: 4px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  table.mcard-table > tbody > tr > td[data-mcard="actions"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-block-start: 4px;
+    border-block-start: 1px solid var(--line);
+  }
+  /* the wrapper's own scroll must not survive the card layout */
+  .mcard-wrap {
+    overflow-x: visible;
+  }
+}
+
+/* ============================================================
+   Touch targets — 44×44 of HIT AREA without 44×44 of ink.
+
+   Measured baseline: 833 controls under 44×44 across the matrix, dominated by
+   §4's canonical sizes — `.icon-btn` at 36×36 (247 instances), `.btn-sm` at 36
+   tall, `.chip.clickable` at 28 tall, the calendar's `.cb-nav` at 36×36. Those
+   sizes are the design system, enforced as a closed set by check:design, so
+   growing the boxes would repaint every screen in the app.
+
+   Instead each control keeps its exact painted size and projects a centred
+   pseudo-element out to 44×44. The ::after is transparent, is not a layout box
+   (absolute), and inherits pointer events, so the tap lands on the button while
+   nothing moves and no icon changes size.
+
+   Deliberately UNLAYERED and scoped to `pointer: coarse`: a mouse does not need
+   it, so desktop density is untouched, and unlayered is what lets it reach the
+   controls declared outside @layer components (locks, statuses, payment
+   methods). Guarded by check:responsive rules 10-11.
+
+   Constraints honoured:
+   - `position: relative` only where the control is still `static`, so no
+     existing absolutely-positioned child is reparented.
+   - `:disabled` and `[aria-disabled="true"]` get NO hit area — a disabled
+     control must stay dead.
+   - z-index stays at the element's own level; the ::after cannot cover a
+     sibling's ink, only extend its own reach.
+   - Row gaps are ≥8px in the affected surfaces, so a ±4px expansion per side
+     meets but does not cross a neighbour. Verified by the overlap probe rather
+     than assumed — see the report.
+   ============================================================ */
+@media (pointer: coarse) {
+  /* Generic on purpose. An enumerated class list missed 325 permission
+     checkboxes (24×24), every Switch (44×24), the segmented-control buttons and
+     the search inputs — measured, not guessed. `:where()` keeps specificity at
+     zero so a control that is deliberately positioned (the absolutely-placed
+     calendar bars, the icon inside a field) keeps its own `position` and is
+     untouched.
+
+     .icon-btn and .btn-sm take `position: relative` at their canonical
+     declaration in design-system.css instead — check:design's
+     duplicate-primitive rule forbids re-declaring a primitive here. */
+  :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary) {
+    position: relative;
+  }
+
+  /* Self-limiting: `width/height: 100%` with a 44px floor means a control that is
+     already ≥44px gets an ::after exactly its own size — no expansion, no
+     overlap. Only the undersized ones grow, and only outward from their centre. */
+  :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary):not(:disabled):not([aria-disabled="true"])::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: 50%;
+    inset-block-start: 50%;
+    translate: -50% -50%;
+    min-width: 44px;
+    min-height: 44px;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    pointer-events: auto;
+  }
+
+  /* A text field cannot use the ::after trick — an overlay would eat the caret
+     and text selection. The short search/filter inputs get real height instead;
+     .field-input is already 44px, so nothing canonical moves. */
+  :where(input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]), select, textarea) {
+    min-height: 44px;
+  }
+
+  /* Gaps: two 36px buttons 4px apart would each expand to 44 and overlap by 4.
+     Widening the gap to 8px makes the expanded areas meet exactly and never
+     cross — the alternative (letting them overlap and relying on hit-test order)
+     is what the requirement rules out. These are the dense action clusters; the
+     value is the minimum that removes the overlap, not a redesign. */
+  .tb-actions,
+  .gc-acts,
+  .ws-acts,
+  .pm-acts,
+  .lk-acts,
+  .bk-tb,
+  .rv-pg {
+    gap: 8px;
+  }
+  /* A wrapping chip row: 28px chips at an 8px row-gap have a 36px pitch, so the
+     44px areas of two ROWS would overlap by 8. 16px row-gap makes the pitch 44. */
+  .rm-quick,
+  .rg-filters {
+    row-gap: 16px;
+  }
+
+  /* Where a control is far below 44 AND sits in a tight cluster, a centred
+     overlay cannot help — two 16px-tall arrows 2px apart would each project 44px
+     and overlap by 42. These get a REAL 44px box instead, so flex/grid layout
+     accounts for the space and overlap is impossible by construction. The icon
+     inside is untouched; the button has no painted background, so the only
+     visible change is that the two arrows sit further apart on a phone. */
+  .ws-ord {
+    flex-direction: row;
+    gap: 8px;
+  }
+  .ws-ord > button {
+    width: 44px;
+    height: 44px;
   }
 }

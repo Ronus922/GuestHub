@@ -284,8 +284,8 @@ function StatusView({ data }: { data: ChannelStatus }) {
             </div>
           </div>
         ) : (
-          <div className="card overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+          <div className="card mcard-wrap overflow-x-auto">
+            <table className="mcard-table w-full min-w-[560px] text-sm">
               <thead>
                 <tr className="border-b border-line">
                   <th className="t-label px-4 py-3 text-start text-faint">קוד</th>
@@ -298,15 +298,15 @@ function StatusView({ data }: { data: ChannelStatus }) {
               <tbody>
                 {errors.map((e) => (
                   <tr key={e.id} className="border-b border-line last:border-0">
-                    <td className="px-4 py-3 text-status-danger">
+                    <td data-label="קוד" className="px-4 py-3 text-status-danger">
                       <bdi className="ltr-num font-mono">{e.error_code ?? "—"}</bdi>
                     </td>
                     {/* D112 — the status ACTUALLY received, verbatim; "—" means
                         no response arrived. Never a number the code made up. */}
-                    <td className="px-4 py-3 text-muted">
+                    <td data-label="HTTP" className="px-4 py-3 text-muted">
                       <bdi className="ltr-num font-mono">{e.http_status ?? "—"}</bdi>
                     </td>
-                    <td className="px-4 py-3 text-text2">
+                    <td data-label="הודעה" className="px-4 py-3 text-text2">
                       <div className="flex flex-col gap-1">
                         <span>{e.error_message ?? "—"}</span>
                         {/* D112 — the provider's raw answer, as stored (2KB,
@@ -324,12 +324,12 @@ function StatusView({ data }: { data: ChannelStatus }) {
                         ) : null}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-muted">
+                    <td data-label="טווח" className="px-4 py-3 text-muted">
                       <bdi className="ltr-num">
                         {e.date_from || e.date_to ? `${fmtDate(e.date_from)} – ${fmtDate(e.date_to)}` : "—"}
                       </bdi>
                     </td>
-                    <td className="px-4 py-3 text-muted">
+                    <td data-label="מתי" className="px-4 py-3 text-muted">
                       <bdi className="ltr-num">{fmtDateTime(e.created_at)}</bdi>
                     </td>
                   </tr>

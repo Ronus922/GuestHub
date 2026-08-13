@@ -139,7 +139,66 @@ export function PermissionsMatrix({
         </div>
       </div>
 
-      <div className="card flex min-h-0 flex-1 flex-col">
+      {/* phone: one card per PERMISSION, the roles as a labelled toggle list inside.
+          A role×permission matrix cannot be squeezed — the row header is what tells
+          you which permission a checkbox belongs to, and it is the first thing to
+          scroll away. Every toggle is the same <Cell> the table renders, with the
+          same `toggle` handler, the same `pending` set and the same PROTECTED rule:
+          no duplicated state and no second code path. */}
+      {groups.length === 0 && (
+        <p className="card t-secondary p-6 text-center text-muted md:hidden">
+          אין הרשאות תואמות לחיפוש „{q.trim()}”
+        </p>
+      )}
+      {groups.length > 0 && (
+        <div className="flex flex-col gap-4 md:hidden">
+          {groups.map(([cat, perms]) => (
+            <section key={cat} className="flex flex-col gap-3">
+              <h3 className="t-label px-1 text-faint">
+                {CATEGORY_LABEL[cat] ?? cat} · <bdi className="ltr-num">{perms.length}</bdi>
+              </h3>
+              {perms.map((perm) => (
+                <article key={perm.id} className="card flex flex-col gap-3 p-4">
+                  <div className="min-w-0">
+                    <div className="t-body font-bold text-ink">{perm.description ?? perm.key}</div>
+                    <bdi className="ltr-num t-label block text-faint">{perm.key}</bdi>
+                  </div>
+                  <ul className="flex flex-col gap-2">
+                    {roles.map((role) => {
+                      const isProtected = PROTECTED.has(role.key);
+                      const on = isProtected || granted.has(`${role.id}:${perm.id}`);
+                      return (
+                        <li
+                          key={`${role.id}:${perm.id}`}
+                          className="flex min-h-11 min-w-0 items-center justify-between gap-3"
+                        >
+                          <span className="t-secondary min-w-0 truncate">
+                            {role.name}
+                            {isProtected && (
+                              <span className="t-label block text-faint">גישה מלאה — לקריאה בלבד</span>
+                            )}
+                          </span>
+                          <Cell
+                            on={on}
+                            editable={canUpdate && !isProtected}
+                            protectedCol={isProtected}
+                            busy={pending.has(`${role.id}:${perm.id}`)}
+                            roleKey={role.key}
+                            permKey={perm.key}
+                            onToggle={() => toggle(role, perm, !granted.has(`${role.id}:${perm.id}`))}
+                          />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </article>
+              ))}
+            </section>
+          ))}
+        </div>
+      )}
+
+      <div className="card hidden min-h-0 flex-1 flex-col md:flex">
         <div className="thin-scroll min-h-0 flex-1 overflow-auto">
           <table className="w-full min-w-[860px] border-collapse text-sm">
             <thead>
