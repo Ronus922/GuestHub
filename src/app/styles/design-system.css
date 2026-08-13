@@ -495,6 +495,9 @@
        card (there is room, so it stays on one row) and gives the title a full line
        when there is not. */
     flex-wrap: wrap;
+    /* the child rule that makes this wrap actually happen lives in
+       responsive.css — it has to beat Tailwind's `min-w-0` utility, and a
+       layered rule cannot. */
     gap: 10px;
     padding: 15px 20px;
     border-bottom: 1px solid var(--line);

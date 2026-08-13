@@ -351,3 +351,22 @@
     height: 44px;
   }
 }
+
+/* ============================================================
+   Card header: let the title force a wrap instead of being crushed.
+
+   `.card-hd` wraps, but wrapping alone changed nothing and the measurement said
+   so: the title block is `flex-1` — `flex: 1 1 0%` — so its flex BASE is zero. It
+   always "fits", so it shrinks instead of pushing the action button to a second
+   row. At 320px it was 24px wide holding 81px of heading, and the section title
+   was clipped away.
+
+   `min-width` is what forces the wrap, and it has to be UNLAYERED: the same
+   element carries Tailwind's `min-w-0` utility, and utilities are a layer that
+   beats @layer components no matter how specific the rule there is.
+   ============================================================ */
+@media (max-width: 767px) {
+  .card-hd > .min-w-0 {
+    min-width: min(11rem, 100%);
+  }
+}
