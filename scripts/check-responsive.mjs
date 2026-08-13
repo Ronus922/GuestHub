@@ -329,4 +329,65 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("pinch-zoom is never disabled anywhere in the viewport declaration");
 }
 
+
+// ------------------------------------ 12. dismissible overlays answer Escape
+{
+  // Every floating surface in the app must close on Escape. The bottom sheet and
+  // the rooms status popover were the two that did not: a keyboard user could open
+  // either and had no way out but a pointer. Both now listen in the CAPTURE phase
+  // and stop propagation, so the innermost surface answers and one Escape never
+  // closes two surfaces at once.
+  for (const [file, what] of [
+    ["app/(dashboard)/calendar/MobileDetailSheet.tsx", "the mobile bottom sheet"],
+    ["app/(dashboard)/rooms/RoomsScreen.tsx", "the rooms status popover"],
+    ["components/ui/SidePanel.tsx", "the canonical drawer"],
+  ]) {
+    const body = read(join(SRC, file));
+    assert.match(body, /e\.key\s*===\s*"Escape"|key\s*!==\s*"Escape"/,
+      `${what} (${file}) must handle Escape — it is a dismissible overlay`);
+  }
+  const sheet = read(join(SRC, "app/(dashboard)/calendar/MobileDetailSheet.tsx"));
+  assert.match(sheet, /addEventListener\("keydown",\s*onKey,\s*true\)/,
+    "the bottom sheet must listen for Escape in the capture phase — it can sit above the calendar and a bubbling handler would let one Escape close both");
+  assert.match(sheet, /stopPropagation\(\)/,
+    "the bottom sheet must stop the Escape event — otherwise it also reaches the surface behind it");
+  assert.match(sheet, /back\.focus\(\)|returnFocusRef/,
+    "the bottom sheet must return focus to its trigger on close");
+  ok("every dismissible overlay closes on Escape, in the capture phase, and returns focus");
+}
+
+// --------------------------- 13. a dense table has a mobile card counterpart
+{
+  // The nine wide tables must not fall back to sideways scrolling on a phone.
+  // Each opts in either through MobileRecordCard or through the `mcard` row→card
+  // pattern; this pins that the opt-in is still present in every one of them.
+  const CARD_SCREENS = [
+    ["app/(dashboard)/reservations/ReservationsScreen.tsx", /MobileRecordCard/],
+    ["app/(dashboard)/staff/StaffTable.tsx", /MobileRecordCard/],
+    ["app/(dashboard)/guests/GuestsScreen.tsx", /MobileRecordCard/],
+    ["app/(dashboard)/permissions/PermissionsMatrix.tsx", /md:hidden/],
+    ["app/(dashboard)/settings/WorkflowStatusSection.tsx", /mcard-rows/],
+    ["app/(dashboard)/settings/PaymentMethodsCard.tsx", /mcard-rows/],
+    ["app/(dashboard)/locks/LocksBoard.tsx", /mcard-rows/],
+    ["app/(dashboard)/channels/Beds24Section.tsx", /mcard-table/],
+    ["components/communications/CommunicationsShell.tsx", /mcard-rows/],
+  ];
+  for (const [file, re] of CARD_SCREENS) {
+    assert.match(read(join(SRC, file)), re,
+      `${file} lost its mobile card representation — a phone must never be asked to scroll a data table sideways`);
+  }
+  // The row→card rules must stay UNLAYERED: three of the partials they override
+  // (status-settings, payment-methods, locks) are themselves unlayered, and an
+  // unlayered rule beats a layered one no matter how specific the layered one is.
+  // Comments stripped first: the file EXPLAINS this rule in prose, and the words
+  // "@layer components" inside that explanation sit after the rule itself, so a
+  // raw lastIndexOf finds the comment and the check inverts.
+  const responsive = stripCss(read(join(SRC, "app/styles/responsive.css")));
+  const layerEnd = responsive.lastIndexOf("@layer components");
+  const mcardAt = responsive.indexOf(".mcard-rows {");
+  assert.ok(mcardAt > layerEnd,
+    "the .mcard row→card rules must sit OUTSIDE @layer components — inside it they lose to .ws-tbl { min-width: 830px }, which is declared unlayered, and the card silently stays a 7-track grid");
+  ok("all nine dense tables keep a mobile card representation, and the row→card layer order is preserved");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);
