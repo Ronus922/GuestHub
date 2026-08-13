@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { formatDayHebMonth, nightsBetween, type DateOnly } from "@/lib/dates";
 import { paymentTriplet } from "@/lib/status-colors";
@@ -45,6 +46,43 @@ export function MobileDetailSheet({
   onClose: () => void;
   onOpenReservation: (reservationId: string) => void;
 }) {
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Escape must dismiss the sheet, like every other overlay in the app — it was
+  // the one dismissible surface without a key handler, so a keyboard user could
+  // open it and had no way out but the mouse.
+  //
+  // `capture` + stopPropagation on purpose: the sheet can be open while the
+  // calendar (and, from the calendar, a SidePanel) is behind it. Without
+  // stopping the event, one Escape would close BOTH — the sheet and its parent.
+  // Handling it in the capture phase means this sheet, the innermost surface,
+  // answers first and the event never reaches anyone else.
+  //
+  // Declared before the early return so the hook order is stable across renders.
+  useEffect(() => {
+    if (!stay) return;
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey, true);
+    // move focus into the sheet so Escape (and Tab) have somewhere to land
+    const t = window.setTimeout(() => sheetRef.current?.focus(), 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("keydown", onKey, true);
+      const back = returnFocusRef.current;
+      if (back?.isConnected) back.focus();
+    };
+  }, [stay]);
+
   if (!stay) return null;
 
   const room = rooms.find((r) => r.id === stay.room_id);
@@ -76,7 +114,14 @@ export function MobileDetailSheet({
         className="cb-sheet-backdrop"
         onClick={onClose}
       />
-      <div className="cb-sheet" role="dialog" aria-label={`הזמנה · ${stay.guest_name}`}>
+      <div
+        ref={sheetRef}
+        tabIndex={-1}
+        className="cb-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`הזמנה · ${stay.guest_name}`}
+      >
         <div className="cb-sheet-hd">
           <span className="cb-sheet-av">{initials}</span>
           <div className="min-w-0 flex-1">

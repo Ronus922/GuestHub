@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
@@ -449,6 +449,23 @@ function StatusPopover({
   const router = useRouter();
   const [saving, startSaving] = useTransition();
   const busy = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // §8 popovers dismiss on Escape like every other overlay. This one was the last
+  // floating surface in the app without a key handler: it could be opened from a
+  // room card and only a pointer could dismiss it. Capture + stopPropagation so
+  // the innermost surface answers and the event never reaches anything behind it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      e.preventDefault();
+      onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // §8: clamp Y against the popover's REAL rendered height (room menu = 7 rows,
   // area menu = 5 rows) with the 12px viewport margin — measured, not a

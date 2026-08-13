@@ -513,9 +513,16 @@
   .md-hd {
     display: flex;
     align-items: center;
+    /* The booking window's header carries an icon, a title, header chips and an
+       action toolbar. On a full-width phone panel that measured 428px inside a
+       390px drawer and the drawer clips — the toolbar's last control, and on the
+       new-reservation panel the close X, were simply gone. Wrapping is the only
+       thing that changes; on a desktop drawer there is room, so it never wraps. */
+    flex-wrap: wrap;
     gap: 12px;
     padding: 18px 24px;
     background: var(--brand);
+    min-width: 0;
   }
   .dw-icon,
   .md-icon {
