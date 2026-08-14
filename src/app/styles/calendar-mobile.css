@@ -341,12 +341,6 @@
   font-weight: 700;
   color: var(--faint);
 }
-/* build stamp — every phone screenshot self-identifies the build it shows */
-.cb-m-build {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--faint);
-}
 .cb-m-hint {
   padding: 0 18px 26px;
   font-size: 12px;
