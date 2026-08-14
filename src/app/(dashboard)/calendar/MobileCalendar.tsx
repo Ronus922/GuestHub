@@ -166,6 +166,12 @@ function StayBarMobile({
       aria-label={`הזמנה ${stay.reservation_number} · ${stay.guest_name}`}
       className={`cb-m-bar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""} ${flash ? "flash" : ""}`}
       style={{
+        // physical fallback FIRST, logical second: a browser that knows
+        // inset-inline-start takes the later declaration (identical value —
+        // the tree above is pinned dir="rtl", so inline-start IS right); an
+        // old WebView that drops the logical property falls back to `right`
+        // instead of collapsing to its static position at the inline end.
+        right: `${geo.start * 100}%`,
         insetInlineStart: `${geo.start * 100}%`,
         width: `${geo.width * 100}%`,
         background: pal.bg,
@@ -195,6 +201,8 @@ function ClosureBlock({
       className="cb-m-block"
       title={closure.reason || "סגור"}
       style={{
+        // same physical-first fallback as StayBarMobile above
+        right: `${geo.start * 100}%`,
         insetInlineStart: `${geo.start * 100}%`,
         width: `${geo.width * 100}%`,
         background: NEUTRAL_STATUS.bg,
