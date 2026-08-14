@@ -1,0 +1,148 @@
+/* ============================================================
+   מסך הצלחה של אשף ההזמנה — the celebration state.
+   Prefix: bw-success-. Split out of booking-window.css so that file stays
+   under the 1500-line partial ceiling (iron rule #7).
+
+   The mark itself is the supplied asset (public/success-animation.gif) — it
+   is green on a transparent background and draws its own ✓, so nothing of
+   ours sits behind it except the soft radial halo. The confetti is 11 fixed
+   pieces raining once from the top edge; the whole layer is decoration and
+   is dropped under prefers-reduced-motion (bottom of the file).
+   ============================================================ */
+
+@layer components {
+
+/* fills the drawer body and centres in it; also the confetti viewport —
+   pieces spawn above the top edge and are clipped by overflow */
+.bw-success {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 100%;
+  padding: 40px 26px;
+  text-align: center;
+}
+
+/* soft green halo behind the transparent GIF — NOT a filled disc */
+.bw-success-ic {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  /* ds-allow: "radial-gradient #E7F6EC/#EFFAF2" (המפרט §2) */
+  background: radial-gradient(circle, #e7f6ec 0%, #effaf2 58%, rgba(239, 250, 242, 0) 72%);
+}
+.bw-success-ic img {
+  display: block;
+  width: 112px;
+  height: 112px;
+}
+
+.bw-success-t {
+  position: relative;
+  z-index: 2;
+  margin-top: 10px;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1.25;
+  color: var(--ink);
+}
+
+/* reservation-number chip — the word is RTL, only the number (.ltr-num) LTR */
+.bw-success-chip {
+  position: relative;
+  z-index: 2;
+  margin-top: 10px;
+  padding: 7px 18px;
+  border-radius: 999px;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--brand);
+  background: #eef1fc; /* ds-allow: "background:#EEF1FC" (המפרט §3) */
+  border: 1.5px solid #dde3fa; /* ds-allow: "border:#DDE3FA" (המפרט §3) */
+}
+.bw-success-chip b {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.bw-success-s {
+  position: relative;
+  z-index: 2;
+  margin-top: 12px;
+  max-width: 560px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.7;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* one-shot confetti — 11 pieces, spawned above the top edge, each with a
+   fixed inline-start / colour / delay (nth-child below). No loop, no clicks. */
+.bw-success-cf {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.bw-success-cf i {
+  position: absolute;
+  top: -24px;
+  width: 9px;
+  height: 16px;
+  border-radius: 2px; /* ds-allow: "border-radius:2px" (המפרט §4 — חלקיק קונפטי) */
+  opacity: 0;
+  animation: bw-cfall 3.2s ease-in forwards;
+}
+
+/* colours — the system status/brand scale, cycled */
+.bw-success-cf i:nth-child(4n + 1) { background: var(--brand); }
+.bw-success-cf i:nth-child(4n + 2) { background: var(--ok); }
+.bw-success-cf i:nth-child(4n + 3) { background: #f5a524; } /* ds-allow: "background:#F5A524" (המפרט §4) */
+.bw-success-cf i:nth-child(4n + 4) { background: var(--danger); }
+
+/* horizontal spread + scattered (non-monotonic) delays */
+.bw-success-cf i:nth-child(1)  { inset-inline-start: 8%;  animation-delay: 0.35s; }
+.bw-success-cf i:nth-child(2)  { inset-inline-start: 16%; animation-delay: 0.05s; }
+.bw-success-cf i:nth-child(3)  { inset-inline-start: 24%; animation-delay: 0.65s; }
+.bw-success-cf i:nth-child(4)  { inset-inline-start: 33%; animation-delay: 0.2s; }
+.bw-success-cf i:nth-child(5)  { inset-inline-start: 41%; animation-delay: 0.9s; }
+.bw-success-cf i:nth-child(6)  { inset-inline-start: 50%; animation-delay: 0.5s; }
+.bw-success-cf i:nth-child(7)  { inset-inline-start: 58%; animation-delay: 0.1s; }
+.bw-success-cf i:nth-child(8)  { inset-inline-start: 66%; animation-delay: 0.75s; }
+.bw-success-cf i:nth-child(9)  { inset-inline-start: 75%; animation-delay: 0.3s; }
+.bw-success-cf i:nth-child(10) { inset-inline-start: 83%; animation-delay: 0.95s; }
+.bw-success-cf i:nth-child(11) { inset-inline-start: 91%; animation-delay: 0.55s; }
+
+@keyframes bw-cfall {
+  0%   { opacity: 0; transform: translateY(0) rotate(0deg); }
+  8%   { opacity: 1; }
+  100% { opacity: 0; transform: translateY(460px) rotate(620deg); }
+}
+
+/* success-footer timer line — "החלון ייסגר אוטומטית תוך N שנ׳" */
+.bw-ft-timer {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.bw-ft-timer b {
+  font-weight: 800;
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+
+/* the celebration is decoration: with reduced motion there is no confetti at
+   all — the screen renders static and fully legible */
+@media (prefers-reduced-motion: reduce) {
+  .bw-success-cf { display: none; }
+}
+
+}

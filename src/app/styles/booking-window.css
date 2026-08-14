@@ -685,45 +685,6 @@
   gap: 5px;
 }
 
-/* מסך הצלחה (wizard MD ש'127) — big green ✓ + title + summary line */
-.bw-success {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 320px;
-  padding: 40px 26px;
-  text-align: center;
-}
-.bw-success-ic {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: var(--ok);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.bw-success-t {
-  font-size: 21px;
-  font-weight: 800;
-  color: var(--ink);
-}
-.bw-success-n {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-.bw-success-s {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
 /* footer step label (wizard) */
 .bw-ft-step {
   font-size: 13.5px;
