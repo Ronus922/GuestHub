@@ -263,10 +263,11 @@
    (absolute), and inherits pointer events, so the tap lands on the button while
    nothing moves and no icon changes size.
 
-   Deliberately UNLAYERED and scoped to `pointer: coarse`: a mouse does not need
-   it, so desktop density is untouched, and unlayered is what lets it reach the
-   controls declared outside @layer components (locks, statuses, payment
-   methods). Guarded by check:responsive rules 10-11.
+   Scoped to `pointer: coarse`: a mouse does not need it, so desktop density is
+   untouched. The ::after hit-area rules below stay UNLAYERED so they can win
+   against the partials that are themselves unlayered (locks, statuses, payment
+   methods) — but the `position: relative` HINT must NOT be unlayered: see the
+   D148 lesson at the rule itself. Guarded by check:responsive rules 10-11 + 20.
 
    Constraints honoured:
    - `position: relative` only where the control is still `static`, so no
@@ -282,16 +283,26 @@
 @media (pointer: coarse) {
   /* Generic on purpose. An enumerated class list missed 325 permission
      checkboxes (24×24), every Switch (44×24), the segmented-control buttons and
-     the search inputs — measured, not guessed. `:where()` keeps specificity at
-     zero so a control that is deliberately positioned (the absolutely-placed
-     calendar bars, the icon inside a field) keeps its own `position` and is
-     untouched.
+     the search inputs — measured, not guessed.
+
+     D148 — the hint lives in @layer base, and :where() alone is NOT the guard.
+     Specificity is only compared WITHIN a layer; an unlayered normal
+     declaration beats every @layer regardless of specificity. The unlayered
+     version of this rule therefore overrode the mobile calendar bars' own
+     `position: absolute` (@layer components) on every touch device — the bars
+     fell back into the RTL flex flow at the far LEFT and the whole timeline
+     rendered mirrored on real phones only. Inside @layer base the hint loses
+     to ANY explicit `position` — components, utilities, or unlayered partials
+     alike — which is the documented intent: relative only where the control is
+     still static.
 
      .icon-btn and .btn-sm take `position: relative` at their canonical
      declaration in design-system.css instead — check:design's
      duplicate-primitive rule forbids re-declaring a primitive here. */
-  :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary) {
-    position: relative;
+  @layer base {
+    :where(button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="tab"], summary) {
+      position: relative;
+    }
   }
 
   /* Self-limiting: `width/height: 100%` with a 44px floor means a control that is
