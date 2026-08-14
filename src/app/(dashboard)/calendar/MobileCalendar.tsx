@@ -71,7 +71,10 @@ export function MobileCalendar({
   );
 
   return (
-    <div className="thin-scroll min-h-0 flex-1 overflow-auto">
+    // dir pinned like the desktop board (.cb-calwrap): the bars' insetInlineStart
+    // and the header/cell flex order are GEOMETRY — they must never depend on the
+    // ambient direction of whatever mounts this tree.
+    <div className="thin-scroll min-h-0 flex-1 overflow-auto" dir="rtl">
       <div className="cb-m-card">
         {/* day header */}
         <div className="cb-m-hdr">
