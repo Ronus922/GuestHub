@@ -703,6 +703,7 @@ export function BookingPanel({
                     /* the MD's LARGE 54px search box (ש'52) */
                     className="field-input bw-search ps-11"
                     placeholder="חפש לפי שם, טלפון או אימייל…"
+                    dir="auto" /* Latin/numeric queries keep their own base direction */
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
@@ -766,6 +767,7 @@ export function BookingPanel({
                       className={`field-input${guestErr.firstName ? " field-error" : ""}`}
                       aria-invalid={guestErr.firstName || undefined}
                       placeholder="שם פרטי"
+                      dir="auto" /* guest names are routinely Latin (OTA bookings) */
                       value={guest.firstName}
                       onChange={(e) => setGuest({ ...guest, firstName: e.target.value, id: undefined })}
                     />
@@ -775,6 +777,7 @@ export function BookingPanel({
                       className={`field-input${guestErr.lastName ? " field-error" : ""}`}
                       aria-invalid={guestErr.lastName || undefined}
                       placeholder="שם משפחה"
+                      dir="auto" /* guest names are routinely Latin (OTA bookings) */
                       value={guest.lastName}
                       onChange={(e) => setGuest({ ...guest, lastName: e.target.value, id: undefined })}
                     />
@@ -854,6 +857,7 @@ export function BookingPanel({
                         company column exists; the value stays in the panel */}
                     <input
                       className="field-input"
+                      dir="auto" /* company names are routinely Latin */
                       value={company}
                       onChange={(e) => setCompany(e.target.value)}
                     />
@@ -1319,6 +1323,7 @@ export function BookingPanel({
                   <textarea
                     className="field-input"
                     placeholder="בקשות מיוחדות…"
+                    dir="auto" /* notes arrive in either language */
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                   />

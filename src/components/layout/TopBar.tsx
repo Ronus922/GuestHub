@@ -44,6 +44,10 @@ export function TopBar({
           type="search"
           aria-label="חיפוש"
           placeholder="חיפוש הזמנות, אורחים או חדרים…"
+          /* dir=auto: a Latin query ("John") gets an LTR base instead of jumping
+             to the far side with its punctuation flipped. Free-text fields only —
+             numeric fields keep their RTL alignment (DECISIONS D-R1). */
+          dir="auto"
           className="field-input ps-11 pe-4"
         />
       </div>

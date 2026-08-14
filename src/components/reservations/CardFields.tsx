@@ -324,6 +324,7 @@ export function CardFields({
               className={`field-input ${roCls} ${holderMissing ? "field-error" : ""}`}
               aria-invalid={holderMissing || undefined}
               placeholder={ro ? "לא התקבל" : "שם כפי שמופיע על הכרטיס"}
+              dir="auto" /* the embossed name is almost always Latin */
               autoComplete="off"
               readOnly={ro}
               value={view.holder}

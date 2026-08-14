@@ -131,6 +131,7 @@ export function GuestsScreen({
           <input
             value={q}
             placeholder="חיפוש לפי שם, טלפון או אימייל…"
+            dir="auto" /* Latin/numeric queries keep their own base direction */
             onChange={(e) => onSearch(e.target.value)}
           />
         </label>

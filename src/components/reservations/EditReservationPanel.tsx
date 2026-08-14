@@ -743,11 +743,11 @@ export function EditReservationPanel({
             >
               <div className="bw-grid2">
                 <Field label="שם פרטי" required>
-                  <input className="field-input" value={guest.firstName} disabled={!canEditNow}
+                  <input className="field-input" dir="auto" value={guest.firstName} disabled={!canEditNow}
                     onChange={(e) => setGuest({ ...guest, firstName: e.target.value })} />
                 </Field>
                 <Field label="שם משפחה" required>
-                  <input className="field-input" value={guest.lastName} disabled={!canEditNow}
+                  <input className="field-input" dir="auto" value={guest.lastName} disabled={!canEditNow}
                     onChange={(e) => setGuest({ ...guest, lastName: e.target.value })} />
                 </Field>
                 {/* the edit MD (ש'24) stars the phone; enforcement stays
@@ -1348,7 +1348,8 @@ export function EditReservationPanel({
                 </Field>
               </div>
               {/* the edit MD (§3.5 ש'56) sizes the notes at ~150px */}
-              <textarea className="field-input min-h-[150px]" value={notes} disabled={!canEditNow}
+              {/* dir=auto: notes arrive in either language (audit F-3) */}
+              <textarea className="field-input min-h-[150px]" dir="auto" value={notes} disabled={!canEditNow}
                 placeholder="בקשות מיוחדות…" onChange={(e) => setNotes(e.target.value)} />
             </BookingCard>
 

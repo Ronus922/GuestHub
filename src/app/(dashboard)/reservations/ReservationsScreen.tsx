@@ -267,6 +267,7 @@ export function ReservationsScreen({
           <input
             value={q}
             placeholder="חיפוש לפי מספר הזמנה, שם אורח, טלפון או חדר…"
+            dir="auto" /* Latin/numeric queries keep their own base direction */
             onChange={(e) => onSearch(e.target.value)}
           />
         </label>

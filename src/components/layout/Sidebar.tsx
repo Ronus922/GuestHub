@@ -80,8 +80,9 @@ export function Sidebar({
           if (items.length === 0) return null;
           return (
             <div key={section.title} className="mb-4">
+              {/* Hebrew section titles — never letter-spaced (audit F-4) */}
               {!collapsed && (
-                <p className="t-label px-3 pb-1 tracking-wide text-faint">
+                <p className="t-label px-3 pb-1 text-faint">
                   {section.title}
                 </p>
               )}
