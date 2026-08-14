@@ -439,6 +439,13 @@ assert.ok(/<bdi/.test(tooltip), "a Latin guest name / OTA source keeps its own d
 // which is why production shipped without a pointer).
 assert.ok(/\.cb-pop::after\s*\{[^}]*rotate\(45deg\)/s.test(css), "the pointer is a rotated pseudo-element");
 assert.ok(!/overflow:\s*hidden/.test(popRule), "the card must NOT clip its own pointer");
+// the clip came back a SECOND way — inherited from .popover's mobile scroll cap
+// (max-height: 70dvh + overflow-y: auto): the pointer's 8px overhang made the
+// card a scroll container, which grew a scrollbar AND clipped the pointer off.
+// The line above only reads the .cb-pop rule, so it was blind to inheritance —
+// the skin must actively neutralize the primitive's cap.
+assert.ok(/max-height:\s*none/.test(popRule) && /overflow:\s*visible/.test(popRule),
+  ".cb-pop must neutralize .popover's scroll cap (max-height: none + overflow: visible) — a scroll container clips the pointer and grows a scrollbar from its 8px overhang");
 assert.ok(/border-radius: 16px 16px 0 0/.test(rule(".cb-pop-h")),
   "with no overflow clip, the blue header rounds its own top corners (no seam, no stray radius)");
 assert.ok(/--cb-caret/.test(css) && /--cb-caret/.test(tooltip),
