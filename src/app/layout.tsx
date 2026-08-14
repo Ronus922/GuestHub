@@ -23,6 +23,18 @@ export const metadata: Metadata = {
   title: "GuestHub",
   description:
     "Multi-tenant PMS for aparthotels and vacation rentals — reservations, occupancy, rates, guests, housekeeping.",
+  // Icon assets live in public/ (public/favicon.ico + public/icons/*) — the
+  // old src/app/favicon.ico convention file was removed so the two never fight
+  // over the /favicon.ico route. All variants are declared here explicitly.
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icons/favicon-32.png", type: "image/png", sizes: "32x32" },
+      { url: "/icons/favicon-16.png", type: "image/png", sizes: "16x16" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon-180.png", sizes: "180x180" }],
+  },
+  manifest: "/manifest.webmanifest",
 };
 
 // Until this existed, Next emitted only its default `width=device-width,
@@ -39,6 +51,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Browser-chrome tint behind the PWA — the app icon's navy, a spec value from
+  // the icon set (variation 1a), deliberately NOT the UI brand #2540C8.
+  // ds-allow: theme-color must match the installed-icon navy
+  themeColor: "#041E48",
 };
 
 export default function RootLayout({

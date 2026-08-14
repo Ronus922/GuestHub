@@ -45,9 +45,16 @@ export default async function LoginPage({
         <div className="pointer-events-none absolute -start-10 top-24 h-52 w-52 rounded-full border border-white/10" />
 
         <div className="relative z-10 flex w-full flex-col justify-center gap-10 px-16 py-14 text-white">
-          <div className="grid h-16 w-16 place-items-center rounded-2xl bg-white/15 backdrop-blur">
-            <Icon name="building" size={24} className="text-white" />
-          </div>
+          {/* the product icon, bare — no backdrop tile, no recolor (icons spec).
+              eslint-disable: static logo asset — next/image buys nothing here. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/icons/icon-192.png"
+            alt=""
+            width={64}
+            height={64}
+            className="rounded-2xl"
+          />
 
           <div className="flex flex-col gap-4">
             <h1 className="h1 tracking-tight text-white">GuestHub</h1>
@@ -90,10 +97,19 @@ export default async function LoginPage({
       {/* טופס — צד שמאל / מלא במובייל */}
       <main className="flex flex-1 items-center justify-center px-6 py-10">
         <div className="flex w-full max-w-[400px] flex-col gap-8">
+          {/* the product icon floats over the form — the ONE screen where the
+              icon spec allows a shadow. alt="" — the name is the text beside it.
+              eslint-disable: static logo asset — next/image buys nothing here. */}
           <div className="flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary">
-              <Icon name="building" size={24} className="text-white" />
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/icons/icon-192.png"
+              alt=""
+              width={74}
+              height={74}
+              /* ds-allow: 18px radius + floating shadow are icon-spec values for the 74px login mark */
+              className="rounded-[18px] shadow-[0_10px_26px_rgba(4,30,72,0.24)]"
+            />
             <span className="h2 text-ink">GuestHub</span>
           </div>
 
