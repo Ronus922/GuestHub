@@ -1014,8 +1014,15 @@
    payment state and reservation status stay two separate axes and are never
    merged. Only what the primitive does not cover lives below. */
 .cb-pop {
-  /* NO overflow:hidden — it clipped the speech-bubble pointer off the card.
-     The header rounds its own top corners instead. */
+  /* NO overflow clip of any kind — `overflow:hidden` here clipped the
+     speech-bubble pointer off the card (the header rounds its own top corners
+     instead), and .popover's mobile scroll cap (max-height: 70dvh +
+     overflow-y: auto) later did the same thing by inheritance: the pointer's
+     8px overhang made the card a scroll container, which grew a scrollbar AND
+     clipped the pointer off. The card is ~270px of fixed content — it never
+     needs internal scroll, so the skin neutralizes the primitive's cap. */
+  max-height: none;
+  overflow: visible;
   animation: cb-pop-in 0.14s ease-out;
   /* informational only — it must NEVER intercept a pointer, capture a click, or
      become a drag/drop target, so it can never cover or block the reservation
