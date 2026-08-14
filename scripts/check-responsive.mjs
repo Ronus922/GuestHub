@@ -509,4 +509,33 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("coarse-pointer surfaces use the platform scroll indicator, not a permanent track");
 }
 
+// ---- 19. no physical inset utilities in components (RTL audit F-1) ----
+// `right-0.5` on the VAT-toggle knob happened to look correct because in RTL
+// the physical right IS inline-start — a coincidence, not a convention. Any new
+// `left-N`/`right-N` in a component re-introduces geometry that a direction
+// change silently breaks. Logical spelling (`inset-s-*` / `inset-e-*` /
+// `start-*` / `end-*`) renders pixel-identically in RTL and stays lawful.
+// Exceptions, each carrying its reason in a comment at the site:
+//   - SidePanel.tsx `left-0`: §7 product decision — the drawer opens from the
+//     physical left edge, and framer-motion's `x` is physical anyway.
+//   - MyTasksScreen.tsx: frozen screen (STATE.md), already carries its own
+//     check:design debt; not new work.
+{
+  const ALLOWED = new Set(["components/ui/SidePanel.tsx", "app/housekeeping/my-tasks/MyTasksScreen.tsx"]);
+  const offenders = [];
+  for (const f of tsxFiles) {
+    const rel = f.slice(SRC.length + 1);
+    if (ALLOWED.has(rel)) continue;
+    const body = read(f);
+    // utility position: preceded by a quote/space/backtick, then left-/right-
+    // with a numeric or arbitrary value. `rounded-l…`, `border-r…` and prose
+    // ("right-hand") do not match.
+    const m = body.match(/[\s"'`](?:-?(?:left|right)-(?:\d|\[))[^\s"'`]*/);
+    if (m) offenders.push(`${rel}: ${m[0].trim()}`);
+  }
+  assert.deepEqual(offenders, [],
+    `physical left-*/right-* inset utilities outside the two documented exceptions — use inset-s-*/inset-e-* (logical): ${offenders.join(" · ")}`);
+  ok("no physical left-*/right-* inset utilities in components — logical inset only, two documented exceptions");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);

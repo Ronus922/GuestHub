@@ -110,7 +110,8 @@ export function SettingsShell({
         <nav className="card hidden shrink-0 p-3 xl:block xl:w-[280px]" aria-label="ניווט הגדרות">
           {groups.map((group) => (
             <div key={group.title} className="mb-3 last:mb-0">
-              <p className="t-label px-3 pb-1 tracking-wide text-faint">{group.title}</p>
+              {/* Hebrew group titles — never letter-spaced (audit F-4) */}
+              <p className="t-label px-3 pb-1 text-faint">{group.title}</p>
               <ul className="flex flex-col gap-0.5">
                 {group.items.map((item) => (
                   <li key={item.key}>

@@ -209,8 +209,9 @@ export function StaffTable({
                 {hg.headers.map((h) => {
                   const sortable = h.column.getCanSort();
                   const dir = h.column.getIsSorted();
+                  // Hebrew headers — never letter-spaced (audit F-4)
                   return (
-                    <th key={h.id} className="t-label px-4 py-3 text-start tracking-wide">
+                    <th key={h.id} className="t-label px-4 py-3 text-start">
                       {h.isPlaceholder ? null : sortable ? (
                         <button
                           type="button"

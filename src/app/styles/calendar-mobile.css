@@ -360,8 +360,9 @@
 }
 .cb-sheet {
   position: fixed;
-  left: 0;
-  right: 0;
+  /* symmetric, so pixel-identical to the old left:0;right:0 — but logical, so
+     the file stays free of physical inline anchors (the audit's F-2) */
+  inset-inline: 0;
   bottom: 0;
   background: var(--surface);
   border-radius: 20px 20px 0 0; /* ds-allow: reference sheet radius */

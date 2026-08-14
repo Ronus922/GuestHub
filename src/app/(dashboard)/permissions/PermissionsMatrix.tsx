@@ -203,7 +203,10 @@ export function PermissionsMatrix({
           <table className="w-full min-w-[860px] border-collapse text-sm">
             <thead>
               <tr>
-                <th className="t-label sticky start-0 top-0 z-30 border-b border-e border-line bg-surface px-5 py-3 text-start align-bottom tracking-wide text-faint">
+                {/* no tracking- on Hebrew: letterforms are never letter-spaced
+                    (hebrew-rtl skill §5). The Latin perm.key <bdi> below keeps its
+                    tracking-wide — the rule is per-script, not per-screen. */}
+                <th className="t-label sticky start-0 top-0 z-30 border-b border-e border-line bg-surface px-5 py-3 text-start align-bottom text-faint">
                   הרשאה
                 </th>
                 {roles.map((role) => (

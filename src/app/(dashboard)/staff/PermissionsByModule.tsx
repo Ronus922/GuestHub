@@ -62,9 +62,10 @@ export function PermissionsByModule({
         <table className="w-full min-w-[420px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-line bg-appbg">
-              <th className="t-label px-4 py-3 text-start tracking-wide text-faint">מודול</th>
+              {/* Hebrew is never letter-spaced — tracking removed (audit F-4) */}
+              <th className="t-label px-4 py-3 text-start text-faint">מודול</th>
               {COLUMNS.map((c) => (
-                <th key={c.id} className="t-label w-20 px-3 py-3 text-center tracking-wide text-faint">
+                <th key={c.id} className="t-label w-20 px-3 py-3 text-center text-faint">
                   {c.label}
                 </th>
               ))}

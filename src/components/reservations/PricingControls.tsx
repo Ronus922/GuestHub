@@ -265,8 +265,12 @@ export function VatToggleRow({
           } ${disabled ? "opacity-60" : ""}`}
         >
           <span
+            /* inset-s (logical), not right (physical): in RTL inline-start IS the
+               right edge, so this renders pixel-identical — but the knob's "on"
+               position is now tied to reading direction instead of a compass
+               point, like every other start/end in the design system. */
             className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
-              !taxExempt ? "right-0.5" : "right-[22px]"
+              !taxExempt ? "inset-s-0.5" : "inset-s-[22px]"
             }`}
           />
         </button>
