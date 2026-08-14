@@ -1,134 +1,148 @@
 /* ============================================================
-   מסך הצלחה של אשף ההזמנה (wizard MD ש'127) — the celebration state.
-   Prefix: bw-success- / bw-confetti-. Split out of booking-window.css so
-   that file stays under the 1500-line partial ceiling (iron rule #7).
+   מסך הצלחה של אשף ההזמנה — the celebration state.
+   Prefix: bw-success-. Split out of booking-window.css so that file stays
+   under the 1500-line partial ceiling (iron rule #7).
 
    The mark itself is the supplied asset (public/success-animation.gif) — it
-   draws its own circle and ✓, so no disc, ring or glyph of ours sits behind it.
-   Nothing else here is a new primitive: every confetti colour is a §1
-   status/brand token. The whole layer is decoration — see the
-   prefers-reduced-motion block at the bottom, which renders the screen in its
-   finished state with no motion of ours at all.
+   is green on a transparent background and draws its own ✓, so nothing of
+   ours sits behind it except the soft radial halo. The confetti is 11 fixed
+   pieces raining once from the top edge; the whole layer is decoration and
+   is dropped under prefers-reduced-motion (bottom of the file).
    ============================================================ */
 
 @layer components {
 
-/* the mark + title + summary line. Fills the drawer body and centres in it:
-   the old fixed 320px min-height pinned the block to the TOP of a body that is
-   a whole viewport tall. */
+/* fills the drawer body and centres in it; also the confetti viewport —
+   pieces spawn above the top edge and are clipped by overflow */
 .bw-success {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  overflow: hidden;
   min-height: 100%;
   padding: 40px 26px;
   text-align: center;
 }
+
+/* soft green halo behind the transparent GIF — NOT a filled disc */
 .bw-success-ic {
-  width: 340px;
-  height: 340px;
-  /* The mark draws itself inside the file, so nothing of ours sits behind it.
-     The file carries 21.4% transparent padding on every side (measured content
-     bbox 214..791 of 1000), i.e. ~73px at this size: the negative block margins
-     cancel most of it, so the mark reads ~196px and lands ~25px above the
-     title instead of floating in dead pixels. */
-  margin: -48px 0;
-  animation: bw-success-in 0.4s ease-out both;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  /* ds-allow: "radial-gradient #E7F6EC/#EFFAF2" (המפרט §2) */
+  background: radial-gradient(circle, #e7f6ec 0%, #effaf2 58%, rgba(239, 250, 242, 0) 72%);
 }
+.bw-success-ic img {
+  display: block;
+  width: 112px;
+  height: 112px;
+}
+
 .bw-success-t {
-  font-size: 30px;
+  position: relative;
+  z-index: 2;
+  margin-top: 10px;
+  font-size: 32px;
   font-weight: 800;
   line-height: 1.25;
   color: var(--ink);
-  animation: bw-success-rise 0.45s ease-out 0.42s both;
 }
-.bw-success-n {
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.35;
-  color: var(--ink);
+
+/* reservation-number chip — the word is RTL, only the number (.ltr-num) LTR */
+.bw-success-chip {
+  position: relative;
+  z-index: 2;
+  margin-top: 10px;
+  padding: 7px 18px;
+  border-radius: 999px;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--brand);
+  background: #eef1fc; /* ds-allow: "background:#EEF1FC" (המפרט §3) */
+  border: 1.5px solid #dde3fa; /* ds-allow: "border:#DDE3FA" (המפרט §3) */
+}
+.bw-success-chip b {
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  animation: bw-success-rise 0.45s ease-out 0.52s both;
 }
+
 .bw-success-s {
-  font-size: 16px;
+  position: relative;
+  z-index: 2;
+  margin-top: 12px;
+  max-width: 560px;
+  font-size: 17px;
   font-weight: 600;
-  line-height: 1.5;
-  margin-top: 4px;
+  line-height: 1.7;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  animation: bw-success-rise 0.45s ease-out 0.62s both;
 }
 
-/* one-shot confetti — TWO layers behind the mark: `bw-confetti-r` rains down
-   the full width of the panel (the background), `bw-confetti-p` bursts out of
-   the mark itself. Neither loops and neither intercepts a click. Every piece
-   carries its own vector as custom props. */
-.bw-success-confetti {
+/* one-shot confetti — 11 pieces, spawned above the top edge, each with a
+   fixed inline-start / colour / delay (nth-child below). No loop, no clicks. */
+.bw-success-cf {
   position: absolute;
   inset: 0;
-  overflow: hidden;
   pointer-events: none;
 }
-.bw-confetti-p,
-.bw-confetti-r {
+.bw-success-cf i {
   position: absolute;
-  width: var(--w);
-  height: var(--h);
-  border-radius: var(--r);
-  background: var(--c);
+  top: -24px;
+  width: 9px;
+  height: 16px;
+  border-radius: 2px; /* ds-allow: "border-radius:2px" (המפרט §4 — חלקיק קונפטי) */
   opacity: 0;
-}
-.bw-confetti-p {
-  top: 50%;
-  left: 50%;
-  animation: bw-confetti-burst var(--t) cubic-bezier(0.22, 0.62, 0.36, 1) var(--d) forwards;
-}
-.bw-confetti-r {
-  top: 0;
-  left: var(--x);
-  animation: bw-confetti-rain var(--t) cubic-bezier(0.34, 0.4, 0.5, 1) var(--d) forwards;
+  animation: bw-cfall 3.2s ease-in forwards;
 }
 
-@keyframes bw-success-in {
-  0% { transform: scale(0.86); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
-}
-@keyframes bw-success-rise {
-  0% { transform: translateY(10px); opacity: 0; }
-  100% { transform: translateY(0); opacity: 1; }
-}
-@keyframes bw-confetti-burst {
-  0% { transform: translate(-50%, -50%) scale(0.4) rotate(0deg); opacity: 0; }
-  10% { opacity: 1; }
-  45% {
-    transform: translate(calc(-50% + var(--mx)), calc(-50% + var(--my))) scale(1) rotate(calc(var(--rot) / 2));
-    opacity: 1;
-  }
-  100% {
-    transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.9) rotate(var(--rot));
-    opacity: 0;
-  }
+/* colours — the system status/brand scale, cycled */
+.bw-success-cf i:nth-child(4n + 1) { background: var(--brand); }
+.bw-success-cf i:nth-child(4n + 2) { background: var(--ok); }
+.bw-success-cf i:nth-child(4n + 3) { background: #f5a524; } /* ds-allow: "background:#F5A524" (המפרט §4) */
+.bw-success-cf i:nth-child(4n + 4) { background: var(--danger); }
+
+/* horizontal spread + scattered (non-monotonic) delays */
+.bw-success-cf i:nth-child(1)  { inset-inline-start: 8%;  animation-delay: 0.35s; }
+.bw-success-cf i:nth-child(2)  { inset-inline-start: 16%; animation-delay: 0.05s; }
+.bw-success-cf i:nth-child(3)  { inset-inline-start: 24%; animation-delay: 0.65s; }
+.bw-success-cf i:nth-child(4)  { inset-inline-start: 33%; animation-delay: 0.2s; }
+.bw-success-cf i:nth-child(5)  { inset-inline-start: 41%; animation-delay: 0.9s; }
+.bw-success-cf i:nth-child(6)  { inset-inline-start: 50%; animation-delay: 0.5s; }
+.bw-success-cf i:nth-child(7)  { inset-inline-start: 58%; animation-delay: 0.1s; }
+.bw-success-cf i:nth-child(8)  { inset-inline-start: 66%; animation-delay: 0.75s; }
+.bw-success-cf i:nth-child(9)  { inset-inline-start: 75%; animation-delay: 0.3s; }
+.bw-success-cf i:nth-child(10) { inset-inline-start: 83%; animation-delay: 0.95s; }
+.bw-success-cf i:nth-child(11) { inset-inline-start: 91%; animation-delay: 0.55s; }
+
+@keyframes bw-cfall {
+  0%   { opacity: 0; transform: translateY(0) rotate(0deg); }
+  8%   { opacity: 1; }
+  100% { opacity: 0; transform: translateY(460px) rotate(620deg); }
 }
 
-@keyframes bw-confetti-rain {
-  0% { transform: translate3d(0, -9vh, 0) rotate(0deg); opacity: 0; }
-  6% { opacity: 1; }
-  88% { opacity: 1; }
-  100% { transform: translate3d(var(--sway), 104vh, 0) rotate(var(--rot)); opacity: 0; }
+/* success-footer timer line — "החלון ייסגר אוטומטית תוך N שנ׳" */
+.bw-ft-timer {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.bw-ft-timer b {
+  font-weight: 800;
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
 }
 
-/* the whole celebration is decoration: with reduced motion the screen renders
-   in its FINAL state — drawn ✓, visible text, no confetti at all */
+/* the celebration is decoration: with reduced motion there is no confetti at
+   all — the screen renders static and fully legible */
 @media (prefers-reduced-motion: reduce) {
-  .bw-success-confetti { display: none; }
-  .bw-success-ic,
-  .bw-success-t,
-  .bw-success-n,
-  .bw-success-s { animation: none; }
+  .bw-success-cf { display: none; }
 }
 
 }

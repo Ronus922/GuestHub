@@ -66,6 +66,8 @@ const EMPTY_GUEST: GuestForm = {
 // the MD's five steps (§2 ש'20): documents sit between pricing and the summary
 const STEPS = ["פרטי אורח", "שהות וחדרים", "תמחור ותשלום", "מסמכים", "סיכום ואישור"];
 const SUMMARY_STEP = STEPS.length - 1;
+// the success screen closes itself after this many seconds without a click
+const AUTO_CLOSE_SECONDS = 5;
 
 // מדינה (MD ש'68: select) — the guests table has no country list of its own,
 // so the select carries a local option set; a value outside it (an imported
@@ -188,6 +190,11 @@ export function BookingPanel({
   // מסך הצלחה (MD ש'127): after a successful create the panel shows the green
   // ✓ summary instead of closing straight away
   const [created, setCreated] = useState<BookingCreated | null>(null);
+  // success-screen auto-close: 5 → 1, then the panel closes exactly as if
+  // "סגור" was clicked. Any manual close clears the interval first (no double
+  // close, no ticking after unmount).
+  const [closeIn, setCloseIn] = useState(AUTO_CLOSE_SECONDS);
+  const closeTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // guest search
   const [query, setQuery] = useState("");
@@ -250,13 +257,41 @@ export function BookingPanel({
     formSnapshot(guest, sourceId, stays, { discountMode, discountValue, taxExempt, currency }, paid, method, notes, arrivalTime, asDraft, cc) !==
       snapshotRef.current || docIds.length > 0;
 
+  const clearCloseTimer = () => {
+    if (closeTimer.current) {
+      clearInterval(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+
+  // every exit from the success screen — button, Esc, overlay, or the timer
+  // itself — funnels here so the interval is ALWAYS cleared before closing
+  const closeFromSuccess = () => {
+    clearCloseTimer();
+    onClose();
+  };
+
+  // the countdown runs only while the success screen is up; closing the panel
+  // unmounts/resets `created`, and the cleanup kills the interval
+  useEffect(() => {
+    if (!created) return;
+    setCloseIn(AUTO_CLOSE_SECONDS);
+    closeTimer.current = setInterval(() => setCloseIn((s) => s - 1), 1000);
+    return clearCloseTimer;
+  }, [created]);
+
+  useEffect(() => {
+    if (created && closeIn <= 0) closeFromSuccess();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [closeIn, created]);
+
   // Escape / X / overlay click route here — unsaved changes get an explicit
   // discard confirmation (footer strip) instead of a silent reset
   const requestClose = () => {
     if (saving) return;
     // the success screen is a terminal state — closing needs no discard confirm
     if (created) {
-      onClose();
+      closeFromSuccess();
       return;
     }
     if (dirty && !confirmDiscard) setConfirmDiscard(true);
@@ -583,11 +618,19 @@ export function BookingPanel({
       }
       footer={
         created ? (
-          /* success-screen footer — the one remaining action is closing */
-          <button type="button" className="btn btn-primary" onClick={onClose}>
-            <Icon name="check" size={20} />
-            סגור
-          </button>
+          /* success-screen footer — §7 via .dw-ft (row-reverse): DOM order =
+             visual left→right, so "סגור" hugs the LEFT edge like every primary
+             action, the countdown sits beside it, and the spacer fills the rest */
+          <>
+            <button type="button" className="btn btn-primary" onClick={closeFromSuccess}>
+              <Icon name="check" size={18} />
+              סגור
+            </button>
+            <span className="bw-ft-timer">
+              החלון ייסגר אוטומטית תוך <b className="ltr-num">{Math.max(1, closeIn)}</b> שנ׳
+            </span>
+            <span className="flex-1" />
+          </>
         ) : confirmDiscard ? (
           /* dirty-state discard confirmation. §7 via .dw-ft (row-reverse):
              DOM order = visual left→right — the confirming action is FIRST
