@@ -548,20 +548,25 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 // Wrapped in @layer base (declared before components) the hint loses to ANY
 // explicit `position`, which is its documented intent.
 {
-  const body = stripCss(read(join(SRC, "app/styles/responsive.css")));
-  const coarse = body.slice(body.indexOf("@media (pointer: coarse)"));
-  const hintRe = /:where\(button[^)]*\)[^{]*\{\s*position:\s*relative/g;
-  let m;
+  const stylesDir = join(SRC, "app/styles");
+  const hintRe = /:where\([^)]*button[^)]*\)[^{]*\{\s*position:\s*relative/g;
   let found = 0;
-  while ((m = hintRe.exec(coarse))) {
-    found++;
-    const before = coarse.slice(Math.max(0, m.index - 60), m.index);
-    assert.ok(/@layer base\s*\{\s*$/.test(before),
-      "the coarse-pointer position hint must be wrapped in @layer base — unlayered it beats @layer components and re-mirrors the calendar bars on touch devices (D148)");
+  for (const f of readdirSync(stylesDir).filter((n) => n.endsWith(".css"))) {
+    const body = stripCss(read(join(stylesDir, f)));
+    const at = body.indexOf("@media (pointer: coarse)");
+    if (at < 0) continue;
+    const coarse = body.slice(at);
+    let m;
+    while ((m = hintRe.exec(coarse))) {
+      found++;
+      const before = coarse.slice(Math.max(0, m.index - 60), m.index);
+      assert.ok(/@layer base\s*\{\s*$/.test(before),
+        `${f}: a coarse-pointer position hint must be wrapped in @layer base — unlayered it beats @layer components and re-mirrors the calendar bars on touch devices (D148)`);
+    }
   }
   assert.ok(found >= 1,
     "the coarse-pointer position hint must exist — the 44px ::after hit area needs a positioned anchor on still-static controls");
-  ok("the coarse-pointer position hint sits in @layer base — any explicit position wins over it (D148)");
+  ok("every coarse-pointer position hint sits in @layer base — any explicit position wins over it (D148)");
 }
 
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);
