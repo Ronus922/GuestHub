@@ -67,7 +67,11 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Everything except Next internals and static assets.
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Everything except Next internals and static assets. manifest.webmanifest
+    // must stay public: browsers fetch it WITHOUT credentials (no crossorigin
+    // attr on the <link>), so behind the login redirect it would 307 to HTML
+    // and the PWA manifest would be invalid for every visitor, including
+    // authenticated ones.
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

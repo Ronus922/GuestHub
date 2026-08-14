@@ -40,14 +40,22 @@ export function Sidebar({
         collapsed ? "md:w-[76px]" : "md:w-[250px]"
       }`}
     >
-      {/* מותג */}
+      {/* מותג — the product icon itself (icons spec 1a): bare <img>, no tile,
+          no shadow, never flipped by RTL.
+          eslint-disable: static 34px logo — next/image buys nothing here. */}
       <div className="flex items-center gap-3 px-4 py-4">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary">
-          <Icon name="building" size={20} className="text-white" />
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/icons/logo-mark-64.png"
+          alt="GuestHub"
+          width={34}
+          height={34}
+          /* ds-allow: 9px radius is the icon-spec value for the 34px mark */
+          className="shrink-0 rounded-[9px]"
+        />
         {!collapsed && (
           <div className="min-w-0">
-            <p className="h4 truncate">GuestHub</p>
+            <p className="h3 truncate">GuestHub</p>
             <p className="t-label truncate text-faint">Property Management</p>
           </div>
         )}
