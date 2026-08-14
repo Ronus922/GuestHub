@@ -76,7 +76,8 @@ export function CalendarScreen({
   ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   can: CalendarCan;
   vatRate: number;
-  /** first 6 chars of the running .next/BUILD_ID — screenshots self-identify */
+  /** first 6 chars of the running .next/BUILD_ID — exposed as data-build on the
+      mobile legend (DevTools-visible only; the on-screen stamp was retired) */
   buildStamp?: string;
 }) {
   const router = useRouter();
@@ -344,7 +345,11 @@ export function CalendarScreen({
           }
         />
 
-        <div className="cb-m-legend">
+        {/* data-build: the running build's id, inspectable from DevTools/element
+            source but invisible on screen. The visible "גרסה" stamp did its
+            diagnostic job (D148) and was retired at Ronen's request — the
+            attribute keeps screenshots+DOM identifiable without UI noise. */}
+        <div className="cb-m-legend" data-build={buildStamp}>
           <span className="cb-m-legend-h">ערוצים:</span>
           {CHANNEL_ORDER.map((ch) => (
             <span key={ch} className="ch-leg">
@@ -352,11 +357,6 @@ export function CalendarScreen({
               {CHANNEL_CONFIG[ch].name}
             </span>
           ))}
-          {buildStamp && (
-            <span className="cb-m-build">
-              גרסה <bdi className="ltr-num">{buildStamp}</bdi>
-            </span>
-          )}
         </div>
         <p className="cb-m-hint">
           לחיצה על פס הזמנה פותחת כרטיס פעולות · צבע הפס לפי סטטוס תשלום
