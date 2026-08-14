@@ -267,3 +267,7 @@ LIVENESS_DB_URL="postgres://guesthub_app:<PW>@172.18.0.4:5432/postgres" pnpm liv
 # read-only preflight: default_transaction_read_only=on (session)
 # cluster fingerprint: 7623660179909357606 — matches the pinned production identity (D142)
 ```
+
+## 15. עבודה ישירה בעץ הפרודקשן — בלי worktrees (D147, כלל קבוע)
+
+אסור ליצור, להשתמש או להציע git worktree אלא בבקשה מפורשת של רונן; עבודה על branch ישירות ב-`/var/www/guesthub`, בלי `next dev` ובלי `pnpm build` בתיקייה — הפרטים וההשלכות על אימות לפני deploy: ‏DECISIONS.md ‏D147.

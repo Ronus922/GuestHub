@@ -12,6 +12,8 @@
 9. **CSS Cleanup** - כשמוחקים/מבטלים אלמנט → תמיד שאל: "למחוק גם את ה-CSS שלו?" אל תשאיר CSS יתום!
 10. **ניהול context (קריטי!)** - אחרי כל 2 משימות חייבים להריץ `/compact`. אם המשתמש מסרב - להזהיר: "השיחה תתקע בקרוב ולא יהיה אפשר לשחזר". לפני סגירה - `/end`. **אסור לחכות ל-3+ משימות בלי compact!**
 
+> **worktrees — אסור ללא בקשה מפורשת:** אסור ליצור, להשתמש או להציע git worktree אלא אם רונן ביקש זאת במפורש בבקשה הנוכחית. עבודה נעשית על branch ישירות ב-`/var/www/guesthub`. בתיקיית הפרודקשן אסור `next dev` ואסור `pnpm build` (שניהם דורסים את `.next` החי) — build רק דרך `PROD_DEPLOY_OK=1 npm run deploy:prod` ובאישור רונן. אימות לפני deploy: `tsc --noEmit` + lint + הוכחת קוד; בדיקה ויזואלית — אחרי deploy, עם rollback מוכן. (D147)
+
 ## Concurrency — עבודה במקביל על אותו ריפו
 
 **לפני `git add <file>` — בדוק אם הקובץ כבר `M` משינוי שאינו שלך. אם כן — staging של hunks בלבד (`git add -p`, או patch/`update-index` ל-index), לעולם לא הקובץ כולו.**
@@ -27,11 +29,12 @@
 
 ## Production Runtime — העץ הרץ הוא פרודקשן בלבד (מ-2026-07-24)
 
-`/var/www/guesthub` מסומן `.production-runtime`: חי על `main` בלבד, מתעדכן אך ורק
-דרך `PROD_DEPLOY_OK=1 npm run deploy:prod`. **אסור לפתח בו** — כל עבודה (אדם או
-סוכן) נעשית ב-git worktree נפרד (`git worktree add ~/worktrees/<name> <base>`),
-נבנית ונבדקת שם, ומגיעה לפרודקשן רק דרך PR ל-main + הדפלוי הקנוני. `pnpm build`
-ידני בעץ המסומן נחסם ע"י prebuild-guard (fail-closed, בכוונה).
+`/var/www/guesthub` מסומן `.production-runtime`: מוגש מ-`main`, מתעדכן אך ורק
+דרך `PROD_DEPLOY_OK=1 npm run deploy:prod`. מ-D147 (2026-08-14) עבודה נעשית על
+branch ייעודי ישירות בעץ הזה (worktree — רק בבקשה מפורשת של רונן), התיקייה
+חוזרת ל-`main` בסוף הריצה, והשינוי מגיע לפרודקשן רק דרך PR ל-main + הדפלוי
+הקנוני. `pnpm build` ידני בעץ המסומן נחסם ע"י prebuild-guard (fail-closed,
+בכוונה) — build רק דרך סקריפט ה-deploy.
 
 ## Minimum Padding (חובה!)
 | Element | Minimum |
