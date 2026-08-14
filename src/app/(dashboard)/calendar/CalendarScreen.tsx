@@ -66,6 +66,7 @@ export function CalendarScreen({
   ratePlans,
   can,
   vatRate,
+  buildStamp,
 }: {
   data: CalendarData;
   statusItems: LookupItem[];
@@ -75,6 +76,8 @@ export function CalendarScreen({
   ratePlans: { id: string; name: string; code: string; plan_kind: string }[];
   can: CalendarCan;
   vatRate: number;
+  /** first 6 chars of the running .next/BUILD_ID — screenshots self-identify */
+  buildStamp?: string;
 }) {
   const router = useRouter();
   const { openNewReservation, flashId } = useNewReservation();
@@ -349,6 +352,11 @@ export function CalendarScreen({
               {CHANNEL_CONFIG[ch].name}
             </span>
           ))}
+          {buildStamp && (
+            <span className="cb-m-build">
+              גרסה <bdi className="ltr-num">{buildStamp}</bdi>
+            </span>
+          )}
         </div>
         <p className="cb-m-hint">
           לחיצה על פס הזמנה פותחת כרטיס פעולות · צבע הפס לפי סטטוס תשלום

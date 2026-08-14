@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { redirect } from "next/navigation";
 import { getActor, hasPermission } from "@/lib/auth/actor";
 import { sql } from "@/lib/db";
@@ -9,6 +11,16 @@ import { CalendarScreen } from "./CalendarScreen";
 import { CALENDAR_DAYS } from "./types";
 
 export const dynamic = "force-dynamic";
+
+// The running build's id, surfaced as a tiny stamp by the mobile legend so any
+// phone screenshot self-identifies which build it shows (App Router embeds no
+// buildId in the HTML). Read once per server boot; "dev" outside a built tree.
+let buildStamp = "dev";
+try {
+  buildStamp = readFileSync(join(process.cwd(), ".next", "BUILD_ID"), "utf8").trim().slice(0, 6);
+} catch {
+  /* dev server / test harness — no .next/BUILD_ID */
+}
 
 // /calendar — the production occupancy calendar (§D). URL-driven range:
 // ?from=YYYY-MM-DD over a fixed 3-week window starting today (property timezone).
@@ -63,6 +75,7 @@ export default async function CalendarPage({
         chargeCard: hasPermission(actor, "payments.card_charge"),
       }}
       vatRate={vatRate}
+      buildStamp={buildStamp}
     />
   );
 }
