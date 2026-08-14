@@ -1,0 +1,132 @@
+/* ============================================================
+   install-prompt.css — the PWA install banner.
+   Prefix: pwa-install-. Rendered ONCE from the root layout
+   (components/layout/InstallPrompt.tsx). Phones only: the JS half gates on
+   BELOW_MD_QUERY + (pointer: coarse); the same md ladder value wraps everything
+   here so a desktop viewport can never paint it even if state said otherwise.
+   ============================================================ */
+
+@layer components {
+  @media (max-width: 767px) {
+    .pwa-install {
+      position: fixed;
+      inset-inline: 0;
+      inset-block-end: 0;
+      /* above the sidebar drawer scrim (z-40, Shell.tsx), below popovers (60)
+         and the booking-window overlay (120) — an install hint must never
+         cover a dialog or menu the user opened on purpose. */
+      z-index: 50;
+      display: flex;
+      justify-content: center;
+      padding: 12px;
+      /* same treatment as .md-ft — without the inset the card sits directly
+         on the iOS home indicator; max() keeps 12px the floor elsewhere. */
+      padding-block-end: max(12px, env(safe-area-inset-bottom));
+      /* the wrapper spans the viewport width; only the card itself is real */
+      pointer-events: none;
+    }
+
+    .pwa-install-card {
+      pointer-events: auto;
+      width: min(420px, 100%);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      box-shadow: var(--shadow-float);
+      animation: pwa-install-rise 0.3s ease;
+    }
+
+    .pwa-install-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    /* the real app icon (public/icons/icon-192.png), not a glyph — the vendored
+       symbols font has no install_mobile, and the actual icon sells the install
+       better anyway: it is exactly what will land on the home screen. */
+    .pwa-install-appicon {
+      flex: none;
+      border-radius: 12px;
+    }
+
+    .pwa-install-text {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      /* keep the two lines optically centered against the 48px icon */
+      padding-block-start: 2px;
+    }
+
+    .pwa-install-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--ink);
+    }
+
+    .pwa-install-sub {
+      font-size: 13.5px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+
+    /* DOM order icon → text → close; text is the flex:1 spacer, so the close
+       button lands on the far inline-end (left, in RTL) with no extra rules. */
+    .pwa-install-close {
+      flex: none;
+      margin-block-start: -6px;
+    }
+
+    /* .btn is inline-flex and hugs its label; the card's single action should
+       span it — 44px tall (.btn) so the touch target holds. */
+    .pwa-install-cta {
+      width: 100%;
+    }
+
+    .pwa-install-steps {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--field-bg);
+      border-radius: var(--r-md);
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .pwa-install-steps li {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pwa-install-steps .ms-icon {
+      flex: none;
+      color: var(--brand);
+    }
+
+    @keyframes pwa-install-rise {
+      from {
+        transform: translateY(16px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .pwa-install-card {
+        animation: none;
+      }
+    }
+  }
+}

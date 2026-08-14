@@ -197,6 +197,11 @@ const ICONS = {
   "door-front": "door_front",
   pdf: "picture_as_pdf",
   upload: "upload_file",
+  // --- PWA install prompt (layout/InstallPrompt) — the iOS share-sheet glyph
+  // its Add-to-Home-Screen steps point at. The vendored woff2 has no
+  // install_mobile/add_to_home_screen; the banner shows the real app icon PNG
+  // instead, and `more`/`plus`/`check` above cover the other steps.
+  "ios-share": "ios_share",
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -1,7 +1,10 @@
 {
+  "id": "/",
   "name": "GuestHub",
   "short_name": "GuestHub",
+  "description": "מערכת ניהול מלון דירות — יומן, הזמנות, מחירים ואורחים.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "dir": "rtl",
   "lang": "he",

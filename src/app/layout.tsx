@@ -1,7 +1,16 @@
 import type { Metadata, Viewport } from "next";
 import { Assistant } from "next/font/google";
 import localFont from "next/font/local";
+import { InstallPrompt } from "@/components/layout/InstallPrompt";
 import "./globals.css";
+
+// Chrome fires `beforeinstallprompt` ONCE, and it can land before React
+// hydrates — a listener attached in a useEffect would simply miss it. This
+// parser-executed inline script ships with the initial HTML, stashes the event
+// for components/layout/InstallPrompt.tsx, and (via preventDefault) suppresses
+// Chrome's own mini-infobar so the only install UI is our branded one.
+const pwaInstallCapture =
+  'window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();window.__ghPwaInstall=e});';
 
 const assistant = Assistant({
   subsets: ["hebrew", "latin"],
@@ -23,7 +32,7 @@ export const metadata: Metadata = {
   title: "GuestHub",
   description:
     "Multi-tenant PMS for aparthotels and vacation rentals — reservations, occupancy, rates, guests, housekeeping.",
-  // Icon assets live in public/ (public/favicon.ico + public/icons/*) — the
+  // Icon assets live in public/ (public/favicon.ico + public/icons) — the
   // old src/app/favicon.ico convention file was removed so the two never fight
   // over the /favicon.ico route. All variants are declared here explicitly.
   icons: {
@@ -35,6 +44,13 @@ export const metadata: Metadata = {
     apple: [{ url: "/icons/apple-touch-icon-180.png", sizes: "180x180" }],
   },
   manifest: "/manifest.webmanifest",
+  // iOS reads these (not the manifest) for Home-Screen installs: standalone
+  // chrome + the launcher title under the icon.
+  appleWebApp: {
+    capable: true,
+    title: "GuestHub",
+    statusBarStyle: "default",
+  },
 };
 
 // Until this existed, Next emitted only its default `width=device-width,
@@ -72,7 +88,11 @@ export default function RootLayout({
        var(--font-sans) }` collapsed, and the whole app silently rendered in
        Tailwind's ui-sans-serif fallback instead of Assistant. */
     <html lang="he" dir="rtl" className={`${assistant.variable} ${materialSymbols.variable}`}>
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <script dangerouslySetInnerHTML={{ __html: pwaInstallCapture }} />
+        {children}
+        <InstallPrompt />
+      </body>
     </html>
   );
 }
