@@ -607,3 +607,19 @@
     margin-block: 4px;
   }
 }
+
+/* ============================================================
+   9 · scrollbar-gutter — the scrollbar sits on the LEFT in RTL (audit F-9)
+   When a classic (non-overlay) scrollbar appears on a scroller that did not
+   have one — a panel growing past the fold, a filter expanding a table — the
+   whole content shifts sideways by the scrollbar's width. In RTL that shift
+   happens on the START side, which is where every label and card is anchored,
+   so it reads as the entire UI twitching. `stable` reserves the lane up front.
+   Scoped to the two primary scrollers (DECISIONS D-R2), not `*`: overlay
+   scrollbars (macOS, all coarse-pointer devices after §5's rule) reserve 0px,
+   so this is inert there and costs a thin lane only where the twitch existed.
+   ============================================================ */
+main.thin-scroll,
+.dw-bd {
+  scrollbar-gutter: stable;
+}
