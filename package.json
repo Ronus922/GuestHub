@@ -120,11 +120,8 @@
     "check:alerts-window-includes-cancelled": "node scripts/check-alerts-window-includes-cancelled.mjs",
     "check:grants": "node scripts/check-grants.mjs",
     "check:liveness-cluster-fingerprint": "node scripts/check-liveness-cluster-fingerprint.mjs",
-<<<<<<< HEAD
-    "check:backup-offhost": "node scripts/check-backup-offhost.mjs"
-=======
+    "check:backup-offhost": "node scripts/check-backup-offhost.mjs",
     "check:pay-charged-write-path": "node scripts/check-pay-charged-write-path.mjs"
->>>>>>> origin/fix/charged-button-write
   },
   "engines": {
     "node": ">=20 <21"
