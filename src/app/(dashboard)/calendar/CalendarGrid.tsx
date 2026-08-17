@@ -383,9 +383,9 @@ export function CalendarGrid({
       ghost.classList.remove("new");
       ghost.classList.add("rsz", "live");
     } else if (s.mode === "create" && s.startDate) {
-      // preview the RAW dragged range (min=1) so the highlighted band is exactly
-      // what will be validated on release — no silent extend-to-minimum.
-      const t = createRangeTarget(s.startDate, dayDelta, 1);
+      // preview the RAW dragged range so the highlighted band is exactly what
+      // will be validated on release — no silent extend-to-minimum.
+      const t = createRangeTarget(s.startDate, dayDelta);
       const geo = cellRangeGeometry(data.from, data.days, t.ci, t.co);
       const room = data.rooms[s.roomIndex];
       const invalid = rangeInvalid(room, t.ci, t.co);
@@ -794,7 +794,8 @@ export function CalendarGrid({
       // RAW selection — never auto-extend to the minimum (owner decision): a
       // sub-minimum drag must be BLOCKED with a message, not silently grown to a
       // legal length, so the enforcement is visible at the moment of selection.
-      const t = createRangeTarget(s.startDate, dayDelta, 1);
+      // The range math no longer even takes a minimum, so this is by construction.
+      const t = createRangeTarget(s.startDate, dayDelta);
       const room = data.rooms[s.roomIndex];
       if (!room) return;
       if (rangeInvalid(room, t.ci, t.co)) {

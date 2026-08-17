@@ -132,28 +132,31 @@ export function barGeometry(
   return { start, width: Math.max(end - start, 0.5 / days), clippedStart, clippedEnd };
 }
 
-// Target of an empty-cell CREATE drag: the anchor cell plus the signed day
-// delta select whole nights in either horizontal direction. The first
-// selected cell is always a stay night, so checkout is exclusive one day
-// past the last selected cell, and the range never shrinks below the
-// cell's minimum stay (§4).
+// Target of an empty-cell CREATE drag. A cell is a DATE, not a night: the
+// nights are the GAPS between the selected dates, so cells 17+18 are the one
+// night 17→18, and three cells are two nights. ci/co are therefore simply the
+// min and max of the anchor and anchor+dayDelta — no +1 on either edge, and
+// the anchor is a stay night only when the drag runs forward (dragging the
+// other way makes the anchor the checkout date). The single-cell case is the
+// one exception: with no gap to measure it opens the natural one night.
+// Invariant: co > ci always (§4).
 export function createRangeTarget(
   startDate: DateOnly,
   dayDelta: number,
-  minNights = 1,
 ): { ci: DateOnly; co: DateOnly; nights: number } {
   const end = addDays(startDate, dayDelta);
-  const ci = dayDelta < 0 ? end : startDate;
-  const lastNight = dayDelta < 0 ? startDate : end;
-  let co = addDays(lastNight, 1);
-  const min = Math.max(1, minNights);
-  if (nightsBetween(ci, co) < min) co = addDays(ci, min);
+  const ci = end < startDate ? end : startDate;
+  const far = end > startDate ? end : startDate;
+  const co = dayDelta === 0 ? addDays(ci, 1) : far;
   return { ci, co, nights: nightsBetween(ci, co) };
 }
 
 // Selection-band geometry: FULL day cells (cell edge to cell edge), unlike
-// reservation pills which run mid-cell to mid-cell — a selected night
-// highlights its whole cell. Same fraction space, same clipping rules.
+// reservation pills which run mid-cell to mid-cell. The band covers every cell
+// the pointer touched — the checkout DATE included — because in the cell-is-a-
+// date model that cell is half of the selection the user drew: N nights span
+// N+1 cells, so the band ends one cell past the checkout's own edge. Same
+// fraction space, same clipping rules.
 export function cellRangeGeometry(
   from: DateOnly,
   days: number,
@@ -161,7 +164,7 @@ export function cellRangeGeometry(
   co: DateOnly,
 ): { start: number; width: number } {
   const start = Math.min(Math.max(nightsBetween(from, ci) / days, 0), 1);
-  const end = Math.min(Math.max(nightsBetween(from, co) / days, 0), 1);
+  const end = Math.min(Math.max((nightsBetween(from, co) + 1) / days, 0), 1);
   return { start, width: Math.max(end - start, 0) };
 }
 

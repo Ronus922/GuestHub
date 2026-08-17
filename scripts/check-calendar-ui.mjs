@@ -97,20 +97,27 @@ assert.equal(ix.createActivated(-7, 3), true, "both horizontal directions work")
 assert.equal(ix.createActivated(7, 8), false, "vertical-dominant movement is a scroll, not a selection");
 assert.equal(ix.createActivated(5, 0), false, "below the threshold nothing activates");
 
-// ---- empty-cell range target (§4): whole nights, exclusive checkout ----
-let cr = ix.createRangeTarget("2026-07-10", 0);
-assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-10", "2026-07-11", 1], "single cell = one night");
-cr = ix.createRangeTarget("2026-07-10", 2);
-assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-10", "2026-07-13", 3], "dragging left (RTL) selects later nights");
-cr = ix.createRangeTarget("2026-07-10", -2);
-assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-08", "2026-07-11", 3], "dragging right selects earlier nights, anchor stays a night");
-cr = ix.createRangeTarget("2026-07-10", 0, 2);
-assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-10", "2026-07-12", 2], "cell min-stay stretches a single-cell selection");
+// ---- empty-cell range target (§4): a cell is a DATE, a night is the GAP
+// between two of them. Two cells (17+18) are therefore ONE night (17→18), not
+// two — the old model counted the anchor cell itself as a night and every
+// selection came out one night too long. The single-cell click is the only
+// special case: with no gap to measure it opens the natural one night. ----
+let cr = ix.createRangeTarget("2026-07-17", 0);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-17", "2026-07-18", 1], "a single cell has no gap to measure → one night");
+cr = ix.createRangeTarget("2026-07-17", 1);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-17", "2026-07-18", 1], "two cells (17+18) = ONE night, 17→18");
+cr = ix.createRangeTarget("2026-07-17", 2);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-17", "2026-07-19", 2], "three cells = two nights (dragging left = later dates in RTL)");
+cr = ix.createRangeTarget("2026-07-17", -1);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-16", "2026-07-17", 1], "dragging right: the anchor becomes the CHECKOUT date, not a night");
+cr = ix.createRangeTarget("2026-07-17", -2);
+assert.deepEqual([cr.ci, cr.co, cr.nights], ["2026-07-15", "2026-07-17", 2], "three cells backwards = two nights");
 
 // ---- selection band geometry: full cells, not mid-cell ----
 let cg = ix.cellRangeGeometry("2026-07-04", 21, "2026-07-08", "2026-07-11");
 assert.ok(Math.abs(cg.start - 4 / 21) < 1e-9, "selection starts at the cell edge");
-assert.ok(Math.abs(cg.width - 3 / 21) < 1e-9, "3 selected nights = exactly 3 whole cells");
+assert.ok(Math.abs(cg.width - 4 / 21) < 1e-9,
+  "N nights span N+1 cells: the band must cover the checkout cell too, so the user sees exactly the cells they dragged over");
 cg = ix.cellRangeGeometry("2026-07-04", 21, "2026-07-01", "2026-07-06");
 assert.equal(cg.start, 0, "selection clips at the visible range start");
 cg = ix.cellRangeGeometry("2026-07-04", 21, "2026-07-20", "2026-08-02");
