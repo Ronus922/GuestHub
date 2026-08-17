@@ -44,6 +44,17 @@ module.exports = {
         NODE_ENV: "production",
         CHANNEL_WORKER_INTERVAL_MS: "20000",
       },
+      // identical to the web app's list below — see the note there
+      filter_env: [
+        "CLAUDE_",
+        "VSCODE_",
+        "SSH_",
+        "XDG_",
+        "COPILOT_",
+        "CODEX_",
+        "AI_AGENT",
+        "PROD_DEPLOY_OK",
+      ],
     },
     {
       name: "guesthub",

@@ -66,10 +66,22 @@ echo "→ applying pending migrations before restart ..."
 node scripts/apply-pending-migrations.mjs || fail "migrations failed — deploy ABORTED before restart (old processes keep running; cleanly-applied files are recorded, the failed one stays pending)"
 
 # 10. restart ONLY the two guesthub processes (unrelated PM2 services untouched)
-pm2 restart "$PM2_APP" --update-env || fail "pm2 restart failed"
-# the worker is declared in ecosystem.config.cjs; startOrRestart registers it on
-# the first deploy and restarts it on every later one. The web app is NOT declared
-# there — restarting it by name above leaves its existing registration intact.
+pm2 restart "$PM2_APP" || fail "pm2 restart failed"
+# Both apps are declared in ecosystem.config.cjs (changed in D149). The web app is
+# still restarted BY NAME on purpose: `pm2 restart <name>` reuses the live
+# registration and reads no file, so a deploy can never re-register it.
+#
+# --update-env was removed from that line deliberately (D150). With the flag, pm2
+# copies the *operator's shell* environment (Object.assign({}, process.env) in
+# API.js `_operate`) into the registration on every deploy — PROD_DEPLOY_OK and the
+# npm_* variables included — and merges it in additively (Utility.extend never
+# deletes), so the pollution accumulates. filter_env is NOT applied in the
+# restart-by-name path; it lives only in Common.prepareAppConf, which is why the
+# startOrRestart below (i.e. _startJson — it reads this file) can keep the flag.
+#
+# The app's own configuration never came from pm2 anyway: Next loads .env.local
+# itself at runtime via loadEnvConfig, and the worker via --env-file-if-exists.
+# startOrRestart registers the worker on the first deploy and restarts it later.
 pm2 startOrRestart ecosystem.config.cjs --only "$PM2_WORKER" --update-env \
   || fail "pm2 restart of $PM2_WORKER failed"
 pm2 save --force >/dev/null 2>&1 || true

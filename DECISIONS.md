@@ -3489,3 +3489,70 @@ prebuild-guard) היה פתוח בסביבה של תהליך פרודקשן, ל�
 הנכונה (בינארי ישיר) אך עם הסביבה המזוהמת. סגירת הפער דורשת
 `pm2 delete guesthub && pm2 start ecosystem.config.cjs --only guesthub`
 בחלון שירות מאושר, ולא נעשתה כאן.
+
+## D150 — ‏`--update-env` הוסר מהרסטארט של ה-web app; התצורה מגיעה מ-`.env.local` (2026-08-17)
+
+**‏`--update-env` היה מנגנון הזיהום עצמו, לא רק נתיב שעוקף את הסינון.** ‏D149
+תיאר את הרישום המזוהם כתוצר של הרמה חד-פעמית מטרמינל אינטראקטיבי. זה היה
+תיאור חלקי. ‏`lib/API.js` בתוך `_operate`:
+
+```js
+if (update_env === true) {
+  if (conf.PM2_PROGRAMMATIC == true)
+    new_env = Common.safeExtend({}, process.env);
+  else
+    new_env = Object.assign({}, process.env);
+  Object.keys(envs).forEach(function(k) { new_env[k] = envs[k]; });
+}
+else { new_env = envs; }
+```
+
+המקור הוא `process.env` של ה-**shell שמריץ את pm2**, כלומר של המפעיל. כל
+`PROD_DEPLOY_OK=1 npm run deploy:prod` הזריק מחדש לרישום את שער האופט-אין
+של הדפלוי ואת ‎20 משתני ה-`npm_*`, ושמר אותם ל-`~/.pm2/dump.pm2`. הזיהום לא
+היה שריד היסטורי — הוא חודש בכל דפלוי.
+
+**המנגנון מוסיף ודורס בלבד, לעולם לא מנקה.** ‏`God.restartProcessId` מבצע
+`Utility.extend(proc.pm2_env.env, env)` תחת הקומנט "Merge new application
+configuration on restart", ו-`Utility.extend` עובר רק על מפתחות ה-**מקור**:
+
+```js
+extend : function(destination, source){
+  if (!source || typeof source != 'object') return destination;
+    Object.keys(source).forEach(function(new_key) {
+      if (source[new_key] != '[object Object]')
+        destination[new_key] = source[new_key];
+    });
+  return destination;
+},
+```
+
+מפתח שקיים ברישום ואינו בסביבה החדשה נשאר. משמעות מעשית: הזיהום **מצטבר**
+לאורך דפלויים ואינו ניתן לניקוי ע"י רסטארט — רק ע"י `delete` + `start`.
+
+**הראיה שההסרה בטוחה.** בצילום ה-`pm2_env` שלפני התיקון: ‏`DATABASE_URL
+present: false`, ‏`NEXT_PUBLIC_* keys: none` — בעוד האתר שירת ‎200 ברציפות.
+כלומר מה שהאפליקציה באמת צריכה מעולם לא הגיע אליה דרך pm2. ‏Next טוען את
+‏`.env.local` בעצמו בזמן ריצה (`next-server.js:643,1049` → `loadEnvConfig`
+→ `@next/env`), וה-worker דרך `--env-file-if-exists=.env.local`. ארבעת
+ה-`NEXT_PUBLIC_*` אכן נקראים בזמן ריצה בצד השרת (‏7/9/8/2 קבצים ב-`.next/server`
+עם קריאת `process.env` חיה; ב-`.next/static` אפס — שם הם הוטבעו ב-build),
+אבל מקורם הוא הקובץ. גם `NODE_ENV`/`PORT` אינם תלויים בדגל: הם שמורים
+ב-`pm2_env.env` מה-`pm2 start`, ו-`node_modules/next/dist/bin/next:68` מבצע
+בלאו הכי `process.env.NODE_ENV = process.env.NODE_ENV || "production"` עבור
+`start`, בעוד הפורט מגיע מ-`args: "start -p 3007"`.
+
+**‏`filter_env` חל רק בנתיב `_startJson`, ולכן שני ה-apps מטופלים אחרת.**
+המופע היחיד של השדה בכל קוד pm2 6.0.14 הוא ב-`lib/Common.js` בתוך
+`prepareAppConf`, שנקרא רק מ-`_startScript`/`_startJson` — אין לו זכר
+ב-`lib/God.js`, ב-`lib/God/` או ב-`lib/API.js`. מכאן:
+- **ה-worker** מופעל דרך `pm2 startOrRestart ecosystem.config.cjs`, כלומר
+  `_startJson` — הקובץ נקרא, `filter_env` מוחל, והשדה שנוסף כאן לרשומתו מגן
+  עליו. השורה נשארה כמות שהיא, כולל הדגל.
+- **ה-web app** מופעל בשורה 69 דרך `pm2 restart <name>`, נתיב שאינו קורא קובץ
+  ואינו מחיל `filter_env` בשום שלב. שם אין מנגנון סינון להישען עליו, ולכן
+  התיקון היחיד האפשרי הוא הסרת הדגל.
+
+**הסייג, במכוון.** מרגע ההסרה, משתנה שמישהו מייצא ידנית ב-shell לפני הרצת
+הדפלוי לא יגיע יותר לתהליך. זו הכוונה: ערוץ התצורה המוצהר היחיד הוא
+‏`.env.local`, ומשתנה שאינו בו אינו אמור להשפיע על פרודקשן.
