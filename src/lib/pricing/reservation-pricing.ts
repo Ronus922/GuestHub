@@ -273,6 +273,34 @@ export async function priceReservationStays<T extends ReservationStayInput>(
   for (const stay of stays) {
     const skip = stay.rrId != null && (opts.skipChecksForRr?.has(stay.rrId) ?? false);
 
+    // D153 invariant. skipChecksForRr exists for ONE case: a status-only edit,
+    // where a stay whose room/dates/occupancy/plan are untouched cannot fail on
+    // capacity it already holds (§F). The caller builds that set by comparing
+    // the incoming stay to the stored row, so a drift in that comparison would
+    // silently wave a genuinely re-dated stay past availability AND restriction
+    // checks — the one bypass in the seam that produces no error at all.
+    //
+    // Re-read the committed dates here, from the DB rather than from the
+    // caller's own comparison, so the guard is independent of the logic it
+    // guards. A skipped stay MUST still occupy exactly its committed range.
+    if (skip && stay.rrId != null) {
+      const [committed] = await db<{ check_in: string; check_out: string }[]>`
+        SELECT check_in::text AS check_in, check_out::text AS check_out
+        FROM guesthub.reservation_rooms
+        WHERE id = ${stay.rrId} AND tenant_id = ${tenantId}`;
+      if (
+        committed &&
+        (committed.check_in !== stay.checkIn || committed.check_out !== stay.checkOut)
+      ) {
+        throw new StayPricingError(
+          `שגיאה פנימית: שהות שסומנה לדילוג על בדיקות שינתה תאריכים ` +
+            `(${committed.check_in}→${committed.check_out} הפך ל-${stay.checkIn}→${stay.checkOut}). ` +
+            `הבדיקות לא דולגו.`,
+          "INVALID_DATE_RANGE",
+          stay.roomId,
+        );
+      }
+    }
     // manual_total (D106) outranks everything: the operator's exact stay total.
     // An explicit priceMode wins; absent = the legacy isManualRate semantics.
     const manualTotal = stay.priceMode === "manual_total" ? (stay.manualTotal ?? null) : null;
