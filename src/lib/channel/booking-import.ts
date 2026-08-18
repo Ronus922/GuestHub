@@ -554,6 +554,13 @@ async function applyLiveRevision(
     // + price_mode='manual_night' mark "not engine-priced"; pricing_snapshot
     // stays NULL — there is no engine quote to snapshot, and inventing one
     // would be dishonest.
+    //
+    // Stay RESTRICTIONS are likewise not enforced here, and that is deliberate
+    // (D153), not an omission: the booking already happened at the channel, so
+    // refusing the row would hide a sold room rather than un-sell it. They ARE
+    // checked and reported after the write — see reportOtaRestrictionViolations
+    // below. Availability is a different matter and IS checked above (:396-400),
+    // because a double-booked room must surface as a conflict.
     const ratePerNight = round2(stay.nights > 0 ? stay.amount / stay.nights : stay.amount);
     await tx`
       INSERT INTO guesthub.reservation_rooms
