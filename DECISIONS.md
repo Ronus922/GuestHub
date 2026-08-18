@@ -3668,15 +3668,42 @@ night" — ולכן נמחק ולא רק תוקן.
 ההתנהגות שמסלול הגרירה מסרב לה במפורש (הוא **חוסם** בהודעה במקום להאריך
 בשקט, כמתועד בקומנט ב-`:794-797`). הפער קדם לרשומה הזו ולא נסגר בה.
 
-**פער נמדד שהרשומה לא סוגרת: אין אכיפת מינימום לילות בשרת.**
-‏`nightsRuleViolation` ([rules.ts:138](src/lib/rates/rules.ts#L138)) הוא
-הוולידטור היחיד, ואתר הקריאה היחיד שלו בכל `src/` הוא ה-`nightsViolation`
-של הגריד — כלומר **לקוח בלבד**. לא ב-`reservations/actions.ts` ולא
-ב-`public-booking/create-booking.ts` יש בדיקת min/max-stay ביצירה. לכן
-"האכיפה נשארת ב-`nightsViolation` ובשרת" נכון רק בחציו הראשון: מסלול
-שעוקף את הגריד (‏API, ‏public booking, ‏action ישיר) יכול ליצור שהות
-מתחת למינימום. הפער קדם לשינוי הזה — הפרמטר שנמחק גם הוא לא אכף דבר
-(הוא **מתח** טווח במקום לחסום, ושני אתרי הקריאה נטרלו אותו עם `1`).
+**תיקון (2026-08-18) — כאן נרשם ש"אין אכיפת מינימום לילות בשרת". זה
+שגוי, והתיקון מחליף את הטענה.** האכיפה קיימת, בכל נתיב שיוצר או מזיז
+שהות חיה. הטעות נבעה מ-grep שחיפש `nightsRuleViolation` ו-`min_stay_*`
+בקבצי ה-actions ולא מצא אותם — הם באמת לא שם, כי האכיפה עוברת שרשרת
+של ארבע חוליות שאף אחת מהן אינה מכילה את המחרוזות האלה:
+
+| חוליה | קובץ:שורה |
+|---|---|
+| `validateAndPriceStays` — עטיפה דקה: `assertNoInternalOverlap` והמרת שגיאה, אפס לוגיקת מגבלות | [actions.ts:104](src/app/(dashboard)/reservations/actions.ts#L104) |
+| `priceReservationStays` | [reservation-pricing.ts:262](src/lib/pricing/reservation-pricing.ts#L262) |
+| `calculateReservationPrice` | [engine.ts:124](src/lib/pricing/engine.ts#L124) |
+| `stayRestrictionViolationStructured` — הוולידטור המשותף | [engine.ts:363](src/lib/pricing/engine.ts#L363) → [rules.ts:56](src/lib/rates/rules.ts#L56) |
+
+**ההבחנה הקריטית: `enforceRestrictions` אינו מדלג על חישוב.** המנוע תמיד
+מעריך את **כל** המגבלות ומחזיר אותן ב-`rq.errors`; הדגל מחליט אילו קודים
+**זורקים** ([reservation-pricing.ts:331-337](src/lib/pricing/reservation-pricing.ts#L331-L337),
+והסינון עצמו ב-[firstEnforcedError:161-174](src/lib/pricing/reservation-pricing.ts#L161-L174)).
+כיבוי הדגל הופך את הבדיקה ל**לא-חוסמת**, לא ל**לא-קיימת**. ההבחנה הזו
+קובעת מה בכלל מותר להסיק מהיעדר חסימה: שהות שנכתבה אינה ראיה לכך שהיא
+עברה בדיקה — רק לכך שהקוד שלה לא היה ברשימת החוסמים באותו מסלול.
+
+הדגל דלוק בכל נתיב יצירה/הזזה חי: `createReservationAction` מעביר `true`
+ללא תנאי ([actions.ts:316](src/app/(dashboard)/reservations/actions.ts#L316));
+הבוקינג הציבורי כנ"ל
+([create-booking.ts:116](src/lib/public-booking/create-booking.ts#L116));
+העדכון וההזזה מעבירים `isBlocking(status)`
+([actions.ts:620](src/app/(dashboard)/reservations/actions.ts#L620),
+[:1125](src/app/(dashboard)/reservations/actions.ts#L1125)), שהוא true לכל
+סטטוס פרט ל-`cancelled` (D126) — כלומר `false` מגיע רק במעבר לביטול.
+
+**‏`nightsRuleViolation` ([rules.ts:138](src/lib/rates/rules.ts#L138)) הוא
+ולידטור לקוח בלבד** — תת-קבוצה **מכוונת** של הוולידטור המשותף: אורך שהות
+בלבד, בלי CTA/CTD/stop_sell. אתר הקריאה היחיד שלו הוא ה-`nightsViolation`
+של הגריד. **היעדרו מקבצי ה-actions אינו מעיד על היעדר אכיפה** — השרת אוכף
+סט **רחב יותר**, דרך הוולידטור המשותף. הפער שכן קיים בין שני הסטים נרשם
+ב-D154; ייבוא ה-OTA, שבאמת אינו מוודא דבר, נרשם ב-D153.
 
 **השומר.** ‏`check:calendar-ui` מחזיק את טבלת האמת המלאה (עוגן
 `2026-07-17`, חמישה מקרים: ‏0/‏+1/‏+2/‏-1/‏-2)
@@ -3685,4 +3712,87 @@ night" — ולכן נמחק ולא רק תוקן.
 החמישי (משבצת בודדת) עבר משום ששני המודלים מסכימים עליו — אין שם רגרסיה
 להוכיח.
 
+### פתוח — לא הוכרע: דאבל-קליק מותח בשקט, גרירה חוסמת
+
+שני מסלולי יצירה מאותו גריד מטפלים בשהות מתחת למינימום **הפוך**, ואף
+אחת מהתנהגויות לא הוכרעה כנכונה:
+
+| מסלול | קוד | סאב-מינימום |
+|---|---|---|
+| דאבל-קליק | `addDays(date, Math.max(1, minNights))` ([CalendarGrid.tsx:847](src/app/(dashboard)/calendar/CalendarGrid.tsx#L847)) | **מותח בשקט** למינימום המשבצת |
+| גרירה | `createRangeTarget` + `nightsViolation` ([CalendarGrid.tsx:805-809](src/app/(dashboard)/calendar/CalendarGrid.tsx#L805-L809)) | **חוסם בהודעה**, לא מאריך |
+
+הקומנט ב-[CalendarGrid.tsx:794-797](src/app/(dashboard)/calendar/CalendarGrid.tsx#L794-L797)
+מצהיר שההארכה-בשקט נדחתה במפורש כהכרעת בעלים ("סאב-מינימום חייב להיחסם
+בהודעה, לא לגדול בשקט, כדי שהאכיפה תהיה גלויה ברגע הבחירה") — אבל ההכרעה
+הזו חלה על מסלול הגרירה בלבד, והדאבל-קליק עושה בדיוק את מה שהיא שוללת.
+הפער קדם ל-D152 ולא נסגר בה; הוא נרשם כאן כפריט פתוח, לא כהכרעה.
+
 commit: `4f9002aa` · ענף מקור: `fix/calendar-range-semantics` @ `c53f3de`
+
+## D153 — ייבוא OTA נכתב ללא ולידציית מגבלות שהות, במכוון (2026-08-18)
+
+**ההכרעה.** הזמנות נכנסות מ-Beds24 נכתבות **ללא ולידציית מגבלות שהות
+כלשהי**. [booking-import.ts:554](src/lib/channel/booking-import.ts#L554)
+מכניס ישירות ל-`reservation_rooms`; שינוי הזמנה קיימת הוא
+`DELETE` ([:467](src/lib/channel/booking-import.ts#L467)) ואחריו אותו
+`INSERT` — גם הוא ללא ולידציה, כולל כשהתאריכים החדשים שונים לגמרי.
+‏`pricing_snapshot` נשאר NULL, ו-`is_manual_rate` + `price_mode='manual_night'`
+מסמנים "לא תומחר ע"י המנוע": מחיר הערוץ סמכותי להזמנה של אותו ערוץ, ואין
+ציטוט מנוע שאפשר לצלם ([:548-552](src/lib/channel/booking-import.ts#L548-L552)).
+
+זהו הנתיב **היחיד** מבין ארבעת נתיבי הכתיבה ל-`reservation_rooms` שאינו
+עובר ב-`validateAndPriceStays`/`priceReservationStays`.
+
+**הנימוק.** ההזמנה **כבר קיימת אצל הספק**. דחייה מקומית לא מבטלת אותה —
+היא יוצרת פאנטום: האורח מחזיק אישור מ-Booking.com, והמערכת שאמורה לנהל
+את השהות אינה מכירה בה. בבחירה בין רשומה שמפרה מגבלה מקומית לבין אורח
+שמגיע לנכס בלי רשומה, הרשומה עדיפה.
+
+**ההגנה האמיתית היא מונעת, לא חוסמת.** מה שאמור למנוע הזמנת OTA מפרה
+הוא הקרנת ה-ARI כלפי Beds24 — הספק לא אמור למכור מלכתחילה
+([beds24-ari-projection.ts:257-258](src/lib/channel/beds24-ari-projection.ts#L257-L258)).
+
+**הנגזרת שחייבת להיאמר במפורש:** כל תקלה בהקרנת ה-ARI — טווח שלא נדחף,
+עבודה תקועה, ערך שהתפרש לא נכון — מתורגמת **ישירות** להזמנות שמפרות
+מגבלות, **בלי שום רשת ביטחון במורד הזרם**. אין שלב שני שיתפוס אותן.
+לכן כשל ARI אינו תקלת סנכרון בלבד; הוא כשל אכיפה.
+
+**ההגנות היחידות שכן חלות על הנתיב הזה** הן ברמת ה-DB, ושתיהן אינן
+נוגעות באורך שהות מסחרי:
+- `CHECK (check_out > check_in)` — לפחות לילה אחד
+  ([000_init_schema.sql:264](db/migrations/000_init_schema.sql#L264))
+- ‏`rr_no_double_booking` — ‏exclusion constraint נגד חפיפת שתי שהויות
+  חוסמות על אותו חדר
+  ([037_double_booking_guard.sql:89-96](db/migrations/037_double_booking_guard.sql#L89-L96))
+
+## D154 — פער CTA/CTD/stop_sell בין הגריד לשרת במסלול הידני (2026-08-18)
+
+**פתוח — טעון הכרעה מסחרית. לא הוכרע כאן.**
+
+**הפער.** [rules.ts:131-137](src/lib/rates/rules.ts#L131-L137) מצהיר
+במפורש שפקיד קבלה רשאי להזמין ידנית על תאריך סגור או stop-sold, ולכן
+`nightsRuleViolation` הוא תת-קבוצה שבודקת **אורך בלבד** — והגריד אכן חוסם
+על אורך בלבד. אבל `createReservationAction` מעביר `enforceRestrictions: true`
+**ללא תנאי** ([actions.ts:316](src/app/(dashboard)/reservations/actions.ts#L316)),
+ואין במנוע שום הסתעפות לפי `source`: הערך `"manual_reservation"` משמש
+כמטא-דאטה בסנאפשוט בלבד ולא נבדק באף תנאי לאורך מסלול המגבלות.
+
+**התוצאה — באג פעיל וניתן לשחזור.** פקיד שיבחר תאריך CTA או stop-sold
+יעבור את חסימת הגריד (האורך חוקי), יגיע לשרת, ויידחה עם
+`CLOSED_ON_ARRIVAL` או `ROOM_CLOSED` ‏(`STOP_SELL` ממופה ל-`ROOM_CLOSED`
+עם תאריך, [engine.ts:365](src/lib/pricing/engine.ts#L365), ונחסם תחת דגל
+המגבלות ב-[firstEnforcedError:164-167](src/lib/pricing/reservation-pricing.ts#L164-L167)).
+כלומר המערכת מזמינה אותו לבחור מה שהיא תסרב לשמור.
+
+**שתי הכרעות אפשריות:**
+
+1. **הכוונה המתועדת נכונה** — פקיד קבלה גובר על סגירה מסחרית. אז השרת
+   צריך להסתעף לפי `source` ולהתיר CTA/CTD/stop_sell במסלול הידני, בעוד
+   הבוקינג הציבורי והערוצים ממשיכים לאכוף את הסט המלא.
+2. **הכוונה התיישנה** — סגירה מסחרית מחייבת גם את הפקיד. אז
+   [rules.ts:131-137](src/lib/rates/rules.ts#L131-L137) והגריד צריכים
+   לאכוף את הסט המלא, כדי שהחסימה תופיע ברגע הבחירה ולא אחרי השמירה.
+
+הרשומה אינה מכריעה ואינה ממליצה בין השתיים — ההבדל ביניהן הוא מדיניות
+מסחרית (מי גובר על סגירה), לא שאלה טכנית.
