@@ -137,7 +137,10 @@ export type PricedReservationStay<T extends ReservationStayInput> = T & {
 const AVAILABILITY_CODES: ReadonlySet<PricingErrorCode> = new Set([
   "ROOM_NOT_FOUND", "ROOM_INACTIVE", "ROOM_OUT_OF_ORDER", "ROOM_UNAVAILABLE",
 ]);
-const RESTRICTION_CODES: ReadonlySet<PricingErrorCode> = new Set([
+// Exported so the OTA import can report the SAME set of violations it never
+// blocks on — one list, so the reporting surface can never drift from the
+// enforcing one.
+export const RESTRICTION_CODES: ReadonlySet<PricingErrorCode> = new Set([
   "MIN_STAY_NOT_MET", "MAX_STAY_EXCEEDED", "CLOSED_ON_ARRIVAL", "CLOSED_ON_DEPARTURE",
   "ARRIVAL_DAY_NOT_ALLOWED", "ADVANCE_BOOKING_RULE_FAILED", "RATE_PLAN_OUTSIDE_VALIDITY",
 ]);
@@ -269,6 +272,7 @@ export async function priceReservationStays<T extends ReservationStayInput>(
 
   for (const stay of stays) {
     const skip = stay.rrId != null && (opts.skipChecksForRr?.has(stay.rrId) ?? false);
+
     // manual_total (D106) outranks everything: the operator's exact stay total.
     // An explicit priceMode wins; absent = the legacy isManualRate semantics.
     const manualTotal = stay.priceMode === "manual_total" ? (stay.manualTotal ?? null) : null;
