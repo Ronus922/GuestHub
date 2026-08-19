@@ -89,3 +89,4 @@
 081_grant_reports_write.sql
 082_default_privileges_write.sql
 083_ttlock_circuit.sql
+084_closure_categories_restriction_override.sql

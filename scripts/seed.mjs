@@ -215,6 +215,10 @@ async function main() {
     // the receptionist grant below: reporting an invalid card / no-show / cancel
     // to the OTA is irreversible, so it is granted explicitly in /permissions.
     ["reservations.channel_report", "דיווח מצב הזמנה ל-Booking.com (כרטיס לא תקין / ביטול / אי-הגעה)", "reservations"],
+    // 084 — overriding a COMMERCIAL restriction (CTA / CTD / stop_sell /
+    // min-stay / max-stay) when creating a booking by hand. Never a path around
+    // a PHYSICAL block (room status, OOO closure, an existing stay).
+    ["reservations.restriction_override", "עקיפת הגבלה מסחרית ביצירת הזמנה", "reservations"],
     ["guests.view", "צפייה באורחים", "guests"],
     ["guests.create", "יצירת אורח", "guests"],
     ["guests.edit", "עריכת אורח", "guests"],
