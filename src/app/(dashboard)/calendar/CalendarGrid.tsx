@@ -76,7 +76,6 @@ import type { NewReservationPrefill } from "@/components/reservations/NewReserva
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
-import { RateCellTooltip, type CellTipTarget } from "./RateCellTooltip";
 import { closureCategoryIcon, closureCategoryLabel } from "@/lib/closures/categories";
 
 // ---- geometry — the ONE source (reference: GuesthubCalandrUpdate.html) ----
@@ -220,10 +219,6 @@ export function CalendarGrid({
   // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
   // delay, kept alive while the pointer is inside the card or the tooltip
   const [tip, setTip] = useState<TooltipTarget | null>(null);
-  // the empty-cell commercial tooltip (§8.2). A SEPARATE target from `tip` but
-  // sharing the one pair of open/close timers below: the two can never be open
-  // at once, because opening either clears the other.
-  const [cellTip, setCellTip] = useState<CellTipTarget | null>(null);
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
   const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
@@ -518,7 +513,6 @@ export function CalendarGrid({
       phaseRef.current = "awaiting_confirmation";
       cancelTipTimers();
       setTip(null);
-      setCellTip(null);
       setConfirmMove({
         rrId: stay.rr_id,
         op,
@@ -596,7 +590,6 @@ export function CalendarGrid({
       if (!can.viewReservation) return;
       cancelTipTimers();
       setTip(null);
-      setCellTip(null);
       setMenu(null);
       setClosurePop(null);
       onOpenReservation(stay.reservation_id);
@@ -654,45 +647,6 @@ export function CalendarGrid({
     tipOpenTimer.current = null;
   }, []);
 
-  // Empty-cell hover → the commercial detail card (§8.2). Same delays, same
-  // drag/phase guards and the same "mouse only" rule as the reservation
-  // tooltip: a touch tap must open the booking flow, never a hover card.
-  const onCellHoverStart = useCallback(
-    (e: React.PointerEvent, room: CalendarRoom, date: DateOnly, rate: RateRow | undefined) => {
-      if (e.pointerType !== "mouse") return;
-      if (sessionRef.current || phaseRef.current !== "idle") return;
-      const el = e.currentTarget as HTMLElement;
-      if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
-      tipCloseTimer.current = null;
-      if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
-      tipOpenTimer.current = setTimeout(() => {
-        tipOpenTimer.current = null;
-        if (sessionRef.current || phaseRef.current !== "idle" || !el.isConnected) return;
-        const r = el.getBoundingClientRect();
-        setTip(null);
-        setCellTip({
-          room,
-          date,
-          rate,
-          basePrice: room.base_price,
-          currency: data.currency,
-          anchor: { x: r.left + r.width / 2, top: r.top, bottom: r.bottom },
-        });
-      }, TOOLTIP_OPEN_MS);
-    },
-    [data.currency],
-  );
-
-  const scheduleCellTipClose = useCallback(() => {
-    if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
-    tipOpenTimer.current = null;
-    if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
-    tipCloseTimer.current = setTimeout(() => {
-      tipCloseTimer.current = null;
-      setCellTip(null);
-    }, TOOLTIP_CLOSE_MS);
-  }, []);
-
   // ---- pointer wiring (handlers live ON the card via pointer capture —
   // no document-level listeners, nothing leaks) ----
   const onBarPointerDown = useCallback(
@@ -707,7 +661,6 @@ export function CalendarGrid({
       phaseRef.current = "pressed";
       cancelTipTimers();
       setTip(null);
-      setCellTip(null);
       setMenu(null);
       setClosurePop(null);
       const body = bodyRef.current;
@@ -750,7 +703,6 @@ export function CalendarGrid({
         phaseRef.current = s.mode === "resize" ? "resizing" : "dragging";
         cancelTipTimers();
         setTip(null);
-        setCellTip(null);
         setDragUi({ mode: s.mode, rrId: s.stay?.rr_id ?? "" });
       }
       if (!s.raf) {
@@ -809,7 +761,6 @@ export function CalendarGrid({
       if (!body) return;
       cancelTipTimers();
       setTip(null);
-      setCellTip(null);
       setMenu(null);
       setClosurePop(null);
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
@@ -900,7 +851,6 @@ export function CalendarGrid({
           return;
         }
         setTip(null);
-        setCellTip(null);
         setBlockedCreate({
           violation,
           prefill: { roomId: room.id, checkIn: ci, checkOut: co, source },
@@ -951,7 +901,6 @@ export function CalendarGrid({
       e.stopPropagation();
       setClosurePop(null);
       setTip(null);
-      setCellTip(null);
       setMenu({ x: e.clientX, y: e.clientY, roomId, date });
     },
     [],
@@ -1185,8 +1134,6 @@ export function CalendarGrid({
                   onCellPointerCancel={onBarPointerCancel}
                   onCellContext={onCellContext}
                   onCellDouble={onCellDouble}
-                  onCellHoverStart={onCellHoverStart}
-                  onCellHoverEnd={scheduleCellTipClose}
                   onClosureClick={onClosureClick}
                 />
               ))}
@@ -1319,10 +1266,6 @@ export function CalendarGrid({
            positioned OUTSIDE the pill; never an interaction target (§1) ===== */}
       <ReservationTooltip target={tip} statusLabel={statusLabel} />
 
-      {/* ===== empty-cell commercial hover card (§8.2) — same contract:
-           informational, pointer-events:none, never open during a drag ===== */}
-      <RateCellTooltip target={cellTip} />
-
       {/* ===== commercial-restriction confirmation (084) — the create gate's
            second question. It opens ONLY for an overridable violation; a
            physical conflict and a non-overridable rule are a toast and never
@@ -1416,8 +1359,6 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel,
   onCellContext,
   onCellDouble,
-  onCellHoverStart,
-  onCellHoverEnd,
   onClosureClick,
 }: {
   room: CalendarRoom;
@@ -1449,13 +1390,6 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (room: CalendarRoom, date: DateOnly) => void;
-  onCellHoverStart: (
-    e: React.PointerEvent,
-    room: CalendarRoom,
-    date: DateOnly,
-    rate: RateRow | undefined,
-  ) => void;
-  onCellHoverEnd: () => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
   const sellable = room.status === "available" && room.is_active;
@@ -1506,13 +1440,15 @@ const RoomRow = memo(function RoomRow({
           // ONE sign per cell, chosen by the priority ladder (lib/rates/cell-mark):
           // the strongest restriction that holds wins and the weaker ones stay
           // silent HERE — a ~52px column cannot hold two marks, and two marks
-          // would read as two severities. Every restriction, including the ones
-          // this cell does not draw, is still listed in full by the hover card
-          // (§8.2, RateCellTooltip).
+          // would read as two severities. The cell's hover card that used to
+          // spell the rest out was DELETED (owner decision): it repeated the
+          // price and the minimum already printed on the cell and covered the
+          // rows underneath to do it. The full commercial state of a room-night
+          // is read on the rates board, whose cell panel exists for exactly that.
           const mark = cellMark(rate);
           // the two closed-to-* rungs share the one discreet lock: it says THAT
-          // the date is closed at one end, and WHICH end is the hover card's job
-          // ("סגור הוא סגור" — the cell does not distinguish CTA from CTD).
+          // the date is closed at one end; WHICH end is a rates-board question
+          // ("סגור הוא סגור" — the cell does not distinguish the two closures).
           const lockMark =
             mark?.mark === "closed_to_arrival" || mark?.mark === "closed_to_departure";
           // Binding minimum for a guest arriving this day = stricter of arrival-min
@@ -1535,8 +1471,6 @@ const RoomRow = memo(function RoomRow({
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
-              onPointerEnter={sellable ? (e) => onCellHoverStart(e, room, d, rate) : undefined}
-              onPointerLeave={sellable ? onCellHoverEnd : undefined}
             >
               {sellable && (
                 <>
