@@ -30,6 +30,7 @@ import {
 } from "@/lib/inventory-rules";
 import {
   isOverridableStayCode,
+  stayLimit,
   stayRestrictionViolationStructured,
   stayViolationMessage,
   type PlanRateRow,
@@ -75,6 +76,8 @@ import type { NewReservationPrefill } from "@/components/reservations/NewReserva
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
+import { RateCellTooltip, type CellTipTarget } from "./RateCellTooltip";
+import { closureCategoryIcon, closureCategoryLabel } from "@/lib/closures/categories";
 
 // ---- geometry — the ONE source (reference: GuesthubCalandrUpdate.html) ----
 // These numbers drive BOTH the drag math (which needs them as numbers) and the
@@ -217,6 +220,10 @@ export function CalendarGrid({
   // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
   // delay, kept alive while the pointer is inside the card or the tooltip
   const [tip, setTip] = useState<TooltipTarget | null>(null);
+  // the empty-cell commercial tooltip (§8.2). A SEPARATE target from `tip` but
+  // sharing the one pair of open/close timers below: the two can never be open
+  // at once, because opening either clears the other.
+  const [cellTip, setCellTip] = useState<CellTipTarget | null>(null);
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
   const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
@@ -511,6 +518,7 @@ export function CalendarGrid({
       phaseRef.current = "awaiting_confirmation";
       cancelTipTimers();
       setTip(null);
+      setCellTip(null);
       setConfirmMove({
         rrId: stay.rr_id,
         op,
@@ -588,6 +596,7 @@ export function CalendarGrid({
       if (!can.viewReservation) return;
       cancelTipTimers();
       setTip(null);
+      setCellTip(null);
       setMenu(null);
       setClosurePop(null);
       onOpenReservation(stay.reservation_id);
@@ -645,6 +654,45 @@ export function CalendarGrid({
     tipOpenTimer.current = null;
   }, []);
 
+  // Empty-cell hover → the commercial detail card (§8.2). Same delays, same
+  // drag/phase guards and the same "mouse only" rule as the reservation
+  // tooltip: a touch tap must open the booking flow, never a hover card.
+  const onCellHoverStart = useCallback(
+    (e: React.PointerEvent, room: CalendarRoom, date: DateOnly, rate: RateRow | undefined) => {
+      if (e.pointerType !== "mouse") return;
+      if (sessionRef.current || phaseRef.current !== "idle") return;
+      const el = e.currentTarget as HTMLElement;
+      if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
+      tipCloseTimer.current = null;
+      if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
+      tipOpenTimer.current = setTimeout(() => {
+        tipOpenTimer.current = null;
+        if (sessionRef.current || phaseRef.current !== "idle" || !el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        setTip(null);
+        setCellTip({
+          room,
+          date,
+          rate,
+          basePrice: room.base_price,
+          currency: data.currency,
+          anchor: { x: r.left + r.width / 2, top: r.top, bottom: r.bottom },
+        });
+      }, TOOLTIP_OPEN_MS);
+    },
+    [data.currency],
+  );
+
+  const scheduleCellTipClose = useCallback(() => {
+    if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
+    tipOpenTimer.current = null;
+    if (tipCloseTimer.current) clearTimeout(tipCloseTimer.current);
+    tipCloseTimer.current = setTimeout(() => {
+      tipCloseTimer.current = null;
+      setCellTip(null);
+    }, TOOLTIP_CLOSE_MS);
+  }, []);
+
   // ---- pointer wiring (handlers live ON the card via pointer capture —
   // no document-level listeners, nothing leaks) ----
   const onBarPointerDown = useCallback(
@@ -659,6 +707,7 @@ export function CalendarGrid({
       phaseRef.current = "pressed";
       cancelTipTimers();
       setTip(null);
+      setCellTip(null);
       setMenu(null);
       setClosurePop(null);
       const body = bodyRef.current;
@@ -701,6 +750,7 @@ export function CalendarGrid({
         phaseRef.current = s.mode === "resize" ? "resizing" : "dragging";
         cancelTipTimers();
         setTip(null);
+        setCellTip(null);
         setDragUi({ mode: s.mode, rrId: s.stay?.rr_id ?? "" });
       }
       if (!s.raf) {
@@ -759,6 +809,7 @@ export function CalendarGrid({
       if (!body) return;
       cancelTipTimers();
       setTip(null);
+      setCellTip(null);
       setMenu(null);
       setClosurePop(null);
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
@@ -849,6 +900,7 @@ export function CalendarGrid({
           return;
         }
         setTip(null);
+        setCellTip(null);
         setBlockedCreate({
           violation,
           prefill: { roomId: room.id, checkIn: ci, checkOut: co, source },
@@ -899,6 +951,7 @@ export function CalendarGrid({
       e.stopPropagation();
       setClosurePop(null);
       setTip(null);
+      setCellTip(null);
       setMenu({ x: e.clientX, y: e.clientY, roomId, date });
     },
     [],
@@ -923,7 +976,8 @@ export function CalendarGrid({
       x: e.clientX,
       y: e.clientY,
       id: c.id,
-      label: `${c.reason || "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(c.end_date)}`,
+      // the same label the bar shows: category → free text → "סגור חדר"
+      label: `${closureCategoryLabel(c.category) ?? c.reason ?? "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(c.end_date)}`,
     });
   }, []);
 
@@ -1131,6 +1185,8 @@ export function CalendarGrid({
                   onCellPointerCancel={onBarPointerCancel}
                   onCellContext={onCellContext}
                   onCellDouble={onCellDouble}
+                  onCellHoverStart={onCellHoverStart}
+                  onCellHoverEnd={scheduleCellTipClose}
                   onClosureClick={onClosureClick}
                 />
               ))}
@@ -1263,6 +1319,10 @@ export function CalendarGrid({
            positioned OUTSIDE the pill; never an interaction target (§1) ===== */}
       <ReservationTooltip target={tip} statusLabel={statusLabel} />
 
+      {/* ===== empty-cell commercial hover card (§8.2) — same contract:
+           informational, pointer-events:none, never open during a drag ===== */}
+      <RateCellTooltip target={cellTip} />
+
       {/* ===== commercial-restriction confirmation (084) — the create gate's
            second question. It opens ONLY for an overridable violation; a
            physical conflict and a non-overridable rule are a toast and never
@@ -1356,6 +1416,8 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel,
   onCellContext,
   onCellDouble,
+  onCellHoverStart,
+  onCellHoverEnd,
   onClosureClick,
 }: {
   room: CalendarRoom;
@@ -1387,6 +1449,13 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (room: CalendarRoom, date: DateOnly) => void;
+  onCellHoverStart: (
+    e: React.PointerEvent,
+    room: CalendarRoom,
+    date: DateOnly,
+    rate: RateRow | undefined,
+  ) => void;
+  onCellHoverEnd: () => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
   const sellable = room.status === "available" && room.is_active;
@@ -1439,6 +1508,15 @@ const RoomRow = memo(function RoomRow({
           // 0 = no minimum. Shown as the moon hint and used to size a double-click.
           const minN = Math.max(rate?.min_nights ?? 0, rate?.min_stay_through ?? 0);
           const closed = rate?.closed ?? false;
+          // ONE discreet sign for "this date carries a restriction" — CTA, CTD
+          // or a max-stay. Deliberately not three glyphs: a ~37px column cannot
+          // hold them and three marks would read as three severities. It only
+          // says THAT there is a rule; WHICH rule is the hover card's job (§8.2).
+          // stayLimit() so a stored 0 (channel "unlimited") is not a limit.
+          const restricted =
+            (rate?.closed_to_arrival ?? false) ||
+            (rate?.closed_to_departure ?? false) ||
+            stayLimit(rate?.max_nights) != null;
           const creatable = can.create && sellable;
           return (
             <div
@@ -1454,24 +1532,38 @@ const RoomRow = memo(function RoomRow({
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
+              onPointerEnter={sellable ? (e) => onCellHoverStart(e, room, d, rate) : undefined}
+              onPointerLeave={sellable ? onCellHoverEnd : undefined}
             >
               {sellable && (
                 <>
                   <span className={`cb-pr ltr-num ${closed ? "cx" : ""}`}>
                     ₪{Math.round(price)}
                   </span>
-                  {closed ? (
-                    // commercial stop-sell — a dense-cell marker (§12.1), distinct
-                    // from the gray dashed physical .cb-blockbar and from pills.
-                    // A 28px .chip cannot fit a ~37px-wide day column.
-                    <span className="cb-cx">סגור</span>
-                  ) : (
-                    minN >= 2 && (
-                      <span className="cb-mn">
-                        <Icon name="moon" size={13.5} />
-                        {minN}
-                      </span>
-                    )
+                  {/* stop-sell and the minimum-nights hint used to be an
+                      either/or: the "סגור" flag replaced the moon, so a date
+                      that was BOTH closed and min-4 showed only that it was
+                      closed. They are two independent facts and now share one
+                      marker row. A 28px .chip still cannot fit a ~37px-wide day
+                      column, so both stay compact markers (§12.1). */}
+                  {(closed || minN >= 2) && (
+                    <span className="cb-rmk">
+                      {closed && <span className="cb-cx">סגור</span>}
+                      {minN >= 2 && (
+                        <span className="cb-mn">
+                          <Icon name="moon" size={13.5} />
+                          {minN}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  {/* the restriction sign sits in the cell CORNER, out of the
+                      flex flow, so it never competes with the price or the
+                      markers for the column's width */}
+                  {restricted && (
+                    <span className="cb-rx" aria-hidden>
+                      <Icon name="lock" size={13.5} />
+                    </span>
                   )}
                 </>
               )}
@@ -1479,26 +1571,40 @@ const RoomRow = memo(function RoomRow({
           );
         })}
 
-        {/* closures — dashed neutral block (reference .blockbar) */}
+        {/* closures — the §8 typed block. Two kinds, two readings:
+              ooo (out of order) = removed from inventory → the approved neutral
+                  grey ("הוחזר") + a dashed border: nothing can be sold here.
+              oos (out of service) = dirty but STILL sellable → the approved
+                  amber ("ממתין לאישור") + a dotted border: a note, not a hole in
+                  the inventory. Both triplets come from status-colors.ts; no
+                  colour is invented for this surface, and the only bespoke bit
+                  is the border STYLE, which carries "blocking vs advisory".
+            The label is the closure's CATEGORY (the closed 084 taxonomy, read
+            from lib/closures/categories), falling back to the operator's free
+            text and then to a bare "סגור". */}
         {(closures ?? []).map((c) => {
           const geo = barGeometry(from, days, c.start_date, c.end_date);
+          const isOoo = c.kind !== "oos";
+          const pal = isOoo ? NEUTRAL_STATUS : STATUS_COLORS.approval;
+          const label = closureCategoryLabel(c.category) ?? c.reason ?? "סגור";
+          const icon = closureCategoryIcon(c.category) ?? "circle-slash";
           return (
             <button
               key={c.id}
               type="button"
               onClick={(e) => onClosureClick(e, c)}
               className="cb-blockbar"
-              // §3.1 neutral ("הוחזר") — the approved triplet, not a local colour
+              data-kind={isOoo ? "ooo" : "oos"}
               style={{
                 insetInlineStart: `${geo.start * 100}%`,
                 width: `${geo.width * 100}%`,
-                background: NEUTRAL_STATUS.bg,
-                borderColor: NEUTRAL_STATUS.bd,
-                color: NEUTRAL_STATUS.tx,
+                background: pal.bg,
+                borderColor: pal.bd,
+                color: pal.tx,
               }}
             >
-              <Icon name="circle-slash" size={13.5} />
-              <span className="cb-nm">{c.reason || "סגור"}</span>
+              <Icon name={icon} size={13.5} />
+              <span className="cb-nm">{label}</span>
             </button>
           );
         })}
