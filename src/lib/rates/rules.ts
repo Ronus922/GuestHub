@@ -92,16 +92,24 @@ export function stayRestrictionViolationStructured(
   return null;
 }
 
+// THE Hebrew wording of the two closed-to-* restrictions. ONE string, ONE
+// spelling, read by every surface that names them: this message, the pricing
+// error map (lib/pricing/messages.ts) and the calendar hover card. Spelled out
+// in words on purpose — no member of staff has to know what CTA or CTD stands
+// for; the abbreviations stay in the codes, the code and the comments.
+export const CLOSED_TO_ARRIVAL_TEXT = "התאריך סגור לכניסת אורחים";
+export const CLOSED_TO_DEPARTURE_TEXT = "התאריך סגור לעזיבת אורחים";
+
 // Hebrew message for a structured violation — the exact historical grid wording.
 export function stayViolationMessage(v: StayRuleViolation): string {
   switch (v.code) {
-    case "CLOSED_ON_ARRIVAL": return "התאריך סגור לצ׳ק-אין (CTA)";
+    case "CLOSED_ON_ARRIVAL": return CLOSED_TO_ARRIVAL_TEXT;
     case "MIN_STAY_NOT_MET":
       return v.scope === "arrival"
         ? `מינימום ${v.required} לילות בהגעה בתאריך זה`
         : `מינימום ${v.required} לילות בטווח זה`;
     case "MAX_STAY_EXCEEDED": return `מקסימום ${v.limit} לילות בתאריך זה`;
-    case "CLOSED_ON_DEPARTURE": return "התאריך סגור לצ׳ק-אאוט (CTD)";
+    case "CLOSED_ON_DEPARTURE": return CLOSED_TO_DEPARTURE_TEXT;
     case "STOP_SELL": return `התאריך ${v.date} סגור למכירה`;
   }
 }

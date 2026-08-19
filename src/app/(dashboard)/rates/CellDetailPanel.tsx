@@ -176,8 +176,8 @@ export function CellDetailPanel({
             <Stepper label="מינימום לילות בטווח" value={cell.minStayThrough} disabled={busy} onSet={(v) => apply({ minStayThrough: v })} />
             <Stepper label="מקסימום לילות" value={cell.maxStay} disabled={busy} onSet={(v) => apply({ maxStay: v })} />
             <div className="flex flex-wrap items-center gap-2">
-              <Toggle label="סגור להגעה (CTA)" on={cell.closedToArrival} disabled={busy} onToggle={() => apply({ closedToArrival: !cell.closedToArrival })} />
-              <Toggle label="סגור לעזיבה (CTD)" on={cell.closedToDeparture} disabled={busy} onToggle={() => apply({ closedToDeparture: !cell.closedToDeparture })} />
+              <Toggle label="סגור לכניסה" on={cell.closedToArrival} disabled={busy} onToggle={() => apply({ closedToArrival: !cell.closedToArrival })} />
+              <Toggle label="סגור לעזיבה" on={cell.closedToDeparture} disabled={busy} onToggle={() => apply({ closedToDeparture: !cell.closedToDeparture })} />
             </div>
           </div>
         )}
@@ -192,7 +192,7 @@ export function CellDetailPanel({
         </Grid>
         <p className="field-hint mt-2 leading-relaxed">
           ערכים מחושבים בלבד — לא נשלח דבר לערוץ בשלב זה. זמינות ליציאה נגזרת מהמלאי הפיזי בלבד;
-          המגבלות ({r.stopSell ? "סגור" : "פתוח"}, CTA {r.closedToArrival ? "✓" : "—"}, CTD {r.closedToDeparture ? "✓" : "—"},
+          המגבלות ({r.stopSell ? "סגור" : "פתוח"}, סגור לכניסה {r.closedToArrival ? "✓" : "—"}, סגור לעזיבה {r.closedToDeparture ? "✓" : "—"},
           מ׳ הגעה {num(r.minStayArrival)}, מ׳ טווח {num(r.minStayThrough)}, מקס {num(r.maxStay)}, ₪{Math.round(r.rate)}) נגזרות מה-ARI המסחרי.
         </p>
       </Box>

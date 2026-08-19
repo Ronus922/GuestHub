@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { formatFullDate } from "@/lib/dates";
-import { stayLimit } from "@/lib/rates/rules";
+import { CLOSED_TO_ARRIVAL_TEXT, CLOSED_TO_DEPARTURE_TEXT, stayLimit } from "@/lib/rates/rules";
 import { clampPopoverLeft, popoverWidth, POPOVER_MARGIN } from "@/lib/popover";
 import type { RateRow } from "@/lib/inventory-rules";
 import type { CalendarRoom } from "./types";
@@ -152,7 +152,7 @@ export function RateCellTooltip({ target }: { target: CellTipTarget | null }) {
           <p className="cb-pl">
             <Icon name="login" size={17} className="cb-pli" />
             <span>
-              <b>סגור לצ׳ק-אין</b> (CTA)
+              <b>{CLOSED_TO_ARRIVAL_TEXT}</b>
             </span>
           </p>
         )}
@@ -160,7 +160,7 @@ export function RateCellTooltip({ target }: { target: CellTipTarget | null }) {
           <p className="cb-pl">
             <Icon name="logout" size={17} className="cb-pli" />
             <span>
-              <b>סגור לצ׳ק-אאוט</b> (CTD)
+              <b>{CLOSED_TO_DEPARTURE_TEXT}</b>
             </span>
           </p>
         )}

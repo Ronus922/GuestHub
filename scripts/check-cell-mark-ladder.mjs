@@ -64,14 +64,29 @@ writeFileSync(
       rootDir: join(ROOT, "src"), outDir: out,
       typeRoots: [join(ROOT, "node_modules/@types")], types: ["node"],
     },
-    include: [join(ROOT, "src/lib/rates/cell-mark.ts")],
+    include: [
+      join(ROOT, "src/lib/rates/cell-mark.ts"),
+      // section 16 asserts on the REAL restriction wording, not on a copy of it
+      join(ROOT, "src/lib/rates/rules.ts"),
+      join(ROOT, "src/lib/pricing/messages.ts"),
+    ],
   }),
 );
 execSync(`npx tsc --project ${join(tmp, "tsconfig.json")}`, { cwd: ROOT, stdio: "inherit" });
 
 const req = createRequire(join(ROOT, "package.json"));
+// messages.ts reaches rules.ts through the "@/" alias — map it onto the emitted tree,
+// the same hook check:restriction-override uses.
+const Module = req("node:module");
+const origResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+  if (request.startsWith("@/")) return origResolve.call(this, join(out, request.slice(2)), ...rest);
+  return origResolve.call(this, request, ...rest);
+};
 const { cellMark, cellMinNights, cellMaxNights, stayRangeLabel, CELL_MARK_LADDER } =
   req(join(out, "lib/rates/cell-mark.js"));
+const { stayViolationMessage } = req(join(out, "lib/rates/rules.js"));
+const { PRICING_ERROR_MESSAGES } = req(join(out, "lib/pricing/messages.js"));
 
 let n = 0;
 const ok = (msg) => { n++; console.log(`✓ ${n}. ${msg}`); };
@@ -325,13 +340,68 @@ for (let i = 0; i < EXPECTED.length; i++) {
   ]) {
     assert.ok(re.test(tip), `the hover card still lists ${what} on its own line`);
   }
-  assert.ok(/\(CTA\)/.test(tip) && /\(CTD\)/.test(tip),
-    "the hover card names CTA and CTD apart — the cell's single lock does not");
+  assert.ok(/CLOSED_TO_ARRIVAL_TEXT/.test(tip) && /CLOSED_TO_DEPARTURE_TEXT/.test(tip),
+    "the hover card names the arrival closure and the departure closure apart, each in the canonical wording from rules.ts — and does not re-type either sentence");
   assert.ok(/מינימום/.test(tip) && /מקסימום/.test(tip),
     "the hover card keeps the minimum and the maximum as two labelled lines — the cell merges them");
   assert.ok(!/cellMark|CELL_MARK_LADDER|stayRangeLabel/.test(tip),
     "the hover card does NOT go through the ladder — it is the full list, not the winner");
   ok("the hover card still lists every restriction, including the ones the cell merges or hides");
+}
+
+// ============================================================
+// 16. NO user-facing text spells a restriction as an English abbreviation
+// ============================================================
+{
+  // THE DEFECT CLASS. "CTA" / "CTD" / "OOO" / "OOS" are trade shorthand. A
+  // receptionist reading "התאריך סגור לצ׳ק-אין (CTA)" learns nothing from the
+  // parenthesis, and a manager deciding whether to override a block should not
+  // have to know that OOO means the room left the inventory. The abbreviations
+  // are legitimate in CODES, in identifiers, in comments and in logs — this
+  // assertion is about the SCREEN only.
+  const ABBREV = /\b(CTA|CTD|OOO|OOS)\b/;
+
+  // --- the messages themselves, run for real (not read from the file) ---
+  const MESSAGE_CASES = [
+    { code: "CLOSED_ON_ARRIVAL", date: "2026-07-10" },
+    { code: "CLOSED_ON_DEPARTURE", date: "2026-07-12" },
+    { code: "STOP_SELL", date: "2026-07-11" },
+    { code: "MIN_STAY_NOT_MET", date: "2026-07-10", required: 3, scope: "arrival" },
+    { code: "MIN_STAY_NOT_MET", date: "2026-07-10", required: 3, scope: "through" },
+    { code: "MAX_STAY_EXCEEDED", date: "2026-07-10", limit: 7 },
+  ];
+  for (const v of MESSAGE_CASES) {
+    const msg = stayViolationMessage(v);
+    assert.ok(!ABBREV.test(msg), `stayViolationMessage(${v.code}/${v.scope ?? "-"}) is free of English abbreviations (got "${msg}")`);
+  }
+  for (const [code, msg] of Object.entries(PRICING_ERROR_MESSAGES)) {
+    assert.ok(!ABBREV.test(msg), `PRICING_ERROR_MESSAGES.${code} is free of English abbreviations (got "${msg}")`);
+  }
+  // …and the two surfaces really do agree, because they read ONE declaration
+  assert.equal(PRICING_ERROR_MESSAGES.CLOSED_ON_ARRIVAL, stayViolationMessage({ code: "CLOSED_ON_ARRIVAL", date: "2026-07-10" }),
+    "client grid and server pricing say the SAME sentence for a closed arrival");
+  assert.equal(PRICING_ERROR_MESSAGES.CLOSED_ON_DEPARTURE, stayViolationMessage({ code: "CLOSED_ON_DEPARTURE", date: "2026-07-12" }),
+    "client grid and server pricing say the SAME sentence for a closed departure");
+
+  // --- and no restriction SURFACE types one either, comments excluded ---
+  const SURFACES = [
+    "src/lib/rates/rules.ts",
+    "src/lib/pricing/messages.ts",
+    "src/app/(dashboard)/calendar/RateCellTooltip.tsx",
+    "src/app/(dashboard)/calendar/CalendarGrid.tsx",
+    "src/app/(dashboard)/rates/RateGrid.tsx",
+    "src/app/(dashboard)/rates/CellDetailPanel.tsx",
+    "src/app/(dashboard)/rates/GroupUpdatePanel.tsx",
+    "src/app/(dashboard)/rate-plans/OverridesPanel.tsx",
+    "src/app/(dashboard)/rate-plans/RatePlanWizard.tsx",
+  ];
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  for (const rel of SURFACES) {
+    const code = stripComments(readFileSync(join(ROOT, rel), "utf8"));
+    const hit = code.match(ABBREV);
+    assert.ok(!hit, `${rel} carries no English restriction abbreviation outside its comments (found "${hit?.[0]}")`);
+  }
+  ok("no user-facing restriction text spells CTA / CTD / OOO / OOS — the messages agree across client and server");
 }
 
 console.log(`\ncheck-cell-mark-ladder: all ${n} checks passed`);

@@ -17,8 +17,8 @@ const METRICS: MetricDef[] = [
   { field: "minStayThrough", kind: "num", label: "מינימום לילות", tag: "MIN" },
   { field: "maxStay", kind: "num", label: "מקסימום לילות", tag: "MAX" },
   { field: "minStayArrival", kind: "num", label: "מ׳ לילות בהגעה", tag: "MIN LOS" },
-  { field: "closedToArrival", kind: "bool", label: "סגור להגעה", tag: "CTA" },
-  { field: "closedToDeparture", kind: "bool", label: "סגור לעזיבה", tag: "CTD" },
+  { field: "closedToArrival", kind: "bool", label: "סגור לכניסה", tag: "" },
+  { field: "closedToDeparture", kind: "bool", label: "סגור לעזיבה", tag: "" },
   { field: "stopSell", kind: "bool", label: "סגור למכירה", tag: "" },
 ];
 

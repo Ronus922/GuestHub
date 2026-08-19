@@ -321,12 +321,12 @@ export function OverridesPanel({
             </div>
             <div className="rm-frow3">
               <ToggleRow
-                label="סגור להגעה (CTA)"
+                label="סגור לכניסה"
                 checked={form.cta}
                 onChange={(v) => setForm((s) => ({ ...s, cta: v }))}
               />
               <ToggleRow
-                label="סגור לעזיבה (CTD)"
+                label="סגור לעזיבה"
                 checked={form.ctd}
                 onChange={(v) => setForm((s) => ({ ...s, ctd: v }))}
               />
@@ -465,8 +465,8 @@ function OverrideChips({
       {minThrough != null && <span className="chip chip-neutral">מינ׳ {minThrough} לילות</span>}
       {minArrival != null && <span className="chip chip-neutral">מינ׳ הגעה {minArrival}</span>}
       {maxStay != null && <span className="chip chip-neutral">מקס׳ {maxStay} לילות</span>}
-      {cta && <span className="chip chip-approval">CTA</span>}
-      {ctd && <span className="chip chip-approval">CTD</span>}
+      {cta && <span className="chip chip-approval">סגור לכניסה</span>}
+      {ctd && <span className="chip chip-approval">סגור לעזיבה</span>}
       {stopSell && <span className="chip chip-unpaid">סגור למכירה</span>}
     </>
   );

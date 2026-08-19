@@ -2,6 +2,7 @@
 // layer the spec requires OUTSIDE the domain core (§15). Pure map; the engine
 // attaches these at its boundary, business logic never parses them.
 
+import { CLOSED_TO_ARRIVAL_TEXT, CLOSED_TO_DEPARTURE_TEXT } from "@/lib/rates/rules";
 import type { PricingErrorCode } from "./types";
 
 export const PRICING_ERROR_MESSAGES: Record<PricingErrorCode, string> = {
@@ -20,8 +21,10 @@ export const PRICING_ERROR_MESSAGES: Record<PricingErrorCode, string> = {
   NO_PRICE_FOR_DATE: "אין מחיר זמין לתאריך המבוקש",
   MIN_STAY_NOT_MET: "השהות קצרה ממינימום הלילות הנדרש",
   MAX_STAY_EXCEEDED: "השהות חורגת ממקסימום הלילות המותר",
-  CLOSED_ON_ARRIVAL: "התאריך סגור לצ׳ק-אין (CTA)",
-  CLOSED_ON_DEPARTURE: "התאריך סגור לצ׳ק-אאוט (CTD)",
+  // the two closed-to-* sentences are NOT re-typed here — client and server
+  // read the one declaration in lib/rates/rules.ts, so they cannot drift.
+  CLOSED_ON_ARRIVAL: CLOSED_TO_ARRIVAL_TEXT,
+  CLOSED_ON_DEPARTURE: CLOSED_TO_DEPARTURE_TEXT,
   ADVANCE_BOOKING_RULE_FAILED: "מועד ההזמנה אינו עומד בחלון ההזמנה של התוכנית",
   OCCUPANCY_BELOW_MINIMUM: "מספר האורחים נמוך מהתפוסה המינימלית",
   OCCUPANCY_EXCEEDED: "מספר האורחים חורג מהתפוסה המקסימלית",
