@@ -106,6 +106,46 @@ export function stayViolationMessage(v: StayRuleViolation): string {
   }
 }
 
+// ============================================================
+// WHICH violations a human may override (084 · reservations.restriction_override).
+//
+// The line is COMMERCIAL vs PHYSICAL, and it is not negotiable:
+//
+//   overridable — every code below. They are SALES rules a property sets and a
+//     manager may knowingly sell against: closed to arrival, closed to
+//     departure, stop-sell, minimum stay, maximum stay. Selling one of these
+//     costs money or breaks a policy; it never double-books a bed.
+//
+//   NEVER overridable — everything else, and in particular every PHYSICAL
+//     conflict, which does not appear in this type at all: a room under an OOO
+//     closure, a room that is out_of_order or inactive, and an existing blocking
+//     stay. Those are facts about the world, not decisions about price, and no
+//     permission can wish a second guest into an occupied bed. They are enforced
+//     on the server by the AVAILABILITY group (lib/pricing/reservation-pricing.ts),
+//     which the override never touches, and in the calendar by rangeInvalid,
+//     which does not route through this mechanism at all.
+//
+// This set is the ONE declaration of that boundary; the client dialog and the
+// server gate both read it, so they cannot drift.
+// ============================================================
+export const OVERRIDABLE_STAY_RULE_CODES = [
+  "CLOSED_ON_ARRIVAL",
+  "CLOSED_ON_DEPARTURE",
+  "STOP_SELL",
+  "MIN_STAY_NOT_MET",
+  "MAX_STAY_EXCEEDED",
+] as const satisfies readonly StayRuleViolation["code"][];
+
+export type OverridableStayRuleCode = (typeof OVERRIDABLE_STAY_RULE_CODES)[number];
+
+const OVERRIDABLE = new Set<string>(OVERRIDABLE_STAY_RULE_CODES);
+
+/** True when a manager holding reservations.restriction_override may proceed
+ *  anyway. Anything not explicitly listed is a hard block — the default is NO. */
+export function isOverridableStayCode(code: string): code is OverridableStayRuleCode {
+  return OVERRIDABLE.has(code);
+}
+
 // Message-shaped wrapper — the historical API every existing caller keeps using.
 export function stayRestrictionViolation(
   byDate: Map<string, PlanRateRow>,
