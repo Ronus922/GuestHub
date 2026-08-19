@@ -162,15 +162,18 @@ export function StayPriceModeControls({
 }
 
 // ---- reservation-level discount: unit segmented + one value field (mock) ----
-// the MD's three units (הקמת הזמנה §"הנחה" ש'99): ₪ ללילה / % ללילה / % להזמנה.
-// "amount_total" is NOT offered any more — it survives only as a legacy
-// passthrough so an existing reservation that stored it still displays honestly.
+// FOUR units, per SPEC.md ס-2 (and SIGNOFF.md): ₪ ללילה / ₪ להזמנה / % להזמנה /
+// % ללילה. The mock's own row shows only three (‏₪ להזמנה is the one it drops) —
+// the SPEC deviation ס-2 decided FOUR, and this array is that decision.
+// Array order IS the DOM order, and the DOM order IS the RTL order (right to
+// left). Both the membership and the order are frozen by check:discount-units
+// (D155); no unit may be injected into this list at render time.
 export const DISCOUNT_UNITS: { value: Exclude<DiscountMode, "none">; label: string; fieldLabel: string }[] = [
   { value: "amount_per_night", label: "₪ ללילה", fieldLabel: "הנחה ללילה (₪)" },
-  { value: "percent_per_night", label: "% ללילה", fieldLabel: "אחוז הנחה ללילה (%)" },
+  { value: "amount_total", label: "₪ להזמנה", fieldLabel: "הנחה להזמנה (₪)" },
   { value: "percent_total", label: "% להזמנה", fieldLabel: "אחוז הנחה להזמנה (%)" },
+  { value: "percent_per_night", label: "% ללילה", fieldLabel: "אחוז הנחה ללילה (%)" },
 ];
-const LEGACY_AMOUNT_TOTAL = { value: "amount_total" as const, label: "₪ להזמנה", fieldLabel: "הנחה להזמנה (₪)" };
 
 export function DiscountControls({
   mode, value, onChange, disabled,
@@ -195,16 +198,13 @@ export function DiscountControls({
     if (mode !== "none") setUiUnit(mode);
   }, [mode]);
   const unit = mode === "none" ? uiUnit : mode;
-  // legacy passthrough: a stored ₪-להזמנה discount keeps its segment visible
-  const units =
-    unit === "amount_total" ? [...DISCOUNT_UNITS, LEGACY_AMOUNT_TOTAL] : DISCOUNT_UNITS;
-  const field = units.find((u) => u.value === unit)!;
+  const field = DISCOUNT_UNITS.find((u) => u.value === unit)!;
   const isPercent = unit === "percent_per_night" || unit === "percent_total";
   return (
     <div className="flex flex-col gap-2">
       <Segmented
         ariaLabel="יחידת הנחה"
-        options={units.map((u) => ({ value: u.value, label: u.label }))}
+        options={DISCOUNT_UNITS.map((u) => ({ value: u.value, label: u.label }))}
         value={unit}
         onChange={(u) => {
           setUiUnit(u);

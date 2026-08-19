@@ -121,7 +121,8 @@
     "check:grants": "node scripts/check-grants.mjs",
     "check:liveness-cluster-fingerprint": "node scripts/check-liveness-cluster-fingerprint.mjs",
     "check:backup-offhost": "node scripts/check-backup-offhost.mjs",
-    "check:pay-charged-write-path": "node scripts/check-pay-charged-write-path.mjs"
+    "check:pay-charged-write-path": "node scripts/check-pay-charged-write-path.mjs",
+    "check:discount-units": "node scripts/check-discount-units.mjs"
   },
   "engines": {
     "node": ">=20 <21"
