@@ -28,6 +28,9 @@ export type CalendarCan = {
   saveCard: boolean;
   revealCard: boolean;
   chargeCard: boolean;
+  /** 084 — may knowingly create a booking against a COMMERCIAL restriction
+   *  (CTA / CTD / stop-sell / min-stay / max-stay). Never a physical block. */
+  restrictionOverride: boolean;
 };
 
 // ONE open panel at a time — the single source of truth for the edit /

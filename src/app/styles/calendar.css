@@ -1352,3 +1352,18 @@
 }
 
 } /* @layer components */
+
+/* ---------- create-gate confirmation (084) ----------
+   The restriction dialog's two text rows. Tokens only: the §2 scale for size,
+   --ink / --muted for colour. The dialog shell itself is the canonical
+   components/ui/ConfirmDialog (.modal/.md-hd/.md-bd/.md-ft). */
+.cb-gate-msg {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.cb-gate-note {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+}

@@ -29,6 +29,7 @@ import {
   type RateRow,
 } from "@/lib/inventory-rules";
 import {
+  isOverridableStayCode,
   stayRestrictionViolationStructured,
   stayViolationMessage,
   type PlanRateRow,
@@ -61,6 +62,7 @@ import {
   type DragMode,
 } from "@/lib/calendar-interactions";
 import { rescheduleReservationRoomAction } from "@/app/(dashboard)/reservations/actions";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { MoveConfirmDialog, type MoveProposal } from "./MoveConfirmDialog";
 import { deleteClosureAction } from "./actions";
 import type {
@@ -221,6 +223,13 @@ export function CalendarGrid({
   // a completed move/resize proposes a change and waits for confirmation (§2/§3);
   // NOTHING is persisted until "אישור". null = no pending confirmation.
   const [confirmMove, setConfirmMove] = useState<MoveProposal | null>(null);
+  // a create blocked on an OVERRIDABLE commercial restriction, waiting for the
+  // operator's answer. The booking panel does not open until they answer, and it
+  // opens with restrictionOverride only if they hold the permission and say so.
+  const [blockedCreate, setBlockedCreate] = useState<{
+    violation: StayRuleViolation;
+    prefill: NewReservationPrefill;
+  } | null>(null);
   const [committing, startCommit] = useTransition();
 
   const sessionRef = useRef<DragSession | null>(null);
@@ -269,6 +278,13 @@ export function CalendarGrid({
     }
     return m;
   }, [data.closures]);
+
+  // the context menu carries a roomId, and the create gate needs the ROOM
+  // (status / is_active / capacity), so resolve it once instead of scanning.
+  const roomById = useMemo(
+    () => new Map(data.rooms.map((r) => [r.id, r])),
+    [data.rooms],
+  );
 
   // O(1) rate lookup per cell — same priority as resolveRate (room > type)
   const rateIdx = useMemo(() => {
@@ -799,6 +815,51 @@ export function CalendarGrid({
     [paintGhost],
   );
 
+  // ============================================================
+  // THE create gate — every manual create path on this board goes through it
+  // (§7): drag-release, double-click and the context menu. Two gates, in this
+  // fixed order, because the two kinds of "no" are not the same kind of no:
+  //
+  //   1. rangeInvalid — PHYSICAL. Room not sellable (inactive / out_of_order),
+  //      an existing blocking stay, or an OOO closure. Absolute: a toast and
+  //      nothing else. It never reaches the override mechanism, because no
+  //      permission can put a second guest in an occupied bed.
+  //   2. nightsViolation — COMMERCIAL. A restriction the property set. If the
+  //      code is overridable (isOverridableStayCode) the confirmation dialog
+  //      opens; if it is not, it is a toast exactly like a physical conflict.
+  //
+  // The server re-validates both on create regardless of what happened here.
+  // ============================================================
+  const startCreate = useCallback(
+    (
+      room: CalendarRoom | undefined,
+      ci: DateOnly,
+      co: DateOnly,
+      source: NewReservationPrefill["source"],
+    ) => {
+      if (!room) return;
+      if (rangeInvalid(room, ci, co)) {
+        toast.error("הטווח המסומן אינו זמין");
+        return;
+      }
+      const violation = nightsViolation(room, ci, co);
+      if (violation) {
+        if (!isOverridableStayCode(violation.code)) {
+          toast.error(stayViolationMessage(violation));
+          return;
+        }
+        setTip(null);
+        setBlockedCreate({
+          violation,
+          prefill: { roomId: room.id, checkIn: ci, checkOut: co, source },
+        });
+        return;
+      }
+      onNewBooking({ roomId: room.id, checkIn: ci, checkOut: co, source });
+    },
+    [rangeInvalid, nightsViolation, onNewBooking],
+  );
+
   const onCellPointerUp = useCallback(
     (e: React.PointerEvent) => {
       const s = sessionRef.current;
@@ -811,20 +872,9 @@ export function CalendarGrid({
       // legal length, so the enforcement is visible at the moment of selection.
       // The range math no longer even takes a minimum, so this is by construction.
       const t = createRangeTarget(s.startDate, dayDelta);
-      const room = data.rooms[s.roomIndex];
-      if (!room) return;
-      if (rangeInvalid(room, t.ci, t.co)) {
-        toast.error("הטווח המסומן אינו זמין");
-        return;
-      }
-      const violation = nightsViolation(room, t.ci, t.co);
-      if (violation) {
-        toast.error(stayViolationMessage(violation));
-        return;
-      }
-      onNewBooking({ roomId: room.id, checkIn: t.ci, checkOut: t.co, source: "calendar_drag" });
+      startCreate(data.rooms[s.roomIndex], t.ci, t.co, "calendar_drag");
     },
-    [endDrag, data.rooms, rangeInvalid, nightsViolation, onNewBooking],
+    [endDrag, data.rooms, startCreate],
   );
 
   // dismiss context menus on outside click / escape
@@ -854,16 +904,16 @@ export function CalendarGrid({
     [],
   );
 
+  // A double-click is a ONE-NIGHT create, raw. It used to open the panel already
+  // stretched to the cell's minimum stay, which made the restriction invisible:
+  // the operator asked for one night and silently got four. D152 is the owner
+  // ruling — a violation is SHOWN and blocked, never quietly repaired. So the
+  // range is [date, date+1) and it goes through the same two gates the drag uses.
   const onCellDouble = useCallback(
-    (roomId: string, date: DateOnly, minNights: number) => {
-      onNewBooking({
-        roomId,
-        checkIn: date,
-        checkOut: addDays(date, Math.max(1, minNights)),
-        source: "calendar_double_click",
-      });
+    (room: CalendarRoom, date: DateOnly) => {
+      startCreate(room, date, addDays(date, 1), "calendar_double_click");
     },
-    [onNewBooking],
+    [startCreate],
   );
 
   const onClosureClick = useCallback((e: React.MouseEvent, c: CalendarClosure) => {
@@ -1133,12 +1183,14 @@ export function CalendarGrid({
               type="button"
               className="cb-menu-it"
               onClick={() => {
-                onNewBooking({
-                  roomId: menu.roomId,
-                  checkIn: menu.date,
-                  checkOut: addDays(menu.date, 1),
-                  source: "calendar_context",
-                });
+                // the SAME two gates as the drag and the double-click (§7):
+                // a context-menu create is not a side door around them
+                startCreate(
+                  roomById.get(menu.roomId),
+                  menu.date,
+                  addDays(menu.date, 1),
+                  "calendar_context",
+                );
                 setMenu(null);
               }}
             >
@@ -1210,6 +1262,51 @@ export function CalendarGrid({
       {/* ===== reservation hover tooltip — informational, pointer-events:none,
            positioned OUTSIDE the pill; never an interaction target (§1) ===== */}
       <ReservationTooltip target={tip} statusLabel={statusLabel} />
+
+      {/* ===== commercial-restriction confirmation (084) — the create gate's
+           second question. It opens ONLY for an overridable violation; a
+           physical conflict and a non-overridable rule are a toast and never
+           reach here (§6.4). The message is the canonical stayViolationMessage;
+           no wording is invented for this surface. "המשך בכל זאת" appears only
+           for a holder of reservations.restriction_override — without it the
+           dialog is an explanation with one way out. ===== */}
+      {blockedCreate && (
+        <ConfirmDialog
+          title="הגבלה מסחרית חוסמת את ההזמנה"
+          onClose={() => setBlockedCreate(null)}
+          footer={
+            <>
+              {can.restrictionOverride && (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => {
+                    const { prefill } = blockedCreate;
+                    setBlockedCreate(null);
+                    onNewBooking({ ...prefill, restrictionOverride: true });
+                  }}
+                >
+                  המשך בכל זאת
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setBlockedCreate(null)}
+              >
+                ביטול
+              </button>
+            </>
+          }
+        >
+          <p className="cb-gate-msg">{stayViolationMessage(blockedCreate.violation)}</p>
+          <p className="cb-gate-note">
+            {can.restrictionOverride
+              ? "המשך ייצור את ההזמנה למרות ההגבלה. חסימה פיזית (חדר מושבת, סגירת OOO או שהות קיימת) אינה ניתנת לעקיפה."
+              : "אין לך הרשאה לעקוף הגבלה מסחרית."}
+          </p>
+        </ConfirmDialog>
+      )}
 
       {/* ===== drag/resize confirmation (§2/§3): persists only on אישור ===== */}
       {confirmMove && (
@@ -1289,7 +1386,7 @@ const RoomRow = memo(function RoomRow({
   onCellPointerUp: (e: React.PointerEvent) => void;
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
-  onCellDouble: (roomId: string, date: DateOnly, minNights: number) => void;
+  onCellDouble: (room: CalendarRoom, date: DateOnly) => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
   const sellable = room.status === "available" && room.is_active;
@@ -1353,7 +1450,7 @@ const RoomRow = memo(function RoomRow({
               onPointerMove={creatable ? onCellPointerMove : undefined}
               onPointerUp={creatable ? onCellPointerUp : undefined}
               onPointerCancel={creatable ? onCellPointerCancel : undefined}
-              onDoubleClick={creatable ? () => onCellDouble(room.id, d, minN || 1) : undefined}
+              onDoubleClick={creatable ? () => onCellDouble(room, d) : undefined}
               onContextMenu={
                 can.create || can.close ? (e) => onCellContext(e, room.id, d) : undefined
               }
