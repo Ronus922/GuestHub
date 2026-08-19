@@ -1,3 +1,4 @@
+import type { ClosureCategory } from "@/lib/closures/categories";
 import type { DateOnly } from "@/lib/dates";
 import type { PaymentState, RateRow } from "@/lib/inventory-rules";
 
@@ -52,6 +53,10 @@ export type CalendarClosure = {
   start_date: DateOnly;
   end_date: DateOnly;
   reason: string | null;
+  /** §8 typed closure (migration 040): ooo removes inventory, oos does not */
+  kind: "ooo" | "oos";
+  /** the closed 084 taxonomy; NULL on every row filed before 084 */
+  category: ClosureCategory | null;
 };
 
 // Active room-type-level inventory hold (future unassigned OTA booking, §R).
