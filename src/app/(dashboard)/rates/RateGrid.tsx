@@ -10,16 +10,21 @@ import type { RateCan, RateCellState, RateGridType, RateGridUnit } from "./types
 import { BoolCell, CellTip, MetricCell, PriceCell, StopSellCell, type BoolField, type CellCtx, type ColGeom, type NumField } from "./RateCells";
 
 // The six restriction rows under each room price row (reference order).
+// Each row is its Hebrew label and nothing else. The faint English shorthand
+// that used to sit beside it (MIN / MAX / MIN LOS, and CTA / CTD before them)
+// was deleted rather than translated: it stood next to a label that already
+// said the same thing in words, so it could only be noise to a reader who knew
+// the trade jargon and a puzzle to one who did not.
 type MetricDef =
-  | { field: NumField; kind: "num"; label: string; tag: string }
-  | { field: BoolField; kind: "bool"; label: string; tag: string };
+  | { field: NumField; kind: "num"; label: string }
+  | { field: BoolField; kind: "bool"; label: string };
 const METRICS: MetricDef[] = [
-  { field: "minStayThrough", kind: "num", label: "מינימום לילות", tag: "MIN" },
-  { field: "maxStay", kind: "num", label: "מקסימום לילות", tag: "MAX" },
-  { field: "minStayArrival", kind: "num", label: "מ׳ לילות בהגעה", tag: "MIN LOS" },
-  { field: "closedToArrival", kind: "bool", label: "סגור לכניסה", tag: "" },
-  { field: "closedToDeparture", kind: "bool", label: "סגור לעזיבה", tag: "" },
-  { field: "stopSell", kind: "bool", label: "סגור למכירה", tag: "" },
+  { field: "minStayThrough", kind: "num", label: "מינימום לילות" },
+  { field: "maxStay", kind: "num", label: "מקסימום לילות" },
+  { field: "minStayArrival", kind: "num", label: "מ׳ לילות בהגעה" },
+  { field: "closedToArrival", kind: "bool", label: "סגור לכניסה" },
+  { field: "closedToDeparture", kind: "bool", label: "סגור לעזיבה" },
+  { field: "stopSell", kind: "bool", label: "סגור למכירה" },
 ];
 
 type CellPatch = {
@@ -183,10 +188,7 @@ export function RateGrid({
 
                     {open && METRICS.map((m) => (
                       <Fragment key={m.field}>
-                        <div className="rg-slabel">
-                          {m.label}
-                          {m.tag && <span className="rg-mtag">{m.tag}</span>}
-                        </div>
+                        <div className="rg-slabel">{m.label}</div>
                         {unit.cells.map((cell, i) =>
                           m.kind === "num"
                             ? <MetricCell key={cell.date} unit={unit} cell={cell} col={cols[i]} field={m.field} ctx={ctx} />

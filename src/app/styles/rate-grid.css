@@ -197,7 +197,6 @@
   border-bottom: 1px solid var(--grid-line);
   font-size: 14px; font-weight: 600; color: var(--muted); white-space: nowrap;
 }
-.rg-mtag { font-size: 12px; font-weight: 800; color: var(--faint); letter-spacing: .04em; }
 
 /* ---------- cells (shared price/restriction) ----------
    The reference tints the weekend/today DAY HEADER only — no body cell carries
