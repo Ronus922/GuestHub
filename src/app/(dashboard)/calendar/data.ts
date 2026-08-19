@@ -24,7 +24,16 @@ export async function getCalendarData(
   days: number,
 ): Promise<CalendarData> {
   const boundedDays = Math.min(Math.max(days, 1), MAX_DAYS);
-  const to = addDays(from, boundedDays); // exclusive
+  const to = addDays(from, boundedDays); // exclusive — the DRAW/inventory boundary
+  // The rate strip needs ONE day MORE than the drawn window. A stay's departure
+  // date carries its own commercial row (closed_to_departure lives there), and
+  // the last slot's departure date is `to` itself — outside [from, to). Without
+  // it the grid's own restriction gate silently cannot see a CTD on the last
+  // column. Only the RATES fetch widens: widening `to` for stays/closures/holds
+  // would pull rows that start after the window, and barGeometry renders such a
+  // row as an off-strip sliver at inset > 100% — that would change what is
+  // drawn, which this fix must not do.
+  const ratesTo = addDays(from, boundedDays + 1);
   const tenantId = actor.tenantId;
 
   const [tenant] = await sql<{ timezone: string; currency: string }[]>`
@@ -82,8 +91,12 @@ export async function getCalendarData(
       AND res.status <> 'cancelled'
     ORDER BY rr.check_in`;
 
+  // kind + category travel with every closure: kind decides how the bar READS
+  // (ooo = removed from inventory, oos = dirty-but-sellable — §8/migration 040)
+  // and category is the closed 084 taxonomy the bar labels itself with.
   const closures = await sql<CalendarClosure[]>`
-    SELECT id, room_id, start_date::text AS start_date, end_date::text AS end_date, reason
+    SELECT id, room_id, start_date::text AS start_date, end_date::text AS end_date,
+           reason, kind, category
     FROM guesthub.room_closures
     WHERE tenant_id = ${tenantId}
       -- same DRAW boundary as stays: a closure ending on day 1 keeps its half-slot
@@ -104,6 +117,15 @@ export async function getCalendarData(
   // commercial model (§0.4): each Sellable Unit's base-plan row is projected
   // onto its member room(s) (room_id set, room_type_id null) so the grid's
   // room-priority lookup is unchanged. min_nights carries min_stay_arrival.
+  //
+  // BASE PLAN ONLY (bp.is_base), deliberately: the grid strip shows the room's
+  // own commercial state, and no Rate-Plan overlay is merged in here. A plan
+  // overlay applies to ONE (plan, sellable unit) pair, so merging it would make
+  // a single cell show a restriction that is only true for whichever plan the
+  // guest ends up booking. The full merged evaluation (base + overlay + plan
+  // rules) is the pricing engine's job on the server (lib/pricing/engine.ts),
+  // and it re-validates every create — so the grid gate is a strict SUBSET of
+  // the server gate and can never permit what the server refuses.
   const rates = await sql<RateRow[]>`
     SELECT ppr.date::text AS date, sur.room_id, NULL::uuid AS room_type_id,
            ppr.price::float8 AS price, ppr.min_stay_arrival AS min_nights,
@@ -113,7 +135,7 @@ export async function getCalendarData(
     JOIN guesthub.pricing_plans bp ON bp.id = ppr.pricing_plan_id AND bp.is_base
     JOIN guesthub.sellable_unit_rooms sur ON sur.sellable_unit_id = ppr.sellable_unit_id
     WHERE ppr.tenant_id = ${tenantId}
-      AND ppr.date >= ${from} AND ppr.date < ${to}`;
+      AND ppr.date >= ${from} AND ppr.date < ${ratesTo}`;
 
   const kpis = await getKpis(tenantId, today);
 

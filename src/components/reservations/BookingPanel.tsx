@@ -40,6 +40,10 @@ export type BookingPrefill = {
   roomId?: string;
   checkIn?: string;
   checkOut?: string;
+  /** 084 — the calendar's create gate was blocked on an overridable COMMERCIAL
+   *  restriction and an authorized operator chose "המשך בכל זאת". Carried
+   *  through to createReservationAction, which re-checks the permission. */
+  restrictionOverride?: boolean;
 };
 
 type GuestForm = {
@@ -139,6 +143,9 @@ export function BookingPanel({
   canPriceOverride: boolean;
 }) {
   const [step, setStep] = useState(0);
+  // 084 — set once, from the prefill, when the panel opens: the operator already
+  // answered the gate dialog. Nothing in the panel can turn it on.
+  const [restrictionOverride, setRestrictionOverride] = useState(false);
   // validation feedback: set true when a blocked "הבא"/"צור הזמנה" click reds the
   // missing fields; cleared on every step change so a fresh step starts clean.
   const [showErrors, setShowErrors] = useState(false);
@@ -221,6 +228,7 @@ export function BookingPanel({
       },
     ];
     setStep(0);
+    setRestrictionOverride(prefill.restrictionOverride === true);
     setGuest(EMPTY_GUEST);
     setSourceId(initialSource);
     setStays(initialStays);
@@ -493,6 +501,7 @@ export function BookingPanel({
         paymentMethod: method || undefined,
         workflowStatusId: workflowStatusId || undefined,
         documentIds: docIds.length > 0 ? docIds : undefined,
+        restrictionOverride,
       });
       if (!res.success) {
         toast.error(res.error);

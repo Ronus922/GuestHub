@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isDateOnly } from "@/lib/dates";
+import { CLOSURE_CATEGORY_VALUES } from "@/lib/closures/categories";
 
 // Shared Zod schemas for the reservation flow (booking panel, edit panel,
 // calendar move/resize, closures). Every server action parses with these —
@@ -116,6 +117,13 @@ export const createReservationSchema = z.object({
   // documents the wizard uploaded BEFORE the reservation existed (booking_id
   // NULL) — attached to the new reservation inside the creation transaction
   documentIds: z.array(z.uuid()).max(50).optional(),
+  // 084 — the operator knowingly booked against a COMMERCIAL restriction
+  // (CTA / CTD / stop-sell / min-stay / max-stay) after confirming the
+  // calendar's gate dialog. Default false: an omitted field never overrides.
+  // The flag is a REQUEST, not an authorization — createReservationAction
+  // requires reservations.restriction_override before it takes effect, and it
+  // can never waive a physical block.
+  restrictionOverride: z.boolean().default(false),
 });
 
 export const updateReservationSchema = z.object({
@@ -159,7 +167,10 @@ export const closureSchema = z
     // §8 typed closures: ooo = out of order (removed from inventory), oos = out
     // of service (dirty but still sellable — never reduces availability).
     kind: z.enum(["ooo", "oos"]).default("ooo"),
-    category: z.string().trim().max(60).optional(),
+    // 084 closed taxonomy — the CHECK constraint's exact value set, read from
+    // the ONE declaration (lib/closures/categories.ts). Optional because a
+    // closure may still be filed with free-text `reason` alone.
+    category: z.enum(CLOSURE_CATEGORY_VALUES).optional(),
   })
   .refine((s) => s.endDate > s.startDate, {
     message: "נדרש לילה אחד לפחות",

@@ -22,6 +22,11 @@ export type NewReservationPrefill = {
   checkIn?: string;
   checkOut?: string;
   source: NewReservationSource;
+  /** 084 — the operator confirmed a blocked-but-overridable COMMERCIAL
+   *  restriction in the calendar's gate dialog. Carried through to
+   *  createReservationAction, which re-checks the permission server-side; the
+   *  flag alone grants nothing. Never set for a physical conflict. */
+  restrictionOverride?: boolean;
 };
 
 type Ctx = {

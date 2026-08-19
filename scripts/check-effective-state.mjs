@@ -10,14 +10,17 @@
 //   - one-room and pooled Sellable Units both project correctly (req 14)
 // Usage: node --env-file=.env.local scripts/check-effective-state.mjs
 import { execSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
 // ---------- pure module (tsc → commonjs, imported directly) ----------
+// resolved from this file, never a hardcoded checkout path (check:guard-roots)
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = mkdtempSync(join(tmpdir(), "ess-"));
 execSync(
   `pnpm exec tsc src/lib/rates/rules.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
@@ -72,9 +75,20 @@ assert.ok(rules.stayRestrictionViolation(idx([row({ date: "2026-07-11", ctd: tru
 assert.ok(rules.stayRestrictionViolation(idx([row({ date: "2026-07-10", ss: true })]), stay("2026-07-10", "2026-07-11", ["2026-07-10"]))?.includes("סגור"), "stop_sell blocks the night");
 assert.equal(rules.stayRestrictionViolation(idx([row({ date: "2026-07-10", price: 500 })]), stay("2026-07-10", "2026-07-11", ["2026-07-10"])), null, "unrestricted stay passes");
 
-// nightsRuleViolation — the calendar's manual-create gate: min/max NIGHTS only,
-// and deliberately NOT cta/ctd/stop_sell (front-desk staff may still place a
-// manual booking on a closed date). Same evaluation order + Hebrew messages.
+// nightsRuleViolation — the stay-LENGTH subset: min_stay_arrival,
+// min_stay_through and max_stay only, deliberately NOT cta/ctd/stop_sell. Same
+// evaluation order + Hebrew messages as the full validator.
+//
+// It is NO LONGER the calendar's manual-create gate (084). It used to be, and
+// the consequence was that a front-desk create walked straight through a CTA or
+// a stop-sell without a word — the restriction existed in the rate grid, was
+// published to the channels, and was invisible to the one surface where staff
+// actually book. The grid now calls stayRestrictionViolationStructured, the
+// same validator the server runs, and a blocked create is SHOWN: refused
+// outright, or offered to a holder of reservations.restriction_override as an
+// explicit "המשך בכל זאת". The assertions below still pin this function's own
+// contract, which is unchanged; the claim about the CALENDAR is asserted at the
+// end of this block, inverted.
 const nstay = (ci, nights) => ({ checkIn: ci, nights });
 assert.equal(
   rules.nightsRuleViolation(idx([row({ date: "2026-07-10", msa: 4 })]), nstay("2026-07-10", ["2026-07-10", "2026-07-11"]))?.code,
@@ -94,7 +108,39 @@ assert.equal(
   null, "nights gate: a length within [min,max] passes");
 assert.equal(
   rules.nightsRuleViolation(idx([row({ date: "2026-07-10", cta: true, ss: true })]), nstay("2026-07-10", ["2026-07-10"])),
-  null, "nights gate: CTA/stop_sell do NOT block a manual calendar create — only illegal length does");
+  null, "length subset: nightsRuleViolation itself still ignores CTA/stop_sell — its own contract is unchanged");
+
+// THE INVERTED CLAIM (084). The calendar's manual-create gate is the FULL
+// validator now, so CTA / CTD / stop_sell DO block a manual create. This is the
+// assertion that used to say the opposite.
+assert.equal(
+  rules.stayRestrictionViolationStructured(
+    idx([row({ date: "2026-07-10", cta: true })]),
+    stay("2026-07-10", "2026-07-11", ["2026-07-10"]),
+  )?.code,
+  "CLOSED_ON_ARRIVAL", "calendar gate: CTA now BLOCKS a manual calendar create");
+assert.equal(
+  rules.stayRestrictionViolationStructured(
+    idx([row({ date: "2026-07-10", ss: true })]),
+    stay("2026-07-10", "2026-07-11", ["2026-07-10"]),
+  )?.code,
+  "STOP_SELL", "calendar gate: stop_sell now BLOCKS a manual calendar create");
+assert.equal(
+  rules.stayRestrictionViolationStructured(
+    idx([row({ date: "2026-07-11", ctd: true })]),
+    stay("2026-07-10", "2026-07-11", ["2026-07-10"]),
+  )?.code,
+  "CLOSED_ON_DEPARTURE",
+  "calendar gate: CTD on the DEPARTURE date blocks — the row the grid now fetches the extra day for");
+// …and the grid really calls that validator, over the nights PLUS the departure
+// date. A gate the UI does not invoke is a comment.
+const gridSrc = readFileSync(join(ROOT, "src/app/(dashboard)/calendar/CalendarGrid.tsx"), "utf8");
+assert.ok(/stayRestrictionViolationStructured\(byDate, \{ checkIn: ci, checkOut: co, nights \}\)/.test(gridSrc),
+  "calendar gate: CalendarGrid calls the FULL shared validator, not the length subset");
+assert.ok(/for \(const d of \[\.\.\.nights, co\]\)/.test(gridSrc),
+  "calendar gate: the grid's byDate covers the nights AND the departure date (CTD lives there)");
+assert.ok(!/\bnightsRuleViolation\b/.test(gridSrc),
+  "calendar gate: the grid no longer calls the length-only subset");
 
 // applyPriceMode — the Group Update modes, clamped + rounded
 assert.equal(rules.applyPriceMode(100, "replace", 250, 300), 250);

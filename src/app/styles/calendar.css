@@ -13,7 +13,7 @@
      layers, month separator) — it is calculated, mirrored by
      src/lib/calendar-interactions.ts, and must not mirror or shift;
    - the dense day cell (price / min-nights / stop-sell), which lives inside a
-     ~37px-wide column: it uses the §12.1 dense-cell floor of 12px and cannot
+     ~52px-wide column: it uses the §12.1 dense-cell floor of 12px and cannot
      carry a 28px chip;
    - .cb-nav / .cb-seg / .cb-rangebox / .cb-todaybtn, which are SHARED with
      /rates (RateToolbar, GroupUpdatePanel). They are declared here with the
@@ -688,7 +688,8 @@
     var(--line) 12px
   );
 }
-/* Dense day cell (§12.1): a ~37px-wide column in the 30-day view. 12px is the
+/* Dense day cell (§12.1): a ~52px-wide column in the 21-day view (21 days
+   across a 1280px-floor board, minus the 176px room column). 12px is the
    absolute floor of the scale and a 28px .chip cannot fit here, so the price,
    the min-nights hint and the stop-sell flag stay compact markers. */
 .cb-rcell .cb-pr {
@@ -706,6 +707,13 @@
   font-weight: 700;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+  /* The stay-range mark can read "3", "1–7" or "3–7", and the en dash is a
+     legal break opportunity — so the widest form could wrap onto a second line
+     inside a flex item that is allowed to shrink to min-content. Measured, the
+     mark needs 33.8px against a 51.6px column floor, so it fits; nowrap makes
+     the break impossible rather than merely unlikely, exactly as its two
+     sibling marks (.cb-pr, .cb-cx) already do. */
+  white-space: nowrap;
 }
 /* commercial stop-sell indicator (§1): a per-day flag on an empty sellable cell,
    deliberately unlike the gray dashed physical .cb-blockbar and the reservation
@@ -1352,3 +1360,65 @@
 }
 
 } /* @layer components */
+
+/* ---------- create-gate confirmation (084) ----------
+   The restriction dialog's two text rows. Tokens only: the §2 scale for size,
+   --ink / --muted for colour. The dialog shell itself is the canonical
+   components/ui/ConfirmDialog (.modal/.md-hd/.md-bd/.md-ft). */
+.cb-gate-msg {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.cb-gate-note {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---------- day-cell markers (§8.1) ----------
+   A day cell carries exactly ONE mark, chosen by the priority ladder in
+   lib/rates/cell-mark. This row hosts whichever of the two in-flow marks won
+   (the "סגור" flag or the min-nights hint) — never both. .cb-rcell is a centred
+   column, so the row keeps the mark on a single line and clips rather than
+   growing the cell past --cb-row-h. */
+.cb-rcell .cb-rmk {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  overflow: hidden;
+}
+/* The three MIDDLE rungs of the ladder (CTA / CTD / max stay) share this one
+   discreet sign. Absolute in the cell CORNER, out of the flex flow, so it never
+   competes with the price for a ~52px column's width. --warn is the token for
+   "attention, not failure"; the detail lives in the hover card. */
+.cb-rcell {
+  position: relative;
+}
+.cb-rcell .cb-rx {
+  position: absolute;
+  top: 3px;
+  inset-inline-end: 3px;
+  display: inline-flex;
+  color: var(--warn);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* ---------- typed closure bar (§8.3) ----------
+   The palette comes from the approved §3.1 triplets (applied inline by the
+   component). Only the border STYLE is declared here, and it carries meaning:
+   dashed = OOO, the nights are gone from inventory; dotted = OOS, an advisory
+   note on nights that are still sellable. */
+.cb-blockbar[data-kind="oos"] {
+  border-style: dotted;
+}
+
+/* ---------- empty-cell commercial hover card (§8.2) ----------
+   It reuses the reservation tooltip's shell (.cb-pop) wholesale — width,
+   caret, placement flip and pointer-events:none all come from there. The only
+   difference is the header, which has no payment chip to leave room for. */
+.cb-cellpop .cb-pop-h {
+  gap: 10px;
+}

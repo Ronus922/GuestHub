@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { nightsBetween } from "@/lib/dates";
+import { CLOSURE_CATEGORIES, type ClosureCategory } from "@/lib/closures/categories";
 import { createClosureAction } from "./actions";
 import type { CalendarRoom } from "./types";
 
@@ -29,6 +30,10 @@ export function ClosurePanel({
   const [roomId, setRoomId] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  // the closed 084 taxonomy — the closure's CLASSIFIER. It was never sent
+  // before, so every closure in production carries category NULL and the board
+  // had only free text to render. "" = not chosen yet (the field is optional).
+  const [category, setCategory] = useState<ClosureCategory | "">("");
   const [reason, setReason] = useState("");
   const [saving, startSaving] = useTransition();
 
@@ -37,6 +42,7 @@ export function ClosurePanel({
     setRoomId(prefill.roomId ?? "");
     setStartDate(prefill.startDate ?? "");
     setEndDate(prefill.endDate ?? "");
+    setCategory("");
     setReason("");
   }, [open, prefill.roomId, prefill.startDate, prefill.endDate]);
 
@@ -45,7 +51,13 @@ export function ClosurePanel({
 
   const submit = () =>
     startSaving(async () => {
-      const res = await createClosureAction({ roomId, startDate, endDate, reason });
+      const res = await createClosureAction({
+        roomId,
+        startDate,
+        endDate,
+        category: category || undefined,
+        reason,
+      });
       if (res.success) {
         toast.success("החדר נסגר לטווח שנבחר");
         onClose();
@@ -128,11 +140,30 @@ export function ClosurePanel({
         )}
 
         <label className="field">
-          <span className="field-label">סיבה</span>
+          <span className="field-label">סיבת הסגירה</span>
+          <select
+            className="field-input"
+            value={category}
+            onChange={(e) => setCategory(e.target.value as ClosureCategory | "")}
+          >
+            <option value="">בחירת סיבה…</option>
+            {CLOSURE_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <span className="field-hint">
+            הסיבה היא מה שמוצג על היומן. הפירוט למטה הוא תוספת חופשית.
+          </span>
+        </label>
+
+        <label className="field">
+          <span className="field-label">פירוט</span>
           <input
             className="field-input"
             value={reason}
-            placeholder="תחזוקה, צביעה, ליקוי…"
+            placeholder="צביעה בחדר האמבטיה, ליקוי בדוד…"
             maxLength={200}
             onChange={(e) => setReason(e.target.value)}
           />

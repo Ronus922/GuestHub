@@ -73,6 +73,7 @@ export default async function CalendarPage({
         saveCard: hasPermission(actor, "payments.card_manage"),
         revealCard: hasPermission(actor, "payments.card_reveal"),
         chargeCard: hasPermission(actor, "payments.card_charge"),
+        restrictionOverride: hasPermission(actor, "reservations.restriction_override"),
       }}
       vatRate={vatRate}
       buildStamp={buildStamp}
