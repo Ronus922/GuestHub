@@ -1,7 +1,7 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { nightsBetween, type DateOnly } from "@/lib/dates";
-import { resolveStayPrice } from "@/lib/rates/rules";
+import { OVERRIDABLE_STAY_RULE_CODES, resolveStayPrice } from "@/lib/rates/rules";
 import { calculateReservationPrice } from "./engine";
 import { computeReservationTotals, type PriceMode } from "./totals";
 import type {
@@ -134,6 +134,19 @@ export type PricedReservationStay<T extends ReservationStayInput> = T & {
 // Engine error → enforcement group. ROOM_CLOSED carries a date when it came
 // from a commercial stop-sell (restriction) and no date when it came from a
 // physical closure (availability) — the same split the legacy path enforced.
+//
+// ⚠ ROOM_CLOSED IS OVERLOADED, AND `e.date` IS THE ONLY DISCRIMINATOR.
+//   · WITH a date  → engine.ts turned a STOP_SELL stay-rule violation into
+//     ROOM_CLOSED and attached violation.date. Commercial. Overridable.
+//   · WITHOUT a date → engine.ts found a room_closures conflict row
+//     (conflict_kind='closure'). PHYSICAL. Blocked always, by anyone.
+//   A type-level split would be cleaner, but ROOM_CLOSED is a published
+//   PricingErrorCode consumed by the engine, the message table, the channel
+//   payload path and several guards; renaming it is a far wider change than
+//   this one. So the RUNTIME discriminator stays, and every consumer of the
+//   override must reproduce the `e.date != null` test EXACTLY — dropping it
+//   would turn a permission to sell against a rate rule into a permission to
+//   double-book a physically blocked room.
 const AVAILABILITY_CODES: ReadonlySet<PricingErrorCode> = new Set([
   "ROOM_NOT_FOUND", "ROOM_INACTIVE", "ROOM_OUT_OF_ORDER", "ROOM_UNAVAILABLE",
 ]);
@@ -153,19 +166,54 @@ const PRICING_CODES: ReadonlySet<PricingErrorCode> = new Set([
   "NO_PRICE_FOR_DATE", "EXTRA_GUEST_PRICING_INCOMPLETE",
 ]);
 
+// The engine-code projection of the ONE overridable declaration
+// (OVERRIDABLE_STAY_RULE_CODES, lib/rates/rules.ts). Only STOP_SELL changes name
+// on the way: the engine reports a commercial stop-sell as ROOM_CLOSED *with a
+// date*. Nothing physical is or can be in this set — the availability group is
+// not consulted against it at all.
+export const OVERRIDABLE_RESTRICTION_CODES: ReadonlySet<PricingErrorCode> = new Set(
+  OVERRIDABLE_STAY_RULE_CODES.map((c): PricingErrorCode =>
+    c === "STOP_SELL" ? "ROOM_CLOSED" : c,
+  ),
+);
+
 // The first engine error the caller's enforcement flags actually block on.
+//
+// `overrideRestrictionCodes` (084) waives codes INSIDE the restriction group and
+// nowhere else: an authorized human said "sell it anyway". Every other group —
+// availability, occupancy, plan, pricing, request-level — is untouched by it.
 export function firstEnforcedError(
   errors: PricingError[],
-  flags: { availability: boolean; restrictions: boolean; pricing: boolean },
+  flags: {
+    availability: boolean;
+    restrictions: boolean;
+    pricing: boolean;
+    /** codes an authorized restriction override waives; never physical ones */
+    overrideRestrictionCodes?: ReadonlySet<PricingErrorCode>;
+  },
 ): PricingError | null {
+  const waived = (code: PricingErrorCode) =>
+    flags.overrideRestrictionCodes?.has(code) ?? false;
   for (const e of errors) {
     if (e.code === "ROOM_DUPLICATED") continue; // cross-stay overlap is the seam's own check
     if (AVAILABILITY_CODES.has(e.code)) { if (flags.availability) return e; continue; }
     if (e.code === "ROOM_CLOSED") {
-      if (e.date != null ? flags.restrictions : flags.availability) return e;
+      // the overload above: dated = commercial stop-sell, undated = PHYSICAL.
+      // The physical branch never asks whether the code was waived — there is
+      // no override path out of a room that is physically blocked.
+      if (e.date != null) {
+        if (!flags.restrictions) continue;
+        if (waived(e.code)) continue;
+        return e;
+      }
+      if (flags.availability) return e;
       continue;
     }
-    if (RESTRICTION_CODES.has(e.code)) { if (flags.restrictions) return e; continue; }
+    if (RESTRICTION_CODES.has(e.code)) {
+      if (!flags.restrictions) continue;
+      if (waived(e.code)) continue;
+      return e;
+    }
     if (OCCUPANCY_CODES.has(e.code)) return e; // always enforced (capacity rule)
     if (PLAN_CODES.has(e.code)) return e; // a requested plan must be usable
     if (PRICING_CODES.has(e.code)) { if (flags.pricing) return e; continue; }
@@ -245,6 +293,9 @@ export type PriceStaysOptions = {
   excludeRrIds?: string[];
   enforceAvailability: boolean;
   enforceRestrictions: boolean;
+  /** 084 — restriction codes an AUTHORIZED override waives. The calling ACTION
+   *  gates the permission; passing the set is not itself an authorization. */
+  overrideRestrictionCodes?: ReadonlySet<PricingErrorCode>;
   skipChecksForRr?: Set<string>;
   // §6 committed-price snapshot: rrId → stored rate. A non-manual stay listed
   // here keeps this committed price instead of being re-priced from CURRENT
@@ -333,6 +384,7 @@ export async function priceReservationStays<T extends ReservationStayInput>(
       : firstEnforcedError(rq.errors, {
           availability: opts.enforceAvailability,
           restrictions: opts.enforceRestrictions,
+          overrideRestrictionCodes: opts.overrideRestrictionCodes,
           // fresh pricing is only authoritative when neither a manual override
           // nor a committed snapshot supplies the price
           pricing: manualRatePerNight == null && !snapshot,

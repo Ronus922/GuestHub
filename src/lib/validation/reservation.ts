@@ -117,6 +117,13 @@ export const createReservationSchema = z.object({
   // documents the wizard uploaded BEFORE the reservation existed (booking_id
   // NULL) — attached to the new reservation inside the creation transaction
   documentIds: z.array(z.uuid()).max(50).optional(),
+  // 084 — the operator knowingly booked against a COMMERCIAL restriction
+  // (CTA / CTD / stop-sell / min-stay / max-stay) after confirming the
+  // calendar's gate dialog. Default false: an omitted field never overrides.
+  // The flag is a REQUEST, not an authorization — createReservationAction
+  // requires reservations.restriction_override before it takes effect, and it
+  // can never waive a physical block.
+  restrictionOverride: z.boolean().default(false),
 });
 
 export const updateReservationSchema = z.object({

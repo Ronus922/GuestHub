@@ -14,11 +14,13 @@ import {
 import { listAvailableRooms, type AvailableRoom } from "@/lib/reservations/available-rooms";
 import { moveAttachedDocumentFiles } from "@/lib/reservations/documents";
 import {
+  OVERRIDABLE_RESTRICTION_CODES,
   priceReservationStays,
   StayPricingError,
   type PricedReservationStay,
   type StayPricingSnapshot,
 } from "@/lib/pricing/reservation-pricing";
+import type { PricingErrorCode } from "@/lib/pricing/types";
 import {
   computeReservationTotals,
   TotalsValidationError,
@@ -109,6 +111,8 @@ async function validateAndPriceStays(
     excludeRrIds?: string[];
     enforceAvailability: boolean;
     enforceRestrictions: boolean;
+    /** 084 — waived restriction codes; the ACTION owns the permission check */
+    overrideRestrictionCodes?: ReadonlySet<PricingErrorCode>;
     skipChecksForRr?: Set<string>;
     snapshotByRr?: Map<string, { ratePerNight: number; priceTotal?: number }>;
     actorUserId?: string;
@@ -305,6 +309,15 @@ export async function createReservationAction(
     // an explicit manual price — nightly or total — is an authorized override (§13)
     if (input.rooms.some((s) => s.isManualRate === true || s.priceMode === "manual_total"))
       requirePermission(actor, "reservations.price_override");
+    // 084 — same shape, one level up: the flag arrives from the client, the
+    // PERMISSION is checked here, BEFORE any enforcement runs. Without the key
+    // this throws and the reservation is never created; the flag alone grants
+    // nothing. What it waives is bounded by OVERRIDABLE_RESTRICTION_CODES —
+    // commercial rules only. enforceAvailability stays true below, so a room
+    // that is out_of_order/inactive, under an OOO closure, or already occupied
+    // is still refused with this flag set.
+    if (input.restrictionOverride)
+      requirePermission(actor, "reservations.restriction_override");
 
     const result = await sql.begin(async (tx) => {
       await lockRooms(tx, actor.tenantId, input.rooms.map((r) => r.roomId));
@@ -314,6 +327,9 @@ export async function createReservationAction(
       const priced = await validateAndPriceStays(tx, actor.tenantId, input.rooms, {
         enforceAvailability: true,
         enforceRestrictions: true,
+        overrideRestrictionCodes: input.restrictionOverride
+          ? OVERRIDABLE_RESTRICTION_CODES
+          : undefined,
         actorUserId: actor.userId,
         taxExempt,
       });
