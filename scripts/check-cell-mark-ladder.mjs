@@ -231,14 +231,26 @@ for (let i = 0; i < EXPECTED.length; i++) {
 {
   // A bare "7" for a ceiling would read as a FLOOR of seven — the opposite
   // rule — so the maximum-only form must stay distinguishable from the
-  // minimum-only form.
+  // minimum-only form. It says so as the full range 1–7 rather than a ≤: the
+  // font the build serves has no U+2264 and rendered it as tofu.
   assert.equal(stayRangeLabel(3, null), "3", "a minimum alone reads as the bare number");
-  assert.equal(stayRangeLabel(null, 7), "≤7", "a maximum alone wears its ≤");
+  assert.equal(stayRangeLabel(null, 7), "1–7", "a maximum alone reads as the full range from 1");
   assert.equal(stayRangeLabel(3, 7), "3–7", "both ends read as a range, with an en dash");
   assert.notEqual(stayRangeLabel(null, 7), stayRangeLabel(7, null),
     "a ceiling of 7 never renders the same as a floor of 7");
   assert.equal(stayRangeLabel(null, null), null, "no ends at all has no label — the rung does not hold");
-  ok("the stay-range rung reads as 3 / ≤7 / 3–7, and a ceiling never looks like a floor");
+  // U+2264 is not in the served font. No input may bring it back, whichever
+  // ends are present — the en dash (U+2013) is the only separator, measured
+  // present. Checked over every shape the rung can take, not just the one form
+  // that used to carry it.
+  for (const [min, max] of [[3, null], [null, 7], [3, 7], [1, 1], [null, 1], [1, null], [2, 99]]) {
+    const label = stayRangeLabel(min, max);
+    assert.ok(label == null || !label.includes("\u2264"),
+      `stayRangeLabel(${min}, ${max}) = ${JSON.stringify(label)} must not contain U+2264`);
+  }
+  assert.ok(!readFileSync(join(ROOT, "src/lib/rates/cell-mark.ts"), "utf8").includes("\u2264"),
+    "the cell-mark module carries no U+2264 at all — not in code, not in its comments");
+  ok("the stay-range rung reads as 3 / 1–7 / 3–7, never returns U+2264, and a ceiling never looks like a floor");
 }
 
 // ============================================================
@@ -266,9 +278,9 @@ for (let i = 0; i < EXPECTED.length; i++) {
   // readings cannot drift between the pure module and the JSX
   assert.ok(/stayRangeLabel\(mark\.min, mark\.max\)/.test(cellBody),
     "the stay-range numbers come from stayRangeLabel(), not from a second formatting rule");
-  // …inside .ltr-num (§11), or the ≤ is flipped to the far side of its number
+  // …inside .ltr-num (§11), or the range is reordered around its en dash
   assert.ok(/<span className="ltr-num">\{stayRangeLabel/.test(cellBody),
-    "the stay-range numbers sit in .ltr-num so the ≤ is not reordered by the RTL direction");
+    "the stay-range numbers sit in .ltr-num so the range is not reordered by the RTL direction");
   // the raw fields must not be re-read in the cell body — that is how a second
   // mark creeps back in
   for (const field of ["rate?.closed", "rate?.closed_to_arrival", "rate?.closed_to_departure", "rate?.max_nights"]) {

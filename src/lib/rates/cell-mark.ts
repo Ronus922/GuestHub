@@ -110,14 +110,18 @@ export function cellMark(rate: CellMarkRow | null | undefined): CellMarkResult |
 
 /**
  * The stay-range rung's text, next to the moon. Three readings, because the two
- * ends are independent: "3" is a floor, "≤7" is a ceiling, "3–7" is a window.
- * A bare "7" for a maximum would read as a minimum of seven — the opposite
- * rule — so the ceiling always wears its ≤. Returns null when neither end
- * exists, which is exactly when the rung does not hold.
+ * ends are independent: "3" is a floor, "3–7" is a window, and a ceiling alone
+ * reads "1–7" — a bare "7" would read as a minimum of seven, the opposite rule.
+ * The ceiling used to wear a U+2264, which is absent from the font the build
+ * serves and rendered as tofu; a maximum with no minimum IS the range 1 to that
+ * maximum (cellMinNights() already drops a non-binding minimum of 1), so the
+ * full range says the same thing with glyphs the font has. The en dash is
+ * U+2013, measured present. Returns null when neither end exists, which is
+ * exactly when the rung does not hold.
  */
 export function stayRangeLabel(min: number | null, max: number | null): string | null {
   if (min != null && max != null) return `${min}–${max}`;
   if (min != null) return `${min}`;
-  if (max != null) return `≤${max}`;
+  if (max != null) return `1–${max}`;
   return null;
 }

@@ -27,7 +27,7 @@
 //
 // WHAT IT SEEDS — one room, four separate clean dates, one reading each:
 //   cell 1  min_stay_arrival = 3               → 🌙 3      (a floor)
-//   cell 2  max_stay = 7                       → 🌙 ≤7     (a ceiling)
+//   cell 2  max_stay = 7                       → 🌙 1–7    (a ceiling)
 //   cell 3  min_stay_arrival = 3 + max_stay = 7 → 🌙 3–7    (a window — the case
 //           that used to show the ceiling only, with the floor invisible)
 //   cell 4  closed_to_arrival = true           → the corner lock
@@ -86,7 +86,7 @@ const FIELDS = [
 // rather than a promise in a comment.
 const CELLS = [
   { label: "floor  — 🌙 3", patch: { min_stay_arrival: 3 } },
-  { label: "ceiling— 🌙 ≤7", patch: { max_stay: 7 } },
+  { label: "ceiling— 🌙 1–7", patch: { max_stay: 7 } },
   { label: "window — 🌙 3–7", patch: { min_stay_arrival: 3, max_stay: 7 } },
   { label: "lock   — CTA", patch: { closed_to_arrival: true } },
 ];

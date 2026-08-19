@@ -13,7 +13,7 @@
      layers, month separator) — it is calculated, mirrored by
      src/lib/calendar-interactions.ts, and must not mirror or shift;
    - the dense day cell (price / min-nights / stop-sell), which lives inside a
-     ~37px-wide column: it uses the §12.1 dense-cell floor of 12px and cannot
+     ~52px-wide column: it uses the §12.1 dense-cell floor of 12px and cannot
      carry a 28px chip;
    - .cb-nav / .cb-seg / .cb-rangebox / .cb-todaybtn, which are SHARED with
      /rates (RateToolbar, GroupUpdatePanel). They are declared here with the
@@ -688,7 +688,8 @@
     var(--line) 12px
   );
 }
-/* Dense day cell (§12.1): a ~37px-wide column in the 30-day view. 12px is the
+/* Dense day cell (§12.1): a ~52px-wide column in the 21-day view (21 days
+   across a 1280px-floor board, minus the 176px room column). 12px is the
    absolute floor of the scale and a 28px .chip cannot fit here, so the price,
    the min-nights hint and the stop-sell flag stay compact markers. */
 .cb-rcell .cb-pr {
@@ -706,7 +707,7 @@
   font-weight: 700;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
-  /* The stay-range mark can read "3", "≤7" or "3–7", and the en dash is a
+  /* The stay-range mark can read "3", "1–7" or "3–7", and the en dash is a
      legal break opportunity — so the widest form could wrap onto a second line
      inside a flex item that is allowed to shrink to min-content. Measured, the
      mark needs 33.8px against a 51.6px column floor, so it fits; nowrap makes
@@ -1390,7 +1391,7 @@
 }
 /* The three MIDDLE rungs of the ladder (CTA / CTD / max stay) share this one
    discreet sign. Absolute in the cell CORNER, out of the flex flow, so it never
-   competes with the price for a ~37px column's width. --warn is the token for
+   competes with the price for a ~52px column's width. --warn is the token for
    "attention, not failure"; the detail lives in the hover card. */
 .cb-rcell {
   position: relative;

@@ -1553,9 +1553,9 @@ const RoomRow = memo(function RoomRow({
                       {mark.mark === "stay_range" && (
                         <span className="cb-mn">
                           <Icon name="moon" size={13.5} />
-                          {/* "3" / "≤7" / "3–7" — .ltr-num (§11) so the ≤ stays
-                              LEFT of its number instead of being flipped to the
-                              far side by the RTL paragraph direction. */}
+                          {/* "3" / "1–7" / "3–7" — .ltr-num (§11) so the range
+                              keeps its low end LEFT of the en dash instead of
+                              being flipped by the RTL paragraph direction. */}
                           <span className="ltr-num">{stayRangeLabel(mark.min, mark.max)}</span>
                         </span>
                       )}
