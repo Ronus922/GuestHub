@@ -11,7 +11,7 @@ export type CalendarRoom = {
   room_number: string;
   name: string | null;
   floor: string | null;
-  status: string; // available | inactive | out_of_order | maintenance
+  status: string; // available | inactive | out_of_order (closed set, migration 009)
   is_active: boolean;
   room_type_id: string | null;
   room_type_name: string | null;

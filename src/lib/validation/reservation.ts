@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isDateOnly } from "@/lib/dates";
+import { CLOSURE_CATEGORY_VALUES } from "@/lib/closures/categories";
 
 // Shared Zod schemas for the reservation flow (booking panel, edit panel,
 // calendar move/resize, closures). Every server action parses with these —
@@ -159,7 +160,10 @@ export const closureSchema = z
     // §8 typed closures: ooo = out of order (removed from inventory), oos = out
     // of service (dirty but still sellable — never reduces availability).
     kind: z.enum(["ooo", "oos"]).default("ooo"),
-    category: z.string().trim().max(60).optional(),
+    // 084 closed taxonomy — the CHECK constraint's exact value set, read from
+    // the ONE declaration (lib/closures/categories.ts). Optional because a
+    // closure may still be filed with free-text `reason` alone.
+    category: z.enum(CLOSURE_CATEGORY_VALUES).optional(),
   })
   .refine((s) => s.endDate > s.startDate, {
     message: "נדרש לילה אחד לפחות",

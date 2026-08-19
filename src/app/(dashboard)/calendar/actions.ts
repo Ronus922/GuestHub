@@ -8,6 +8,7 @@ import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventor
 import { markAriDirty } from "@/lib/channel/outbox";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { closureSchema } from "@/lib/validation/reservation";
+import type { ClosureCategory } from "@/lib/closures/categories";
 import type { ActionResult } from "./types";
 
 const fail = (error: string): ActionResult<never> => ({ success: false, error });
@@ -29,7 +30,8 @@ export async function createClosureAction(raw: {
   endDate: string;
   reason?: string;
   kind?: "ooo" | "oos";
-  category?: string;
+  /** 084 closed taxonomy — closureSchema rejects anything outside it */
+  category?: ClosureCategory;
 }): Promise<ActionResult> {
   try {
     const actor = await getActor();

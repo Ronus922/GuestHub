@@ -1281,12 +1281,15 @@ const RoomRow = memo(function RoomRow({
   const occupiedNow = (stays ?? []).some(
     (s) => isBlocking(s.status) && s.check_in <= today && s.check_out > today,
   );
+  // rooms.status is a CLOSED set of three since migration 009 —
+  // available | inactive | out_of_order. 'maintenance' was folded into
+  // out_of_order there and is rejected by rooms_status_check, so the branch
+  // that rendered "תחזוקה" was unreachable. Maintenance is a DATED closure
+  // (room_closures.category = 'maintenance', 084), never a room status.
   const statusText = !sellable
     ? room.status === "out_of_order"
       ? "מושבת"
-      : room.status === "maintenance"
-        ? "תחזוקה"
-        : "לא פעיל"
+      : "לא פעיל"
     : occupiedNow
       ? "תפוס"
       : "פנוי";
