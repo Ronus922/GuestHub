@@ -3,13 +3,19 @@
 // No imports beyond stayLimit, no DB, no React. Checkable by
 // scripts/check-cell-mark-ladder.mjs.
 //
-// WHY A LADDER. A calendar day cell is ~37px wide in the 30-day view. It can
-// carry ONE sign, so the question is never "which restrictions are on this
-// date" (the hover card answers that in full — RateCellTooltip) but "which ONE
-// of them does the operator most need to see without hovering". That is a
-// strict ORDER, not a set: the strongest restriction that holds wins and the
-// weaker ones are silent on the cell. Two marks in one cell would read as two
-// severities and would not fit.
+// WHY A LADDER. A calendar day cell is a ~52px column (21 days across a
+// 1280px-floor board, minus the 176px room column). It can carry ONE sign, so
+// the question is never "which restrictions are on this date" (the hover card
+// answers that in full — RateCellTooltip) but "which ONE of them does the
+// operator most need to see without hovering". That is a strict ORDER, not a
+// set: the strongest restriction that holds wins and the weaker ones are silent
+// on the cell. Two marks in one cell would read as two severities.
+//
+// WHY MIN AND MAX ARE ONE RUNG. They were two competing rungs, and a cell with
+// both showed only the maximum — the minimum, which is the one that actually
+// turns bookings away, vanished. They are not two restrictions racing each
+// other; they are the two ends of ONE rule ("how long may a stay here be"), so
+// they occupy one rung and the mark carries whichever ends exist.
 //
 // The enforcement layer is deliberately NOT here. This module never decides
 // what may be sold — src/lib/rates/rules.ts does, and a manager with the 084
@@ -24,8 +30,7 @@ export const CELL_MARK_LADDER = [
   "stop_sell", // סגור למכירה — the date is not for sale at all
   "closed_to_arrival", // סגור להגעה — may not check IN here
   "closed_to_departure", // סגור לעזיבה — may not check OUT here
-  "max_stay", // מקסימום לילות
-  "min_nights", // מינימום לילות (only when it actually binds, i.e. >= 2)
+  "stay_range", // אורך השהייה המותר — the minimum, the maximum, or both
 ] as const;
 
 export type CellMark = (typeof CELL_MARK_LADDER)[number];
@@ -44,6 +49,16 @@ export type CellMarkRow = {
 };
 
 /**
+ * What the cell draws. The three closure rungs are a bare name — the sign is
+ * the same whatever the row says. The stay-range rung is NOT: its sign is the
+ * numbers, so the result carries both ends, either of which may be absent (the
+ * rung holds when at least one is present).
+ */
+export type CellMarkResult =
+  | { mark: Exclude<CellMark, "stay_range"> }
+  | { mark: "stay_range"; min: number | null; max: number | null };
+
+/**
  * The binding minimum for this cell — the stricter of the arrival-min and the
  * through-min — but ONLY when it is a real restriction. A minimum of 1 night
  * restricts nothing (every stay is at least one night), so it does not reach
@@ -56,6 +71,15 @@ export function cellMinNights(rate: CellMarkRow | null | undefined): number | nu
 }
 
 /**
+ * The binding maximum for this cell. Unlike the minimum there is no
+ * "non-binding" value to filter out: any positive maximum forbids some stay.
+ * stayLimit() already reads NULL and 0 as "no limit" (D104).
+ */
+export function cellMaxNights(rate: CellMarkRow | null | undefined): number | null {
+  return stayLimit(rate?.max_nights);
+}
+
+/**
  * Does this single rung hold for this row? One predicate per rung, so the
  * ladder ARRAY above is the only statement of priority — there is no parallel
  * if-chain that could quietly disagree with it.
@@ -64,8 +88,7 @@ const HOLDS: Record<CellMark, (rate: CellMarkRow) => boolean> = {
   stop_sell: (r) => r.closed === true,
   closed_to_arrival: (r) => r.closed_to_arrival === true,
   closed_to_departure: (r) => r.closed_to_departure === true,
-  max_stay: (r) => stayLimit(r.max_nights) != null,
-  min_nights: (r) => cellMinNights(r) != null,
+  stay_range: (r) => cellMinNights(r) != null || cellMaxNights(r) != null,
 };
 
 /**
@@ -74,10 +97,27 @@ const HOLDS: Record<CellMark, (rate: CellMarkRow) => boolean> = {
  * worth a mark. The renderer draws exactly this and nothing else, so there is
  * one place (here) where "which sign" is decided.
  */
-export function cellMark(rate: CellMarkRow | null | undefined): CellMark | null {
+export function cellMark(rate: CellMarkRow | null | undefined): CellMarkResult | null {
   if (!rate) return null;
   for (const mark of CELL_MARK_LADDER) {
-    if (HOLDS[mark](rate)) return mark;
+    if (!HOLDS[mark](rate)) continue;
+    return mark === "stay_range"
+      ? { mark, min: cellMinNights(rate), max: cellMaxNights(rate) }
+      : { mark };
   }
+  return null;
+}
+
+/**
+ * The stay-range rung's text, next to the moon. Three readings, because the two
+ * ends are independent: "3" is a floor, "≤7" is a ceiling, "3–7" is a window.
+ * A bare "7" for a maximum would read as a minimum of seven — the opposite
+ * rule — so the ceiling always wears its ≤. Returns null when neither end
+ * exists, which is exactly when the rung does not hold.
+ */
+export function stayRangeLabel(min: number | null, max: number | null): string | null {
+  if (min != null && max != null) return `${min}–${max}`;
+  if (min != null) return `${min}`;
+  if (max != null) return `≤${max}`;
   return null;
 }

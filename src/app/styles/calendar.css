@@ -706,6 +706,13 @@
   font-weight: 700;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+  /* The stay-range mark can read "3", "≤7" or "3–7", and the en dash is a
+     legal break opportunity — so the widest form could wrap onto a second line
+     inside a flex item that is allowed to shrink to min-content. Measured, the
+     mark needs 33.8px against a 51.6px column floor, so it fits; nowrap makes
+     the break impossible rather than merely unlikely, exactly as its two
+     sibling marks (.cb-pr, .cb-cx) already do. */
+  white-space: nowrap;
 }
 /* commercial stop-sell indicator (§1): a per-day flag on an empty sellable cell,
    deliberately unlike the gray dashed physical .cb-blockbar and the reservation

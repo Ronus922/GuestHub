@@ -35,7 +35,7 @@ import {
   type PlanRateRow,
   type StayRuleViolation,
 } from "@/lib/rates/rules";
-import { cellMark, cellMinNights } from "@/lib/rates/cell-mark";
+import { cellMark, cellMinNights, stayRangeLabel } from "@/lib/rates/cell-mark";
 import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
@@ -1505,17 +1505,16 @@ const RoomRow = memo(function RoomRow({
           const price = rate?.price != null ? Number(rate.price) : room.base_price;
           // ONE sign per cell, chosen by the priority ladder (lib/rates/cell-mark):
           // the strongest restriction that holds wins and the weaker ones stay
-          // silent HERE — a ~37px column cannot hold two marks, and two marks
+          // silent HERE — a ~52px column cannot hold two marks, and two marks
           // would read as two severities. Every restriction, including the ones
           // this cell does not draw, is still listed in full by the hover card
           // (§8.2, RateCellTooltip).
           const mark = cellMark(rate);
-          // the three middle rungs share the one discreet lock: it says THAT
-          // the date carries a rule, and WHICH rule is the hover card's job.
+          // the two closed-to-* rungs share the one discreet lock: it says THAT
+          // the date is closed at one end, and WHICH end is the hover card's job
+          // ("סגור הוא סגור" — the cell does not distinguish CTA from CTD).
           const lockMark =
-            mark === "closed_to_arrival" ||
-            mark === "closed_to_departure" ||
-            mark === "max_stay";
+            mark?.mark === "closed_to_arrival" || mark?.mark === "closed_to_departure";
           // Binding minimum for a guest arriving this day = stricter of arrival-min
           // and this cell's through-min (the Group Update's primary "מינימום לילות").
           // null = no minimum that binds. Shown as the moon hint on the last rung
@@ -1541,20 +1540,23 @@ const RoomRow = memo(function RoomRow({
             >
               {sellable && (
                 <>
-                  <span className={`cb-pr ltr-num ${mark === "stop_sell" ? "cx" : ""}`}>
+                  <span className={`cb-pr ltr-num ${mark?.mark === "stop_sell" ? "cx" : ""}`}>
                     ₪{Math.round(price)}
                   </span>
                   {/* the marker row holds the ONE chosen mark. A 28px .chip
-                      cannot fit a ~37px-wide day column, so it stays a compact
+                      cannot fit a ~52px-wide day column, so it stays a compact
                       marker (§12.1); the row keeps it on one line and clips
                       rather than growing the cell past --cb-row-h. */}
-                  {(mark === "stop_sell" || mark === "min_nights") && (
+                  {(mark?.mark === "stop_sell" || mark?.mark === "stay_range") && (
                     <span className="cb-rmk">
-                      {mark === "stop_sell" && <span className="cb-cx">סגור</span>}
-                      {mark === "min_nights" && (
+                      {mark.mark === "stop_sell" && <span className="cb-cx">סגור</span>}
+                      {mark.mark === "stay_range" && (
                         <span className="cb-mn">
                           <Icon name="moon" size={13.5} />
-                          {minN}
+                          {/* "3" / "≤7" / "3–7" — .ltr-num (§11) so the ≤ stays
+                              LEFT of its number instead of being flipped to the
+                              far side by the RTL paragraph direction. */}
+                          <span className="ltr-num">{stayRangeLabel(mark.min, mark.max)}</span>
                         </span>
                       )}
                     </span>
