@@ -29,9 +29,10 @@ import {
   type RateRow,
 } from "@/lib/inventory-rules";
 import {
-  nightsRuleViolation,
+  stayRestrictionViolationStructured,
   stayViolationMessage,
-  type NightsRuleRow,
+  type PlanRateRow,
+  type StayRuleViolation,
 } from "@/lib/rates/rules";
 import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
@@ -313,26 +314,40 @@ export function CalendarGrid({
     [rangeInvalid],
   );
 
-  // Stay-LENGTH gate for a NEW range [ci, co) — the same min/max-nights rule the
-  // server enforces on create (nightsRuleViolation shares the canonical Hebrew
-  // message). Built from the already-fetched per-cell rates, so a selection that
-  // violates minimum/maximum nights is blocked at selection time and never opens
-  // the booking panel. Returns the Hebrew message, or null when the length is legal.
+  // THE commercial-restriction gate for a NEW range [ci, co) — the SAME shared
+  // validator the server runs (stayRestrictionViolationStructured), fed from the
+  // already-fetched per-cell rates. It covers the full rule set, not only stay
+  // LENGTH: min/max stay, min_stay_through, CTA on the arrival date, CTD on the
+  // departure date and stop_sell on every occupied night. A blocked selection
+  // never silently opens the booking panel.
+  //
+  // Returns the STRUCTURED verdict, not a message: the caller needs the CODE to
+  // decide whether the violation is overridable (isOverridableStayCode) and thus
+  // whether to offer "המשך בכל זאת" at all. The Hebrew wording still comes from
+  // the one place, stayViolationMessage.
+  //
+  // The map is built over the nights PLUS the departure date: closed_to_departure
+  // lives on the check-out date's row, which is not an occupied night. The rate
+  // fetch is widened by exactly that one day (see calendar/data.ts).
   const nightsViolation = useCallback(
-    (room: CalendarRoom, ci: DateOnly, co: DateOnly): string | null => {
+    (room: CalendarRoom, ci: DateOnly, co: DateOnly): StayRuleViolation | null => {
       const nights = eachDay(ci, co); // occupied nights [ci, co)
-      const byDate = new Map<string, NightsRuleRow>();
-      for (const d of nights) {
+      const byDate = new Map<string, PlanRateRow>();
+      for (const d of [...nights, co]) {
         const r = cellRate(room, d);
         if (r)
           byDate.set(d, {
+            date: d,
+            price: r.price == null ? null : Number(r.price),
             min_stay_arrival: r.min_nights,
             min_stay_through: r.min_stay_through,
             max_stay: r.max_nights,
+            closed_to_arrival: r.closed_to_arrival,
+            closed_to_departure: r.closed_to_departure,
+            stop_sell: r.closed,
           });
       }
-      const v = nightsRuleViolation(byDate, { checkIn: ci, nights });
-      return v ? stayViolationMessage(v) : null;
+      return stayRestrictionViolationStructured(byDate, { checkIn: ci, checkOut: co, nights });
     },
     [cellRate],
   );
@@ -802,9 +817,9 @@ export function CalendarGrid({
         toast.error("הטווח המסומן אינו זמין");
         return;
       }
-      const lenMsg = nightsViolation(room, t.ci, t.co);
-      if (lenMsg) {
-        toast.error(lenMsg);
+      const violation = nightsViolation(room, t.ci, t.co);
+      if (violation) {
+        toast.error(stayViolationMessage(violation));
         return;
       }
       onNewBooking({ roomId: room.id, checkIn: t.ci, checkOut: t.co, source: "calendar_drag" });
