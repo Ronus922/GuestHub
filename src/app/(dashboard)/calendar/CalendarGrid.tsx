@@ -631,6 +631,13 @@ export function CalendarGrid({
     [can.viewReservation],
   );
 
+  // Leaving the pill CANCELS the pending open before it schedules the close —
+  // the invariant is that a timer never fires on a pill the pointer has already
+  // left. It reads like belt and braces and it is not: this pair of timer slots
+  // used to be shared with a second hover card, whose own close path replaced a
+  // pending `setTip(null)` with a `setCellTip(null)`, so a card that was open
+  // stayed open with nothing left scheduled to close it. One consumer, one
+  // close path — a second consumer must not re-borrow these slots.
   const scheduleTipClose = useCallback(() => {
     if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
     tipOpenTimer.current = null;
@@ -646,6 +653,34 @@ export function CalendarGrid({
     if (tipOpenTimer.current) clearTimeout(tipOpenTimer.current);
     tipOpenTimer.current = null;
   }, []);
+
+  // The card is anchored to a rect measured ONCE, and the pointer does not have
+  // to move for that anchor to go stale: any scroll slides the pill out from
+  // under a card that stays where it was, and no pointerleave fires to say so.
+  // Escape did nothing to it at all — the two other keydown listeners in this
+  // file are mounted only while a drag or a context menu is live, and neither
+  // touches `tip`. Both now close it IMMEDIATELY and cancel the timers, so a
+  // queued open cannot reopen it a moment later. Pointerdown, the drag
+  // threshold, the confirmation dialog and the editor already do this on their
+  // own paths (cancelTipTimers + setTip(null)) — nothing here duplicates them.
+  // Mounted only while a card is on screen; capture=true because scroll does
+  // not bubble and the board scrolls in its own container, not the window.
+  useEffect(() => {
+    if (!tip) return;
+    const close = () => {
+      cancelTipTimers();
+      setTip(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [tip, cancelTipTimers]);
 
   // ---- pointer wiring (handlers live ON the card via pointer capture —
   // no document-level listeners, nothing leaks) ----
