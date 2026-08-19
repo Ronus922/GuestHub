@@ -122,7 +122,8 @@
     "check:liveness-cluster-fingerprint": "node scripts/check-liveness-cluster-fingerprint.mjs",
     "check:backup-offhost": "node scripts/check-backup-offhost.mjs",
     "check:pay-charged-write-path": "node scripts/check-pay-charged-write-path.mjs",
-    "check:discount-units": "node scripts/check-discount-units.mjs"
+    "check:discount-units": "node scripts/check-discount-units.mjs",
+    "check:restriction-override": "node scripts/check-restriction-override.mjs"
   },
   "engines": {
     "node": ">=20 <21"
