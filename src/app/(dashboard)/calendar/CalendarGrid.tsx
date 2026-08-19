@@ -30,12 +30,12 @@ import {
 } from "@/lib/inventory-rules";
 import {
   isOverridableStayCode,
-  stayLimit,
   stayRestrictionViolationStructured,
   stayViolationMessage,
   type PlanRateRow,
   type StayRuleViolation,
 } from "@/lib/rates/rules";
+import { cellMark, cellMinNights } from "@/lib/rates/cell-mark";
 import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
@@ -1503,27 +1503,31 @@ const RoomRow = memo(function RoomRow({
           const weekend = dow === 5 || dow === 6;
             const rate = cellRate(room, d);
           const price = rate?.price != null ? Number(rate.price) : room.base_price;
+          // ONE sign per cell, chosen by the priority ladder (lib/rates/cell-mark):
+          // the strongest restriction that holds wins and the weaker ones stay
+          // silent HERE — a ~37px column cannot hold two marks, and two marks
+          // would read as two severities. Every restriction, including the ones
+          // this cell does not draw, is still listed in full by the hover card
+          // (§8.2, RateCellTooltip).
+          const mark = cellMark(rate);
+          // the three middle rungs share the one discreet lock: it says THAT
+          // the date carries a rule, and WHICH rule is the hover card's job.
+          const lockMark =
+            mark === "closed_to_arrival" ||
+            mark === "closed_to_departure" ||
+            mark === "max_stay";
           // Binding minimum for a guest arriving this day = stricter of arrival-min
           // and this cell's through-min (the Group Update's primary "מינימום לילות").
-          // 0 = no minimum. Shown as the moon hint and used to size a double-click.
-          const minN = Math.max(rate?.min_nights ?? 0, rate?.min_stay_through ?? 0);
-          const closed = rate?.closed ?? false;
-          // ONE discreet sign for "this date carries a restriction" — CTA, CTD
-          // or a max-stay. Deliberately not three glyphs: a ~37px column cannot
-          // hold them and three marks would read as three severities. It only
-          // says THAT there is a rule; WHICH rule is the hover card's job (§8.2).
-          // stayLimit() so a stored 0 (channel "unlimited") is not a limit.
-          const restricted =
-            (rate?.closed_to_arrival ?? false) ||
-            (rate?.closed_to_departure ?? false) ||
-            stayLimit(rate?.max_nights) != null;
+          // null = no minimum that binds. Shown as the moon hint on the last rung
+          // of the ladder, and used to size a double-click-created stay.
+          const minN = cellMinNights(rate);
           const creatable = can.create && sellable;
           return (
             <div
               key={d}
               className={`cb-rcell ${weekend ? "we" : ""} ${d === today ? "td" : ""} ${!sellable ? "blocked" : ""} ${creatable ? "cr" : ""}`}
               onPointerDown={
-                creatable ? (e) => onCellPointerDown(e, roomIndex, d, minN || 1) : undefined
+                creatable ? (e) => onCellPointerDown(e, roomIndex, d, minN ?? 1) : undefined
               }
               onPointerMove={creatable ? onCellPointerMove : undefined}
               onPointerUp={creatable ? onCellPointerUp : undefined}
@@ -1537,19 +1541,17 @@ const RoomRow = memo(function RoomRow({
             >
               {sellable && (
                 <>
-                  <span className={`cb-pr ltr-num ${closed ? "cx" : ""}`}>
+                  <span className={`cb-pr ltr-num ${mark === "stop_sell" ? "cx" : ""}`}>
                     ₪{Math.round(price)}
                   </span>
-                  {/* stop-sell and the minimum-nights hint used to be an
-                      either/or: the "סגור" flag replaced the moon, so a date
-                      that was BOTH closed and min-4 showed only that it was
-                      closed. They are two independent facts and now share one
-                      marker row. A 28px .chip still cannot fit a ~37px-wide day
-                      column, so both stay compact markers (§12.1). */}
-                  {(closed || minN >= 2) && (
+                  {/* the marker row holds the ONE chosen mark. A 28px .chip
+                      cannot fit a ~37px-wide day column, so it stays a compact
+                      marker (§12.1); the row keeps it on one line and clips
+                      rather than growing the cell past --cb-row-h. */}
+                  {(mark === "stop_sell" || mark === "min_nights") && (
                     <span className="cb-rmk">
-                      {closed && <span className="cb-cx">סגור</span>}
-                      {minN >= 2 && (
+                      {mark === "stop_sell" && <span className="cb-cx">סגור</span>}
+                      {mark === "min_nights" && (
                         <span className="cb-mn">
                           <Icon name="moon" size={13.5} />
                           {minN}
@@ -1557,10 +1559,9 @@ const RoomRow = memo(function RoomRow({
                       )}
                     </span>
                   )}
-                  {/* the restriction sign sits in the cell CORNER, out of the
-                      flex flow, so it never competes with the price or the
-                      markers for the column's width */}
-                  {restricted && (
+                  {/* the lock sits in the cell CORNER, out of the flex flow, so
+                      it never competes with the price for the column's width */}
+                  {lockMark && (
                     <span className="cb-rx" aria-hidden>
                       <Icon name="lock" size={13.5} />
                     </span>

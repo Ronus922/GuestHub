@@ -1369,10 +1369,11 @@
 }
 
 /* ---------- day-cell markers (§8.1) ----------
-   The stop-sell flag and the min-nights hint are two independent facts and now
-   share ONE marker row instead of replacing each other. .cb-rcell is a centred
-   column, so the row keeps them on a single line and clips rather than growing
-   the cell past --cb-row-h. */
+   A day cell carries exactly ONE mark, chosen by the priority ladder in
+   lib/rates/cell-mark. This row hosts whichever of the two in-flow marks won
+   (the "סגור" flag or the min-nights hint) — never both. .cb-rcell is a centred
+   column, so the row keeps the mark on a single line and clips rather than
+   growing the cell past --cb-row-h. */
 .cb-rcell .cb-rmk {
   display: flex;
   align-items: center;
@@ -1380,10 +1381,10 @@
   max-width: 100%;
   overflow: hidden;
 }
-/* The one discreet "this date carries a restriction" sign (CTA / CTD / max
-   stay). Absolute in the cell CORNER, out of the flex flow, so it never
-   competes with the price or the markers for a ~37px column's width. --warn is
-   the token for "attention, not failure"; the detail lives in the hover card. */
+/* The three MIDDLE rungs of the ladder (CTA / CTD / max stay) share this one
+   discreet sign. Absolute in the cell CORNER, out of the flex flow, so it never
+   competes with the price for a ~37px column's width. --warn is the token for
+   "attention, not failure"; the detail lives in the hover card. */
 .cb-rcell {
   position: relative;
 }
