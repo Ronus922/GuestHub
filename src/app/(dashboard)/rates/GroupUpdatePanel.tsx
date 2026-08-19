@@ -393,11 +393,11 @@ export function GroupUpdatePanel({
                 <Stepper value={minArrival} onChange={setMinArrival} disabled={!minArrivalOn} />
               </FieldRow>
 
-              <FieldRow icon="login" title="סגור להגעה (CTA)" desc="חסימת צ׳ק-אין בתאריכים שנבחרו">
+              <FieldRow icon="login" title="סגור לכניסה" desc="חסימת צ׳ק-אין בתאריכים שנבחרו">
                 <Segmented value={cta} onChange={setCta} yes="פעיל" no="כבוי" testId="gu-cta" />
               </FieldRow>
 
-              <FieldRow icon="logout" title="סגור לעזיבה (CTD)" desc="חסימת צ׳ק-אאוט בתאריכים שנבחרו">
+              <FieldRow icon="logout" title="סגור לעזיבה" desc="חסימת צ׳ק-אאוט בתאריכים שנבחרו">
                 <Segmented value={ctd} onChange={setCtd} yes="פעיל" no="כבוי" testId="gu-ctd" />
               </FieldRow>
             </div>

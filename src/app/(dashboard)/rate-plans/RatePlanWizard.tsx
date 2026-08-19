@@ -304,8 +304,8 @@ export function RatePlanWizard({
   if (d.minAdvance != null) restrictionParts.push(`לפחות ${d.minAdvance} ימים מראש`);
   if (d.maxAdvance != null) restrictionParts.push(`עד ${d.maxAdvance} ימים מראש`);
   if (!d.allDays) restrictionParts.push(`${d.days.length} ימי הגעה מותרים`);
-  if (d.cta) restrictionParts.push("CTA");
-  if (d.ctd) restrictionParts.push("CTD");
+  if (d.cta) restrictionParts.push("סגור לכניסה");
+  if (d.ctd) restrictionParts.push("סגור לעזיבה");
 
   return (
     <SidePanel
@@ -628,13 +628,13 @@ export function RatePlanWizard({
             <Sec icon="globe" title="ברירות מחדל והפצה">
               <div className="rm-frow">
                 <ToggleRow
-                  label="סגור להגעה (CTA) כברירת מחדל"
+                  label="סגור לכניסה כברירת מחדל"
                   hint="הגעה נחסמת אלא אם נפתחה בחריגת תאריך"
                   checked={d.cta}
                   onChange={(v) => set("cta", v)}
                 />
                 <ToggleRow
-                  label="סגור לעזיבה (CTD) כברירת מחדל"
+                  label="סגור לעזיבה כברירת מחדל"
                   hint="עזיבה נחסמת אלא אם נפתחה בחריגת תאריך"
                   checked={d.ctd}
                   onChange={(v) => set("ctd", v)}

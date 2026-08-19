@@ -1414,11 +1414,3 @@
 .cb-blockbar[data-kind="oos"] {
   border-style: dotted;
 }
-
-/* ---------- empty-cell commercial hover card (§8.2) ----------
-   It reuses the reservation tooltip's shell (.cb-pop) wholesale — width,
-   caret, placement flip and pointer-events:none all come from there. The only
-   difference is the header, which has no payment chip to leave room for. */
-.cb-cellpop .cb-pop-h {
-  gap: 10px;
-}

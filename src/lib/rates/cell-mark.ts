@@ -5,11 +5,11 @@
 //
 // WHY A LADDER. A calendar day cell is a ~52px column (21 days across a
 // 1280px-floor board, minus the 176px room column). It can carry ONE sign, so
-// the question is never "which restrictions are on this date" (the hover card
-// answers that in full — RateCellTooltip) but "which ONE of them does the
-// operator most need to see without hovering". That is a strict ORDER, not a
-// set: the strongest restriction that holds wins and the weaker ones are silent
-// on the cell. Two marks in one cell would read as two severities.
+// the question is never "which restrictions are on this date" (the rates board
+// answers that in full) but "which ONE of them does the operator most need to
+// see on the calendar itself". That is a strict ORDER, not a set: the strongest
+// restriction that holds wins and the weaker ones are silent on the cell. Two
+// marks in one cell would read as two severities.
 //
 // WHY MIN AND MAX ARE ONE RUNG. They were two competing rungs, and a cell with
 // both showed only the maximum — the minimum, which is the one that actually
