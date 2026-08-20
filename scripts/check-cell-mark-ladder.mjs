@@ -31,6 +31,8 @@
 //   · the cell's hover card is GONE and stays gone — component, state, timers,
 //     hover listeners and CSS. The ladder is now the calendar's whole answer;
 //     the full per-night state is read on the rates board.
+//   · the MOBILE cell's TAP agrees with the sign the ladder made it draw: a
+//     stop-sold night does not open a clean booking form (§17)
 //
 // The ladder is VISUAL ONLY. It never decides what may be sold — that is
 // rules.ts + the 084 override (check:restriction-override) — so this guard
@@ -414,6 +416,72 @@ for (let i = 0; i < EXPECTED.length; i++) {
     assert.ok(!hit, `${rel} carries no English restriction abbreviation outside its comments (found "${hit?.[0]}")`);
   }
   ok("no user-facing restriction text spells CTA / CTD / OOO / OOS — the messages agree across client and server");
+}
+
+// ============================================================
+// 17. the MOBILE cell's tap agrees with the sign it just drew
+// ============================================================
+{
+  // THE DEFECT. The mobile board learned to DRAW the two axes (physical hatch,
+  // commercial "סגור" tag) but only the physical one disarmed the tap. A cell
+  // wearing "סגור" opened a clean booking form — room 1006 in production is
+  // closed on every date and every one of them was tappable — so the board
+  // showed a sign and then contradicted it one tap later.
+  //
+  // Still VISUAL, not enforcement: this asserts nothing about what the server
+  // may accept (rules.ts + the 084 override own that, and a manager may still
+  // sell a stop-sold night from the desktop gate). It asserts only that the
+  // tap on a cell answers the SAME axis the cell drew:
+  //
+  //   physical   → no handler at all. Silence. The row is hatched and dead.
+  //   commercial → a toast, and only a toast. Deliberately NOT silence: the
+  //                cell looks like a plain tappable cell wearing a tag, so a
+  //                dead tap reads as a broken board.
+  //   open       → the booking form, untouched.
+  //
+  // The two "no"s differing is the point; collapsing them in either direction
+  // (silence the toast, or hatch the closed cell) must fail here.
+  const CAL = "src/app/(dashboard)/calendar";
+  const mobile = stripComments(readFileSync(join(ROOT, `${CAL}/MobileCalendar.tsx`), "utf8"));
+
+  // the empty-cell body: from the AXIS-B predicate to the end of that cell
+  const cellAt = mobile.indexOf("const closed =");
+  assert.ok(cellAt > -1, "the mobile empty-cell body was located");
+  const cell = cellAt > -1 ? mobile.slice(cellAt, mobile.indexOf("</div>", cellAt)) : "";
+
+  // --- the commercial mark the tap reacts to is the LADDER's, not a raw field ---
+  assert.match(cell, /cellMark\(cellRate\(room, d\)\)\?\.mark === "stop_sell"/,
+    "the mobile cell asks cellMark() whether the night is stop-sold — not rate.closed directly");
+  assert.match(cell, /roomSellable &&\s*cellMark\(/,
+    "the commercial question is asked only where the physical axis already allows selling");
+
+  // --- physical: NO handler. Not a no-op, not a toast. ---
+  assert.match(cell, /!roomSellable \|\| !canCreate\s*\n?\s*\?\s*undefined/,
+    "a physically unsellable cell (or a user who cannot create) gets onClick={undefined} — silence, no handler");
+
+  // --- commercial: a toast, and the booking form is NOT opened ---
+  assert.match(cell, /closed\s*\n?\s*\?\s*\(\)\s*=>\s*toast\.\w+\(/,
+    "a commercially closed cell taps into a toast");
+  assert.equal((cell.match(/onEmptyTap\(/g) ?? []).length, 1,
+    "onEmptyTap is reachable from exactly ONE branch — the closed branch must not also open the booking form");
+  assert.match(cell, /:\s*\(\)\s*=>\s*onEmptyTap\(room\.id, d\)/,
+    "the remaining branch — an open, sellable cell — still opens the booking form");
+
+  // --- the toast says the ONE canonical sentence, and does not re-type it ---
+  assert.match(cell, /toast\.\w+\(\s*stayViolationMessage\(\{\s*code:\s*"STOP_SELL",\s*date:\s*d\s*\}\)\s*\)/,
+    "the toast's Hebrew comes from stayViolationMessage(STOP_SELL) — the one place restriction wording lives");
+  assert.doesNotMatch(cell, /"[^"]*סגור למכירה[^"]*"/,
+    "the mobile cell does not re-type the stop-sell sentence as a literal — that is how two spellings start");
+  // …and that one sentence really is the stop-sell sentence, run for real
+  assert.match(stayViolationMessage({ code: "STOP_SELL", date: "2026-08-25" }), /סגור למכירה/,
+    "stayViolationMessage(STOP_SELL) is the 'סגור למכירה' sentence the mobile toast shows");
+
+  // --- mobile gets feedback, never a window (the owner's ruling) ---
+  for (const stump of ["isOverridableStayCode", "setBlockedCreate", "המשך בכל זאת", "<Dialog", "cb-gate"]) {
+    assert.ok(!mobile.includes(stump),
+      `MobileCalendar carries no \`${stump}\` — a closed night on mobile is a toast, not an override dialog`);
+  }
+  ok("the mobile cell's tap answers the axis it drew: physical is silent, commercial toasts the canonical sentence, open still books");
 }
 
 console.log(`\ncheck-cell-mark-ladder: all ${n} checks passed`);

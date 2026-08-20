@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { addDays, dayOfWeek, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { barGeometry } from "@/lib/calendar-interactions";
 import { resolveChannelBadge } from "@/lib/colors";
+import { stayViolationMessage } from "@/lib/rates/rules";
 import { NEUTRAL_STATUS } from "@/lib/status-colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import type { RateRow } from "@/lib/inventory-rules";
@@ -16,7 +18,8 @@ import { stayPalette } from "./CalendarGrid";
 // under "קומה N" headers; each row shows a fixed 56px label column + a `days`-day
 // timeline. Bars reuse barGeometry (mid-cell fractions) so they line up exactly
 // with the desktop math. No prices, no drag — tap a bar to open its card, tap an
-// empty cell to start a booking.
+// empty cell to start a booking (unless that night is closed for sale — see the
+// two axes at the cell below).
 export function MobileCalendar({
   data,
   days,
@@ -140,16 +143,38 @@ export function MobileCalendar({
                       // a room that cannot be sold at all is not "closed for sale
                       // today", and drawing both signs would restate the exact
                       // conflation this split removes. Physical wins outright.
-                      // Unlike the physical axis it does NOT disarm the tap: a
-                      // closed night is still bookable by someone who may override.
                       const closed =
                         roomSellable && cellMark(cellRate(room, d))?.mark === "stop_sell";
                       return (
                         <div
                           key={d}
                           className={`cb-m-cell ${cls} ${roomSellable ? "" : "blocked"} ${closed ? "cx" : ""}`}
+                          // The two axes ANSWER A TAP DIFFERENTLY, on purpose:
+                          //
+                          //   PHYSICAL (not sellable) — no handler at all. There is
+                          //     nothing to say: the whole row is hatched, the label is
+                          //     dimmed, and the state is a fact about the room, not
+                          //     about this date. Silence.
+                          //   COMMERCIAL (closed) — a short toast and nothing else.
+                          //     The cell LOOKS tappable (it is a plain open cell wearing
+                          //     a "סגור" tag), so silence would read as a dead board;
+                          //     the tap must say why it did not open a booking. The
+                          //     owner's ruling for mobile is feedback, not a window:
+                          //     no dialog, no "המשך בכל זאת" — the desktop board keeps
+                          //     the override path (CalendarGrid §7), a 390px screen
+                          //     does not get a modal to dismiss.
+                          //   OPEN — opens the booking form, unchanged.
+                          //
+                          // The wording is NOT typed here: it comes from
+                          // stayViolationMessage, the one place the restriction
+                          // sentences live (lib/rates/rules.ts), so this toast cannot
+                          // drift from what the desktop gate and the server say.
                           onClick={
-                            roomSellable && canCreate ? () => onEmptyTap(room.id, d) : undefined
+                            !roomSellable || !canCreate
+                              ? undefined
+                              : closed
+                                ? () => toast.error(stayViolationMessage({ code: "STOP_SELL", date: d }))
+                                : () => onEmptyTap(room.id, d)
                           }
                         >
                           {closed && <span className="cb-m-cx">סגור</span>}
