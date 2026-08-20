@@ -36,6 +36,7 @@ import {
   type StayRuleViolation,
 } from "@/lib/rates/rules";
 import { cellMark, cellMinNights, stayRangeLabel } from "@/lib/rates/cell-mark";
+import { sellable as isSellable } from "./cell-state";
 import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
@@ -1427,7 +1428,7 @@ const RoomRow = memo(function RoomRow({
   onCellDouble: (room: CalendarRoom, date: DateOnly) => void;
   onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
 }) {
-  const sellable = room.status === "available" && room.is_active;
+  const sellable = isSellable(room);
   const occupiedNow = (stays ?? []).some(
     (s) => isBlocking(s.status) && s.check_in <= today && s.check_out > today,
   );

@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Icon } from "@/components/shared/Icon";
 import { addDays, dayOfWeek, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { barGeometry } from "@/lib/calendar-interactions";
 import { resolveChannelBadge } from "@/lib/colors";
 import { NEUTRAL_STATUS } from "@/lib/status-colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
+import type { RateRow } from "@/lib/inventory-rules";
 import type { CalendarData, CalendarRoom, CalendarStay, CalendarClosure } from "./types";
+import { cellMark, sellable } from "./cell-state";
 import { stayPalette } from "./CalendarGrid";
 
 // Mobile "ציר זמן" board (reference GuesthubCalandrMobile). Rooms are grouped
@@ -64,6 +66,26 @@ export function MobileCalendar({
     return groups;
   }, [data.rooms]);
 
+  // O(1) rate lookup per cell, with the SAME priority the desktop board uses
+  // (a room's own row wins over its type's row — see rateIdx/cellRate in
+  // CalendarGrid.tsx). The mobile board needs it for AXIS B only.
+  const rateIdx = useMemo(() => {
+    const room = new Map<string, RateRow>();
+    const type = new Map<string, RateRow>();
+    for (const r of data.rates) {
+      if (r.room_id) room.set(`${r.room_id}|${r.date}`, r);
+      else if (r.room_type_id) type.set(`${r.room_type_id}|${r.date}`, r);
+    }
+    return { room, type };
+  }, [data.rates]);
+
+  const cellRate = useCallback(
+    (roomItem: CalendarRoom, date: DateOnly): RateRow | undefined =>
+      rateIdx.room.get(`${roomItem.id}|${date}`) ??
+      (roomItem.room_type_id ? rateIdx.type.get(`${roomItem.room_type_id}|${date}`) : undefined),
+    [rateIdx],
+  );
+
   const staysByRoom = useMemo(() => groupBy(data.stays, (s) => s.room_id), [data.stays]);
   const closuresByRoom = useMemo(
     () => groupBy(data.closures, (c) => c.room_id),
@@ -94,47 +116,69 @@ export function MobileCalendar({
         {floors.map((floor) => (
           <div key={floor.key}>
             <div className="cb-m-floor">{floor.label}</div>
-            {floor.rooms.map((room) => (
-              <div key={room.id} className="cb-m-row">
-                <div className="cb-m-rlabel">
-                  <span className="cb-m-rnum ltr-num">{room.room_number}</span>
-                  <span className="cb-m-rtype">{room.room_type_name ?? room.name ?? "—"}</span>
-                </div>
-                <div className="cb-m-strip">
-                  {/* empty cells — tap target for a new booking */}
-                  {dates.map((d) => {
-                    const dow = dayOfWeek(d);
-                    const cls = d === data.today ? "td" : dow === 5 || dow === 6 ? "we" : "";
-                    return (
-                      <div
-                        key={d}
-                        className={`cb-m-cell ${cls}`}
-                        onClick={canCreate ? () => onEmptyTap(room.id, d) : undefined}
+            {floor.rooms.map((room) => {
+              // AXIS A — PHYSICAL, row-level and rate-independent: an inactive or
+              // out-of-order room cannot be sold on ANY date, so the whole row is
+              // hatched, dead to the tap, and shows no commercial sign at all.
+              // The label only DIMS: .cb-m-rlabel is a 50px two-line box with no
+              // vertical room for a third line, so the word lives on the desktop
+              // board (.cb-rst) and mobile carries the state as tone.
+              const roomSellable = sellable(room);
+              return (
+                <div key={room.id} className="cb-m-row">
+                  <div className={`cb-m-rlabel ${roomSellable ? "" : "off"}`}>
+                    <span className="cb-m-rnum ltr-num">{room.room_number}</span>
+                    <span className="cb-m-rtype">{room.room_type_name ?? room.name ?? "—"}</span>
+                  </div>
+                  <div className="cb-m-strip">
+                    {/* empty cells — tap target for a new booking */}
+                    {dates.map((d) => {
+                      const dow = dayOfWeek(d);
+                      const cls = d === data.today ? "td" : dow === 5 || dow === 6 ? "we" : "";
+                      // AXIS B — COMMERCIAL, per-cell: this room-night is closed for
+                      // sale. It is asked ONLY where AXIS A already allows selling —
+                      // a room that cannot be sold at all is not "closed for sale
+                      // today", and drawing both signs would restate the exact
+                      // conflation this split removes. Physical wins outright.
+                      // Unlike the physical axis it does NOT disarm the tap: a
+                      // closed night is still bookable by someone who may override.
+                      const closed =
+                        roomSellable && cellMark(cellRate(room, d))?.mark === "stop_sell";
+                      return (
+                        <div
+                          key={d}
+                          className={`cb-m-cell ${cls} ${roomSellable ? "" : "blocked"} ${closed ? "cx" : ""}`}
+                          onClick={
+                            roomSellable && canCreate ? () => onEmptyTap(room.id, d) : undefined
+                          }
+                        >
+                          {closed && <span className="cb-m-cx">סגור</span>}
+                        </div>
+                      );
+                    })}
+                    {/* closures — dashed neutral block (non-interactive) */}
+                    {(closuresByRoom.get(room.id) ?? [])
+                      .filter((c) => inWindow(c.start_date, c.end_date))
+                      .map((c) => (
+                      <ClosureBlock key={c.id} closure={c} from={data.from} days={days} />
+                    ))}
+                    {/* reservation bars */}
+                    {(staysByRoom.get(room.id) ?? [])
+                      .filter((stay) => inWindow(stay.check_in, stay.check_out))
+                      .map((stay) => (
+                      <StayBarMobile
+                        key={stay.rr_id}
+                        stay={stay}
+                        from={data.from}
+                        days={days}
+                        flash={flashId != null && stay.reservation_id === flashId}
+                        onTap={onBarTap}
                       />
-                    );
-                  })}
-                  {/* closures — dashed neutral block (non-interactive) */}
-                  {(closuresByRoom.get(room.id) ?? [])
-                    .filter((c) => inWindow(c.start_date, c.end_date))
-                    .map((c) => (
-                    <ClosureBlock key={c.id} closure={c} from={data.from} days={days} />
-                  ))}
-                  {/* reservation bars */}
-                  {(staysByRoom.get(room.id) ?? [])
-                    .filter((stay) => inWindow(stay.check_in, stay.check_out))
-                    .map((stay) => (
-                    <StayBarMobile
-                      key={stay.rr_id}
-                      stay={stay}
-                      from={data.from}
-                      days={days}
-                      flash={flashId != null && stay.reservation_id === flashId}
-                      onTap={onBarTap}
-                    />
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
       </div>

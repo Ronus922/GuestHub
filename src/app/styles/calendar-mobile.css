@@ -278,6 +278,56 @@
   background: #f6f8fe; /* ds-allow: reference today body */
 }
 
+/* ---------- the two cell axes (see calendar/cell-state.ts) ----------
+   They are drawn in two DIFFERENT languages on purpose, and the language is
+   the desktop board's, so the two boards read as one system.
+
+   AXIS A — PHYSICAL. The same 45° hatch as the desktop .cb-rcell.blocked, at
+   the same 6px/12px pitch and the same --line ink: a room that cannot be sold
+   at all is struck through as a surface, not flagged as a date. */
+.cb-m-cell.blocked {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    var(--line) 6px,
+    var(--line) 12px
+  );
+}
+/* the row label only dims — .cb-m-rlabel is a 50px two-line box with no room
+   for the desktop's third "מושבת / לא פעיל" line (.cb-rst.off), so mobile
+   carries the state as tone and reuses that rule's --faint ink. */
+.cb-m-rlabel.off {
+  color: var(--faint);
+}
+.cb-m-rlabel.off .cb-m-rnum {
+  color: inherit;
+}
+/* AXIS B — COMMERCIAL. The desktop stop-sell flag (.cb-rcell .cb-cx) verbatim:
+   same 12px/800, same danger-tinted pill. Measured against the narrowest slice
+   this board offers — 7 days on a 390px device gives a 41.9px cell interior and
+   the tag needs 32.3px (22.3px of Assistant 800 + the 2×5px padding), so it
+   fits without wrapping and nowrap makes the break impossible rather than
+   merely unlikely. The cell centres it; nothing else is drawn here (mobile
+   shows no price, so there is no struck-through .cb-pr mate). */
+.cb-m-cell.cx {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cb-m-cx {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: color-mix(in srgb, var(--danger) 70%, var(--ink));
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  border-radius: var(--r-xs);
+  padding: 0 5px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 /* ---------- bars ---------- */
 .cb-m-bar {
   position: absolute;
