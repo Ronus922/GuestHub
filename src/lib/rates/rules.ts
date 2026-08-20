@@ -99,6 +99,12 @@ export function stayRestrictionViolationStructured(
 // for; the abbreviations stay in the codes, the code and the comments.
 export const CLOSED_TO_ARRIVAL_TEXT = "התאריך סגור לכניסת אורחים";
 export const CLOSED_TO_DEPARTURE_TEXT = "התאריך סגור לעזיבת אורחים";
+// Stop-sell, same rule — but the bare PHRASE, not a sentence, because two
+// surfaces need it at two different grammatical scopes: the violation message
+// below names a DATE ("התאריך … סגור למכירה"), while the calendar's room label
+// names a ROOM whose every visible night is closed. Composing the sentence from
+// this constant is what keeps them one spelling instead of two.
+export const STOP_SELL_TEXT = "סגור למכירה";
 
 // Hebrew message for a structured violation — the exact historical grid wording.
 export function stayViolationMessage(v: StayRuleViolation): string {
@@ -110,7 +116,7 @@ export function stayViolationMessage(v: StayRuleViolation): string {
         : `מינימום ${v.required} לילות בטווח זה`;
     case "MAX_STAY_EXCEEDED": return `מקסימום ${v.limit} לילות בתאריך זה`;
     case "CLOSED_ON_DEPARTURE": return CLOSED_TO_DEPARTURE_TEXT;
-    case "STOP_SELL": return `התאריך ${v.date} סגור למכירה`;
+    case "STOP_SELL": return `התאריך ${v.date} ${STOP_SELL_TEXT}`;
   }
 }
 

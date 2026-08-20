@@ -36,7 +36,7 @@ import {
   type StayRuleViolation,
 } from "@/lib/rates/rules";
 import { cellMark, cellMinNights, stayRangeLabel } from "@/lib/rates/cell-mark";
-import { sellable as isSellable } from "./cell-state";
+import { sellable as isSellable, roomLabel } from "./cell-state";
 import { resolveChannelBadge, statusTintPalette } from "@/lib/colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import {
@@ -1432,20 +1432,23 @@ const RoomRow = memo(function RoomRow({
   const occupiedNow = (stays ?? []).some(
     (s) => isBlocking(s.status) && s.check_in <= today && s.check_out > today,
   );
-  // rooms.status is a CLOSED set of three since migration 009 —
-  // available | inactive | out_of_order. 'maintenance' was folded into
-  // out_of_order there and is rejected by rooms_status_check, so the branch
-  // that rendered "תחזוקה" was unreachable. Maintenance is a DATED closure
-  // (room_closures.category = 'maintenance', 084), never a room status.
-  const statusText = !sellable
-    ? room.status === "out_of_order"
-      ? "מושבת"
-      : "לא פעיל"
-    : occupiedNow
-      ? "תפוס"
-      : "פנוי";
-  // the state colour is a §1 token, carried by a class (dot + word share it)
-  const statusTone = !sellable ? "off" : occupiedNow ? "busy" : "free";
+  // The label answers BOTH axes, and the decision — wording, tone, precedence —
+  // is roomLabel()'s alone (calendar/cell-state.ts). It used to read the
+  // physical axis here, in this row, so a room whose every visible night was
+  // stop-sold wore a green "פנוי" beside 21 cells tagged "סגור". The mobile
+  // board calls the very same function, which is why the two cannot drift.
+  // The state colour is a §1 token, carried by the returned tone as a class
+  // (the dot and the word share it).
+  const { label: statusText, tone: statusTone } = roomLabel(
+    room,
+    dates.map((d) => ({
+      rate: cellRate(room, d),
+      // half-open [start, end) — the same reading rangeInvalid() and the
+      // closed_today KPI use, so one closure means the same thing everywhere
+      closure: (closures ?? []).some((c) => c.start_date <= d && c.end_date > d),
+    })),
+    occupiedNow,
+  );
 
   return (
     <div className="cb-rrow">

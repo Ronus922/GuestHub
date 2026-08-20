@@ -11,7 +11,7 @@ import { NEUTRAL_STATUS } from "@/lib/status-colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import type { RateRow } from "@/lib/inventory-rules";
 import type { CalendarData, CalendarRoom, CalendarStay, CalendarClosure } from "./types";
-import { cellMark, sellable } from "./cell-state";
+import { cellMark, roomLabel, sellable } from "./cell-state";
 import { stayPalette } from "./CalendarGrid";
 
 // Mobile "ציר זמן" board (reference GuesthubCalandrMobile). Rooms are grouped
@@ -127,9 +127,26 @@ export function MobileCalendar({
               // vertical room for a third line, so the word lives on the desktop
               // board (.cb-rst) and mobile carries the state as tone.
               const roomSellable = sellable(room);
+              // …and AXIS B at ROW level: a room whose every night in the
+              // VISIBLE SLICE is stop-sold is not on the market either, and the
+              // label may not keep saying it is. The decision is roomLabel()'s,
+              // the same function the desktop row calls — mobile only takes the
+              // TONE from it, because the 50px box still has no room for a word.
+              // The slice IS the window here (3/5/7 days, §4), so mobile and
+              // desktop can legitimately disagree: each answers for what it
+              // shows.
+              const { tone } = roomLabel(
+                room,
+                dates.map((d) => ({
+                  rate: cellRate(room, d),
+                  closure: (closuresByRoom.get(room.id) ?? []).some(
+                    (c) => c.start_date <= d && c.end_date > d,
+                  ),
+                })),
+              );
               return (
                 <div key={room.id} className="cb-m-row">
-                  <div className={`cb-m-rlabel ${roomSellable ? "" : "off"}`}>
+                  <div className={`cb-m-rlabel ${tone === "free" ? "" : tone}`}>
                     <span className="cb-m-rnum ltr-num">{room.room_number}</span>
                     <span className="cb-m-rtype">{room.room_type_name ?? room.name ?? "—"}</span>
                   </div>
