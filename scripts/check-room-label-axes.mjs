@@ -20,8 +20,13 @@
 //      never green
 //   3. anything else, a PARTIAL closure included — "פנוי", exactly as before
 //
-// …plus the two static facts that make the runtime result reach the screen:
-// both boards call roomLabel(), and neither re-types its Hebrew as a literal.
+// …over the ROOM'S window: the whole set of dates the loader fetched, not the
+// 3/5/7-day slice the mobile board happens to draw. A label describes a room,
+// and a room does not change state when someone changes the zoom.
+//
+// …plus the static facts that make the runtime result reach the screen: both
+// boards call roomLabel(), both feed it that same window, and neither re-types
+// its Hebrew as a literal.
 //
 // The label is VISUAL ONLY. It never decides what may be sold — rules.ts does
 // (check:restriction-override) — so nothing here asserts about enforcement.
@@ -126,9 +131,11 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
     "state 2 is NOT the free tone — a green 'available' beside 21 'סגור' cells is the bug this guard exists for");
   assert.equal(v.tone, "nosale",
     "state 2 wears its own tone, so the stylesheet can colour it without touching the other three");
-  // and it holds for the narrowest slice the mobile board offers, too
+  // the function judges whatever array it is handed, at any length; WHICH array
+  // that is — the room's window, never the visible slice — is the caller's job,
+  // and it is asserted twice below (runtime in §4, statically in §5)
   assert.equal(roomLabel(HEALTHY, win(shut, 3)).label, STOP_SELL_TEXT,
-    "a 3-day mobile slice that is entirely stop-sold reads the same label — the window is whatever the board shows");
+    "a fully stop-sold window reads the same label at any length — the function judges the cells it is given");
   ok("state 2: a fully stop-sold window reads 'סגור למכירה' in a non-green tone");
 }
 
@@ -162,7 +169,26 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
 }
 
 // ============================================================
-// 4. BOTH boards read that one function, and neither re-types its Hebrew
+// 4. THE WINDOW IS THE ROOM'S, NOT THE VIEW'S (the owner's ruling)
+// ============================================================
+{
+  // The mobile board DRAWS 3/5/7 days out of the 21 the loader fetched, and it
+  // used to hand roomLabel that slice. The consequence was a label whose meaning
+  // changed with a view toggle: the same room, at the same moment, read
+  // "סגור למכירה" on mobile and "פנוי" on desktop whenever the closed nights
+  // happened to be the ones on screen. A label describes a ROOM; a room does not
+  // become unsellable because someone tapped "3 ימים".
+  const slice = win(shut, 3);
+  const window21 = [...win(shut, 20), { ...open }]; // the sellable night sits OUTSIDE the slice
+  assert.deepEqual(roomLabel(HEALTHY, window21), { label: "פנוי", tone: "free" },
+    "a sellable night anywhere in the fetched window keeps the room on the market");
+  assert.deepEqual(roomLabel(HEALTHY, slice), { label: STOP_SELL_TEXT, tone: "nosale" },
+    "…while judging that same room's first three days ALONE says the opposite — which is why the caller must pass the window, not the slice");
+  ok("a closed slice inside a window with a sellable night reads 'פנוי' — the slice would have said the reverse");
+}
+
+// ============================================================
+// 5. BOTH boards read that one function, and neither re-types its Hebrew
 // ============================================================
 {
   const CAL = "src/app/(dashboard)/calendar";
@@ -182,6 +208,18 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
         `${file} does not re-type the label "${word}" — that is how two spellings start`);
     }
   }
+  // …and mobile hands it the FETCHED WINDOW, which is the static half of §4:
+  // roomLabel is pure, so nothing it does can stop a caller passing the slice.
+  const mobileSrc = stripComments(readFileSync(join(ROOT, `${CAL}/MobileCalendar.tsx`), "utf8"));
+  assert.match(mobileSrc, /windowDates\s*=\s*useMemo\(\s*\(\)\s*=>\s*Array\.from\(\{\s*length:\s*data\.days\s*\}/,
+    "MobileCalendar builds the label's window from data.days — the whole window the loader fetched");
+  assert.match(mobileSrc, /roomLabel\(\s*room,\s*windowDates\.map\(/,
+    "…and that is what reaches roomLabel, not the 3/5/7-day slice the board draws");
+  assert.match(mobileSrc, /\bdates\.map\(/,
+    "…while the strip itself still renders from the slice — only the label's input widened");
+  assert.equal((mobileSrc.match(/windowDates/g) ?? []).length, 2,
+    "windowDates is declared once and read once, by the label — it is not a second rendering window");
+
   // the label's Hebrew comes from the SAME place the restriction messages do
   const cellState = stripComments(readFileSync(join(ROOT, `${CAL}/cell-state.ts`), "utf8"));
   assert.match(cellState, /STOP_SELL_TEXT.*from "@\/lib\/rates\/rules"/,
@@ -192,7 +230,7 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
 }
 
 // ============================================================
-// 5. The tone the function returns is a tone the stylesheet can actually draw
+// 6. The tone the function returns is a tone the stylesheet can actually draw
 // ============================================================
 {
   const tones = new Set([

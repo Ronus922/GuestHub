@@ -41,6 +41,19 @@ export function MobileCalendar({
     [data.from, days],
   );
 
+  // …and the WHOLE window the loader fetched (data.days, 21 — see CALENDAR_DAYS),
+  // of which `dates` above is only the 3/5/7-day slice this board draws. The row
+  // LABEL judges this one, never the slice: it describes a ROOM, and a room does
+  // not become unsellable because the user tapped "3 ימים". Judging the slice let
+  // the two boards disagree about the same room at the same moment — desktop
+  // "פנוי", mobile "סגור למכירה" — which is the same self-contradiction the label
+  // was fixed to stop, moved one screen over. Rendering is untouched: every cell,
+  // bar and closure below still comes from `dates`.
+  const windowDates = useMemo(
+    () => Array.from({ length: data.days }, (_, i) => addDays(data.from, i)),
+    [data.from, data.days],
+  );
+
   // The loader fetches a whole window (3 weeks / a month); the mobile timeline
   // only SLICES 3/5/7 days out of it (§4). Bars were rendered for the entire
   // fetched set regardless, and barGeometry happily returned a start of 370% for
@@ -127,17 +140,15 @@ export function MobileCalendar({
               // vertical room for a third line, so the word lives on the desktop
               // board (.cb-rst) and mobile carries the state as tone.
               const roomSellable = sellable(room);
-              // …and AXIS B at ROW level: a room whose every night in the
-              // VISIBLE SLICE is stop-sold is not on the market either, and the
-              // label may not keep saying it is. The decision is roomLabel()'s,
-              // the same function the desktop row calls — mobile only takes the
-              // TONE from it, because the 50px box still has no room for a word.
-              // The slice IS the window here (3/5/7 days, §4), so mobile and
-              // desktop can legitimately disagree: each answers for what it
-              // shows.
+              // …and AXIS B at ROW level: a room whose every night in the FETCHED
+              // WINDOW is stop-sold is not on the market either, and the label may
+              // not keep saying it is. The decision is roomLabel()'s, the same
+              // function the desktop row calls, fed the same window — so the two
+              // boards give one room one answer. Mobile takes only the TONE from
+              // it, because the 50px box still has no room for a word.
               const { tone } = roomLabel(
                 room,
-                dates.map((d) => ({
+                windowDates.map((d) => ({
                   rate: cellRate(room, d),
                   closure: (closuresByRoom.get(room.id) ?? []).some(
                     (c) => c.start_date <= d && c.end_date > d,
