@@ -377,6 +377,15 @@ for (let i = 0; i < EXPECTED.length; i++) {
   // assertion is about the SCREEN only.
   const ABBREV = /\b(CTA|CTD|OOO|OOS)\b/;
 
+  // The same argument, made about DATES. "2026-08-25" is the wire format: it is
+  // how a rate row stores a day, and it is unreadable as Hebrew prose — a staff
+  // member reading "התאריך 2026-08-25 סגור למכירה" is being shown the database.
+  // Every screen that can raise one of these messages is a calendar view whose
+  // header already names the month and the year, so the sentence needs the day
+  // and the month and nothing else. rules.ts formats it at the single source
+  // (dayMonth), so no surface has to, and none may.
+  const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
+
   // --- the messages themselves, run for real (not read from the file) ---
   const MESSAGE_CASES = [
     { code: "CLOSED_ON_ARRIVAL", date: "2026-07-10" },
@@ -389,9 +398,11 @@ for (let i = 0; i < EXPECTED.length; i++) {
   for (const v of MESSAGE_CASES) {
     const msg = stayViolationMessage(v);
     assert.ok(!ABBREV.test(msg), `stayViolationMessage(${v.code}/${v.scope ?? "-"}) is free of English abbreviations (got "${msg}")`);
+    assert.ok(!ISO_DATE.test(msg), `stayViolationMessage(${v.code}/${v.scope ?? "-"}) shows no ISO date — a date it names is Hebrew D.M (got "${msg}")`);
   }
   for (const [code, msg] of Object.entries(PRICING_ERROR_MESSAGES)) {
     assert.ok(!ABBREV.test(msg), `PRICING_ERROR_MESSAGES.${code} is free of English abbreviations (got "${msg}")`);
+    assert.ok(!ISO_DATE.test(msg), `PRICING_ERROR_MESSAGES.${code} shows no ISO date (got "${msg}")`);
   }
   // …and the two surfaces really do agree, because they read ONE declaration
   assert.equal(PRICING_ERROR_MESSAGES.CLOSED_ON_ARRIVAL, stayViolationMessage({ code: "CLOSED_ON_ARRIVAL", date: "2026-07-10" }),
@@ -472,9 +483,11 @@ for (let i = 0; i < EXPECTED.length; i++) {
     "the toast's Hebrew comes from stayViolationMessage(STOP_SELL) — the one place restriction wording lives");
   assert.doesNotMatch(cell, /"[^"]*סגור למכירה[^"]*"/,
     "the mobile cell does not re-type the stop-sell sentence as a literal — that is how two spellings start");
-  // …and that one sentence really is the stop-sell sentence, run for real
-  assert.match(stayViolationMessage({ code: "STOP_SELL", date: "2026-08-25" }), /סגור למכירה/,
-    "stayViolationMessage(STOP_SELL) is the 'סגור למכירה' sentence the mobile toast shows");
+  // …and that one sentence really is the stop-sell sentence, run for real —
+  // whole, so the DATE inside it is pinned too: the toast a guest-facing clerk
+  // reads names the day in Hebrew, not in the storage format.
+  assert.equal(stayViolationMessage({ code: "STOP_SELL", date: "2026-08-25" }), "התאריך 25.8 סגור למכירה",
+    "stayViolationMessage(STOP_SELL) is the exact sentence the mobile toast shows, date included, in Hebrew D.M");
 
   // --- mobile gets feedback, never a window (the owner's ruling) ---
   for (const stump of ["isOverridableStayCode", "setBlockedCreate", "המשך בכל זאת", "<Dialog", "cb-gate"]) {
