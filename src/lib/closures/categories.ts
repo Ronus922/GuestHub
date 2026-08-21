@@ -14,20 +14,27 @@
 // silently forks into five spellings of "תחזוקה".
 //
 // The values MUST stay in lockstep with the CHECK constraint in
-// db/migrations/084_closure_categories_restriction_override.sql.
+// db/migrations/084_closure_categories_restriction_override.sql, as widened by
+// 085_closure_category_long_term.sql.
 //
-// IMPORT-FREE on purpose. This module is pulled in by the calendar read model
+// NO .tsx IMPORT, EVER. This module is pulled in by the calendar read model
 // (calendar/data.ts → calendar/types.ts), which check:calendar-departure-edge
 // compiles in ISOLATION with a tsconfig that has no `jsx` — so a single
 // `import type { IconName } from "@/components/shared/Icon"` (a .tsx file)
 // would break that guard. The icon names are therefore plain string literals,
 // still checked against IconName at every `<Icon name={...} />` call site.
+// The two imports below are PURE .ts modules with no imports of their own, so
+// that tsconfig (which does carry the "@/*" path mapping) resolves them fine.
 // ============================================================
+import { addDays, type DateOnly } from "@/lib/dates";
+import { dayMonth } from "@/lib/rates/rules";
+
 export const CLOSURE_CATEGORY_VALUES = [
   "maintenance",
   "cleaning",
   "renovation",
   "private_use",
+  "long_term",
   "other",
 ] as const;
 
@@ -38,6 +45,12 @@ export const CLOSURE_CATEGORIES = [
   { value: "cleaning", label: "ניקיון", icon: "cleaning" },
   { value: "renovation", label: "שיפוץ", icon: "brush" },
   { value: "private_use", label: "שימוש פרטי", icon: "user" },
+  // 085. A yearly lease is not "שימוש פרטי" (an owner taking a weekend) and not
+  // "אחר": it is a PHYSICAL, months-long occupancy of the flat, and the whole
+  // point of naming it is that the board can say so. date_range — a long stretch
+  // of dates held — rather than `key`, which this app already spends on TTLock
+  // passcodes.
+  { value: "long_term", label: "שכירות ארוכה", icon: "date-range" },
   { value: "other", label: "אחר", icon: "category" },
 ] as const satisfies readonly { value: ClosureCategory; label: string; icon: string }[];
 
@@ -57,4 +70,34 @@ export function closureCategoryIcon(
   category: string | null | undefined,
 ): ClosureCategoryIcon | null {
   return category ? (BY_VALUE.get(category)?.icon ?? null) : null;
+}
+
+// ============================================================
+// THE sentence a blocked surface says when the blocker is a ROOM CLOSURE.
+//
+// ONE function, because there are three callers and they must not drift: the
+// desktop create gate (a drag/double-click/context create onto closed dates),
+// the mobile cell's tap, and the room row label. It is the closure twin of
+// stayViolationMessage() in lib/rates/rules.ts — that module owns the wording
+// of COMMERCIAL restrictions, this one owns the wording of a PHYSICAL closure,
+// and neither surface types either sentence as a literal.
+//
+// It is INFORMATIVE, never a question. A commercial restriction ends in an
+// override dialog for a manager who holds the 084 key; a closure ends here.
+// Nobody sells a bed somebody else is sleeping in, so this sentence has no
+// button and the callers give it none.
+//
+// THE DATE IS THE LAST CLOSED NIGHT, NOT THE STORED BOUNDARY. room_closures is
+// half-open [start_date, end_date): a lease whose last night is 31.12 is stored
+// with end_date = 2027-01-01. Saying "עד 1.1" would name a night the guest CAN
+// have. The subtraction lives here, once, so no call site has to remember it.
+// ============================================================
+export function closureBlockMessage(
+  category: string | null | undefined,
+  endDateExclusive: DateOnly,
+): string {
+  const lastNight = dayMonth(addDays(endDateExclusive, -1));
+  // A closure filed before 084 carries no category, and an unknown value is
+  // treated the same way: the generic noun, never a raw stored string.
+  return `${closureCategoryLabel(category) ?? "סגירת חדר"} עד ${lastNight}`;
 }
