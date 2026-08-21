@@ -1372,7 +1372,7 @@ export function CalendarGrid({
           <p className="cb-gate-msg">{stayViolationMessage(blockedCreate.violation)}</p>
           <p className="cb-gate-note">
             {can.restrictionOverride
-              ? "המשך ייצור את ההזמנה למרות ההגבלה. חסימה פיזית (חדר מושבת, סגירת חדר או שהות קיימת) אינה ניתנת לעקיפה."
+              ? "המשך ייצור את ההזמנה למרות ההגבלה."
               : "אין לך הרשאה לעקוף הגבלה מסחרית."}
           </p>
         </ConfirmDialog>
