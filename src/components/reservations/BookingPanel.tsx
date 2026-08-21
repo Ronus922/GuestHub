@@ -25,6 +25,7 @@ import type { CancellationPolicySnapshot } from "@/lib/commercial/policy-snapsho
 import { CancellationSnapshotView } from "./EditReservationPanel";
 import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
+import { ClosurePanel } from "@/app/(dashboard)/calendar/ClosurePanel";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
 import { BookingSuccess, type BookingCreated } from "./BookingSuccess";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
@@ -125,6 +126,7 @@ export function BookingPanel({
   enabledCurrencies = ["ILS"],
   canSaveCard,
   canPriceOverride,
+  canClose = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -141,8 +143,13 @@ export function BookingPanel({
   enabledCurrencies?: string[];
   canSaveCard: boolean;
   canPriceOverride: boolean;
+  /** rooms.edit — renders the header's room-closure shortcut */
+  canClose?: boolean;
 }) {
   const [step, setStep] = useState(0);
+  // the header's room-closure shortcut (§ header cluster). It opens the SAME
+  // ClosurePanel the calendar uses — one closure form in the app, not two.
+  const [closureOpen, setClosureOpen] = useState(false);
   // 084 — set once, from the prefill, when the panel opens: the operator already
   // answered the gate dialog. Nothing in the panel can turn it on.
   const [restrictionOverride, setRestrictionOverride] = useState(false);
@@ -547,6 +554,7 @@ export function BookingPanel({
   const totalGuests = stays.reduce((n, s) => n + s.adults + s.children + s.infants, 0);
 
   return (
+    <>
     <SidePanel
       open={open}
       onClose={requestClose}
@@ -563,42 +571,33 @@ export function BookingPanel({
       visualVariant="booking"
       headerActions={
         /* the MD header cluster (ש'14-15) — RTL DOM order = right→left:
-           room-closure first, divider, then מייל/וואטסאפ/PDF/הדפסה/תצוגה
-           מקדימה, divider, and SidePanel's own X. Every button here is a
-           GRAPHIC SHELL: before the reservation exists none of these actions
-           has anything real to act on, so clicking does nothing.
-           TODO(wire-up): room-closure creation; TODO(wire-up): pre-create
-           mail/whatsapp/pdf/print/preview. */
-        <>
-          <button
-            type="button"
-            className="bw-hd-btn bw-close-room"
-            title="סגירת חדר ביומן"
-            aria-label="סגירת חדר ביומן"
-          >
-            <Icon name="door-front" size={20} />
-            <span className="bw-cr-badge">
-              <Icon name="lock" size={13.5} />
-            </span>
-          </button>
-          <span className="bk-tb-div" aria-hidden />
-          <button type="button" className="bw-hd-btn" title="מייל" aria-label="מייל">
-            <Icon name="mail" size={20} />
-          </button>
-          <button type="button" className="bw-hd-btn" title="וואטסאפ" aria-label="וואטסאפ">
-            <Icon name="whatsapp" size={20} />
-          </button>
-          <button type="button" className="bw-hd-btn" title="PDF" aria-label="PDF">
-            <Icon name="pdf" size={20} />
-          </button>
-          <button type="button" className="bw-hd-btn" title="הדפסה" aria-label="הדפסה">
-            <Icon name="printer" size={20} />
-          </button>
-          <button type="button" className="bw-hd-btn" title="תצוגה מקדימה" aria-label="תצוגה מקדימה">
-            <Icon name="eye" size={20} />
-          </button>
-          <span className="bk-tb-div" aria-hidden />
-        </>
+           room-closure, divider, and SidePanel's own X.
+           WHAT IS NOT HERE, AND WHY. תצוגה מקדימה / הדפסה / PDF / וואטסאפ /
+           מייל used to sit here as graphic shells with no onClick, because on
+           CREATE there is nothing to preview, print or send — the reservation
+           does not exist yet. Owner ruling: those five belong to editing an
+           existing reservation, where BookingToolbar (BookingActions.tsx) draws
+           them with real handlers. On create they were noise, so they are gone
+           rather than wired to nothing.
+           The room-closure button is the one that stays, and it now DOES
+           something: the same ClosurePanel the calendar opens. */
+        canClose ? (
+          <>
+            <button
+              type="button"
+              className="bw-hd-btn bw-close-room"
+              title="סגירת חדר ביומן"
+              aria-label="סגירת חדר ביומן"
+              onClick={() => setClosureOpen(true)}
+            >
+              <Icon name="door-front" size={20} />
+              <span className="bw-cr-badge">
+                <Icon name="lock" size={13.5} />
+              </span>
+            </button>
+            <span className="bk-tb-div" aria-hidden />
+          </>
+        ) : undefined
       }
       band={
         created ? undefined : (
@@ -1481,6 +1480,14 @@ export function BookingPanel({
       </div>
       )}
     </SidePanel>
+      {/* the header shortcut's target. A sibling of the wizard, not a child:
+          ClosurePanel is its own portalled SidePanel and stacks over this one,
+          so the half-filled booking stays exactly where it was underneath.
+          The prefill is empty on purpose — a header button has no row context,
+          and aiming the form at the room the operator is mid-way through
+          BOOKING is the last thing it should do. */}
+      <ClosurePanel open={closureOpen} onClose={() => setClosureOpen(false)} prefill={{}} />
+    </>
   );
 }
 

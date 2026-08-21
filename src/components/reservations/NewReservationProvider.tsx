@@ -56,6 +56,7 @@ export function NewReservationProvider({
   canSaveCard,
   canPriceOverride,
   canCreate,
+  canClose,
 }: {
   children: React.ReactNode;
   bookingSources: LookupItem[];
@@ -67,6 +68,8 @@ export function NewReservationProvider({
   canSaveCard: boolean;
   canPriceOverride: boolean;
   canCreate: boolean;
+  /** rooms.edit — may file a room closure from the wizard's header shortcut */
+  canClose: boolean;
 }) {
   const [prefill, setPrefill] = useState<NewReservationPrefill | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
@@ -105,6 +108,7 @@ export function NewReservationProvider({
         enabledCurrencies={enabledCurrencies}
         canSaveCard={canSaveCard}
         canPriceOverride={canPriceOverride}
+        canClose={canClose}
       />
     </NewReservationContext.Provider>
   );
