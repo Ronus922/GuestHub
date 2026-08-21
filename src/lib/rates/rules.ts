@@ -99,6 +99,29 @@ export function stayRestrictionViolationStructured(
 // for; the abbreviations stay in the codes, the code and the comments.
 export const CLOSED_TO_ARRIVAL_TEXT = "התאריך סגור לכניסת אורחים";
 export const CLOSED_TO_DEPARTURE_TEXT = "התאריך סגור לעזיבת אורחים";
+// Stop-sell, same rule — but the bare PHRASE, not a sentence, because two
+// surfaces need it at two different grammatical scopes: the violation message
+// below names a DATE ("התאריך … סגור למכירה"), while the calendar's room label
+// names a ROOM whose every visible night is closed. Composing the sentence from
+// this constant is what keeps them one spelling instead of two.
+export const STOP_SELL_TEXT = "סגור למכירה";
+
+// The Hebrew face of a DateOnly: "2026-08-25" → "25.8". Day and month only —
+// every surface that shows a restriction message is a calendar view whose own
+// header already names the month and the year, so repeating them adds nothing,
+// and a raw ISO string reads as machine output inside a Hebrew sentence.
+//
+// The same arithmetic exists in lib/dates.formatDayMonth, and it is deliberately
+// NOT imported: this module is compiled STANDALONE by eight guard scripts with a
+// bare `tsc src/lib/rates/rules.ts` — no tsconfig, so no "@/" path mapping — and
+// a single import would break every one of them. That is what the PURE line in
+// the header buys, and four characters of slicing is the cheap half of the deal.
+// Passing a formatter in as a parameter would be worse still: it would hand the
+// decision back to all five call sites, which is precisely the "every component
+// formats its own dates" that having one wording module exists to prevent.
+function dayMonth(date: string): string {
+  return `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}`;
+}
 
 // Hebrew message for a structured violation — the exact historical grid wording.
 export function stayViolationMessage(v: StayRuleViolation): string {
@@ -110,7 +133,7 @@ export function stayViolationMessage(v: StayRuleViolation): string {
         : `מינימום ${v.required} לילות בטווח זה`;
     case "MAX_STAY_EXCEEDED": return `מקסימום ${v.limit} לילות בתאריך זה`;
     case "CLOSED_ON_DEPARTURE": return CLOSED_TO_DEPARTURE_TEXT;
-    case "STOP_SELL": return `התאריך ${v.date} סגור למכירה`;
+    case "STOP_SELL": return `התאריך ${dayMonth(v.date)} ${STOP_SELL_TEXT}`;
   }
 }
 

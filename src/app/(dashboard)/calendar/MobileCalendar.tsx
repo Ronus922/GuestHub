@@ -1,22 +1,25 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { toast } from "sonner";
 import { Icon } from "@/components/shared/Icon";
 import { addDays, dayOfWeek, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { barGeometry } from "@/lib/calendar-interactions";
 import { resolveChannelBadge } from "@/lib/colors";
+import { stayViolationMessage } from "@/lib/rates/rules";
 import { NEUTRAL_STATUS } from "@/lib/status-colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import type { RateRow } from "@/lib/inventory-rules";
 import type { CalendarData, CalendarRoom, CalendarStay, CalendarClosure } from "./types";
-import { cellMark, sellable } from "./cell-state";
+import { cellMark, roomLabel, sellable } from "./cell-state";
 import { stayPalette } from "./CalendarGrid";
 
 // Mobile "ציר זמן" board (reference GuesthubCalandrMobile). Rooms are grouped
 // under "קומה N" headers; each row shows a fixed 56px label column + a `days`-day
 // timeline. Bars reuse barGeometry (mid-cell fractions) so they line up exactly
 // with the desktop math. No prices, no drag — tap a bar to open its card, tap an
-// empty cell to start a booking.
+// empty cell to start a booking (unless that night is closed for sale — see the
+// two axes at the cell below).
 export function MobileCalendar({
   data,
   days,
@@ -36,6 +39,19 @@ export function MobileCalendar({
   const dates = useMemo(
     () => Array.from({ length: days }, (_, i) => addDays(data.from, i)),
     [data.from, days],
+  );
+
+  // …and the WHOLE window the loader fetched (data.days, 21 — see CALENDAR_DAYS),
+  // of which `dates` above is only the 3/5/7-day slice this board draws. The row
+  // LABEL judges this one, never the slice: it describes a ROOM, and a room does
+  // not become unsellable because the user tapped "3 ימים". Judging the slice let
+  // the two boards disagree about the same room at the same moment — desktop
+  // "פנוי", mobile "סגור למכירה" — which is the same self-contradiction the label
+  // was fixed to stop, moved one screen over. Rendering is untouched: every cell,
+  // bar and closure below still comes from `dates`.
+  const windowDates = useMemo(
+    () => Array.from({ length: data.days }, (_, i) => addDays(data.from, i)),
+    [data.from, data.days],
   );
 
   // The loader fetches a whole window (3 weeks / a month); the mobile timeline
@@ -124,9 +140,24 @@ export function MobileCalendar({
               // vertical room for a third line, so the word lives on the desktop
               // board (.cb-rst) and mobile carries the state as tone.
               const roomSellable = sellable(room);
+              // …and AXIS B at ROW level: a room whose every night in the FETCHED
+              // WINDOW is stop-sold is not on the market either, and the label may
+              // not keep saying it is. The decision is roomLabel()'s, the same
+              // function the desktop row calls, fed the same window — so the two
+              // boards give one room one answer. Mobile takes only the TONE from
+              // it, because the 50px box still has no room for a word.
+              const { tone } = roomLabel(
+                room,
+                windowDates.map((d) => ({
+                  rate: cellRate(room, d),
+                  closure: (closuresByRoom.get(room.id) ?? []).some(
+                    (c) => c.start_date <= d && c.end_date > d,
+                  ),
+                })),
+              );
               return (
                 <div key={room.id} className="cb-m-row">
-                  <div className={`cb-m-rlabel ${roomSellable ? "" : "off"}`}>
+                  <div className={`cb-m-rlabel ${tone === "free" ? "" : tone}`}>
                     <span className="cb-m-rnum ltr-num">{room.room_number}</span>
                     <span className="cb-m-rtype">{room.room_type_name ?? room.name ?? "—"}</span>
                   </div>
@@ -140,16 +171,38 @@ export function MobileCalendar({
                       // a room that cannot be sold at all is not "closed for sale
                       // today", and drawing both signs would restate the exact
                       // conflation this split removes. Physical wins outright.
-                      // Unlike the physical axis it does NOT disarm the tap: a
-                      // closed night is still bookable by someone who may override.
                       const closed =
                         roomSellable && cellMark(cellRate(room, d))?.mark === "stop_sell";
                       return (
                         <div
                           key={d}
                           className={`cb-m-cell ${cls} ${roomSellable ? "" : "blocked"} ${closed ? "cx" : ""}`}
+                          // The two axes ANSWER A TAP DIFFERENTLY, on purpose:
+                          //
+                          //   PHYSICAL (not sellable) — no handler at all. There is
+                          //     nothing to say: the whole row is hatched, the label is
+                          //     dimmed, and the state is a fact about the room, not
+                          //     about this date. Silence.
+                          //   COMMERCIAL (closed) — a short toast and nothing else.
+                          //     The cell LOOKS tappable (it is a plain open cell wearing
+                          //     a "סגור" tag), so silence would read as a dead board;
+                          //     the tap must say why it did not open a booking. The
+                          //     owner's ruling for mobile is feedback, not a window:
+                          //     no dialog, no "המשך בכל זאת" — the desktop board keeps
+                          //     the override path (CalendarGrid §7), a 390px screen
+                          //     does not get a modal to dismiss.
+                          //   OPEN — opens the booking form, unchanged.
+                          //
+                          // The wording is NOT typed here: it comes from
+                          // stayViolationMessage, the one place the restriction
+                          // sentences live (lib/rates/rules.ts), so this toast cannot
+                          // drift from what the desktop gate and the server say.
                           onClick={
-                            roomSellable && canCreate ? () => onEmptyTap(room.id, d) : undefined
+                            !roomSellable || !canCreate
+                              ? undefined
+                              : closed
+                                ? () => toast.error(stayViolationMessage({ code: "STOP_SELL", date: d }))
+                                : () => onEmptyTap(room.id, d)
                           }
                         >
                           {closed && <span className="cb-m-cx">סגור</span>}

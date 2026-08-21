@@ -303,6 +303,15 @@
 .cb-m-rlabel.off .cb-m-rnum {
   color: inherit;
 }
+/* AXIS B at ROW level — every night of the visible slice is stop-sold. Same
+   ink as the desktop's .cb-rst.nosale, carried the same way .off is: mobile has
+   no word to colour, only the label box. */
+.cb-m-rlabel.nosale {
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+}
+.cb-m-rlabel.nosale .cb-m-rnum {
+  color: inherit;
+}
 /* AXIS B — COMMERCIAL. The desktop stop-sell flag (.cb-rcell .cb-cx) verbatim:
    same 12px/800, same danger-tinted pill. Measured against the narrowest slice
    this board offers — 7 days on a 390px device gives a 41.9px cell interior and

@@ -649,6 +649,12 @@
 .cb-rst.off {
   color: var(--faint);
 }
+/* the whole visible window is closed for sale (cell-state.roomLabel, state 2).
+   Commercial, not broken — so it borrows the board's existing amber, the very
+   mix .cb-rl2.hold already wears, and never the --ok green. */
+.cb-rst.nosale {
+  color: color-mix(in srgb, var(--warn) 70%, var(--ink));
+}
 .cb-rstrip {
   flex: 1;
   height: var(--cb-row-h);
