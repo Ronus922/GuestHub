@@ -66,7 +66,7 @@ import {
 import { rescheduleReservationRoomAction } from "@/app/(dashboard)/reservations/actions";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { MoveConfirmDialog, type MoveProposal } from "./MoveConfirmDialog";
-import { deleteClosureAction } from "./actions";
+import { updateClosureAction } from "./actions";
 import type {
   CalendarClosure,
   CalendarData,
@@ -74,7 +74,7 @@ import type {
   CalendarStay,
 } from "./types";
 import type { NewReservationPrefill } from "@/components/reservations/NewReservationProvider";
-import type { ClosureEdit, ClosurePrefill } from "./ClosurePanel";
+import { closureEditOf, type ClosureEdit, type ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
 import {
@@ -140,13 +140,6 @@ export function stayPalette(stay: Pick<CalendarStay, "status" | "payment" | "wor
 }
 
 type ContextMenu = { x: number; y: number; roomId: string; date: DateOnly };
-type ClosurePopover = {
-  x: number;
-  y: number;
-  label: string;
-  /** everything the closure panel needs to open on this exact closure */
-  edit: ClosureEdit;
-};
 
 // §8: a popover opens at the click point and is CLAMPED to the viewport with a
 // 12px margin. The box is the canonical `.popover` (316px), so only the height
@@ -177,9 +170,14 @@ function useClampedMenu(anchor: { x: number; y: number } | null) {
 // re-renders the grid; only the ghost node is mutated (rAF-throttled).
 // mode "create" is an empty-cell range selection: stay is null and
 // startDate anchors the selected night range (§4).
+// The SUBJECT of a move/resize is a stay OR a closure — exactly one of the two
+// is set, and "create" has neither (it draws a range out of empty cells).
+// A closure is a reservation of nobody: same geometry, same thresholds, same
+// ghost, so it rides the same session rather than a second pointer pipeline.
 type DragSession = {
   mode: DragMode;
   stay: CalendarStay | null;
+  closure: CalendarClosure | null;
   startDate: DateOnly | null;
   minNights: number;
   roomIndex: number;
@@ -195,6 +193,17 @@ type DragSession = {
 };
 
 const isBlocking = (s: string) => (INVENTORY_BLOCKING_STATUSES as readonly string[]).includes(s);
+
+// The dragged block's own span. A closure stores [start_date, end_date) — the
+// same half-open pair a stay stores as [check_in, check_out) — so the whole
+// geometry layer (moveTarget / resizeTarget / barGeometry / resizeDeltaRange)
+// takes it unchanged and there is no second set of date math for closures.
+// Module scope on purpose: it closes over nothing, so it is not a hook dep.
+function dragSpan(s: DragSession): { check_in: DateOnly; check_out: DateOnly } | null {
+  if (s.stay) return s.stay;
+  if (s.closure) return { check_in: s.closure.start_date, check_out: s.closure.end_date };
+  return null;
+}
 
 export function CalendarGrid({
   data,
@@ -227,15 +236,17 @@ export function CalendarGrid({
 
   const [pending, setPending] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<ContextMenu | null>(null);
-  const [closurePop, setClosurePop] = useState<ClosurePopover | null>(null);
   const menuPop = useClampedMenu(menu);
-  const closureMenuPop = useClampedMenu(closurePop);
   // hover tooltip (reference Tooltip.png) — opened by a deliberate hover
   // delay, kept alive while the pointer is inside the card or the tooltip
   const [tip, setTip] = useState<TooltipTarget | null>(null);
   // set once when the movement threshold is crossed, cleared on release —
   // NOT updated per pointer move (that path is ref + rAF + DOM only).
-  const [dragUi, setDragUi] = useState<{ mode: DragMode; rrId: string } | null>(null);
+  const [dragUi, setDragUi] = useState<{
+    mode: DragMode;
+    rrId: string;
+    closureId: string | null;
+  } | null>(null);
   // a completed move/resize proposes a change and waits for confirmation (§2/§3);
   // NOTHING is persisted until "אישור". null = no pending confirmation.
   const [confirmMove, setConfirmMove] = useState<MoveProposal | null>(null);
@@ -323,7 +334,15 @@ export function CalendarGrid({
   // ---- client-side collision PREVIEW (visual only — the server re-validates
   // everything inside a transaction before any commit, §I) ----
   const rangeInvalid = useCallback(
-    (targetRoom: CalendarRoom, ci: DateOnly, co: DateOnly, excludeRrId?: string): boolean => {
+    (
+      targetRoom: CalendarRoom,
+      ci: DateOnly,
+      co: DateOnly,
+      excludeRrId?: string,
+      /** a closure being MOVED is its own overlap — without this every drag of a
+       *  closure would collide with the row it is dragging */
+      excludeClosureId?: string,
+    ): boolean => {
       if (targetRoom.status !== "available" || !targetRoom.is_active) return true;
       for (const other of staysByRoom.get(targetRoom.id) ?? []) {
         if (excludeRrId && other.rr_id === excludeRrId) continue;
@@ -331,6 +350,7 @@ export function CalendarGrid({
         if (other.check_in < co && other.check_out > ci) return true;
       }
       for (const c of closuresByRoom.get(targetRoom.id) ?? []) {
+        if (excludeClosureId && c.id === excludeClosureId) continue;
         if (c.start_date < co && c.end_date > ci) return true;
       }
       return false;
@@ -404,6 +424,22 @@ export function CalendarGrid({
     [cellRate],
   );
 
+  // ---- ONE question per subject, asked the same way by the ghost and by the
+  // release path, so the preview and the commit can never disagree ----
+
+  // "is this target free for the thing being dragged" — visual PREVIEW only;
+  // the server re-validates inside a transaction before any commit (§I). A stay
+  // also has to fit the room's occupancy; a closure has no guests, so it asks
+  // only about the range — and it must ignore ITSELF, or every drag would
+  // collide with the row being dragged.
+  const dragInvalid = useCallback(
+    (s: DragSession, room: CalendarRoom, ci: DateOnly, co: DateOnly): boolean =>
+      s.stay
+        ? previewInvalid(s.stay, room, ci, co)
+        : rangeInvalid(room, ci, co, undefined, s.closure?.id),
+    [previewInvalid, rangeInvalid],
+  );
+
   // ---- ghost rendering (direct DOM, rAF-throttled — zero React work) ----
   const paintGhost = useCallback(() => {
     const s = sessionRef.current;
@@ -412,12 +448,13 @@ export function CalendarGrid({
     if (!s || !ghost || !body || !s.activated) return;
 
     const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
-    if (s.mode === "move" && s.stay) {
+    const span = dragSpan(s);
+    if (s.mode === "move" && span) {
       const roomDelta = snapRowDelta(s.startY, s.lastY, ROW_H);
-      const t = moveTarget(s.stay, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
+      const t = moveTarget(span, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
       const geo = barGeometry(data.from, data.days, t.ci, t.co);
       const targetRoom = data.rooms[t.roomIndex];
-      const invalid = previewInvalid(s.stay, targetRoom, t.ci, t.co);
+      const invalid = dragInvalid(s, targetRoom, t.ci, t.co);
       // physical left inside the body: strips sit left of the sticky RTL
       // room column, so x = stripWidth * (1 - start - width)
       const x = s.stripWidth * (1 - geo.start - geo.width);
@@ -427,19 +464,21 @@ export function CalendarGrid({
       ghost.dataset.invalid = invalid ? "true" : "false";
       ghost.classList.remove("rsz", "new");
       ghost.classList.add("live");
-    } else if (s.mode === "resize" && s.stay) {
-      const t = resizeTarget(s.stay, dayDelta);
-      const delta = resizeDeltaRange(s.stay, t.co);
+    } else if (s.mode === "resize" && span) {
+      const t = resizeTarget(span, dayDelta);
+      const delta = resizeDeltaRange(span, t.co);
       if (!delta) {
         ghost.classList.remove("live");
         return;
       }
       const geo = barGeometry(data.from, data.days, delta.from, delta.to);
       // extension must be free; shortening turns invalid only when the
-      // result drops below the cell's minimum-stay restriction (§1)
-      const nightsAfter = nightsBetween(s.stay.check_in, t.co);
+      // result drops below the cell's minimum-stay restriction (§1). A closure
+      // carries no commercial minimum, so its floor is the one night
+      // resizeTarget already guarantees.
+      const nightsAfter = nightsBetween(span.check_in, t.co);
       const invalid = delta.extending
-        ? previewInvalid(s.stay, data.rooms[s.roomIndex], delta.from, delta.to)
+        ? dragInvalid(s, data.rooms[s.roomIndex], delta.from, delta.to)
         : nightsAfter < s.minNights;
       const x = s.stripWidth * (1 - geo.start - geo.width);
       const y = s.roomIndex * ROW_H + BAR_TOP;
@@ -465,7 +504,7 @@ export function CalendarGrid({
       ghost.classList.add("new", "live");
       if (gnRef.current) gnRef.current.textContent = `${t.nights} לילות`;
     }
-  }, [data.from, data.days, data.rooms, previewInvalid, rangeInvalid]);
+  }, [data.from, data.days, data.rooms, dragInvalid, rangeInvalid]);
 
   const endDrag = useCallback(() => {
     const s = sessionRef.current;
@@ -625,7 +664,6 @@ export function CalendarGrid({
       cancelTipTimers();
       setTip(null);
       setMenu(null);
-      setClosurePop(null);
       onOpenReservation(stay.reservation_id);
     },
     [can.viewReservation, cancelTipTimers, onOpenReservation],
@@ -718,9 +756,19 @@ export function CalendarGrid({
 
   // ---- pointer wiring (handlers live ON the card via pointer capture —
   // no document-level listeners, nothing leaks) ----
-  const onBarPointerDown = useCallback(
-    (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => {
-      if (!canDragCard(can.edit, pending.has(stay.rr_id))) return;
+  // The press→session half of a drag, for EVERY draggable block on the board.
+  // A reservation and a closure disagree about the subject, the permission that
+  // unlocks it and the minimum they may be shortened to — not about how a press
+  // becomes a drag, so that part is written once and there is one session, one
+  // ghost and one click-suppressor for both.
+  const beginDrag = useCallback(
+    (
+      e: React.PointerEvent,
+      mode: DragMode,
+      roomIndex: number,
+      subject: { stay: CalendarStay | null; closure: CalendarClosure | null },
+      minNights: number,
+    ) => {
       if (e.button !== 0) return;
       e.preventDefault();
       // a new pointer sequence starts: clear any stale completed-drag marker
@@ -731,18 +779,16 @@ export function CalendarGrid({
       cancelTipTimers();
       setTip(null);
       setMenu(null);
-      setClosurePop(null);
       const body = bodyRef.current;
       if (!body) return;
-      const room = data.rooms[roomIndex];
-      const minN = room ? (cellRate(room, stay.check_in)?.min_nights ?? 1) : 1;
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       sessionRef.current = {
         mode,
-        stay,
+        stay: subject.stay,
+        closure: subject.closure,
         startDate: null,
-        minNights: Math.max(1, minN ?? 1),
+        minNights: Math.max(1, minNights),
         roomIndex,
         pointerId: e.pointerId,
         startX: e.clientX,
@@ -755,7 +801,29 @@ export function CalendarGrid({
         raf: 0,
       };
     },
-    [can.edit, pending, data.days, data.rooms, cellRate, cancelTipTimers],
+    [data.days, cancelTipTimers],
+  );
+
+  const onBarPointerDown = useCallback(
+    (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => {
+      if (!canDragCard(can.edit, pending.has(stay.rr_id))) return;
+      const room = data.rooms[roomIndex];
+      const minN = room ? (cellRate(room, stay.check_in)?.min_nights ?? 1) : 1;
+      beginDrag(e, mode, roomIndex, { stay, closure: null }, minN ?? 1);
+    },
+    [can.edit, pending, data.rooms, cellRate, beginDrag],
+  );
+
+  // Same gesture, different subject and a different permission: closing a room
+  // is rooms.edit, not reservations.edit. A closure carries no commercial
+  // minimum stay — the only floor is the one night the schema demands, which
+  // resizeTarget already enforces — so the minimum passed here is 1.
+  const onClosurePointerDown = useCallback(
+    (e: React.PointerEvent, closure: CalendarClosure, roomIndex: number, mode: DragMode) => {
+      if (!canDragCard(can.close, pending.has(closure.id))) return;
+      beginDrag(e, mode, roomIndex, { stay: null, closure }, 1);
+    },
+    [can.close, pending, beginDrag],
   );
 
   const onBarPointerMove = useCallback(
@@ -772,7 +840,7 @@ export function CalendarGrid({
         phaseRef.current = s.mode === "resize" ? "resizing" : "dragging";
         cancelTipTimers();
         setTip(null);
-        setDragUi({ mode: s.mode, rrId: s.stay?.rr_id ?? "" });
+        setDragUi({ mode: s.mode, rrId: s.stay?.rr_id ?? "", closureId: s.closure?.id ?? null });
       }
       if (!s.raf) {
         s.raf = requestAnimationFrame(() => {
@@ -831,13 +899,13 @@ export function CalendarGrid({
       cancelTipTimers();
       setTip(null);
       setMenu(null);
-      setClosurePop(null);
       const stripWidth = body.getBoundingClientRect().width - ROOM_COL;
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       // no preventDefault — a sub-threshold press must still double-click
       sessionRef.current = {
         mode: "create",
         stay: null,
+        closure: null,
         startDate: date,
         minNights: Math.max(1, minNights),
         roomIndex,
@@ -866,7 +934,7 @@ export function CalendarGrid({
         const dy = e.clientY - s.startY;
         if (createActivated(dx, dy)) {
           s.activated = true;
-          setDragUi({ mode: "create", rrId: "" });
+          setDragUi({ mode: "create", rrId: "", closureId: null });
         } else if (dragActivated(dx, dy)) {
           // vertical-dominant = scroll gesture → abort the selection
           sessionRef.current = null;
@@ -961,11 +1029,8 @@ export function CalendarGrid({
 
   // dismiss context menus on outside click / escape
   useEffect(() => {
-    if (!menu && !closurePop) return;
-    const close = () => {
-      setMenu(null);
-      setClosurePop(null);
-    };
+    if (!menu) return;
+    const close = () => setMenu(null);
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("click", close);
     window.addEventListener("keydown", onKey);
@@ -973,13 +1038,12 @@ export function CalendarGrid({
       window.removeEventListener("click", close);
       window.removeEventListener("keydown", onKey);
     };
-  }, [menu, closurePop]);
+  }, [menu]);
 
   const onCellContext = useCallback(
     (e: React.MouseEvent, roomId: string, date: DateOnly) => {
       e.preventDefault();
       e.stopPropagation();
-      setClosurePop(null);
       setTip(null);
       setMenu({ x: e.clientX, y: e.clientY, roomId, date });
     },
@@ -998,28 +1062,123 @@ export function CalendarGrid({
     [startCreate],
   );
 
-  const onClosureClick = useCallback((e: React.MouseEvent, c: CalendarClosure, room: CalendarRoom) => {
-    e.stopPropagation();
-    setMenu(null);
-    setClosurePop({
-      x: e.clientX,
-      y: e.clientY,
-      // the same label the bar shows: category → free text → "סגור חדר".
-      // The range ENDS ON THE LAST CLOSED NIGHT: end_date is the exclusive
-      // boundary, so a lease running out on 31.12 stores 01/01/2027 and
-      // printing that boundary names a night the room is free to sell.
-      label: `${closureCategoryLabel(c.category) ?? c.reason ?? "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(closureLastNight(c.end_date))}`,
-      edit: {
-        id: c.id,
-        roomId: c.room_id,
-        roomLabel: `${room.room_number}${room.name && room.name !== room.room_number ? ` · ${room.name}` : ""}`,
-        startDate: c.start_date,
-        endDate: c.end_date,
-        category: c.category,
-        reason: c.reason,
-      },
-    });
-  }, []);
+  // ---- click on a closure → the SAME side panel a reservation click opens,
+  // holding this closure. The two-item popover that used to sit in between is
+  // gone: its "עריכה" opened this panel anyway (one extra click on the common
+  // path), and its "הסר חסימה" now lives in the panel's own footer behind a
+  // confirmation, where a destructive act belongs. ----
+  const openClosurePanel = useCallback(
+    (c: CalendarClosure, room: CalendarRoom) => {
+      // same lifecycle rule as openEditor: never from a completed drag's
+      // synthetic click, never mid-gesture (§4)
+      if (
+        suppressClickRef.current !== null ||
+        phaseRef.current === "dragging" ||
+        phaseRef.current === "resizing" ||
+        phaseRef.current === "awaiting_confirmation"
+      ) {
+        return;
+      }
+      if (!can.close) {
+        // the popover used to say this in place; without it the bar would answer
+        // a deliberate click with nothing at all
+        toast.error("אין הרשאה לעריכת חסימה או להסרתה");
+        return;
+      }
+      cancelTipTimers();
+      setTip(null);
+      setMenu(null);
+      onEditClosure(closureEditOf(c, room));
+    },
+    [can.close, cancelTipTimers, onEditClosure],
+  );
+
+  // A completed drag/resize of a CLOSURE commits straight to the server. There
+  // is no before/after confirmation the way a reservation gets one: that dialog
+  // exists to show a guest, a night count and a re-quoted price, and a closure
+  // has no guest and no price. Nothing is written locally — on refusal the bar
+  // is already back where it was, because it never moved.
+  const commitClosureChange = useCallback(
+    (s: DragSession) => {
+      const c = s.closure;
+      const span = dragSpan(s);
+      if (!c || !span) return;
+      const dayDelta = snapDayDelta(s.startX, s.lastX, s.colW);
+      let targetRoom: CalendarRoom;
+      let startDate: DateOnly;
+      let endDate: DateOnly;
+      if (s.mode === "move") {
+        const roomDelta = snapRowDelta(s.startY, s.lastY, ROW_H);
+        const t = moveTarget(span, s.roomIndex, dayDelta, roomDelta, data.rooms.length);
+        targetRoom = data.rooms[t.roomIndex];
+        startDate = t.ci;
+        endDate = t.co;
+      } else {
+        const t = resizeTarget(span, dayDelta);
+        targetRoom = data.rooms[s.roomIndex];
+        startDate = t.ci;
+        endDate = t.co;
+      }
+      if (
+        startDate === c.start_date &&
+        endDate === c.end_date &&
+        targetRoom.id === c.room_id
+      ) {
+        return;
+      }
+      // the client-side PREVIEW, the same one the ghost painted red; the server
+      // re-runs the real check inside the transaction and has the last word
+      if (rangeInvalid(targetRoom, startDate, endDate, undefined, c.id)) {
+        toast.error("היעד אינו זמין — הפעולה בוטלה");
+        return;
+      }
+      startCommit(async () => {
+        setPending((prev) => new Set(prev).add(c.id));
+        // category and reason travel with the move: updateClosureAction writes
+        // the whole row, so omitting them would silently erase the reason the
+        // room is closed as a side effect of dragging it one day.
+        const res = await updateClosureAction({
+          id: c.id,
+          roomId: targetRoom.id,
+          startDate,
+          endDate,
+          category: c.category ?? undefined,
+          reason: c.reason ?? undefined,
+        });
+        setPending((prev) => {
+          const n = new Set(prev);
+          n.delete(c.id);
+          return n;
+        });
+        if (res.success) {
+          toast.success(targetRoom.id === c.room_id ? "הסגירה עודכנה" : "הסגירה הועברה");
+        } else {
+          toast.error(res.error);
+        }
+      });
+    },
+    [data.rooms, rangeInvalid],
+  );
+
+  const onClosurePointerUp = useCallback(
+    (e: React.PointerEvent, closure: CalendarClosure, room: CalendarRoom) => {
+      const s = sessionRef.current;
+      if (!s || e.pointerId !== s.pointerId) return;
+      const action = dragEndAction(s.mode, s.activated);
+      endDrag();
+      phaseRef.current = "idle";
+      if (action === "open") {
+        openClosurePanel(closure, room);
+      } else if (action === "confirm") {
+        // the ONE synthetic click that follows a completed drag is marked for
+        // the capture-phase suppressor, exactly as it is for a reservation —
+        // without it the release would reopen the panel on top of the commit
+        suppressClickRef.current = e.pointerId;
+        commitClosureChange(s);
+      }
+    },
+    [endDrag, openClosurePanel, commitClosureChange],
+  );
 
   // month band segments (reference .mrow/.mseg)
   const monthSegs = useMemo(() => {
@@ -1067,8 +1226,19 @@ export function CalendarGrid({
   const dragPalette = dragStay ? stayPalette(dragStay) : null;
   // ghost badge follows the same rule as the pill: channel, or the manual pencil
   const dragChannel = dragStay ? resolveChannelBadge(dragStay.source_key) : null;
-  // dim only the source card of a MOVE, and only re-render its own row
-  const dimRoomId = dragUi?.mode === "move" ? (dragStay?.room_id ?? null) : null;
+  // …and the same three questions for a dragged CLOSURE, so the ghost wears the
+  // block's own colours and label instead of an empty brand-bordered box
+  const dragClosure = dragUi?.closureId
+    ? (data.closures.find((c) => c.id === dragUi.closureId) ?? null)
+    : null;
+  const dragClosurePal = dragClosure
+    ? dragClosure.kind !== "oos"
+      ? NEUTRAL_STATUS
+      : STATUS_COLORS.approval
+    : null;
+  // dim only the source block of a MOVE, and only re-render its own row
+  const dimRoomId =
+    dragUi?.mode === "move" ? (dragStay?.room_id ?? dragClosure?.room_id ?? null) : null;
   // highlighted card = the one whose hover tooltip is open (row-scoped)
   const selRoomId = tip?.stay.room_id ?? null;
 
@@ -1209,6 +1379,7 @@ export function CalendarGrid({
                   pending={pending}
                   flashRid={flashId ?? null}
                   dragRrId={room.id === dimRoomId && dragUi ? dragUi.rrId : null}
+                  dragClosureId={room.id === dimRoomId && dragUi ? dragUi.closureId : null}
                   selectedRrId={room.id === selRoomId && tip ? tip.stay.rr_id : null}
                   can={can}
                   onBarPointerDown={onBarPointerDown}
@@ -1225,7 +1396,9 @@ export function CalendarGrid({
                   onCellPointerCancel={onBarPointerCancel}
                   onCellContext={onCellContext}
                   onCellDouble={onCellDouble}
-                  onClosureClick={onClosureClick}
+                  onClosurePointerDown={onClosurePointerDown}
+                  onClosurePointerUp={onClosurePointerUp}
+                  onOpenClosure={openClosurePanel}
                 />
               ))}
 
@@ -1233,11 +1406,19 @@ export function CalendarGrid({
                   content rendered once per drag, never per pointer move */}
               <div
                 ref={ghostRef}
-                className="cb-ghost"
+                className={`cb-ghost ${dragUi?.mode === "move" && dragClosure ? "blk" : ""}`}
                 style={
-                  dragUi?.mode === "move" && dragPalette
-                    ? { background: dragPalette.bg, color: dragPalette.tx }
-                    : undefined
+                  dragUi?.mode !== "move"
+                    ? undefined
+                    : dragPalette
+                      ? { background: dragPalette.bg, color: dragPalette.tx }
+                      : dragClosurePal
+                        ? {
+                            background: dragClosurePal.bg,
+                            borderColor: dragClosurePal.bd,
+                            color: dragClosurePal.tx,
+                          }
+                        : undefined
                 }
               >
                 {dragUi?.mode === "move" && dragStay ? (
@@ -1248,6 +1429,17 @@ export function CalendarGrid({
                     <span className="cb-bn">
                       <Icon name="moon" size={13.5} />
                       {nightsBetween(dragStay.check_in, dragStay.check_out)}
+                    </span>
+                  </>
+                ) : null}
+                {dragUi?.mode === "move" && dragClosure ? (
+                  <>
+                    <Icon
+                      name={closureCategoryIcon(dragClosure.category) ?? "circle-slash"}
+                      size={13.5}
+                    />
+                    <span className="cb-nm">
+                      {closureCategoryLabel(dragClosure.category) ?? dragClosure.reason ?? "סגור"}
                     </span>
                   </>
                 ) : null}
@@ -1320,53 +1512,6 @@ export function CalendarGrid({
               פתיחת רשת התעריפים לתאריך זה
             </button>
           </div>
-        </div>
-      )}
-
-      {/* ===== closure popover (edit / delete) — same canonical §8 popover.
-           EDIT is the first item on purpose: extending a lease by a month used
-           to mean removing the closure and filing it again, which put the room
-           back on sale for as long as the operator took to retype the form. ===== */}
-      {closurePop && (
-        <div
-          ref={closureMenuPop.ref}
-          className="popover cb-menu"
-          style={closureMenuPop.style}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <p className="cb-menu-h">{closurePop.label}</p>
-          {can.close ? (
-            <>
-              <button
-                type="button"
-                className="cb-menu-it"
-                onClick={() => {
-                  const edit = closurePop.edit;
-                  setClosurePop(null);
-                  onEditClosure(edit);
-                }}
-              >
-                <Icon name="edit" size={17} className="text-primary" />
-                עריכה
-              </button>
-              <button
-                type="button"
-                className="cb-menu-it danger"
-                onClick={async () => {
-                  const id = closurePop.edit.id;
-                  setClosurePop(null);
-                  const res = await deleteClosureAction(id);
-                  if (res.success) toast.success("החסימה הוסרה");
-                  else toast.error(res.error);
-                }}
-              >
-                <Icon name="trash" size={17} />
-                הסר חסימה
-              </button>
-            </>
-          ) : (
-            <p className="cb-menu-note">אין הרשאה לעריכת חסימה או להסרתה</p>
-          )}
         </div>
       )}
 
@@ -1451,6 +1596,7 @@ const RoomRow = memo(function RoomRow({
   pending,
   flashRid,
   dragRrId,
+  dragClosureId,
   selectedRrId,
   can,
   onBarPointerDown,
@@ -1467,7 +1613,9 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel,
   onCellContext,
   onCellDouble,
-  onClosureClick,
+  onClosurePointerDown,
+  onClosurePointerUp,
+  onOpenClosure,
 }: {
   room: CalendarRoom;
   roomIndex: number;
@@ -1482,6 +1630,7 @@ const RoomRow = memo(function RoomRow({
   pending: Set<string>;
   flashRid: string | null;
   dragRrId: string | null;
+  dragClosureId: string | null;
   selectedRrId: string | null;
   can: CalendarCan;
   onBarPointerDown: (e: React.PointerEvent, stay: CalendarStay, roomIndex: number, mode: DragMode) => void;
@@ -1498,7 +1647,14 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (room: CalendarRoom, date: DateOnly) => void;
-  onClosureClick: (e: React.MouseEvent, c: CalendarClosure, room: CalendarRoom) => void;
+  onClosurePointerDown: (
+    e: React.PointerEvent,
+    c: CalendarClosure,
+    roomIndex: number,
+    mode: DragMode,
+  ) => void;
+  onClosurePointerUp: (e: React.PointerEvent, c: CalendarClosure, room: CalendarRoom) => void;
+  onOpenClosure: (c: CalendarClosure, room: CalendarRoom) => void;
 }) {
   const sellable = isSellable(room);
   const occupiedNow = (stays ?? []).some(
@@ -1624,43 +1780,27 @@ const RoomRow = memo(function RoomRow({
           );
         })}
 
-        {/* closures — the §8 typed block. Two kinds, two readings:
-              ooo (out of order) = removed from inventory → the approved neutral
-                  grey ("הוחזר") + a dashed border: nothing can be sold here.
-              oos (out of service) = dirty but STILL sellable → the approved
-                  amber ("ממתין לאישור") + a dotted border: a note, not a hole in
-                  the inventory. Both triplets come from status-colors.ts; no
-                  colour is invented for this surface, and the only bespoke bit
-                  is the border STYLE, which carries "blocking vs advisory".
-            The label is the closure's CATEGORY (the closed 084 taxonomy, read
-            from lib/closures/categories), falling back to the operator's free
-            text and then to a bare "סגור". */}
-        {(closures ?? []).map((c) => {
-          const geo = barGeometry(from, days, c.start_date, c.end_date);
-          const isOoo = c.kind !== "oos";
-          const pal = isOoo ? NEUTRAL_STATUS : STATUS_COLORS.approval;
-          const label = closureCategoryLabel(c.category) ?? c.reason ?? "סגור";
-          const icon = closureCategoryIcon(c.category) ?? "circle-slash";
-          return (
-            <button
-              key={c.id}
-              type="button"
-              onClick={(e) => onClosureClick(e, c, room)}
-              className="cb-blockbar"
-              data-kind={isOoo ? "ooo" : "oos"}
-              style={{
-                insetInlineStart: `${geo.start * 100}%`,
-                width: `${geo.width * 100}%`,
-                background: pal.bg,
-                borderColor: pal.bd,
-                color: pal.tx,
-              }}
-            >
-              <Icon name={icon} size={13.5} />
-              <span className="cb-nm">{label}</span>
-            </button>
-          );
-        })}
+        {/* closures — the §8 typed block, drawn by the same kind of component as
+            a reservation pill and answering the same gestures (see ClosureBar) */}
+        {(closures ?? []).map((c) => (
+          <ClosureBar
+            key={c.id}
+            closure={c}
+            room={room}
+            roomIndex={roomIndex}
+            from={from}
+            days={days}
+            pending={pending.has(c.id)}
+            dragSource={dragClosureId === c.id}
+            canClose={can.close}
+            onPointerDown={onClosurePointerDown}
+            onPointerMove={onBarPointerMove}
+            onPointerUp={onClosurePointerUp}
+            onPointerCancel={onBarPointerCancel}
+            onHandleHover={onHandleHover}
+            onOpen={onOpenClosure}
+          />
+        ))}
 
         {/* reservation pills */}
         {(stays ?? []).map((stay) => (
@@ -1804,6 +1944,132 @@ const StayBar = memo(function StayBar({
           onPointerUp={(e) => {
             e.stopPropagation();
             onPointerUp(e, stay);
+          }}
+          onPointerCancel={onPointerCancel}
+        />
+      )}
+    </div>
+  );
+});
+
+// ============================================================
+// One closure bar. A closure is a reservation of nobody, so this is the SAME
+// anatomy as StayBar above — an absolutely positioned block with a drag body
+// and a departure handle — minus everything a closure has no business carrying:
+// no guest, no channel badge, no VIP star, no night count, no price.
+//
+// The §8 typed block has two kinds and two readings:
+//   ooo (out of order) = removed from inventory → the approved neutral grey
+//       ("הוחזר") + a dashed border: nothing can be sold here.
+//   oos (out of service) = dirty but STILL sellable → the approved amber
+//       ("ממתין לאישור") + a dotted border: a note, not a hole in the inventory.
+// Both triplets come from status-colors.ts; no colour is invented for this
+// surface, and the only bespoke bit is the border STYLE, which carries
+// "blocking vs advisory". The label is the closure's CATEGORY (the closed 084
+// taxonomy), falling back to the operator's free text and then to a bare "סגור".
+//
+// It is a div[role=button], not a <button>, for the same reason the pill is: the
+// resize handle is a nested control, and a button inside a button is neither
+// valid nor focusable the way it looks.
+// ============================================================
+const ClosureBar = memo(function ClosureBar({
+  closure,
+  room,
+  roomIndex,
+  from,
+  days,
+  pending,
+  dragSource,
+  canClose,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  onHandleHover,
+  onOpen,
+}: {
+  closure: CalendarClosure;
+  room: CalendarRoom;
+  roomIndex: number;
+  from: DateOnly;
+  days: number;
+  pending: boolean;
+  dragSource: boolean;
+  canClose: boolean;
+  onPointerDown: (
+    e: React.PointerEvent,
+    c: CalendarClosure,
+    roomIndex: number,
+    mode: DragMode,
+  ) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent, c: CalendarClosure, room: CalendarRoom) => void;
+  onPointerCancel: () => void;
+  onHandleHover: () => void;
+  onOpen: (c: CalendarClosure, room: CalendarRoom) => void;
+}) {
+  const geo = barGeometry(from, days, closure.start_date, closure.end_date);
+  const isOoo = closure.kind !== "oos";
+  const pal = isOoo ? NEUTRAL_STATUS : STATUS_COLORS.approval;
+  const label = closureCategoryLabel(closure.category) ?? closure.reason ?? "סגור";
+  const icon = closureCategoryIcon(closure.category) ?? "circle-slash";
+  const draggable = canDragCard(canClose, pending);
+  // The range ENDS ON THE LAST CLOSED NIGHT: end_date is the exclusive boundary,
+  // so a lease running out on 31.12 stores 01/01/2027, and printing that
+  // boundary would name a night the room is free to sell.
+  const range = `${formatFullDate(closure.start_date)} – ${formatFullDate(closureLastNight(closure.end_date))}`;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`סגירת חדר · ${label} · ${range}`}
+      title={`${label} · ${range}`}
+      className={`cb-blockbar ${geo.clippedStart ? "cutR" : ""} ${geo.clippedEnd ? "cutL" : ""} ${
+        dragSource ? "src" : ""
+      } ${pending ? "pending" : ""} ${draggable ? "drg" : "lk"}`}
+      data-kind={isOoo ? "ooo" : "oos"}
+      style={{
+        insetInlineStart: `${geo.start * 100}%`,
+        width: `${geo.width * 100}%`,
+        background: pal.bg,
+        borderColor: pal.bd,
+        color: pal.tx,
+      }}
+      onPointerDown={draggable ? (e) => onPointerDown(e, closure, roomIndex, "move") : undefined}
+      onPointerMove={draggable ? onPointerMove : undefined}
+      onPointerUp={draggable ? (e) => onPointerUp(e, closure, room) : undefined}
+      onPointerCancel={draggable ? onPointerCancel : undefined}
+      // a draggable block opens from pointer-up (a click there is the drag's own
+      // synthetic one); a locked block has no session, so the plain click is it
+      onClick={draggable ? undefined : () => onOpen(closure, room)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(closure, room);
+        }
+      }}
+    >
+      <Icon name={icon} size={13.5} />
+      <span className="cb-nm">{label}</span>
+
+      {/* end-of-closure resize handle — the pill's own .cb-rh, in the same place
+          on the same edge, starting a RESIZE session on the same capture flow */}
+      {draggable && (
+        <span
+          className="cb-rh"
+          role="separator"
+          aria-label="שינוי סוף הסגירה"
+          title="גרירה לשינוי סוף הסגירה"
+          onPointerEnter={onHandleHover}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            onPointerDown(e, closure, roomIndex, "resize");
+          }}
+          onPointerMove={onPointerMove}
+          onPointerUp={(e) => {
+            e.stopPropagation();
+            onPointerUp(e, closure, room);
           }}
           onPointerCancel={onPointerCancel}
         />

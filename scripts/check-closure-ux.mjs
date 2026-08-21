@@ -191,12 +191,12 @@ function actionBody(name) {
   assert.ok(closureBlockMessage("long_term", "2027-01-01").includes("31.12"),
     "the blocked-surface sentence names the last closed night");
   const grid = stripComments(read(`${CAL}/CalendarGrid.tsx`));
-  const at = grid.indexOf("const onClosureClick");
-  assert.ok(at > -1, "the closure popover's opener was located");
-  const pop = at > -1 ? grid.slice(at, grid.indexOf("}, []);", at)) : "";
-  assert.match(pop, /closureLastNight\(c\.end_date\)/,
-    "the popover's range ends on closureLastNight(end_date) — the ONE subtraction, not a second one typed here");
-  assert.doesNotMatch(pop, /formatFullDate\(c\.end_date\)/,
+  const at = grid.indexOf("const ClosureBar = memo(");
+  assert.ok(at > -1, "the closure bar component was located");
+  const bar = at > -1 ? grid.slice(at) : "";
+  assert.match(bar, /closureLastNight\(closure\.end_date\)/,
+    "the bar's own range ends on closureLastNight(end_date) — the ONE subtraction, not a second one typed here");
+  assert.doesNotMatch(bar, /formatFullDate\(closure\.end_date\)/,
     "…and the raw exclusive boundary is not printed: 01/01/2027 is a night the room is FREE");
 
   // nobody re-derives it with an inline addDays(-1)
@@ -265,26 +265,32 @@ function actionBody(name) {
   assert.match(panel, /createClosureAction\(/,
     "…and the create action otherwise — one form, two verbs, so a field added reaches both");
   assert.match(panel, /disabled=\{Boolean\(edit\)\}/,
-    "the room selector is disabled while editing — moving a closure to another room is a delete plus a create, each with its own availability check");
+    "the room selector is read-only while editing — a closure changes rooms by being DRAGGED to another row, which is one act with one availability check, not a form field");
 
-  // the server must not accept a room change either — the UI is not the gate
+  // …and the server DOES accept that move, as one write. It used to refuse,
+  // which made "move" mean delete-then-create: two audit rows and a window in
+  // between where the room was back on sale.
   const validation = read("src/lib/validation/reservation.ts");
   const upd = validation.slice(validation.indexOf("export const closureUpdateSchema"));
-  assert.doesNotMatch(upd.slice(0, upd.indexOf(";")), /roomId/,
-    "closureUpdateSchema carries no roomId — a disabled <select> is a courtesy, the schema is the rule");
+  assert.match(upd.slice(0, upd.indexOf(";")), /roomId: z\.uuid\(\)\.optional\(\)/,
+    "closureUpdateSchema carries an OPTIONAL roomId — absent means 'leave it where it is', present means a move");
 
-  // the popover offers the edit at all
+  // clicking the bar opens the panel directly; the two-item popover is gone
   const grid = stripComments(read(`${CAL}/CalendarGrid.tsx`));
-  const popAt = grid.indexOf("{closurePop && (");
-  assert.ok(popAt > -1, "the closure popover was located");
-  const popover = popAt > -1 ? grid.slice(popAt, grid.indexOf("<ReservationTooltip", popAt)) : "";
-  assert.match(popover, /עריכה/,
-    "the popover offers עריכה — without it, extending a lease is still delete-and-retype");
-  assert.match(popover, /onEditClosure\(/,
-    "…wired to the panel, not to a placeholder");
-  assert.match(popover, /deleteClosureAction\(/,
-    "…and הסר חסימה is still there beside it");
-  ok("one panel serves both verbs, the popover opens it, and no path lets an edit move a closure to a different room");
+  assert.doesNotMatch(grid, /closurePop/,
+    "the closure popover is gone — its עריכה opened this same panel, one click later, and its delete has moved into the panel behind a confirmation");
+  const openAt = grid.indexOf("const openClosurePanel = useCallback(");
+  assert.ok(openAt > -1, "the closure bar's opener was located");
+  const opener = openAt > -1 ? grid.slice(openAt, grid.indexOf("\n  );", openAt)) : "";
+  assert.match(opener, /onEditClosure\(closureEditOf\(c, room\)\)/,
+    "a click on a closure opens the panel on THAT closure — wired to the panel, not to a placeholder");
+  assert.match(opener, /can\.close/,
+    "…and an actor without rooms.edit is told so instead of meeting a dead bar");
+  assert.match(panel, /deleteClosureAction\(/,
+    "הסר חסימה lives in the panel now");
+  assert.match(panel, /<ConfirmDialog/,
+    "…behind the canonical §8 confirmation — lifting a closure puts a room back on sale");
+  ok("one panel serves both verbs, a click on the bar opens it, deletion asks first, and a room move is one server-validated write");
 }
 
 console.log(`\nAll ${n} closure-UX claim groups hold.`);
