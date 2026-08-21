@@ -27,6 +27,7 @@ import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-a
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
 import { ClosurePanel, type ClosurePrefill } from "@/app/(dashboard)/calendar/ClosurePanel";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
+import { autoFilled, formFingerprint } from "@/lib/reservations/form-dirty";
 import { BookingSuccess, type BookingCreated } from "./BookingSuccess";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
@@ -93,24 +94,36 @@ const CANCEL_POLICY_OPTIONS: { value: string; label: string; explain: string }[]
   { value: "none", label: "ללא ביטול (Non-refundable)", explain: "הזמנה ללא אפשרות ביטול — חיוב מלא בכל שלב." },
 ];
 
-// dirty-state fingerprint of everything the user can edit (stay "key"
-// fields are random per open, so the replacer drops them)
+// dirty-state fingerprint of everything the user can edit.
+//
+// "שולם" is NOT ordinary input: an effect below copies the live quote into it
+// the moment the quote lands, so a wizard opened from a calendar drag rewrites
+// that field by itself a few hundred milliseconds after it appears. Comparing
+// the rewritten value against the 0 the baseline was taken with made an
+// untouched wizard report unsaved changes — and every exit (X, Escape, the
+// room-closure shortcut) then demanded an answer nobody had. It goes through
+// autoFilled() with the SAME paidTouched flag that stops the effect from
+// overwriting a hand-edited amount: while the form owns the field it does not
+// speak, and the instant the operator takes it over it counts in full.
 function formSnapshot(
   guest: GuestForm,
   sourceId: string,
   stays: StayDraft[],
   pricing: { discountMode: string; discountValue: number; taxExempt: boolean; currency: string },
   paid: number,
+  /** the operator has edited "שולם" by hand — see autoFilled() */
+  paidTouched: boolean,
   method: string,
   notes: string,
   arrivalTime: string,
   asDraft: boolean,
   cc: CardDraft,
 ): string {
-  return JSON.stringify(
-    [guest, sourceId, stays, pricing, paid, method, notes, arrivalTime, asDraft, cc],
-    (k, v) => (k === "key" ? undefined : v),
-  );
+  return formFingerprint([
+    guest, sourceId, stays, pricing,
+    autoFilled(paidTouched, paid),
+    method, notes, arrivalTime, asDraft, cc,
+  ]);
 }
 
 export function BookingPanel({
@@ -252,6 +265,10 @@ export function BookingPanel({
     setPaid(0);
     setMethod(initialMethod);
     setNotes("");
+    // שעת הגעה: cleared like every other field — it used to survive from the
+    // previous wizard run, which both showed as an unsaved change on open and
+    // rode along into the next reservation (see expectedArrivalTime on save)
+    setArrivalTime("");
     setAsDraft(false);
     setCc(EMPTY_CARD);
     setDocIds([]);
@@ -268,13 +285,15 @@ export function BookingPanel({
     snapshotRef.current = formSnapshot(
       EMPTY_GUEST, initialSource, initialStays,
       { discountMode: "none", discountValue: 0, taxExempt: false, currency: "ILS" },
-      0, initialMethod, "", "", false, EMPTY_CARD,
+      // paid, and nobody has touched it yet — at open, by definition
+      0, false,
+      initialMethod, "", "", false, EMPTY_CARD,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const dirty =
-    formSnapshot(guest, sourceId, stays, { discountMode, discountValue, taxExempt, currency }, paid, method, notes, arrivalTime, asDraft, cc) !==
+    formSnapshot(guest, sourceId, stays, { discountMode, discountValue, taxExempt, currency }, paid, paidTouched.current, method, notes, arrivalTime, asDraft, cc) !==
       snapshotRef.current || docIds.length > 0;
 
   const clearCloseTimer = () => {
