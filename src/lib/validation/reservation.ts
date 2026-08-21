@@ -186,13 +186,18 @@ export const closureSchema = closureEditableFields
   })
   .refine(atLeastOneNight.check, { message: atLeastOneNight.message });
 
-// Editing an existing closure. The ROOM is deliberately absent: moving a
-// closure to another room is not an edit, it is a delete plus a create, and
-// each of those already has its own availability check and its own ARI mark.
-// `kind` is likewise fixed at filing time — an OOO hole and an OOS note are
-// different instruments, not two settings of one.
+// Editing an existing closure. The ROOM is now part of it (owner ruling: a
+// closure is a reservation of nobody, and a reservation is dragged between rooms
+// on the board): OPTIONAL, so an edit that says nothing about the room leaves it
+// where it is. It used to be forbidden here on the argument that a move is "a
+// delete plus a create" — which is true only if you are willing to put the room
+// back on sale for the width of the gap between those two writes, and to file two
+// audit rows for one act. One write, one availability check, one ARI mark over
+// both rooms.
+// `kind` stays fixed at filing time — an OOO hole and an OOS note are different
+// instruments, not two settings of one.
 export const closureUpdateSchema = closureEditableFields
-  .extend({ id: z.uuid() })
+  .extend({ id: z.uuid(), roomId: z.uuid().optional() })
   .refine(atLeastOneNight.check, { message: atLeastOneNight.message });
 
 export type RoomStayInput = z.infer<typeof roomStaySchema>;
