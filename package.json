@@ -125,7 +125,8 @@
     "check:discount-units": "node scripts/check-discount-units.mjs",
     "check:restriction-override": "node scripts/check-restriction-override.mjs",
     "check:cell-mark-ladder": "node scripts/check-cell-mark-ladder.mjs",
-    "check:room-label-axes": "node scripts/check-room-label-axes.mjs"
+    "check:room-label-axes": "node scripts/check-room-label-axes.mjs",
+    "check:long-term-closure": "node scripts/check-long-term-closure.mjs"
   },
   "engines": {
     "node": ">=20 <21"

@@ -11,11 +11,14 @@
 // PHYSICAL axis cannot help doing that; nothing about a rate row can reach it.
 //
 // So the decision moved into ONE pure function, cell-state.roomLabel(), and
-// this guard runs THAT function — not a description of it — over the three
+// this guard runs THAT function — not a description of it — over the four
 // states of the owner's ruling, in their precedence order:
 //
-//   1. physically disabled (out_of_order / inactive / a dated closure in the
-//      window) — unchanged, and it WINS over the commercial reading
+//   1. physically disabled (out_of_order / inactive) — and it WINS over the
+//      commercial reading
+//   1b. every visible date under a dated closure — the closure's CATEGORY
+//      ("שכירות ארוכה"), falling back to "סגירת חדר". Also physical, so it
+//      outranks stop_sell; see check:long-term-closure for the category half
 //   2. physically fine and every visible date stop-sold — "סגור למכירה",
 //      never green
 //   3. anything else, a PARTIAL closure included — "פנוי", exactly as before
@@ -103,17 +106,21 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
     { label: "לא פעיל", tone: "off" },
     "an inactive room reads 'לא פעיל' even with the whole window stop-sold",
   );
-  // a DATED closure is the physical axis too: it already draws its own bar
-  // across the cells, so it keeps the label it has always had
+  // A DATED closure is the physical axis too, and when it covers the WHOLE
+  // window it describes the ROOM: rooms 1006/1042 are year-lets, somebody lives
+  // in each flat, and the label used to read a green "פנוי" beside a closure bar
+  // that ran off both edges of the screen. It now names the closure — and it
+  // outranks the commercial reading below, which is the whole point: a closure
+  // is physical, and no permission may override it.
   assert.deepEqual(
     roomLabel(HEALTHY, win({ rate: { closed: true }, closure: true })),
-    { label: "פנוי", tone: "free" },
-    "a room closure covering the window keeps the label it always had — the closure bar speaks for itself",
+    { label: "סגירת חדר", tone: "off" },
+    "a closure covering the whole window names the closure, in the disabled tone — a room somebody lives in is not 'פנוי'",
   );
   assert.deepEqual(
     roomLabel(HEALTHY, win({ rate: { closed: true }, closure: true }), true),
-    { label: "תפוס", tone: "busy" },
-    "…and an occupied one still reads 'תפוס' — state 1 is untouched, not rewritten",
+    { label: "סגירת חדר", tone: "off" },
+    "…and occupiedNow cannot talk it back onto the market — the closure is the fact, 'תפוס' would be a second one",
   );
   ok("state 1 (physically disabled) wins outright over the commercial reading, and its wording is unchanged");
 }
