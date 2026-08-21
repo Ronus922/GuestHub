@@ -6,6 +6,7 @@ import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/acto
 import { writeAudit } from "@/lib/audit";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { unionRange } from "@/lib/channel/ranges";
 import { sortRoomsByNumber } from "@/lib/rooms/sort";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { closureSchema, closureUpdateSchema } from "@/lib/validation/reservation";
@@ -215,11 +216,14 @@ export async function updateClosureAction(raw: {
         after: { start: input.startDate, end: input.endDate, category: input.category ?? null, reason: input.reason || null },
       }, tx);
 
-      // the union — see the note above. An OOS note never moved availability in
-      // either range, so editing one syncs nothing, exactly like filing it.
+      // the union — see the note above, and unionRange's own. An OOS note never
+      // moved availability in either range, so editing one syncs nothing,
+      // exactly like filing it.
       if (isOoo) {
-        const dateFrom = before.start_date < input.startDate ? before.start_date : input.startDate;
-        const dateTo = before.end_date > input.endDate ? before.end_date : input.endDate;
+        const { date_from: dateFrom, date_to: dateTo } = unionRange(
+          { date_from: before.start_date, date_to: before.end_date },
+          { date_from: input.startDate, date_to: input.endDate },
+        );
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
           roomIds: [before.room_id],

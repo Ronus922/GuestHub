@@ -70,6 +70,27 @@ export function coalesceRange<T extends DateRange & { id: string }>(
   return { merged: { date_from: from, date_to: to }, absorbedIds };
 }
 
+// The dirty window an EDIT of a dated block must publish: the UNION of what the
+// block covered before and what it covers now.
+//
+// This is not a convenience. Editing a room closure moves BOTH edges, and each
+// direction leaves a different kind of stale night behind: shortening RELEASES
+// nights the channels still publish as unavailable (lost sales), extending
+// BLOCKS nights they still publish as free (overbooking). Marking only the new
+// range misses the released tail; marking only the old one misses the new head.
+// The union covers both, and a superset is always the safe error: re-publishing
+// a night whose value did not change is a no-op upstream, while missing one is
+// a real booking taken against a room somebody lives in.
+//
+// ISO dates compare lexicographically in date order, which is the same
+// assumption coalesceRange above is built on.
+export function unionRange(a: DateRange, b: DateRange): DateRange {
+  return {
+    date_from: a.date_from < b.date_from ? a.date_from : b.date_from,
+    date_to: a.date_to > b.date_to ? a.date_to : b.date_to,
+  };
+}
+
 // Exponential backoff with full jitter for transient sync failures (§U).
 // attempt is 1-based; caps at ~1h. `rand` is injectable for tests.
 export function backoffMs(attempt: number, rand: () => number = Math.random): number {
