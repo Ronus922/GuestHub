@@ -375,8 +375,16 @@
   white-space: nowrap;
   min-width: 0;
 }
+/* The closure block is a SIGN, not a control: it is absolutely positioned over
+   the cells it spans, so without this it would swallow the tap on its middle
+   34px of a 50px row and the cell's toast would fire only from the 8px strips
+   above and below it — the same tap answering two different ways depending on
+   how high the finger landed. The cell underneath owns the tap and names the
+   closure in a toast; this element has nothing to handle. (`title` goes with
+   it, which costs nothing: a touch device never showed that tooltip anyway.) */
 .cb-m-block {
   position: absolute;
+  pointer-events: none;
   top: 8px;
   height: 34px;
   border-radius: 9px; /* ds-allow: reference block radius */

@@ -77,7 +77,7 @@ import type { NewReservationPrefill } from "@/components/reservations/NewReserva
 import type { ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
-import { closureCategoryIcon, closureCategoryLabel } from "@/lib/closures/categories";
+import { closureBlockMessage, closureCategoryIcon, closureCategoryLabel } from "@/lib/closures/categories";
 
 // ---- geometry — the ONE source (reference: GuesthubCalandrUpdate.html) ----
 // These numbers drive BOTH the drag math (which needs them as numbers) and the
@@ -321,6 +321,26 @@ export function CalendarGrid({
         if (c.start_date < co && c.end_date > ci) return true;
       }
       return false;
+    },
+    [staysByRoom, closuresByRoom],
+  );
+
+  // WHICH closure blocks [ci, co) — and only when a closure is the whole reason.
+  // rangeInvalid() above answers three questions in one boolean and the create
+  // gate needs the third one by name, so this repeats its ladder in the same
+  // order and stops the moment an earlier blocker applies: a range that also
+  // lands on a booked night is not "closed for a long lease", it is taken, and
+  // the generic sentence is the honest one for it.
+  const blockingClosure = useCallback(
+    (targetRoom: CalendarRoom, ci: DateOnly, co: DateOnly): CalendarClosure | null => {
+      if (targetRoom.status !== "available" || !targetRoom.is_active) return null;
+      for (const other of staysByRoom.get(targetRoom.id) ?? []) {
+        if (!isBlocking(other.status)) continue;
+        if (other.check_in < co && other.check_out > ci) return null;
+      }
+      return (closuresByRoom.get(targetRoom.id) ?? []).find(
+        (c) => c.start_date < co && c.end_date > ci,
+      ) ?? null;
     },
     [staysByRoom, closuresByRoom],
   );
@@ -861,7 +881,9 @@ export function CalendarGrid({
   //   1. rangeInvalid — PHYSICAL. Room not sellable (inactive / out_of_order),
   //      an existing blocking stay, or an OOO closure. Absolute: a toast and
   //      nothing else. It never reaches the override mechanism, because no
-  //      permission can put a second guest in an occupied bed.
+  //      permission can put a second guest in an occupied bed — and a year-let
+  //      flat is exactly that case, which is why "שכירות ארוכה" is a CLOSURE
+  //      and not a stop_sell the same override would wave through.
   //   2. nightsViolation — COMMERCIAL. A restriction the property set. If the
   //      code is overridable (isOverridableStayCode) the confirmation dialog
   //      opens; if it is not, it is a toast exactly like a physical conflict.
@@ -877,7 +899,16 @@ export function CalendarGrid({
     ) => {
       if (!room) return;
       if (rangeInvalid(room, ci, co)) {
-        toast.error("הטווח המסומן אינו זמין");
+        // A closure is the one physical blocker that can SAY something useful:
+        // it knows why the room is out and until when. The other two cannot —
+        // "the room is out of order" is a room-level fact the row label already
+        // carries, and naming the guest of the stay in the way would leak one
+        // booking into another operator's selection. So only the closure case
+        // is named; the rest keep the sentence they have always had.
+        const cover = blockingClosure(room, ci, co);
+        toast.error(
+          cover ? closureBlockMessage(cover.category, cover.end_date) : "הטווח המסומן אינו זמין",
+        );
         return;
       }
       const violation = nightsViolation(room, ci, co);
@@ -895,7 +926,7 @@ export function CalendarGrid({
       }
       onNewBooking({ roomId: room.id, checkIn: ci, checkOut: co, source });
     },
-    [rangeInvalid, nightsViolation, onNewBooking],
+    [rangeInvalid, blockingClosure, nightsViolation, onNewBooking],
   );
 
   const onCellPointerUp = useCallback(
@@ -1441,12 +1472,17 @@ const RoomRow = memo(function RoomRow({
   // (the dot and the word share it).
   const { label: statusText, tone: statusTone } = roomLabel(
     room,
-    dates.map((d) => ({
-      rate: cellRate(room, d),
+    dates.map((d) => {
       // half-open [start, end) — the same reading rangeInvalid() and the
       // closed_today KPI use, so one closure means the same thing everywhere
-      closure: (closures ?? []).some((c) => c.start_date <= d && c.end_date > d),
-    })),
+      const cover = (closures ?? []).find((c) => c.start_date <= d && c.end_date > d);
+      // the category travels with the flag: a window closed end to end is
+      // labelled by WHAT closed it ("שכירות ארוכה"), which only the covering
+      // row knows. Overlapping closures on one date are a data accident;
+      // find() takes the first and roomLabel falls back to the generic noun
+      // the moment two dates disagree.
+      return { rate: cellRate(room, d), closure: cover !== undefined, closureCategory: cover?.category ?? null };
+    }),
     occupiedNow,
   );
 

@@ -7,6 +7,7 @@ import { addDays, dayOfWeek, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dat
 import { barGeometry } from "@/lib/calendar-interactions";
 import { resolveChannelBadge } from "@/lib/colors";
 import { stayViolationMessage } from "@/lib/rates/rules";
+import { closureBlockMessage } from "@/lib/closures/categories";
 import { NEUTRAL_STATUS } from "@/lib/status-colors";
 import { ChannelBadge } from "@/components/shared/ChannelBadge";
 import type { RateRow } from "@/lib/inventory-rules";
@@ -108,6 +109,15 @@ export function MobileCalendar({
     [data.closures],
   );
 
+  // THE dated-closure question, asked once and answered the same way for the row
+  // label and for the cell beneath it. Half-open [start, end) — the same reading
+  // the desktop board, rangeInvalid() and the closed_today KPI use.
+  const coverOn = useCallback(
+    (roomId: string, date: DateOnly): CalendarClosure | undefined =>
+      (closuresByRoom.get(roomId) ?? []).find((c) => c.start_date <= date && c.end_date > date),
+    [closuresByRoom],
+  );
+
   return (
     // dir pinned like the desktop board (.cb-calwrap): the bars' insetInlineStart
     // and the header/cell flex order are GEOMETRY — they must never depend on the
@@ -148,12 +158,10 @@ export function MobileCalendar({
               // it, because the 50px box still has no room for a word.
               const { tone } = roomLabel(
                 room,
-                windowDates.map((d) => ({
-                  rate: cellRate(room, d),
-                  closure: (closuresByRoom.get(room.id) ?? []).some(
-                    (c) => c.start_date <= d && c.end_date > d,
-                  ),
-                })),
+                windowDates.map((d) => {
+                  const cover = coverOn(room.id, d);
+                  return { rate: cellRate(room, d), closure: cover !== undefined, closureCategory: cover?.category ?? null };
+                }),
               );
               return (
                 <div key={room.id} className="cb-m-row">
@@ -173,16 +181,33 @@ export function MobileCalendar({
                       // conflation this split removes. Physical wins outright.
                       const closed =
                         roomSellable && cellMark(cellRate(room, d))?.mark === "stop_sell";
+                      // AXIS A, DATED: a room_closures row covering this night.
+                      // It is the physical axis with a date on it, so it wears
+                      // the physical hatch — the same .blocked the row-level
+                      // reading uses — and it SUPPRESSES the commercial tag
+                      // beside it. A flat somebody lives in is not "closed for
+                      // sale today"; drawing both signs is the exact conflation
+                      // the two axes exist to prevent, and after the year-lets
+                      // move off stop_sell (scripts/migrate-longterm-closures)
+                      // the second sign is not even true any more.
+                      const cover = roomSellable ? coverOn(room.id, d) : undefined;
                       return (
                         <div
                           key={d}
-                          className={`cb-m-cell ${cls} ${roomSellable ? "" : "blocked"} ${closed ? "cx" : ""}`}
+                          className={`cb-m-cell ${cls} ${roomSellable && !cover ? "" : "blocked"} ${closed && !cover ? "cx" : ""}`}
                           // The two axes ANSWER A TAP DIFFERENTLY, on purpose:
                           //
-                          //   PHYSICAL (not sellable) — no handler at all. There is
-                          //     nothing to say: the whole row is hatched, the label is
-                          //     dimmed, and the state is a fact about the room, not
-                          //     about this date. Silence.
+                          //   PHYSICAL, ROW-LEVEL (not sellable) — no handler at all.
+                          //     There is nothing to say: the whole row is hatched, the
+                          //     label is dimmed, and the state is a fact about the room,
+                          //     not about this date. Silence.
+                          //   PHYSICAL, DATED (a room closure) — a toast naming WHAT
+                          //     closed it and until when ("שכירות ארוכה עד 31.12"), and
+                          //     nothing else. Unlike the row-level case this one IS
+                          //     about this date, and unlike the commercial case below
+                          //     there is no override anywhere: no dialog, no button, no
+                          //     "המשך בכל זאת" for anybody, manager included. Nobody
+                          //     sells a bed somebody else sleeps in.
                           //   COMMERCIAL (closed) — a short toast and nothing else.
                           //     The cell LOOKS tappable (it is a plain open cell wearing
                           //     a "סגור" tag), so silence would read as a dead board;
@@ -193,19 +218,23 @@ export function MobileCalendar({
                           //     does not get a modal to dismiss.
                           //   OPEN — opens the booking form, unchanged.
                           //
-                          // The wording is NOT typed here: it comes from
-                          // stayViolationMessage, the one place the restriction
-                          // sentences live (lib/rates/rules.ts), so this toast cannot
-                          // drift from what the desktop gate and the server say.
+                          // Neither sentence is typed here: the commercial one comes
+                          // from stayViolationMessage (lib/rates/rules.ts) and the
+                          // closure one from closureBlockMessage
+                          // (lib/closures/categories.ts) — the two places blocked-date
+                          // wording lives — so this toast cannot drift from what the
+                          // desktop gate and the server say.
                           onClick={
                             !roomSellable || !canCreate
                               ? undefined
-                              : closed
-                                ? () => toast.error(stayViolationMessage({ code: "STOP_SELL", date: d }))
-                                : () => onEmptyTap(room.id, d)
+                              : cover
+                                ? () => toast.error(closureBlockMessage(cover.category, cover.end_date))
+                                : closed
+                                  ? () => toast.error(stayViolationMessage({ code: "STOP_SELL", date: d }))
+                                  : () => onEmptyTap(room.id, d)
                           }
                         >
-                          {closed && <span className="cb-m-cx">סגור</span>}
+                          {closed && !cover && <span className="cb-m-cx">סגור</span>}
                         </div>
                       );
                     })}
