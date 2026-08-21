@@ -18,24 +18,36 @@ import { stayPalette } from "./CalendarGrid";
 // Mobile "ציר זמן" board (reference GuesthubCalandrMobile). Rooms are grouped
 // under "קומה N" headers; each row shows a fixed 56px label column + a `days`-day
 // timeline. Bars reuse barGeometry (mid-cell fractions) so they line up exactly
-// with the desktop math. No prices, no drag — tap a bar to open its card, tap an
-// empty cell to start a booking (unless that night is closed for sale — see the
-// two axes at the cell below).
+// with the desktop math. No prices, no drag — tap a bar to open its card, tap a
+// closure to edit or lift it, tap an empty cell to start a booking (unless that
+// night is closed for sale — see the two axes at the cell below).
+//
+// THE DRAG GESTURES ARE DESKTOP-ONLY, on purpose. There is no reservation drag
+// on this board to be at parity with: a 390px row is 50px tall and a day column
+// is ~66px wide, so a drag would be inventing a touch gesture nobody asked for
+// and would fight the board's own scrolling. A closure is therefore MOVED and
+// RESIZED from the panel's date fields here, and by dragging on the desktop
+// board — the same panel, the same server action, both ways.
 export function MobileCalendar({
   data,
   days,
   canCreate,
+  canClose,
   flashId,
   onBarTap,
   onEmptyTap,
+  onClosureTap,
 }: {
   data: CalendarData;
   days: number;
   canCreate: boolean;
+  /** rooms.edit — a closure may be opened for editing / lifting */
+  canClose: boolean;
   /** reservation_id of a just-created booking — its bar(s) pulse ~3s */
   flashId?: string | null;
   onBarTap: (rrId: string) => void;
   onEmptyTap: (roomId: string, checkIn: DateOnly) => void;
+  onClosureTap: (closure: CalendarClosure, room: CalendarRoom) => void;
 }) {
   const dates = useMemo(
     () => Array.from({ length: days }, (_, i) => addDays(data.from, i)),
@@ -224,14 +236,33 @@ export function MobileCalendar({
                           // (lib/closures/categories.ts) — the two places blocked-date
                           // wording lives — so this toast cannot drift from what the
                           // desktop gate and the server say.
+                          //
+                          // The closure branch moved from "explain the block" to
+                          // "open the block": a closure is an object an operator
+                          // edits and lifts, exactly like a reservation, and this
+                          // is the only tap target it has on a phone. The bar
+                          // itself stays pointer-events:none (see .cb-m-block) so
+                          // the cell UNDER it owns the whole 50px row — otherwise
+                          // the same finger would get two different answers
+                          // depending on how high it landed. Without rooms.edit
+                          // there is nothing to open, so the sentence stays.
+                          //
+                          // canCreate no longer gates the whole cell either: it
+                          // is the permission to make a BOOKING, and it was
+                          // silently swallowing the closure's tap for anyone who
+                          // could close a room but not sell one.
                           onClick={
-                            !roomSellable || !canCreate
+                            !roomSellable
                               ? undefined
                               : cover
-                                ? () => toast.error(closureBlockMessage(cover.category, cover.end_date))
-                                : closed
-                                  ? () => toast.error(stayViolationMessage({ code: "STOP_SELL", date: d }))
-                                  : () => onEmptyTap(room.id, d)
+                                ? canClose
+                                  ? () => onClosureTap(cover, room)
+                                  : () => toast.error(closureBlockMessage(cover.category, cover.end_date))
+                                : !canCreate
+                                  ? undefined
+                                  : closed
+                                    ? () => toast.error(stayViolationMessage({ code: "STOP_SELL", date: d }))
+                                    : () => onEmptyTap(room.id, d)
                           }
                         >
                           {closed && !cover && <span className="cb-m-cx">סגור</span>}

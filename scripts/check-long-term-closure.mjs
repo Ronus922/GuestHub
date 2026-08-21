@@ -190,7 +190,11 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
 }
 
 // ============================================================
-// 4. The mobile closure cell answers a tap with a TOAST — never the form
+// 4. The mobile closure cell answers a tap about the CLOSURE — never with a
+//    booking. It used to answer with the sentence alone; since the closure
+//    became a thing an operator edits and lifts on a phone too, a tap OPENS it
+//    for whoever may close a room, and still explains itself to whoever may not.
+//    What has not moved an inch: a covered cell never opens the BOOKING form.
 // ============================================================
 {
   const mobile = stripComments(read(`${CAL}/MobileCalendar.tsx`));
@@ -200,8 +204,10 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
 
   assert.match(cell, /const cover = roomSellable \? coverOn\(room\.id, d\)/,
     "the cell asks ONE dated-closure question, the same coverOn() the row label uses — not a second overlap predicate");
-  assert.match(cell, /cover\s*\n?\s*\?\s*\(\)\s*=>\s*toast\.\w+\(\s*closureBlockMessage\(/,
-    "a covered cell taps into a toast carrying the canonical closure sentence");
+  assert.match(cell, /:\s*cover\s*\?\s*canClose\s*\?\s*\(\)\s*=>\s*onClosureTap\(cover, room\)/,
+    "a covered cell taps into the closure itself — the same panel the desktop bar opens, on that closure");
+  assert.match(cell, /:\s*\(\)\s*=>\s*toast\.\w+\(\s*closureBlockMessage\(cover\.category, cover\.end_date\)\)/,
+    "…and without rooms.edit it still carries the canonical closure sentence, rather than answering a deliberate tap with nothing");
   assert.ok(cover_precedes_closed(cell),
     "the closure branch is asked BEFORE the stop-sell branch — physical outranks commercial in the handler exactly as it does in the label");
   assert.equal((cell.match(/onEmptyTap\(/g) ?? []).length, 1,
@@ -220,11 +226,11 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
   // the sign the closure bar draws must not eat the tap it is drawn over
   assert.match(read("src/app/styles/calendar-mobile.css"), /\.cb-m-block \{[^}]*pointer-events: none/,
     ".cb-m-block is pointer-events:none — an absolutely positioned SIGN must not swallow the tap the cell beneath it answers");
-  ok("the mobile closure cell looks physically blocked, drops the commercial tag, and answers a tap with the closure toast — never the form");
+  ok("the mobile closure cell looks physically blocked, drops the commercial tag, and answers a tap about the closure — the panel for whoever may close a room, the sentence for whoever may not, never a booking");
 }
 
 function cover_precedes_closed(cell) {
-  const c = cell.indexOf("? () => toast.error(closureBlockMessage(");
+  const c = cell.indexOf(": cover");
   const s = cell.indexOf('stayViolationMessage({ code: "STOP_SELL"');
   return c > -1 && s > -1 && c < s;
 }

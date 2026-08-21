@@ -18,6 +18,8 @@
 //   4. The "הקמת הזמנה חדשה" wizard drew תצוגה/הדפסה/PDF/וואטסאפ/מייל as
 //      buttons with no onClick. Before the reservation exists there is nothing
 //      to preview, print or send; they were noise that looked like function.
+//      The room+lock door beside them was wired, and it went too (owner ruling):
+//      closing a room is an act of the calendar, and it has its own doors there.
 //
 // Runtime where it can be (the pure range and date helpers are compiled and
 // CALLED), static where it cannot (a server action needs a DB to run).
@@ -208,36 +210,52 @@ function actionBody(name) {
 }
 
 // ============================================================
-// 4. The create wizard's header carries no share icons — and the door WORKS
+// 4. The create wizard's header carries NOTHING — the share shells went first,
+//    and the room+lock door followed them (owner ruling)
 // ============================================================
 {
   const wiz = stripComments(read("src/components/reservations/BookingPanel.tsx"));
-  const at = wiz.indexOf("headerActions={");
-  assert.ok(at > -1, "the wizard's header cluster was located");
-  const header = at > -1 ? wiz.slice(at, wiz.indexOf("band={", at)) : "";
+  // the wizard's own chrome: everything the SidePanel is configured WITH, up to
+  // the stepper band. The body below it is a different thing — it legitimately
+  // draws a mail glyph inside the guest's email field, which is not a share
+  // button, so the header claim is asked of the header.
+  const chrome = wiz.slice(wiz.indexOf("return ("), wiz.indexOf("band={"));
+  assert.ok(chrome.length > 0, "the wizard's SidePanel configuration was located");
 
   // the five that were noise on CREATE — there is nothing to preview, print or
   // send before the reservation exists
   for (const [icon, label] of [["eye", "תצוגה מקדימה"], ["printer", "הדפסה"], ["pdf", "PDF"], ["whatsapp", "וואטסאפ"], ["mail", "מייל"]]) {
-    assert.doesNotMatch(header, new RegExp(`name="${icon}"`),
-      `the create wizard's header does not render the ${label} icon — it belongs to editing an EXISTING reservation`);
+    assert.doesNotMatch(chrome, new RegExp(`name="${icon}"`),
+      `the create wizard's chrome does not render the ${label} icon — it belongs to editing an EXISTING reservation`);
   }
-  assert.doesNotMatch(header, /TODO\(wire-up\)/,
-    "…and no wire-up TODO is left standing in the cluster: a button that does nothing is removed, not documented");
+  assert.doesNotMatch(wiz, /TODO\(wire-up\)/,
+    "…and no wire-up TODO is left standing: a button that does nothing is removed, not documented");
 
-  // the one that stays does something
-  assert.match(header, /className="bw-hd-btn bw-close-room"/,
-    "the room-closure button is still there");
-  assert.match(header, /onClick=\{\(\) => setClosureOpen\(true\)\}/,
-    "…and it OPENS something — this button had no onClick at all, which is the defect");
-  assert.match(wiz, /<ClosurePanel\s+open=\{closureOpen\}/,
-    "…namely the ClosurePanel the calendar uses — one closure form in the app, not a second one written for the wizard");
-  assert.match(wiz, /from "@\/app\/\(dashboard\)\/calendar\/ClosurePanel"/,
-    "…imported, not re-implemented");
-  assert.match(header, /canClose \?/,
-    "the shortcut renders only for an actor who may close a room (rooms.edit)");
-  assert.match(read("src/app/(dashboard)/layout.tsx"), /canClose: hasPermission\(actor, "rooms\.edit"\)/,
-    "…and that flag is the real permission, resolved server-side in the dashboard layout");
+  // …and the door is gone with them. A wizard for CREATING a reservation is not
+  // where a room gets closed: that act has its own doors on the board (the
+  // "חסימת חדר" header button, a right-click on the desktop grid), and a
+  // shortcut that had to close the wizard, ask about unsaved work and reopen
+  // elsewhere was a second route to a place that already had one.
+  assert.doesNotMatch(wiz, /headerActions=/,
+    "the wizard's SidePanel passes no headerActions at all — the cluster is empty, not hidden");
+  for (const token of ["bw-hd-btn", "bw-close-room", "bw-cr-badge", 'name="door-front"']) {
+    assert.doesNotMatch(wiz, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `the room+lock door's ${token} is gone from the wizard`);
+  }
+  assert.doesNotMatch(wiz, /ClosurePanel/,
+    "…and the wizard no longer mounts the closure form: one form, reached from the board that owns the act");
+  assert.doesNotMatch(wiz, /canClose/,
+    "…so the rooms.edit flag is not threaded into the wizard either");
+  for (const rel of ["src/components/reservations/NewReservationProvider.tsx", "src/components/layout/Shell.tsx", "src/app/(dashboard)/layout.tsx"]) {
+    assert.doesNotMatch(read(rel), /canClose/,
+      `${rel} carries no leftover canClose — the prop existed for the door alone`);
+  }
+  // and the CSS that dressed it left with it (no orphan rules, §9)
+  const css = read("src/app/styles/booking-window.css");
+  for (const cls of [".bw-hd-btn", ".bw-close-room", ".bw-cr-badge"]) {
+    assert.doesNotMatch(css, new RegExp(`\\${cls}\\s*[{,:]`),
+      `${cls} is gone from booking-window.css — deleting the element and leaving its CSS is how dead rules accumulate`);
+  }
 
   // the EDIT panel keeps all five — this change is scoped to create
   const edit = stripComments(read("src/components/reservations/EditReservationPanel.tsx"));
@@ -252,7 +270,7 @@ function actionBody(name) {
     assert.match(edit, new RegExp(`${handler}=\\{`),
       `…and the edit panel passes a real ${handler} handler, unlike the shells that were removed from create`);
   }
-  ok("the create wizard's header is the room-closure door alone, and it opens the shared ClosurePanel; the edit panel's five actions are untouched");
+  ok("the create wizard's header is empty — no share shells, no room+lock door, no orphan CSS; the edit panel's five actions are untouched");
 }
 
 // ============================================================

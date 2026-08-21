@@ -188,19 +188,22 @@ const region = (src, from, to) => {
 // ============================================================
 {
   assert.match(sidepanel, /\{open && \(/,
-    "a closed SidePanel renders nothing — so the wizard's header actions, the door+lock shortcut among them, do not exist while it is closed");
-  const header = region(booking, "headerActions={", "band={");
-  assert.match(header, /className="bw-hd-btn bw-close-room"/,
-    "…and the door+lock shortcut lives in those header actions, inside the wizard, reachable only from an open one");
-  assert.match(header, /onClick=\{openClosureShortcut\}/, "…wired to the one decision that reads dirty");
+    "a closed SidePanel renders nothing — so nothing inside the wizard exists while it is closed, and nothing inside it can ask a question");
+  // …and there is no longer any door INSIDE the wizard leading out of it. The
+  // shortcut this guard was born over is gone (owner ruling this run): the
+  // closure form is opened from the calendar, so the unsaved-changes question
+  // can only ever be raised by the wizard's OWN exits — the X, Escape, the
+  // overlay. A route that does not exist cannot ask about work nobody typed.
+  assert.doesNotMatch(booking, /openClosureShortcut|closureAfterDiscard|bw-close-room|ClosurePanel/,
+    "the wizard carries no closure shortcut at all — the one route that could raise the question on the way to a different job");
 
-  // the calendar's OWN ways into the closure form never pass through any of this
+  // the calendar's ways into the closure form never pass through any of this
   assert.doesNotMatch(screen, /dirty/,
-    "the calendar's own closure entry points know nothing about wizard dirt — a header click with no wizard open cannot raise an unsaved-changes question");
+    "the calendar's closure entry points know nothing about wizard dirt — a header click with no wizard open cannot raise an unsaved-changes question");
   assert.match(screen, /<ClosurePanel\s+open=\{panel\?\.kind === "closure"\}/,
     "…they open the closure form straight from the board's panel state");
 
-  ok("the unsaved-changes question belongs to an open wizard and to nothing else");
+  ok("the unsaved-changes question belongs to an open wizard's own exits and to nothing else");
 }
 
 console.log(`\nAll ${n} dirty-check claim groups hold.`);

@@ -707,52 +707,10 @@
   background: var(--color-status-danger-050);
 }
 
-/* ============================================================
-   wizard header action cluster (חלון הקמת הזמנה MD §1 ש'14-15): 40px
-   buttons, white at .12, hover .24 — a SHELL cluster (TODO(wire-up): none
-   of these actions exists before the reservation is created).
-   ============================================================ */
-.bw-hd-btn {
-  /* ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'14 (40px) */
-  height: 40px;
-  width: 40px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  transition: background-color 0.15s ease;
-}
-.bw-hd-btn:hover {
-  background: rgba(255, 255, 255, 0.24);
-}
-.bw-hd-btn:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 1px;
-}
-/* the room-closure icon — door_front with a small filled lock badge in the
-   bottom corner (MD ש'15) */
-.bw-close-room {
-  position: relative;
-  overflow: visible;
-}
-.bw-cr-badge {
-  position: absolute;
-  bottom: -3px;
-  inset-inline-end: -3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  /* ds-allow: prompts/הוראות לקלוד קוד - חלון הקמת הזמנה חדשה.md ש'15 (#1C2E9A) */
-  background: #1c2e9a;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+/* The wizard header action cluster (MD §1 ש'14-15) is GONE, and so is its CSS:
+   .bw-hd-btn / .bw-close-room / .bw-cr-badge dressed the room+lock door, which
+   was the cluster's last member. Closing a room happens on the calendar, not
+   inside a form for creating a reservation. */
 
 /* the wizard guest-search field (MD §4 ש'52): a LARGE 54px search box */
 .field-input.bw-search {
