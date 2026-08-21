@@ -223,7 +223,7 @@ export function ClosurePanel({
 
         {nights > 0 && (
           <p className="cb-closenote">
-            החדר ייסגר ל־<span className="ltr-num">{nights}</span> לילות · הלילה האחרון
+            הסגירה מכסה <span className="ltr-num">{nights}</span> לילות · הלילה האחרון
             הסגור הוא <span className="ltr-num">{formatFullDate(closureLastNight(endDate))}</span>
           </p>
         )}

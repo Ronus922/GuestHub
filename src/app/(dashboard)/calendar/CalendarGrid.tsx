@@ -1365,7 +1365,7 @@ export function CalendarGrid({
               </button>
             </>
           ) : (
-            <p className="cb-menu-note">אין הרשאה לעריכת חסימה</p>
+            <p className="cb-menu-note">אין הרשאה לעריכת חסימה או להסרתה</p>
           )}
         </div>
       )}
