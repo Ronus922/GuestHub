@@ -25,7 +25,7 @@ import type { CancellationPolicySnapshot } from "@/lib/commercial/policy-snapsho
 import { CancellationSnapshotView } from "./EditReservationPanel";
 import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
-import { ClosurePanel } from "@/app/(dashboard)/calendar/ClosurePanel";
+import { ClosurePanel, type ClosurePrefill } from "@/app/(dashboard)/calendar/ClosurePanel";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
 import { BookingSuccess, type BookingCreated } from "./BookingSuccess";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
@@ -149,7 +149,11 @@ export function BookingPanel({
   const [step, setStep] = useState(0);
   // the header's room-closure shortcut (§ header cluster). It opens the SAME
   // ClosurePanel the calendar uses — one closure form in the app, not two.
-  const [closureOpen, setClosureOpen] = useState(false);
+  // Non-null = the closure form is up, holding the context it was opened with;
+  // the wizard is already gone by then (see openClosureShortcut).
+  const [closurePrefill, setClosurePrefill] = useState<ClosurePrefill | null>(null);
+  // that same context, parked while the discard confirmation is on screen
+  const closureAfterDiscard = useRef<ClosurePrefill | null>(null);
   // 084 — set once, from the prefill, when the panel opens: the operator already
   // answered the gate dialog. Nothing in the panel can turn it on.
   const [restrictionOverride, setRestrictionOverride] = useState(false);
@@ -257,6 +261,7 @@ export function BookingPanel({
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
+    closureAfterDiscard.current = null;
     setCompany("");
     setPolicyChoice(CANCEL_POLICY_OPTIONS[0].value);
     setCreated(null);
@@ -311,6 +316,36 @@ export function BookingPanel({
     }
     if (dirty && !confirmDiscard) setConfirmDiscard(true);
     else onClose();
+  };
+
+  // The header's closure shortcut LEAVES the wizard — it never stacks a second
+  // window on top of it. Closing a room and booking one are two different jobs,
+  // and a closure saved over a half-filled wizard left that wizard behind, red
+  // required-field marks and all, reading as "now finish the booking you never
+  // asked for". Filing the closure IS the answer; there is nothing to come back
+  // to.
+  //
+  // The context travels with the operator. Whatever the first stay row holds —
+  // and a calendar drag fills exactly that row with the room and the dragged
+  // nights — becomes the closure form's prefill, so the drag is not re-typed.
+  // check-out and closure end are the same exclusive boundary, so they map 1:1.
+  const openClosureShortcut = () => {
+    if (saving) return;
+    const first = stays[0];
+    const context: ClosurePrefill = {
+      roomId: first?.roomId || undefined,
+      startDate: first?.checkIn || undefined,
+      endDate: first?.checkOut || undefined,
+    };
+    if (dirty) {
+      // typed-in work is never discarded silently: the wizard's OWN unsaved-
+      // changes confirmation asks, and the shortcut resumes on "סגור בלי לשמור"
+      closureAfterDiscard.current = context;
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+    setClosurePrefill(context);
   };
 
   useEffect(() => {
@@ -588,7 +623,7 @@ export function BookingPanel({
               className="bw-hd-btn bw-close-room"
               title="סגירת חדר ביומן"
               aria-label="סגירת חדר ביומן"
-              onClick={() => setClosureOpen(true)}
+              onClick={openClosureShortcut}
             >
               <Icon name="door-front" size={20} />
               <span className="bw-cr-badge">
@@ -652,11 +687,23 @@ export function BookingPanel({
                 // documents (booking_id NULL) are soft-deleted, fire-and-forget
                 for (const id of docIds) void deleteBookingDocumentAction(id);
                 onClose();
+                // …and if the discard was asked for BY the closure shortcut,
+                // that is where the operator was going. Take them there.
+                const next = closureAfterDiscard.current;
+                closureAfterDiscard.current = null;
+                if (next) setClosurePrefill(next);
               }}
             >
               סגור בלי לשמור
             </button>
-            <button type="button" className="btn btn-secondary" onClick={() => setConfirmDiscard(false)}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                closureAfterDiscard.current = null;
+                setConfirmDiscard(false);
+              }}
+            >
               המשך עריכה
             </button>
             <span className="flex-1" />
@@ -1480,13 +1527,16 @@ export function BookingPanel({
       </div>
       )}
     </SidePanel>
-      {/* the header shortcut's target. A sibling of the wizard, not a child:
-          ClosurePanel is its own portalled SidePanel and stacks over this one,
-          so the half-filled booking stays exactly where it was underneath.
-          The prefill is empty on purpose — a header button has no row context,
-          and aiming the form at the room the operator is mid-way through
-          BOOKING is the last thing it should do. */}
-      <ClosurePanel open={closureOpen} onClose={() => setClosureOpen(false)} prefill={{}} />
+      {/* the header shortcut's target. A SIBLING of the wizard, not a child, and
+          that is what lets the wizard close out from under it: this subtree
+          keeps rendering while <SidePanel open={false}>, so the closure form
+          survives the very close that opened it. Its prefill is the wizard's
+          own row — see openClosureShortcut. */}
+      <ClosurePanel
+        open={closurePrefill !== null}
+        onClose={() => setClosurePrefill(null)}
+        prefill={closurePrefill ?? {}}
+      />
     </>
   );
 }

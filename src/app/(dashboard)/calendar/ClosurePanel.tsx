@@ -7,6 +7,7 @@ import { formatFullDate, nightsBetween } from "@/lib/dates";
 import {
   CLOSURE_CATEGORIES,
   closureLastNight,
+  closureMinEnd,
   type ClosureCategory,
 } from "@/lib/closures/categories";
 import {
@@ -116,6 +117,26 @@ export function ClosurePanel({
   const nights =
     startDate && endDate && endDate > startDate ? nightsBetween(startDate, endDate) : 0;
 
+  // A native <input type="date"> opens its picker ONLY from the little
+  // indicator glyph; clicking the rest of the box just focuses it, so the field
+  // reads as a control that answers in one place out of ten. showPicker() is the
+  // platform's own opener — routing the field's click through it makes the whole
+  // box the target it already looks like. Optional-called: the method is typed
+  // as always-present, but a browser too old to have it must not throw here.
+  const openPicker = (e: React.MouseEvent<HTMLInputElement>) => {
+    e.currentTarget.showPicker?.();
+  };
+
+  // A closure is at least one night, so end (exclusive) is never on or before
+  // start. The field's own `min` stops the picker from offering an illegal day;
+  // this repairs the OTHER direction — a range that was legal until start moved
+  // past it. Zod re-checks the same rule server-side; this is UX, not the guard.
+  const minEnd = startDate ? closureMinEnd(startDate) : "";
+  const pickStart = (v: string) => {
+    setStartDate(v);
+    if (v && endDate && endDate <= v) setEndDate(closureMinEnd(v));
+  };
+
   const submit = () =>
     startSaving(async () => {
       const res = edit
@@ -206,7 +227,8 @@ export function ClosurePanel({
               type="date"
               className="field-input"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onClick={openPicker}
+              onChange={(e) => pickStart(e.target.value)}
             />
           </label>
           <label className="field">
@@ -215,7 +237,8 @@ export function ClosurePanel({
               type="date"
               className="field-input"
               value={endDate}
-              min={startDate}
+              min={minEnd}
+              onClick={openPicker}
               onChange={(e) => setEndDate(e.target.value)}
             />
           </label>

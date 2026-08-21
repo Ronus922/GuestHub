@@ -87,6 +87,21 @@ export function closureLastNight(endDateExclusive: DateOnly): DateOnly {
 }
 
 // ============================================================
+// THE earliest end a closure starting on this date can be given.
+//
+// The mirror of closureLastNight: that one reads a stored boundary back as a
+// night, this one turns a start into the boundary that stores exactly one. A
+// closure of zero nights is not a short closure, it is nothing — the same rule
+// closureSchema/closureUpdateSchema enforce with `endDate > startDate`. The
+// form uses it twice (the end field's floor, and the repair when the start is
+// moved past the end); the arithmetic lives here so those two and the schema
+// can never disagree about what "at least one night" means.
+// ============================================================
+export function closureMinEnd(startDate: DateOnly): DateOnly {
+  return addDays(startDate, 1);
+}
+
+// ============================================================
 // THE sentence a blocked surface says when the blocker is a ROOM CLOSURE.
 //
 // ONE function, because there are three callers and they must not drift: the
