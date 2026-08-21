@@ -3,10 +3,11 @@
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { SidePanel } from "@/components/ui/SidePanel";
-import { addDays, formatFullDate, nightsBetween } from "@/lib/dates";
+import { formatFullDate, nightsBetween } from "@/lib/dates";
 import {
   CLOSURE_CATEGORIES,
   closureLastNight,
+  closureMinEnd,
   type ClosureCategory,
 } from "@/lib/closures/categories";
 import {
@@ -130,10 +131,10 @@ export function ClosurePanel({
   // start. The field's own `min` stops the picker from offering an illegal day;
   // this repairs the OTHER direction — a range that was legal until start moved
   // past it. Zod re-checks the same rule server-side; this is UX, not the guard.
-  const minEnd = startDate ? addDays(startDate, 1) : "";
+  const minEnd = startDate ? closureMinEnd(startDate) : "";
   const pickStart = (v: string) => {
     setStartDate(v);
-    if (v && endDate && endDate <= v) setEndDate(addDays(v, 1));
+    if (v && endDate && endDate <= v) setEndDate(closureMinEnd(v));
   };
 
   const submit = () =>

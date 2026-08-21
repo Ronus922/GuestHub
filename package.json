@@ -127,7 +127,8 @@
     "check:cell-mark-ladder": "node scripts/check-cell-mark-ladder.mjs",
     "check:room-label-axes": "node scripts/check-room-label-axes.mjs",
     "check:long-term-closure": "node scripts/check-long-term-closure.mjs",
-    "check:closure-ux": "node scripts/check-closure-ux.mjs"
+    "check:closure-ux": "node scripts/check-closure-ux.mjs",
+    "check:closure-panel-ux": "node scripts/check-closure-panel-ux.mjs"
   },
   "engines": {
     "node": ">=20 <21"
