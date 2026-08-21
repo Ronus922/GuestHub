@@ -467,8 +467,15 @@ for (let i = 0; i < EXPECTED.length; i++) {
     "the commercial question is asked only where the physical axis already allows selling");
 
   // --- physical: NO handler. Not a no-op, not a toast. ---
-  assert.match(cell, /!roomSellable \|\| !canCreate\s*\n?\s*\?\s*undefined/,
-    "a physically unsellable cell (or a user who cannot create) gets onClick={undefined} — silence, no handler");
+  assert.match(cell, /!roomSellable\s*\n?\s*\?\s*undefined/,
+    "a physically unsellable cell gets onClick={undefined} — silence, no handler; the state is a fact about the ROOM, not about this date");
+  // …and a user who cannot BOOK gets no booking handler either. The two used to
+  // be one test (`!roomSellable || !canCreate`), which quietly swallowed a third
+  // thing: a dated CLOSURE is opened from this cell now, and reservations.create
+  // is not the permission for that. So the closure branch is asked first and the
+  // create permission gates only what it is actually about.
+  assert.match(cell, /:\s*!canCreate\s*\n?\s*\?\s*undefined/,
+    "…and the create permission gates the BOOKING branches alone, below the closure branch");
 
   // --- commercial: a toast, and the booking form is NOT opened ---
   assert.match(cell, /closed\s*\n?\s*\?\s*\(\)\s*=>\s*toast\.\w+\(/,
