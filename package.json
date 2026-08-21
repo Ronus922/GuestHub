@@ -129,7 +129,8 @@
     "check:long-term-closure": "node scripts/check-long-term-closure.mjs",
     "check:closure-ux": "node scripts/check-closure-ux.mjs",
     "check:closure-panel-ux": "node scripts/check-closure-panel-ux.mjs",
-    "check:closure-dirty": "node scripts/check-closure-dirty.mjs"
+    "check:closure-dirty": "node scripts/check-closure-dirty.mjs",
+    "check:closure-parity": "node scripts/check-closure-parity.mjs"
   },
   "engines": {
     "node": ">=20 <21"
