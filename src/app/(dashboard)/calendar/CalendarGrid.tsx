@@ -74,10 +74,15 @@ import type {
   CalendarStay,
 } from "./types";
 import type { NewReservationPrefill } from "@/components/reservations/NewReservationProvider";
-import type { ClosurePrefill } from "./ClosurePanel";
+import type { ClosureEdit, ClosurePrefill } from "./ClosurePanel";
 import type { CalendarCan } from "./CalendarScreen";
 import { ReservationTooltip, type TooltipTarget } from "./ReservationTooltip";
-import { closureBlockMessage, closureCategoryIcon, closureCategoryLabel } from "@/lib/closures/categories";
+import {
+  closureBlockMessage,
+  closureCategoryIcon,
+  closureCategoryLabel,
+  closureLastNight,
+} from "@/lib/closures/categories";
 
 // ---- geometry — the ONE source (reference: GuesthubCalandrUpdate.html) ----
 // These numbers drive BOTH the drag math (which needs them as numbers) and the
@@ -135,7 +140,13 @@ export function stayPalette(stay: Pick<CalendarStay, "status" | "payment" | "wor
 }
 
 type ContextMenu = { x: number; y: number; roomId: string; date: DateOnly };
-type ClosurePopover = { x: number; y: number; id: string; label: string };
+type ClosurePopover = {
+  x: number;
+  y: number;
+  label: string;
+  /** everything the closure panel needs to open on this exact closure */
+  edit: ClosureEdit;
+};
 
 // §8: a popover opens at the click point and is CLAMPED to the viewport with a
 // 12px margin. The box is the canonical `.popover` (316px), so only the height
@@ -194,6 +205,7 @@ export function CalendarGrid({
   onOpenReservation,
   onNewBooking,
   onNewClosure,
+  onEditClosure,
 }: {
   data: CalendarData;
   paymentFilter: PaymentState | "all";
@@ -204,6 +216,7 @@ export function CalendarGrid({
   onOpenReservation: (id: string) => void;
   onNewBooking: (prefill: NewReservationPrefill) => void;
   onNewClosure: (prefill: ClosurePrefill) => void;
+  onEditClosure: (edit: ClosureEdit) => void;
 }) {
   const router = useRouter();
 
@@ -985,15 +998,26 @@ export function CalendarGrid({
     [startCreate],
   );
 
-  const onClosureClick = useCallback((e: React.MouseEvent, c: CalendarClosure) => {
+  const onClosureClick = useCallback((e: React.MouseEvent, c: CalendarClosure, room: CalendarRoom) => {
     e.stopPropagation();
     setMenu(null);
     setClosurePop({
       x: e.clientX,
       y: e.clientY,
-      id: c.id,
-      // the same label the bar shows: category → free text → "סגור חדר"
-      label: `${closureCategoryLabel(c.category) ?? c.reason ?? "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(c.end_date)}`,
+      // the same label the bar shows: category → free text → "סגור חדר".
+      // The range ENDS ON THE LAST CLOSED NIGHT: end_date is the exclusive
+      // boundary, so a lease running out on 31.12 stores 01/01/2027 and
+      // printing that boundary names a night the room is free to sell.
+      label: `${closureCategoryLabel(c.category) ?? c.reason ?? "סגור חדר"} · ${formatFullDate(c.start_date)} – ${formatFullDate(closureLastNight(c.end_date))}`,
+      edit: {
+        id: c.id,
+        roomId: c.room_id,
+        roomLabel: `${room.room_number}${room.name && room.name !== room.room_number ? ` · ${room.name}` : ""}`,
+        startDate: c.start_date,
+        endDate: c.end_date,
+        category: c.category,
+        reason: c.reason,
+      },
     });
   }, []);
 
@@ -1299,7 +1323,10 @@ export function CalendarGrid({
         </div>
       )}
 
-      {/* ===== closure popover (delete) — same canonical §8 popover ===== */}
+      {/* ===== closure popover (edit / delete) — same canonical §8 popover.
+           EDIT is the first item on purpose: extending a lease by a month used
+           to mean removing the closure and filing it again, which put the room
+           back on sale for as long as the operator took to retype the form. ===== */}
       {closurePop && (
         <div
           ref={closureMenuPop.ref}
@@ -1309,22 +1336,36 @@ export function CalendarGrid({
         >
           <p className="cb-menu-h">{closurePop.label}</p>
           {can.close ? (
-            <button
-              type="button"
-              className="cb-menu-it danger"
-              onClick={async () => {
-                const id = closurePop.id;
-                setClosurePop(null);
-                const res = await deleteClosureAction(id);
-                if (res.success) toast.success("החסימה הוסרה");
-                else toast.error(res.error);
-              }}
-            >
-              <Icon name="trash" size={17} />
-              הסר חסימה
-            </button>
+            <>
+              <button
+                type="button"
+                className="cb-menu-it"
+                onClick={() => {
+                  const edit = closurePop.edit;
+                  setClosurePop(null);
+                  onEditClosure(edit);
+                }}
+              >
+                <Icon name="edit" size={17} className="text-primary" />
+                עריכה
+              </button>
+              <button
+                type="button"
+                className="cb-menu-it danger"
+                onClick={async () => {
+                  const id = closurePop.edit.id;
+                  setClosurePop(null);
+                  const res = await deleteClosureAction(id);
+                  if (res.success) toast.success("החסימה הוסרה");
+                  else toast.error(res.error);
+                }}
+              >
+                <Icon name="trash" size={17} />
+                הסר חסימה
+              </button>
+            </>
           ) : (
-            <p className="cb-menu-note">אין הרשאה להסרת חסימה</p>
+            <p className="cb-menu-note">אין הרשאה לעריכת חסימה</p>
           )}
         </div>
       )}
@@ -1457,7 +1498,7 @@ const RoomRow = memo(function RoomRow({
   onCellPointerCancel: () => void;
   onCellContext: (e: React.MouseEvent, roomId: string, date: DateOnly) => void;
   onCellDouble: (room: CalendarRoom, date: DateOnly) => void;
-  onClosureClick: (e: React.MouseEvent, c: CalendarClosure) => void;
+  onClosureClick: (e: React.MouseEvent, c: CalendarClosure, room: CalendarRoom) => void;
 }) {
   const sellable = isSellable(room);
   const occupiedNow = (stays ?? []).some(
@@ -1604,7 +1645,7 @@ const RoomRow = memo(function RoomRow({
             <button
               key={c.id}
               type="button"
-              onClick={(e) => onClosureClick(e, c)}
+              onClick={(e) => onClosureClick(e, c, room)}
               className="cb-blockbar"
               data-kind={isOoo ? "ooo" : "oos"}
               style={{

@@ -15,7 +15,7 @@ import { MobileCalendar } from "./MobileCalendar";
 import { MobileDetailSheet } from "./MobileDetailSheet";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import { useNewReservation } from "@/components/reservations/NewReservationProvider";
-import { ClosurePanel, type ClosurePrefill } from "./ClosurePanel";
+import { ClosurePanel, type ClosureEdit, type ClosurePrefill } from "./ClosurePanel";
 
 export type LookupItem = { id: string; key: string; label: string; color: string | null };
 
@@ -38,7 +38,9 @@ export type CalendarCan = {
 // global shared BookingPanel (D48, useNewReservation), not a local instance.
 type PanelState =
   | { kind: "edit"; id: string }
-  | { kind: "closure"; prefill: ClosurePrefill }
+  // one closure panel, two verbs: `edit` present = rewrite that closure,
+  // absent = file a new one from the prefill
+  | { kind: "closure"; prefill: ClosurePrefill; edit?: ClosureEdit }
   | null;
 
 // The legend IS the payment filter, so every dot is the §3.1 dot of the state it
@@ -256,6 +258,7 @@ export function CalendarScreen({
             onOpenReservation={openReservation}
             onNewBooking={openNewReservation}
             onNewClosure={(prefill) => can.close && setPanel({ kind: "closure", prefill })}
+            onEditClosure={(edit) => can.close && setPanel({ kind: "closure", prefill: {}, edit })}
           />
         </div>
 
@@ -387,7 +390,7 @@ export function CalendarScreen({
         open={panel?.kind === "closure"}
         onClose={closePanel}
         prefill={panel?.kind === "closure" ? panel.prefill : {}}
-        rooms={data.rooms}
+        edit={panel?.kind === "closure" ? panel.edit : undefined}
       />
 
       {/* mobile quick-view: read-only card whose actions open the real flow */}
