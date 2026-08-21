@@ -107,9 +107,16 @@ export const CLOSED_TO_DEPARTURE_TEXT = "התאריך סגור לעזיבת או
 export const STOP_SELL_TEXT = "סגור למכירה";
 
 // The Hebrew face of a DateOnly: "2026-08-25" → "25.8". Day and month only —
-// every surface that shows a restriction message is a calendar view whose own
+// every surface that shows a blocked-date message is a calendar view whose own
 // header already names the month and the year, so repeating them adds nothing,
 // and a raw ISO string reads as machine output inside a Hebrew sentence.
+//
+// EXPORTED so the closure wording (lib/closures/categories.closureBlockMessage)
+// spells its date exactly like the restriction wording below does. A blocked
+// date is a blocked date: the operator must not meet "25.8" on one toast and
+// "25/8" on the next because the blocker happened to be physical rather than
+// commercial. Importing this one line is what keeps that from happening; a
+// third copy of four characters of slicing is what it replaces.
 //
 // The same arithmetic exists in lib/dates.formatDayMonth, and it is deliberately
 // NOT imported: this module is compiled STANDALONE by eight guard scripts with a
@@ -119,7 +126,7 @@ export const STOP_SELL_TEXT = "סגור למכירה";
 // Passing a formatter in as a parameter would be worse still: it would hand the
 // decision back to all five call sites, which is precisely the "every component
 // formats its own dates" that having one wording module exists to prevent.
-function dayMonth(date: string): string {
+export function dayMonth(date: string): string {
   return `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}`;
 }
 

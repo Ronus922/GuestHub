@@ -17,6 +17,7 @@
 
 import { cellMark, type CellMarkRow } from "@/lib/rates/cell-mark";
 import { STOP_SELL_TEXT } from "@/lib/rates/rules";
+import { closureCategoryLabel } from "@/lib/closures/categories";
 import type { CalendarRoom } from "./types";
 
 export { cellMark, cellMinNights, cellMaxNights, stayRangeLabel } from "@/lib/rates/cell-mark";
@@ -37,6 +38,12 @@ export function sellable(room: CalendarRoom): boolean {
 export type RoomWindowCell = {
   rate: CellMarkRow | null | undefined;
   closure: boolean;
+  /** The covering closure's 084/085 category, READ ONLY WHEN `closure` is true.
+   *  A separate optional field rather than a richer `closure` value on purpose:
+   *  `closure` is the axis-A boolean it has always been, every existing caller
+   *  and fixture keeps compiling, and a date with no closure has nothing to say
+   *  here. NULL/absent = a closure filed before the taxonomy existed. */
+  closureCategory?: string | null;
 };
 
 /** The §1 status token the label wears; the dot and the word share it. */
@@ -52,12 +59,17 @@ export type RoomLabelTone = "free" | "busy" | "off" | "nosale";
  * A board that contradicts itself in two adjacent columns is worse than a board
  * that says nothing, so the label now answers BOTH axes.
  *
- * THREE STATES, IN PRECEDENCE ORDER (the owner's ruling):
+ * FOUR STATES, IN PRECEDENCE ORDER (the owner's ruling):
  *
- *  1. PHYSICALLY DISABLED — out_of_order, is_active=false, or a dated room
- *     closure covering any visible date. Unchanged from before, and it wins
- *     outright: a broken or withdrawn room is not "closed for sale", and a
- *     closure already draws its own bar across the cells it covers.
+ *  1. PHYSICALLY DISABLED — out_of_order or is_active=false. Unchanged from
+ *     before, and it wins outright: a broken or withdrawn room is not "closed
+ *     for sale".
+ *  1b. FULLY CLOSED BY A DATED CLOSURE — every visible date is covered by a
+ *     room_closures row. The label is the closure's CATEGORY ("שכירות ארוכה"),
+ *     falling back to the generic "סגירת חדר", in the disabled tone. It sits
+ *     after the room-level physical reading and before the commercial one: a
+ *     closure IS the physical axis, so stop_sell may never outrank it. A
+ *     PARTIAL closure is untouched — it stays state 3, exactly as before.
  *  2. PHYSICALLY FINE, COMMERCIALLY SHUT — every visible date is stop-sold.
  *     "סגור למכירה", in the board's amber. Never green.
  *  3. OTHERWISE — at least one night is sellable, so the room IS on the market
@@ -94,8 +106,27 @@ export function roomLabel(
     ? { label: "תפוס", tone: "busy" }
     : { label: "פנוי", tone: "free" };
 
-  // …a dated closure is AXIS A too, so it keeps state 1's precedence over the
-  // commercial reading below, and the label stays what it has always been.
+  // STATE 1b. A dated closure is AXIS A too, so it keeps state 1's precedence
+  // over the commercial reading below — but only when it covers the WHOLE
+  // window does it describe the ROOM. Rooms 1006/1042 are year-lets: somebody
+  // lives there, every night is closed, and a green "פנוי" beside a bar that
+  // runs off both edges of the screen is the same self-contradiction this
+  // function exists to end, one axis over.
+  //
+  // The word is the CATEGORY's, read from the one taxonomy module — never the
+  // operator's free text, which is a complement ("צביעה בחדר האמבטיה")
+  // and says nothing about a room's state. Categories that DISAGREE across the
+  // window fall back to the generic noun: two different closures butted
+  // together are not "שכירות ארוכה", and picking the first would be a
+  // coin toss rendered as fact.
+  if (cells.length > 0 && cells.every((c) => c.closure)) {
+    const labels = new Set(cells.map((c) => closureCategoryLabel(c.closureCategory)));
+    const only = labels.size === 1 ? [...labels][0] : null;
+    return { label: only ?? "סגירת חדר", tone: "off" };
+  }
+
+  // …while a PARTIAL closure keeps the label it has always had: the bar it
+  // draws speaks for the nights it covers, and the room is still on the market.
   if (cells.some((c) => c.closure)) return onTheMarket;
 
   // STATE 2. Asked through cellMark() rather than rate.closed, so the label can
