@@ -73,6 +73,20 @@ export function closureCategoryIcon(
 }
 
 // ============================================================
+// THE last night a closure actually holds.
+//
+// room_closures is half-open [start_date, end_date), exactly like a stay: a
+// lease whose last night is 31.12 is stored with end_date = 2027-01-01. That
+// boundary is a correct DATABASE value and a WRONG thing to show an operator —
+// 1.1 is a night the room is free and can be sold. Every surface that renders a
+// closure's end (the sentence below, the popover on the closure bar) subtracts
+// through this one function, so none of them has to remember to.
+// ============================================================
+export function closureLastNight(endDateExclusive: DateOnly): DateOnly {
+  return addDays(endDateExclusive, -1);
+}
+
+// ============================================================
 // THE sentence a blocked surface says when the blocker is a ROOM CLOSURE.
 //
 // ONE function, because there are three callers and they must not drift: the
@@ -96,7 +110,7 @@ export function closureBlockMessage(
   category: string | null | undefined,
   endDateExclusive: DateOnly,
 ): string {
-  const lastNight = dayMonth(addDays(endDateExclusive, -1));
+  const lastNight = dayMonth(closureLastNight(endDateExclusive));
   // A closure filed before 084 carries no category, and an unknown value is
   // treated the same way: the generic noun, never a raw stored string.
   return `${closureCategoryLabel(category) ?? "סגירת חדר"} עד ${lastNight}`;

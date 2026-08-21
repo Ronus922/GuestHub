@@ -23,6 +23,8 @@ export type NewReservationConfig = {
   canSaveCard: boolean;
   canPriceOverride: boolean;
   canCreate: boolean;
+  /** rooms.edit — the wizard header's room-closure shortcut */
+  canClose: boolean;
 };
 
 export function Shell({

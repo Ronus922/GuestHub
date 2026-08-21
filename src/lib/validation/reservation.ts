@@ -158,23 +158,42 @@ export const rescheduleSchema = z
     message: "תאריך היציאה חייב להיות אחרי תאריך הכניסה",
   });
 
-export const closureSchema = z
-  .object({
+// The fields a closure carries whether it is being FILED or EDITED. Both
+// schemas below build on this one object, so a rule added here (a longer
+// reason, a seventh category) reaches the create and the update path together
+// — a validation that holds on one of them only is the same bug twice.
+const closureEditableFields = z.object({
+  startDate: dateOnlySchema,
+  endDate: dateOnlySchema,
+  reason: z.string().trim().max(200).optional(),
+  // 084 closed taxonomy — the CHECK constraint's exact value set, read from
+  // the ONE declaration (lib/closures/categories.ts). Optional because a
+  // closure may still be filed with free-text `reason` alone.
+  category: z.enum(CLOSURE_CATEGORY_VALUES).optional(),
+});
+
+const atLeastOneNight = {
+  check: (s: { startDate: string; endDate: string }) => s.endDate > s.startDate,
+  message: "נדרש לילה אחד לפחות",
+} as const;
+
+export const closureSchema = closureEditableFields
+  .extend({
     roomId: z.uuid(),
-    startDate: dateOnlySchema,
-    endDate: dateOnlySchema,
-    reason: z.string().trim().max(200).optional(),
     // §8 typed closures: ooo = out of order (removed from inventory), oos = out
     // of service (dirty but still sellable — never reduces availability).
     kind: z.enum(["ooo", "oos"]).default("ooo"),
-    // 084 closed taxonomy — the CHECK constraint's exact value set, read from
-    // the ONE declaration (lib/closures/categories.ts). Optional because a
-    // closure may still be filed with free-text `reason` alone.
-    category: z.enum(CLOSURE_CATEGORY_VALUES).optional(),
   })
-  .refine((s) => s.endDate > s.startDate, {
-    message: "נדרש לילה אחד לפחות",
-  });
+  .refine(atLeastOneNight.check, { message: atLeastOneNight.message });
+
+// Editing an existing closure. The ROOM is deliberately absent: moving a
+// closure to another room is not an edit, it is a delete plus a create, and
+// each of those already has its own availability check and its own ARI mark.
+// `kind` is likewise fixed at filing time — an OOO hole and an OOS note are
+// different instruments, not two settings of one.
+export const closureUpdateSchema = closureEditableFields
+  .extend({ id: z.uuid() })
+  .refine(atLeastOneNight.check, { message: atLeastOneNight.message });
 
 export type RoomStayInput = z.infer<typeof roomStaySchema>;
 export type ExistingRoomStayInput = z.infer<typeof existingRoomStaySchema>;

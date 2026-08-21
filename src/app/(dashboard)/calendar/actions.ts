@@ -6,8 +6,10 @@ import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/acto
 import { writeAudit } from "@/lib/audit";
 import { checkRoomAvailability, lockRooms, CONFLICT_LABEL } from "@/lib/inventory";
 import { markAriDirty } from "@/lib/channel/outbox";
+import { unionRange } from "@/lib/channel/ranges";
+import { sortRoomsByNumber } from "@/lib/rooms/sort";
 import { publishDomainEvent } from "@/lib/realtime/publish";
-import { closureSchema } from "@/lib/validation/reservation";
+import { closureSchema, closureUpdateSchema } from "@/lib/validation/reservation";
 import type { ClosureCategory } from "@/lib/closures/categories";
 import type { ActionResult } from "./types";
 
@@ -138,6 +140,130 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
 
     revalidatePath("/calendar");
     return { success: true };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// Editing an existing closure. Extending a lease used to mean deleting the
+// closure and filing a new one — two writes, two audit rows, and a window in
+// between where the room is on sale. This is one write.
+//
+// THE ARI MARK IS THE UNION OF THE OLD AND THE NEW RANGE, and that is the whole
+// point of the function. Shortening a closure RELEASES nights that the channels
+// still publish as unavailable; extending it BLOCKS nights they still publish as
+// free. Marking only the new range leaves the released tail stale, marking only
+// the old one leaves the new head stale. The union covers both, and a superset
+// is always safe: re-publishing a night whose value did not change is a no-op
+// upstream, while missing one is an overbooking or a lost sale.
+export async function updateClosureAction(raw: {
+  id: string;
+  startDate: string;
+  endDate: string;
+  reason?: string;
+  category?: ClosureCategory;
+}): Promise<ActionResult> {
+  try {
+    const actor = await getActor();
+    // the same permission the create and the delete demand — an edit is not a
+    // lesser act than filing the closure it rewrites
+    requirePermission(actor, "rooms.edit");
+    const parsed = closureUpdateSchema.safeParse(raw);
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
+    const input = parsed.data;
+
+    await sql.begin(async (tx) => {
+      const [before] = await tx<
+        { id: string; room_id: string; start_date: string; end_date: string; kind: string; category: string | null; reason: string | null }[]
+      >`
+        SELECT c.id, c.room_id, c.start_date::text, c.end_date::text, c.kind,
+               c.category, c.reason
+        FROM guesthub.room_closures c
+        WHERE c.id = ${input.id} AND c.tenant_id = ${actor.tenantId}
+        FOR UPDATE OF c`;
+      if (!before) throw new DomainError("חסימה לא נמצאה");
+      const isOoo = before.kind === "ooo";
+
+      await lockRooms(tx, actor.tenantId, [before.room_id]);
+      // Same gate as the create — an OOO closure may not overlap a stay or
+      // another closure. The closure being edited is its OWN overlap, so it is
+      // filtered out by id; without that, every edit would collide with itself.
+      if (isOoo) {
+        const conflicts = (
+          await checkRoomAvailability(tx, {
+            tenantId: actor.tenantId,
+            roomIds: [before.room_id],
+            checkIn: input.startDate,
+            checkOut: input.endDate,
+          })
+        ).filter((c) => c.conflict_id !== before.id);
+        if (conflicts.length > 0) throw new DomainError(CONFLICT_LABEL[conflicts[0].conflict_kind]);
+      }
+
+      await tx`
+        UPDATE guesthub.room_closures
+        SET start_date = ${input.startDate},
+            end_date   = ${input.endDate},
+            reason     = ${input.reason || null},
+            category   = ${input.category || null}
+        WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
+
+      await writeAudit(actor, {
+        entityType: "room_closure",
+        entityId: input.id,
+        action: "update",
+        before: { start: before.start_date, end: before.end_date, category: before.category, reason: before.reason },
+        after: { start: input.startDate, end: input.endDate, category: input.category ?? null, reason: input.reason || null },
+      }, tx);
+
+      // the union — see the note above, and unionRange's own. An OOS note never
+      // moved availability in either range, so editing one syncs nothing,
+      // exactly like filing it.
+      if (isOoo) {
+        const { date_from: dateFrom, date_to: dateTo } = unionRange(
+          { date_from: before.start_date, date_to: before.end_date },
+          { date_from: input.startDate, date_to: input.endDate },
+        );
+        await markAriDirty(tx, {
+          tenantId: actor.tenantId,
+          roomIds: [before.room_id],
+          dateFrom,
+          dateTo,
+        });
+        await publishDomainEvent(tx, actor.tenantId, {
+          type: "inventory.changed",
+          roomIds: [before.room_id],
+          dateFrom,
+          dateTo,
+        });
+      }
+    });
+
+    revalidatePath("/calendar");
+    return { success: true };
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// The rooms a closure may be filed against. The filter (physically healthy and
+// active) used to live in the panel's JSX, which meant the panel could only
+// open where a full calendar room list already sat in memory. It is a QUERY,
+// so it belongs in a query — and now the panel opens anywhere.
+export async function listClosableRoomsAction(): Promise<
+  ActionResult<{ id: string; room_number: string; name: string | null }[]>
+> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "rooms.edit");
+    const rooms = await sql<{ id: string; room_number: string; name: string | null }[]>`
+      SELECT id, room_number, name
+      FROM guesthub.rooms
+      WHERE tenant_id = ${actor.tenantId}
+        AND status = 'available' AND is_active`;
+    // D86 — the ONE room comparator, so the picker reads 100 · 926 · 1006 like
+    // every other room list instead of the lexicographic order SQL would give
+    return { success: true, data: sortRoomsByNumber(rooms) };
   } catch (e) {
     return fail(errorMessage(e));
   }
