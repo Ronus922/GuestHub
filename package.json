@@ -132,7 +132,8 @@
     "check:closure-dirty": "node scripts/check-closure-dirty.mjs",
     "check:closure-parity": "node scripts/check-closure-parity.mjs",
     "check:closure-bar-hit": "node scripts/check-closure-bar-hit.mjs",
-    "check:closure-redesign": "node scripts/check-closure-redesign.mjs"
+    "check:closure-redesign": "node scripts/check-closure-redesign.mjs",
+    "check:availability-ari-coverage": "node scripts/check-availability-ari-coverage.mjs"
   },
   "engines": {
     "node": ">=20 <21"

@@ -25,6 +25,16 @@ import { ARI_HORIZON_DAYS } from "@/lib/channel/ranges";
 import { z } from "zod";
 import type { TransactionSql } from "postgres";
 
+// Physical eligibility — the ONE definition of "may this room be sold at all",
+// and byte-for-byte the filter guesthub.sellable_unit_inventory() applies when
+// it counts a unit's sellable rooms (migration 040, `status = 'available' AND
+// is_active`). Two write paths in this file can flip it — the wizard and the
+// board-status popover — and a room whose eligibility flips is a room whose
+// published availability changed. One definition, so the two can never drift.
+function isRoomSellable(status: string, isActive: boolean): boolean {
+  return status === "available" && isActive;
+}
+
 // Every physical room owns exactly one sellable unit — the Phase-4A external
 // inventory identity (D66 closure: rooms born through the app never got one, so
 // they were absent from Rate Plan selection, the Rates grid and price
@@ -221,7 +231,7 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
           SELECT id, status, is_active FROM guesthub.rooms
           WHERE id = ${roomId} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
         if (!exists) throw new AuthorizationError("החדר לא נמצא");
-        wasSellable = exists.status === "available" && exists.is_active;
+        wasSellable = isRoomSellable(exists.status, exists.is_active);
         await tx`
           UPDATE guesthub.rooms SET
             room_number = ${r.room_number}, room_type_id = ${r.room_type_id},
@@ -272,7 +282,7 @@ export async function saveRoomAction(raw: unknown): Promise<ActionResult & { id?
       // Physical eligibility flipped through the wizard (available ⇄ inactive/
       // out_of_order) → availability dirty over the published horizon, exactly
       // like setRoomStatusAction. No-op unless an outbound connection is active.
-      const nowSellable = r.status === "available" && r.is_active;
+      const nowSellable = isRoomSellable(r.status, r.is_active);
       if (wasSellable !== null && wasSellable !== nowSellable) {
         const [t] = await tx<{ timezone: string | null }[]>`
           SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
@@ -732,40 +742,45 @@ export async function updateRoomBoardStatusAction(raw: unknown): Promise<ActionR
     const parsed = boardStatusSchema.safeParse(raw);
     if (!parsed.success) return { success: false, error: "קלט לא תקין" };
     const { room_id, target } = parsed.data;
+    // ONE derivation of the next physical status: the value the UPDATE stores
+    // and the value the sellability comparison reads. Two expressions here
+    // would be two chances for the outbox mark to disagree with the row.
+    const nextStatus =
+      target === "blocked" ? "out_of_order" : target === "maintenance" ? "inactive" : "available";
 
     await sql.begin(async (tx) => {
-      const [room] = await tx<{ status: string }[]>`
-        SELECT status FROM guesthub.rooms
+      // is_active is NOT written on this path, so the locked row supplies it to
+      // both sides of the eligibility comparison below, held constant.
+      const [room] = await tx<{ status: string; is_active: boolean }[]>`
+        SELECT status, is_active FROM guesthub.rooms
         WHERE id = ${room_id} AND tenant_id = ${actor.tenantId} FOR UPDATE`;
       if (!room) throw new AuthorizationError("החדר לא נמצא");
 
-      if (target === "blocked" || target === "maintenance") {
+      // the physical row: one write, the derived value
+      await tx`
+        UPDATE guesthub.rooms SET status = ${nextStatus}
+        WHERE id = ${room_id} AND tenant_id = ${actor.tenantId}`;
+
+      // …and its housekeeping meaning. free / dirty / cleaning all leave the
+      // room operational and speak about the task list; blocked and maintenance
+      // are purely physical and never touch it.
+      if (target === "free") {
         await tx`
-          UPDATE guesthub.rooms SET status = ${target === "blocked" ? "out_of_order" : "inactive"}
-          WHERE id = ${room_id} AND tenant_id = ${actor.tenantId}`;
-      } else {
-        // free / dirty / cleaning all mean the room itself is operational
-        await tx`
-          UPDATE guesthub.rooms SET status = 'available'
-          WHERE id = ${room_id} AND tenant_id = ${actor.tenantId}`;
-        if (target === "free") {
+          UPDATE guesthub.housekeeping_tasks
+          SET status = 'completed', completed_at = now()
+          WHERE tenant_id = ${actor.tenantId} AND room_id = ${room_id}
+            AND status IN ('pending', 'in_progress')`;
+      } else if (target === "dirty" || target === "cleaning") {
+        const hk = target === "dirty" ? "pending" : "in_progress";
+        const updated = await tx`
+          UPDATE guesthub.housekeeping_tasks SET status = ${hk}
+          WHERE tenant_id = ${actor.tenantId} AND room_id = ${room_id}
+            AND status IN ('pending', 'in_progress')
+          RETURNING id`;
+        if (updated.length === 0) {
           await tx`
-            UPDATE guesthub.housekeeping_tasks
-            SET status = 'completed', completed_at = now()
-            WHERE tenant_id = ${actor.tenantId} AND room_id = ${room_id}
-              AND status IN ('pending', 'in_progress')`;
-        } else {
-          const hk = target === "dirty" ? "pending" : "in_progress";
-          const updated = await tx`
-            UPDATE guesthub.housekeeping_tasks SET status = ${hk}
-            WHERE tenant_id = ${actor.tenantId} AND room_id = ${room_id}
-              AND status IN ('pending', 'in_progress')
-            RETURNING id`;
-          if (updated.length === 0) {
-            await tx`
-              INSERT INTO guesthub.housekeeping_tasks (tenant_id, room_id, status, notes)
-              VALUES (${actor.tenantId}, ${room_id}, ${hk}, 'נוצר מלוח חדרים ואזורים')`;
-          }
+            INSERT INTO guesthub.housekeeping_tasks (tenant_id, room_id, status, notes)
+            VALUES (${actor.tenantId}, ${room_id}, ${hk}, 'נוצר מלוח חדרים ואזורים')`;
         }
       }
 
@@ -776,6 +791,25 @@ export async function updateRoomBoardStatusAction(raw: unknown): Promise<ActionR
         before: { status: room.status },
         after: { target },
       }, tx);
+
+      // Physical eligibility flipped through the popover (available ⇄
+      // out_of_order/inactive) → availability dirty over the published horizon,
+      // exactly like the wizard above and over the same window. מלוכלך/בניקיון
+      // keep status='available' and therefore mark nothing: cleanliness is not
+      // inventory. No-op unless an outbound connection is active.
+      const wasSellable = isRoomSellable(room.status, room.is_active);
+      const nowSellable = isRoomSellable(nextStatus, room.is_active);
+      if (wasSellable !== nowSellable) {
+        const [t] = await tx<{ timezone: string | null }[]>`
+          SELECT timezone FROM guesthub.tenants WHERE id = ${actor.tenantId}`;
+        const today = todayInTz(t?.timezone || "Asia/Jerusalem");
+        await markAriDirty(tx, {
+          tenantId: actor.tenantId,
+          roomIds: [room_id],
+          dateFrom: today,
+          dateTo: addDays(today, ARI_HORIZON_DAYS),
+        });
+      }
     });
 
     revalidatePath("/rooms");
