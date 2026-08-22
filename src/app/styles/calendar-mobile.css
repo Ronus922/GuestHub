@@ -95,34 +95,19 @@
   gap: 9px;
   padding: 0 16px 12px;
 }
-/* The DESKTOP tree's touch-only twin. A landscape phone (844x390, 932x430) is
-   past `md`, so it renders the desktop calendar, whose closure entry point is a
-   right-click context menu — unreachable with a finger. Hidden for a mouse, so
-   the desktop layout is byte-identical to before; shown on a coarse pointer. */
-.cb-touch-close {
-  display: none;
-}
-@media (pointer: coarse) {
-  .cb-touch-close {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 44px;
-    padding: 0 12px;
-    border: 1.5px solid var(--line);
-    border-radius: var(--r-md);
-    background: var(--surface);
-    color: #5b6478; /* ds-allow: reference muted-2 */
-    font-family: inherit;
-    font-size: 14px;
-    font-weight: 700;
-    white-space: nowrap;
-    cursor: pointer;
-  }
-}
+/* THE closure entry button, in BOTH headers — .cb-hd-close in the desktop tree,
+   .cb-m-close in the mobile one. Two elements because the two trees are separate
+   (each header has its own layout), but ONE appearance and one behaviour, so one
+   rule: the pair drifting apart is the failure this shape exists to prevent.
 
-/* the mobile entry point to ClosurePanel — same visual weight as .cb-m-nav's
-   buttons, since it sits in the same header stack */
+   .cb-hd-close was .cb-touch-close, and it used to be `display: none` unlocked
+   only by `@media (pointer: coarse)` — a landscape phone renders this desktop
+   tree, and a finger cannot open a right-click menu. That gate is GONE. Reason:
+   once the booking wizard's own room-closure door was removed, a desktop MOUSE
+   had no visible way into a closure at all — only a right-click on the grid,
+   which nothing on screen advertises. A coarse pointer still gets it, because
+   "always" includes them. */
+.cb-hd-close,
 .cb-m-close {
   display: flex;
   align-items: center;
@@ -138,6 +123,32 @@
   font-weight: 700;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* The room-closure MARK: door_front with a small lock welded into its bottom
+   corner (the composed glyph from חלון הקמת הזמנה MD ש'15, which is where this
+   act's icon has always been drawn). A bare circle-slash reads as "blocked" —
+   a state — while a door with a lock reads as "close a room", which is the act
+   the button performs. The badge is punched out of the door with the button's
+   own background, so the two marks stay legible at 20px. */
+.cb-close-mark {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  line-height: 0;
+}
+.cb-close-mark-lock {
+  position: absolute;
+  bottom: -4px;
+  inset-inline-end: -5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 /* jump-to-date button, mobile — same native-picker mechanism as desktop (§6) */
 .cb-datejump-m {

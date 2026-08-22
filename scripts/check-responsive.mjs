@@ -412,15 +412,25 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   assert.match(screen, /חסימת חדר/,
     "the mobile closure trigger must be explicitly labelled — a long-press or other hidden gesture is not a discoverable entry point");
   // A landscape phone is 844x390 — past `md`, so it renders the DESKTOP tree,
-  // whose only closure entry point is a right-click menu no finger can open.
-  // The desktop tree therefore carries a coarse-pointer-only twin.
-  assert.match(screen, /className="cb-touch-close"/,
-    "the desktop calendar must carry the coarse-pointer closure trigger (.cb-touch-close) — a landscape phone at 844px renders the desktop tree, where closure is otherwise right-click-only");
+  // whose other closure entry point is a right-click menu no finger can open.
+  // The desktop tree therefore carries a labelled button of its own.
+  //
+  // That button used to be `display: none` unlocked only by `(pointer: coarse)`,
+  // so it existed for fingers alone and the desktop layout stayed pixel-
+  // identical. The gate is gone and this guard now forbids it: once the booking
+  // wizard's room-closure door was removed, a desktop MOUSE had no visible way
+  // into a closure either — only an unadvertised right-click. The reachability
+  // this section is about is satisfied a fortiori by a button that is simply
+  // always there.
+  assert.match(screen, /className="cb-hd-close"/,
+    "the desktop calendar must carry a closure trigger (.cb-hd-close) — a landscape phone at 844px renders the desktop tree, where closure is otherwise right-click-only");
   const cal = read(join(SRC, "app/styles/calendar-mobile.css"));
-  assert.match(cal, /\.cb-touch-close\s*\{\s*display:\s*none/,
-    ".cb-touch-close must be display:none by default — desktop with a mouse stays exactly as it was");
-  assert.match(cal, /@media\s*\(pointer:\s*coarse\)\s*\{\s*\.cb-touch-close/,
-    ".cb-touch-close must be revealed by (pointer: coarse), not by a width query — the whole point is that this viewport is wide");
+  assert.doesNotMatch(cal, /\.cb-hd-close[^{]*\{[^}]*display:\s*none/,
+    ".cb-hd-close must never be display:none — hiding it is exactly how the desktop lost its only visible closure entry");
+  assert.doesNotMatch(cal, /@media[^{]*\{\s*\.cb-hd-close/,
+    "…and it must not be revealed by a media query of any kind: neither a pointer type nor a width may decide whether the act has a door");
+  assert.match(cal, /\.cb-hd-close,\s*\n\.cb-m-close \{/,
+    "…and the two headers' buttons share ONE rule, so the desktop and the mobile door cannot drift apart");
   // The trigger must live in the md:hidden subtree, i.e. after the desktop block
   // closes. Cheap structural proof: it appears after `md:hidden` and before the
   // shared panel block.

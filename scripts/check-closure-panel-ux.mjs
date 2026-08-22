@@ -121,7 +121,7 @@ function braceBlock(src, marker) {
   // …and those doors are real, on BOTH boards. This is what makes the removal a
   // simplification rather than a deletion of the capability.
   const screen = stripComments(read(SCREEN));
-  assert.match(screen, /className="cb-touch-close"/,
+  assert.match(screen, /className="cb-hd-close"/,
     "the desktop tree carries a 'חסימת חדר' header button");
   assert.match(screen, /className="cb-m-close"/,
     "…and so does the mobile tree");
