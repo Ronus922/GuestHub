@@ -118,6 +118,19 @@ export function CalendarScreen({
   }, [statusItems]);
 
   const rangeEnd = addDays(data.from, data.days - 1);
+
+  // The exact rows the closure panel's calendar reads, assembled once here so a
+  // re-render of the board does not hand the panel a new object every time.
+  const occupancy = useMemo(
+    () => ({
+      today: data.today,
+      from: data.from,
+      to: addDays(data.from, data.days),
+      stays: data.stays,
+      closures: data.closures,
+    }),
+    [data.today, data.from, data.days, data.stays, data.closures],
+  );
   const mobileEnd = addDays(data.from, mobileDays - 1);
 
   const jumpLabel = (n: number) => (n > 0 ? `+${n}` : `${n}`);
@@ -412,6 +425,15 @@ export function CalendarScreen({
         onClose={closePanel}
         prefill={panel?.kind === "closure" ? panel.prefill : {}}
         edit={panel?.kind === "closure" ? panel.edit : undefined}
+        /* The closure calendar paints the room's taken nights, and this is
+           where they come from: the board's OWN loaded rows. No endpoint of its
+           own and no second fetch — data.stays is already every non-cancelled
+           stay of the window and data.closures every closure of it, which is
+           exactly the set that decides whether a night can be closed. `to` is
+           the exclusive end of that window, so the panel knows where its
+           knowledge stops and says so rather than drawing an unloaded month as
+           free. */
+        occupancy={occupancy}
       />
 
       {/* mobile quick-view: read-only card whose actions open the real flow */}
