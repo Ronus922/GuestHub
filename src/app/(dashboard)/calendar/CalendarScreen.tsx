@@ -158,15 +158,27 @@ export function CalendarScreen({
               <Icon name="chevron-left" size={17} />
             </button>
           </div>
-          {/* A landscape phone is 844x390 — WIDER than md, so it gets this
-              desktop tree, where the only way to close a room is a right-click
-              menu that a finger cannot open. This button is display:none for a
-              mouse (desktop is unchanged, pixel for pixel) and appears only on a
-              coarse pointer. Same handler, same panel, same prefill shape. */}
+          {/* THE desktop entry to a room closure, beside the range box — the
+              twin of the mobile header's button, same mark, same label, same
+              handler, same panel.
+
+              It used to be display:none for a mouse and revealed only on a
+              coarse pointer, on the argument that the desktop layout should stay
+              pixel-identical: a landscape phone renders this tree and cannot open
+              a right-click menu, so the button existed for fingers alone. That
+              argument stopped holding the moment the booking wizard's own
+              room-closure door was removed — from then on a desktop MOUSE had no
+              visible way into a closure at all. The only remaining route was a
+              right-click on a grid cell, and nothing on screen says so: an
+              undiscoverable gesture is not an entry point. So the button is
+              simply here, for everyone.
+
+              It is a MARK PLUS A LABEL, never a bare icon — a lone glyph in a
+              toolbar is the same undiscoverability one step less severe. */}
           {can.close && (
             <button
               type="button"
-              className="cb-touch-close"
+              className="cb-hd-close"
               onClick={() =>
                 setPanel({
                   kind: "closure",
@@ -174,7 +186,7 @@ export function CalendarScreen({
                 })
               }
             >
-              <Icon name="circle-slash" size={17} />
+              <ClosureMark />
               חסימת חדר
             </button>
           )}
@@ -333,7 +345,7 @@ export function CalendarScreen({
                   })
                 }
               >
-                <Icon name="circle-slash" size={17} />
+                <ClosureMark />
                 חסימת חדר
               </button>
             )}
@@ -412,6 +424,21 @@ export function CalendarScreen({
         onOpenReservation={openReservation}
       />
     </div>
+  );
+}
+
+// The room-closure mark — door_front carrying a small lock. ONE component for
+// both headers: the desktop and the mobile buttons perform the same act, and an
+// act that wears two different marks on two boards is the drift this run exists
+// to close. Decorative: the button's own text is its accessible name.
+function ClosureMark() {
+  return (
+    <span className="cb-close-mark" aria-hidden>
+      <Icon name="door-front" size={20} />
+      <span className="cb-close-mark-lock">
+        <Icon name="lock" size={13.5} />
+      </span>
+    </span>
   );
 }
 

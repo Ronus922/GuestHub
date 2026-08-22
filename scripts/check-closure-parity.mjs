@@ -278,13 +278,41 @@ function callbackBody(src, name) {
     assert.ok(!new RegExp(`\\${cls}\\s*[{,:]`).test(css),
       `${cls} left booking-window.css with the element it dressed`);
   }
-  // the act still HAS doors, one per board, and they open the one form
+  // …AND THE ACT STILL HAS A VISIBLE DOOR ON EACH BOARD. This half is not a
+  // formality: removing the wizard's door left the desktop with nothing but a
+  // right-click on a grid cell, which nothing on screen advertises, and the
+  // owner found that by eye. A door that only a gesture reaches is not a door.
   const screen = stripComments(read(`${CAL}/CalendarScreen.tsx`));
-  assert.match(screen, /className="cb-touch-close"/, "the desktop tree keeps a 'חסימת חדר' header button");
-  assert.match(screen, /className="cb-m-close"/, "…and the mobile tree its own");
+  const calCss = read("src/app/styles/calendar-mobile.css");
+  for (const [cls, board] of [["cb-hd-close", "desktop"], ["cb-m-close", "mobile"]]) {
+    const at = screen.indexOf(`className="${cls}"`);
+    assert.ok(at > -1, `the ${board} header carries a closure button (.${cls})`);
+    const button = at > -1 ? screen.slice(at, screen.indexOf("</button>", at)) : "";
+    // a LABEL, not a bare glyph — the undiscoverability is the whole defect
+    assert.match(button, /חסימת חדר/,
+      `…labelled in words on ${board}: a bare icon in a toolbar is the same defect one step less severe`);
+    assert.match(button, /<ClosureMark \/>/,
+      `…wearing the shared door+lock mark on ${board}, not a mark of its own`);
+    assert.match(button, /kind: "closure",\s*\n?\s*prefill: \{ startDate: data\.from, endDate: addDays\(data\.from, 1\) \},/,
+      `…and opening the panel with no row context on ${board} — the room is chosen in the form, because a header has no row to prefill from`);
+  }
+  // …and nothing hides the desktop one. It WAS coarse-pointer-only, which is how
+  // a mouse ended up with no visible entry at all once the wizard's door went.
+  assert.doesNotMatch(calCss, /\.cb-hd-close[^{]*\{[^}]*display:\s*none/,
+    ".cb-hd-close is never display:none — that gate is what made the regression invisible to the guards");
+  assert.doesNotMatch(calCss, /@media[^{]*\{\s*\.cb-hd-close/,
+    "…and no media query decides whether it exists: not a pointer type, not a width");
+  assert.match(calCss, /\.cb-hd-close,\s*\n\.cb-m-close \{/,
+    "…and both buttons share ONE rule, so the two boards' doors cannot drift apart");
+  // one mark, one component, both buttons
+  assert.match(screen, /function ClosureMark\(\)/,
+    "the door+lock mark is one component");
+  assert.match(screen, /<Icon name="door-front" size=\{20\} \/>[\s\S]{0,200}?<Icon name="lock" size=\{13\.5\} \/>/,
+    "…a door carrying a lock — the act, not the state a circle-slash names");
+
   assert.match(grid, /onNewClosure\(\{ roomId: menu\.roomId/,
-    "…and the desktop grid's right-click menu still files one on the cell under the cursor");
-  ok("the wizard's door and its CSS are gone, and every remaining door is on the board the act belongs to");
+    "…and the desktop grid's right-click menu still files one on the cell under the cursor, unchanged");
+  ok("the wizard's door and its CSS are gone, and each board carries a visible, labelled door of its own to the one closure form");
 }
 
 // ============================================================
