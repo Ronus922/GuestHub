@@ -1,0 +1,432 @@
+/* ============================================================
+   Room-closure panel (owner reference "סגירת חדר זמנית") — two columns of
+   cards over a calendar of the room's real nights, and a footer whose three
+   actions never leave one row on a phone.
+
+   Every colour here is a TOKEN or a mix of one. The reference's palette IS the
+   design system's: its blue, range tint, chip fill, hairline, page ground, ink,
+   muted and faint values are byte-for-byte --brand, --brand-line, --brand-soft,
+   --line, --bg, --ink, --muted and --faint. The reds and greens it uses have no
+   tokens, so they are DERIVED from --danger and --ok the way .alr-red already
+   does — §1 forbids inventing a token, not deriving a tint from one.
+   ============================================================ */
+
+@layer components {
+  .cp-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  /* The reference is explicit: flex-wrap, never a fixed grid, so the calendar
+     drops below the side column at ANY width the panel happens to have — no
+     media query on the viewport, no horizontal scroll. */
+  .cp-cols {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .cp-side {
+    flex: 1 1 330px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .cp-card {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .cp-room {
+    width: 100%;
+  }
+
+  /* ---------- reason chips (the closed 084 taxonomy) ---------- */
+  .cp-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .cp-chip {
+    height: 44px;
+    padding: 0 16px;
+    border-radius: var(--r-md);
+    border: 1.5px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .cp-chip .ms-icon {
+    color: var(--muted);
+  }
+  .cp-chip:hover {
+    border-color: color-mix(in srgb, var(--line) 55%, var(--muted));
+  }
+  .cp-chip.on {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+    color: var(--brand-hover);
+  }
+  .cp-chip.on .ms-icon {
+    color: var(--brand);
+  }
+
+  .cp-note-hd {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+  }
+  .cp-note-hd .field-label {
+    flex: 1;
+  }
+  .cp-count {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+  .cp-textarea {
+    width: 100%;
+    min-height: 74px;
+    height: auto;
+    resize: vertical;
+    padding: 12px 14px;
+  }
+
+  /* ---------- the calendar card ---------- */
+  .cp-cal {
+    flex: 1 1 620px;
+    min-width: 0;
+    padding: 16px;
+    /* the months read the CARD's width, not the viewport's — the panel is 60%
+       of the screen on desktop and 100% on a phone, and only the card knows */
+    container-type: inline-size;
+  }
+  .cp-cal-hd {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 14px;
+  }
+  .cp-cal-hd .field-label {
+    flex: 1;
+  }
+  .cp-nav {
+    border: 1.5px solid var(--line);
+  }
+
+  /* Two months side by side above 626px of CARD width, stacked below it. The
+     number measured for the stay picker holds here for the same reason: below
+     it the 7 columns can no longer give a 44px cell, and the cell is what may
+     not shrink (iron rule #6) — the month count is what gives. */
+  .cp-months {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    row-gap: 18px;
+  }
+  .cp-month {
+    flex: 1 1 100%;
+    min-width: 0;
+    padding: 0 4px;
+  }
+  .cp-m2 {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .cp-sep {
+    display: none;
+  }
+  @container (min-width: 626px) {
+    .cp-month,
+    .cp-m2 {
+      flex: 1 1 0;
+    }
+    .cp-m2 > .cp-month {
+      flex: none;
+    }
+    .cp-sep {
+      display: block;
+      align-self: stretch;
+      width: 1px;
+      background: var(--line);
+    }
+  }
+
+  .cp-mt {
+    text-align: center;
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--ink);
+    padding-bottom: 10px;
+  }
+  .cp-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+  .cp-wd {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--faint);
+  }
+
+  /* One cell = one NIGHT. No gap between cells (the stay picker's geometry):
+     a gap would take another 24px out of the 7 columns on a 360px screen, and
+     the continuous range bar is what makes a range read as a range. */
+  .cp-day {
+    height: 44px;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 0;
+    padding: 0;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .cp-day > .ltr-num {
+    width: 44px;
+    max-width: 100%;
+    height: 44px;
+    border-radius: var(--r-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cp-day:hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
+  .cp-day:disabled {
+    cursor: not-allowed;
+  }
+  .cp-day.past {
+    opacity: 0.45;
+  }
+  /* outside the board's loaded window: selectable, but it is NOT known to be
+     free, and a muted number is the panel saying only that */
+  .cp-day.unk > .ltr-num {
+    color: var(--muted);
+  }
+  .cp-day.today > .ltr-num {
+    box-shadow: inset 0 0 0 1.5px var(--brand);
+    font-weight: 800;
+  }
+
+  /* the picked range: a continuous tint with solid ends */
+  .cp-day.mid,
+  .cp-day.edge,
+  .cp-day.mid:hover,
+  .cp-day.edge:hover {
+    background: var(--brand-line);
+  }
+  .cp-day.mid > .ltr-num {
+    color: var(--brand-hover);
+    font-weight: 800;
+  }
+  .cp-day.edge > .ltr-num {
+    background: var(--brand);
+    color: #fff;
+    font-weight: 800;
+  }
+
+  /* a night the room already owes — painted, and the button is disabled */
+  .cp-day.busy,
+  .cp-day.busy:hover {
+    background: color-mix(in srgb, var(--danger) 10%, #fff);
+    position: relative;
+  }
+  .cp-day.busy > .ltr-num {
+    color: color-mix(in srgb, var(--danger) 78%, var(--ink));
+    font-weight: 800;
+  }
+  /* …and a taken night INSIDE the drawn range: the collision, unmissable */
+  .cp-day.busy.mid > .ltr-num,
+  .cp-day.busy.edge > .ltr-num {
+    background: var(--danger);
+    color: #fff;
+  }
+  .cp-dot {
+    position: absolute;
+    inset-block-end: 5px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--danger) 78%, var(--ink));
+  }
+
+  .cp-cal-ft {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 14px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+  .cp-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .cp-legend {
+    margin-inline-start: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .cp-leg {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .cp-leg-sw {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--r-xs);
+    flex: none;
+  }
+  .cp-leg-sel {
+    background: var(--brand);
+  }
+  .cp-leg-busy {
+    background: color-mix(in srgb, var(--danger) 22%, #fff);
+  }
+  .cp-leg-today {
+    border: 1.5px solid var(--brand);
+  }
+
+  /* ---------- the one status line ---------- */
+  .cp-status {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .cp-status.ok {
+    background: var(--ok-soft);
+    border-color: color-mix(in srgb, var(--ok) 28%, #fff);
+  }
+  .cp-status.ok .ms-icon,
+  .cp-status.ok .cp-status-h {
+    color: color-mix(in srgb, var(--ok) 80%, var(--ink));
+  }
+  .cp-status.bad {
+    background: color-mix(in srgb, var(--danger) 10%, #fff);
+    border-color: color-mix(in srgb, var(--danger) 26%, #fff);
+  }
+  .cp-status.bad .ms-icon,
+  .cp-status.bad .cp-status-h {
+    color: color-mix(in srgb, var(--danger) 78%, var(--ink));
+  }
+  .cp-status.unk {
+    background: var(--field-bg);
+  }
+  .cp-status.unk .ms-icon,
+  .cp-status.unk .cp-status-h {
+    color: var(--muted);
+  }
+  .cp-status-t {
+    flex: 1;
+    min-width: 0;
+  }
+  .cp-status-h {
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .cp-status-s {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* ---------- footer ----------
+     The whole footer is ONE child of `.dw-ft`. That is deliberate: the phone
+     rule in responsive.css gives `.dw-ft` `flex-wrap: wrap` so a third action
+     starts a second line instead of leaving the screen — right for every other
+     drawer, and exactly what requirement 7 forbids here. With a single child
+     there is nothing for `.dw-ft` to wrap, and the row inside is `nowrap` by
+     its own declaration. */
+  .cp-ft {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: center;
+    gap: 12px;
+  }
+  .cp-ft-acts {
+    flex: none;
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+  .cp-ft-sum {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .cp-sum-l {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--ink);
+  }
+  .cp-sum-s {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .cp-ft-acts .cp-lbl-short {
+    display: none;
+  }
+
+  /* Requirement 7, and the only place it needs saying: at 360px the three full
+     labels plus two 22px paddings and a trash glyph measure past the footer's
+     312px of usable width. The labels shorten and the padding narrows — both
+     inside the existing tokens — and the SUMMARY moves above the row rather
+     than competing with it for the same line. Nothing stacks and nothing hides:
+     the three buttons stay side by side, each still wider than 44px.
+     Same breakpoint as the `.dw-ft` wrap rule they are exempt from. */
+  @media (max-width: 767px), (max-height: 600px) {
+    .cp-ft {
+      flex-direction: column-reverse;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .cp-ft-acts .cp-lbl-full {
+      display: none;
+    }
+    .cp-ft-acts .cp-lbl-short {
+      display: inline;
+    }
+    .cp-ft-acts .btn {
+      padding: 0 14px;
+    }
+  }
+}
