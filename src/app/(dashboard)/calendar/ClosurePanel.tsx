@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
+import { Icon } from "@/components/shared/Icon";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { formatFullDate, nightsBetween } from "@/lib/dates";
 import {
@@ -12,9 +14,11 @@ import {
 } from "@/lib/closures/categories";
 import {
   createClosureAction,
+  deleteClosureAction,
   listClosableRoomsAction,
   updateClosureAction,
 } from "./actions";
+import type { CalendarClosure, CalendarRoom } from "./types";
 
 export type ClosurePrefill = {
   roomId?: string;
@@ -22,9 +26,10 @@ export type ClosurePrefill = {
   endDate?: string;
 };
 
-// An EXISTING closure, opened for editing from the closure bar's popover. The
-// room is carried for display only — updateClosureAction cannot move a closure
-// between rooms, and the panel does not offer to.
+// An EXISTING closure, opened for editing by a click on its bar (either board).
+// The room is carried for display only: a closure CHANGES rooms by being dragged
+// to another row, which is the gesture that moves a reservation too — this form
+// edits the dates, the category and the free text.
 export type ClosureEdit = {
   id: string;
   roomId: string;
@@ -41,6 +46,21 @@ type ClosureRoom = { id: string; room_number: string; name: string | null };
 
 const roomText = (r: ClosureRoom) =>
   `${r.room_number}${r.name && r.name !== r.room_number ? ` · ${r.name}` : ""}`;
+
+// Board row → the panel's edit payload. Both boards open the SAME panel on the
+// same closure, so the translation is written once: a second copy is how the
+// desktop and the mobile card start disagreeing about what they are editing.
+export function closureEditOf(c: CalendarClosure, room: CalendarRoom): ClosureEdit {
+  return {
+    id: c.id,
+    roomId: c.room_id,
+    roomLabel: roomText(room),
+    startDate: c.start_date,
+    endDate: c.end_date,
+    category: c.category,
+    reason: c.reason,
+  };
+}
 
 // "סגור חדר" — temporary date-range closure (start-inclusive / end-exclusive,
 // minimum one hotel night). Uses guesthub.room_closures, never rooms.status.
@@ -72,6 +92,9 @@ export function ClosurePanel({
   const [category, setCategory] = useState<ClosureCategory | "">("");
   const [reason, setReason] = useState("");
   const [saving, startSaving] = useTransition();
+  // the delete confirmation (§8 ConfirmDialog) — removing a closure puts a room
+  // back on sale, which is not something a mis-aimed click may do in one step
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // The picker's rows come from the server on open, not from a prop: that is
   // what lets this panel mount over the booking wizard, where no calendar room
@@ -101,6 +124,7 @@ export function ClosurePanel({
     setEndDate(edit?.endDate ?? prefill.endDate ?? "");
     setCategory(edit?.category ?? "");
     setReason(edit?.reason ?? "");
+    setConfirmDelete(false);
   }, [
     open,
     edit?.id,
@@ -136,6 +160,19 @@ export function ClosurePanel({
     setStartDate(v);
     if (v && endDate && endDate <= v) setEndDate(closureMinEnd(v));
   };
+
+  const remove = () =>
+    startSaving(async () => {
+      if (!edit) return;
+      const res = await deleteClosureAction(edit.id);
+      if (res.success) {
+        toast.success("החסימה הוסרה");
+        setConfirmDelete(false);
+        onClose();
+      } else {
+        toast.error(res.error);
+      }
+    });
 
   const submit = () =>
     startSaving(async () => {
@@ -184,16 +221,32 @@ export function ClosurePanel({
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             ביטול
           </button>
+          {/* lifting the closure — only when there IS one. It sits at the far
+              inline end of the row (.dw-ft is row-reverse), away from the
+              primary, and it asks before it acts. */}
+          {edit && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={saving}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Icon name="trash" size={20} />
+              הסר חסימה
+            </button>
+          )}
         </>
       }
     >
       <div className="space-y-5">
         <label className="field">
           <span className="field-label">חדר *</span>
-          {/* editing NEVER moves a closure between rooms — that is a delete plus
-              a create, each with its own availability check and ARI mark. The
-              room is shown, read-only, so the operator still sees what they
-              are editing. */}
+          {/* read-only while editing. The room is not missing from this form by
+              accident and it is not forbidden either: a closure is MOVED between
+              rooms the way a reservation is — by dragging it to another row on
+              the board, which is one act with one availability check and one ARI
+              mark over both rooms. Here it is shown so the operator sees what
+              they are editing. */}
           <select
             className="field-input"
             value={roomId}
@@ -281,6 +334,39 @@ export function ClosurePanel({
           />
         </label>
 
+        {/* §8 confirmation. It portals to document.body, so it is above the
+            drawer whatever this subtree's stacking context is. */}
+        {confirmDelete && edit && (
+          <ConfirmDialog
+            title="הסרת סגירת חדר"
+            onClose={() => setConfirmDelete(false)}
+            footer={
+              <>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={saving}
+                  onClick={remove}
+                >
+                  {saving ? "מוחק…" : "מחיקה"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={saving}
+                  onClick={() => setConfirmDelete(false)}
+                >
+                  ביטול
+                </button>
+              </>
+            }
+          >
+            <p className="cb-gate-msg">למחוק את הסגירה?</p>
+            <p className="cb-gate-note">
+              הלילות שהיא מכסה יחזרו למכירה ויפורסמו מחדש לערוצים.
+            </p>
+          </ConfirmDialog>
+        )}
       </div>
     </SidePanel>
   );

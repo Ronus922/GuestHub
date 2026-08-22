@@ -149,15 +149,18 @@ export async function deleteClosureAction(id: string): Promise<ActionResult> {
 // closure and filing a new one — two writes, two audit rows, and a window in
 // between where the room is on sale. This is one write.
 //
-// THE ARI MARK IS THE UNION OF THE OLD AND THE NEW RANGE, and that is the whole
-// point of the function. Shortening a closure RELEASES nights that the channels
-// still publish as unavailable; extending it BLOCKS nights they still publish as
-// free. Marking only the new range leaves the released tail stale, marking only
-// the old one leaves the new head stale. The union covers both, and a superset
-// is always safe: re-publishing a night whose value did not change is a no-op
-// upstream, while missing one is an overbooking or a lost sale.
+// THE ARI MARK IS THE UNION OF THE OLD AND THE NEW RANGE, ON EVERY ROOM THE EDIT
+// TOUCHED, and that is the whole point of the function. Shortening a closure
+// RELEASES nights that the channels still publish as unavailable; extending it
+// BLOCKS nights they still publish as free. Marking only the new range leaves the
+// released tail stale, marking only the old one leaves the new head stale. The
+// union covers both, and a superset is always safe: re-publishing a night whose
+// value did not change is a no-op upstream, while missing one is an overbooking
+// or a lost sale. The same reasoning is what makes a MOVE mark BOTH rooms.
 export async function updateClosureAction(raw: {
   id: string;
+  /** the room to move the closure TO. Absent = leave it where it is. */
+  roomId?: string;
   startDate: string;
   endDate: string;
   reason?: string;
@@ -183,26 +186,45 @@ export async function updateClosureAction(raw: {
         FOR UPDATE OF c`;
       if (!before) throw new DomainError("חסימה לא נמצאה");
       const isOoo = before.kind === "ooo";
+      // where the closure ENDS UP. An update that says nothing about the room
+      // leaves it in the one it was filed against.
+      const targetRoomId = input.roomId ?? before.room_id;
+      const moved = targetRoomId !== before.room_id;
 
-      await lockRooms(tx, actor.tenantId, [before.room_id]);
-      // Same gate as the create — an OOO closure may not overlap a stay or
-      // another closure. The closure being edited is its OWN overlap, so it is
-      // filtered out by id; without that, every edit would collide with itself.
-      if (isOoo) {
+      // BOTH rooms are locked on a move: the room being vacated is as much a
+      // participant as the one being filled, and a concurrent write against
+      // either of them has to queue behind this transaction.
+      await lockRooms(tx, actor.tenantId, moved ? [before.room_id, targetRoomId] : [before.room_id]);
+      // Same gate as the create, asked of the room the closure is LANDING IN —
+      // which on a move is not the room it came from. The closure being edited is
+      // its OWN overlap, so it is filtered out by id; without that, every in-place
+      // edit would collide with itself.
+      //
+      // An OOS note takes no inventory, so an overlapping stay or closure never
+      // blocks it — but a MOVE still has to land somewhere real: the same call
+      // answers "does this room exist, and is it sellable at all", and those two
+      // verdicts bind whatever the kind.
+      if (isOoo || moved) {
         const conflicts = (
           await checkRoomAvailability(tx, {
             tenantId: actor.tenantId,
-            roomIds: [before.room_id],
+            roomIds: [targetRoomId],
             checkIn: input.startDate,
             checkOut: input.endDate,
           })
         ).filter((c) => c.conflict_id !== before.id);
-        if (conflicts.length > 0) throw new DomainError(CONFLICT_LABEL[conflicts[0].conflict_kind]);
+        const blocking = isOoo
+          ? conflicts
+          : conflicts.filter(
+              (c) => c.conflict_kind === "room_missing" || c.conflict_kind === "room_status",
+            );
+        if (blocking.length > 0) throw new DomainError(CONFLICT_LABEL[blocking[0].conflict_kind]);
       }
 
       await tx`
         UPDATE guesthub.room_closures
-        SET start_date = ${input.startDate},
+        SET room_id    = ${targetRoomId},
+            start_date = ${input.startDate},
             end_date   = ${input.endDate},
             reason     = ${input.reason || null},
             category   = ${input.category || null}
@@ -212,8 +234,8 @@ export async function updateClosureAction(raw: {
         entityType: "room_closure",
         entityId: input.id,
         action: "update",
-        before: { start: before.start_date, end: before.end_date, category: before.category, reason: before.reason },
-        after: { start: input.startDate, end: input.endDate, category: input.category ?? null, reason: input.reason || null },
+        before: { room_id: before.room_id, start: before.start_date, end: before.end_date, category: before.category, reason: before.reason },
+        after: { room_id: targetRoomId, start: input.startDate, end: input.endDate, category: input.category ?? null, reason: input.reason || null },
       }, tx);
 
       // the union — see the note above, and unionRange's own. An OOS note never
@@ -224,15 +246,21 @@ export async function updateClosureAction(raw: {
           { date_from: before.start_date, date_to: before.end_date },
           { date_from: input.startDate, date_to: input.endDate },
         );
+        // A MOVE changes availability in TWO rooms — the one the nights were
+        // released from and the one they were taken in — and marking only the
+        // destination is the same defect as marking only the new range: the
+        // vacated room stays published as blocked and cannot be sold. The union
+        // window is a superset for each of them, which is always the safe error.
+        const roomIds = moved ? [before.room_id, targetRoomId] : [before.room_id];
         await markAriDirty(tx, {
           tenantId: actor.tenantId,
-          roomIds: [before.room_id],
+          roomIds,
           dateFrom,
           dateTo,
         });
         await publishDomainEvent(tx, actor.tenantId, {
           type: "inventory.changed",
-          roomIds: [before.room_id],
+          roomIds,
           dateFrom,
           dateTo,
         });

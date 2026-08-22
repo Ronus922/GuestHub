@@ -280,9 +280,14 @@ assert.ok(openEditorBody &&
   /suppressClickRef\.current !== null/.test(openEditorBody[1]) &&
   /phaseRef\.current === "awaiting_confirmation"/.test(openEditorBody[1]),
   "6–12. openEditor opens ONLY on a genuine click — never mid/after a drag or while confirming");
-// tooltip hides on pointer-down and never shows during drag/confirm
-assert.ok(/const onBarPointerDown[\s\S]*?phaseRef\.current = "pressed"[\s\S]*?setTip\(null\)/.test(grid),
-  "3. pointer-down on a reservation hides the tooltip immediately");
+// tooltip hides on pointer-down and never shows during drag/confirm.
+// The press→session half is now ONE function (beginDrag) shared by the
+// reservation pill and the closure bar — a closure is dragged by the same
+// gesture, and a second copy of this sequence is how the two would drift.
+assert.ok(/const beginDrag = useCallback\([\s\S]*?phaseRef\.current = "pressed"[\s\S]*?setTip\(null\)/.test(grid),
+  "3. a press on a draggable block hides the tooltip immediately and records the phase");
+assert.ok(/const onBarPointerDown = useCallback\([\s\S]*?beginDrag\(e, mode, roomIndex, \{ stay, closure: null \}/.test(grid),
+  "3. …and the reservation pill's pointer-down routes through it — one session, one ghost, one suppressor");
 assert.ok(/const onBarHoverStart[\s\S]*?phaseRef\.current !== "idle"[\s\S]*?return/.test(grid),
   "4. the tooltip never reopens during a drag/resize or pending confirmation");
 // 17: empty-cell drag still opens the new-booking panel

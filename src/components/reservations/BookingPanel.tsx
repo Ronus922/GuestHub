@@ -25,7 +25,6 @@ import type { CancellationPolicySnapshot } from "@/lib/commercial/policy-snapsho
 import { CancellationSnapshotView } from "./EditReservationPanel";
 import { saveReservationCardAction } from "@/app/(dashboard)/reservations/card-actions";
 import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
-import { ClosurePanel, type ClosurePrefill } from "@/app/(dashboard)/calendar/ClosurePanel";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
 import { autoFilled, formFingerprint } from "@/lib/reservations/form-dirty";
 import { BookingSuccess, type BookingCreated } from "./BookingSuccess";
@@ -139,7 +138,6 @@ export function BookingPanel({
   enabledCurrencies = ["ILS"],
   canSaveCard,
   canPriceOverride,
-  canClose = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -156,17 +154,8 @@ export function BookingPanel({
   enabledCurrencies?: string[];
   canSaveCard: boolean;
   canPriceOverride: boolean;
-  /** rooms.edit — renders the header's room-closure shortcut */
-  canClose?: boolean;
 }) {
   const [step, setStep] = useState(0);
-  // the header's room-closure shortcut (§ header cluster). It opens the SAME
-  // ClosurePanel the calendar uses — one closure form in the app, not two.
-  // Non-null = the closure form is up, holding the context it was opened with;
-  // the wizard is already gone by then (see openClosureShortcut).
-  const [closurePrefill, setClosurePrefill] = useState<ClosurePrefill | null>(null);
-  // that same context, parked while the discard confirmation is on screen
-  const closureAfterDiscard = useRef<ClosurePrefill | null>(null);
   // 084 — set once, from the prefill, when the panel opens: the operator already
   // answered the gate dialog. Nothing in the panel can turn it on.
   const [restrictionOverride, setRestrictionOverride] = useState(false);
@@ -278,7 +267,6 @@ export function BookingPanel({
     setQuery("");
     setResults([]);
     setConfirmDiscard(false);
-    closureAfterDiscard.current = null;
     setCompany("");
     setPolicyChoice(CANCEL_POLICY_OPTIONS[0].value);
     setCreated(null);
@@ -335,36 +323,6 @@ export function BookingPanel({
     }
     if (dirty && !confirmDiscard) setConfirmDiscard(true);
     else onClose();
-  };
-
-  // The header's closure shortcut LEAVES the wizard — it never stacks a second
-  // window on top of it. Closing a room and booking one are two different jobs,
-  // and a closure saved over a half-filled wizard left that wizard behind, red
-  // required-field marks and all, reading as "now finish the booking you never
-  // asked for". Filing the closure IS the answer; there is nothing to come back
-  // to.
-  //
-  // The context travels with the operator. Whatever the first stay row holds —
-  // and a calendar drag fills exactly that row with the room and the dragged
-  // nights — becomes the closure form's prefill, so the drag is not re-typed.
-  // check-out and closure end are the same exclusive boundary, so they map 1:1.
-  const openClosureShortcut = () => {
-    if (saving) return;
-    const first = stays[0];
-    const context: ClosurePrefill = {
-      roomId: first?.roomId || undefined,
-      startDate: first?.checkIn || undefined,
-      endDate: first?.checkOut || undefined,
-    };
-    if (dirty) {
-      // typed-in work is never discarded silently: the wizard's OWN unsaved-
-      // changes confirmation asks, and the shortcut resumes on "סגור בלי לשמור"
-      closureAfterDiscard.current = context;
-      setConfirmDiscard(true);
-      return;
-    }
-    onClose();
-    setClosurePrefill(context);
   };
 
   useEffect(() => {
@@ -608,7 +566,6 @@ export function BookingPanel({
   const totalGuests = stays.reduce((n, s) => n + s.adults + s.children + s.infants, 0);
 
   return (
-    <>
     <SidePanel
       open={open}
       onClose={requestClose}
@@ -623,36 +580,19 @@ export function BookingPanel({
       /* MD §1: slide from -108% in .45s cubic-bezier(.32,.72,.24,1) over the
          rgba(15,23,42,.45)+blur overlay — the booking visual variant */
       visualVariant="booking"
-      headerActions={
-        /* the MD header cluster (ש'14-15) — RTL DOM order = right→left:
-           room-closure, divider, and SidePanel's own X.
-           WHAT IS NOT HERE, AND WHY. תצוגה מקדימה / הדפסה / PDF / וואטסאפ /
-           מייל used to sit here as graphic shells with no onClick, because on
-           CREATE there is nothing to preview, print or send — the reservation
-           does not exist yet. Owner ruling: those five belong to editing an
-           existing reservation, where BookingToolbar (BookingActions.tsx) draws
-           them with real handlers. On create they were noise, so they are gone
-           rather than wired to nothing.
-           The room-closure button is the one that stays, and it now DOES
-           something: the same ClosurePanel the calendar opens. */
-        canClose ? (
-          <>
-            <button
-              type="button"
-              className="bw-hd-btn bw-close-room"
-              title="סגירת חדר ביומן"
-              aria-label="סגירת חדר ביומן"
-              onClick={openClosureShortcut}
-            >
-              <Icon name="door-front" size={20} />
-              <span className="bw-cr-badge">
-                <Icon name="lock" size={13.5} />
-              </span>
-            </button>
-            <span className="bk-tb-div" aria-hidden />
-          </>
-        ) : undefined
-      }
+      /* WHAT IS NOT IN THIS HEADER, AND WHY. תצוגה מקדימה / הדפסה / PDF /
+         וואטסאפ / מייל used to sit here as graphic shells with no onClick,
+         because on CREATE there is nothing to preview, print or send — the
+         reservation does not exist yet. Owner ruling: those five belong to
+         editing an EXISTING reservation, where BookingToolbar
+         (BookingActions.tsx) draws them with real handlers.
+         The room+lock door went with them (owner ruling, this run). A wizard for
+         creating a reservation is not where a room gets closed: the act has its
+         own doors on the board it belongs to — the "חסימת חדר" header button and
+         a right-click on the desktop grid, the same header button on mobile — and
+         a shortcut that had to close the wizard, ask about unsaved work and
+         re-open somewhere else was a second route to a place that already had
+         one. Nothing replaced it here; there is no header cluster left. */
       band={
         created ? undefined : (
         /* stepper band (reference .stp) — RTL: step 1 rightmost */
@@ -706,11 +646,6 @@ export function BookingPanel({
                 // documents (booking_id NULL) are soft-deleted, fire-and-forget
                 for (const id of docIds) void deleteBookingDocumentAction(id);
                 onClose();
-                // …and if the discard was asked for BY the closure shortcut,
-                // that is where the operator was going. Take them there.
-                const next = closureAfterDiscard.current;
-                closureAfterDiscard.current = null;
-                if (next) setClosurePrefill(next);
               }}
             >
               סגור בלי לשמור
@@ -718,10 +653,7 @@ export function BookingPanel({
             <button
               type="button"
               className="btn btn-secondary"
-              onClick={() => {
-                closureAfterDiscard.current = null;
-                setConfirmDiscard(false);
-              }}
+              onClick={() => setConfirmDiscard(false)}
             >
               המשך עריכה
             </button>
@@ -1546,17 +1478,6 @@ export function BookingPanel({
       </div>
       )}
     </SidePanel>
-      {/* the header shortcut's target. A SIBLING of the wizard, not a child, and
-          that is what lets the wizard close out from under it: this subtree
-          keeps rendering while <SidePanel open={false}>, so the closure form
-          survives the very close that opened it. Its prefill is the wizard's
-          own row — see openClosureShortcut. */}
-      <ClosurePanel
-        open={closurePrefill !== null}
-        onClose={() => setClosurePrefill(null)}
-        prefill={closurePrefill ?? {}}
-      />
-    </>
   );
 }
 

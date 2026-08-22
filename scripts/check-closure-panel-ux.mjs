@@ -8,10 +8,14 @@
 //      booking wizard. The closure saved — and the wizard was still there
 //      underneath, red required-field marks and all, so a person who wanted to
 //      close a room was left believing they now had to finish a reservation.
-//      Two different jobs; the shortcut must LEAVE the first one.
+//      Two different jobs; the shortcut must LEAVE the first one. The owner's
+//      ruling since: the shortcut is GONE, which is the strongest form of that —
+//      a route that does not exist cannot stack. §1 now guards the removal, and
+//      that both boards keep a real door of their own.
 //   2. That same route threw the operator's context away. A calendar drag had
 //      just named the room and the exact nights; the closure form opened blank
-//      and asked for the room again.
+//      and asked for the room again. The surviving routes still carry context,
+//      including the whole row when an EXISTING closure is opened.
 //   3. The date fields answered only their own indicator glyph. Clicking the
 //      rest of the box — most of its area — did nothing, which reads as a dead
 //      control, and it is the same click that works everywhere else.
@@ -72,6 +76,7 @@ const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\
 const BOOKING = "src/components/reservations/BookingPanel.tsx";
 const PANEL = "src/app/(dashboard)/calendar/ClosurePanel.tsx";
 const GRID = "src/app/(dashboard)/calendar/CalendarGrid.tsx";
+const SCREEN = "src/app/(dashboard)/calendar/CalendarScreen.tsx";
 
 const booking = stripComments(read(BOOKING));
 const panel = stripComments(read(PANEL));
@@ -91,82 +96,73 @@ function braceBlock(src, marker) {
 }
 
 // ============================================================
-// 1. Filing a closure from the wizard LEAVES the wizard — it never stacks
+// 1. The wizard has NO closure door at all — the strongest form of "it never
+//    stacks", and the owner's ruling this run
 // ============================================================
 {
-  const shortcut = braceBlock(booking, "const openClosureShortcut = () => {");
-  assert.ok(shortcut, "openClosureShortcut exists — the door icon routes through one decision, not through a bare setter");
+  // The shortcut is gone, with everything it needed: the decision function, the
+  // parked-context ref, the mounted form and the permission flag. Defect 1 above
+  // was "the form opened on top of a half-filled wizard"; a route that does not
+  // exist cannot stack, cannot throw context away, and cannot raise an
+  // unsaved-changes question about a form nobody typed in.
+  for (const token of [
+    "openClosureShortcut",
+    "closureAfterDiscard",
+    "closurePrefill",
+    "ClosurePanel",
+    "headerActions=",
+    "bw-close-room",
+    "canClose",
+  ]) {
+    assert.doesNotMatch(booking, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `the create wizard carries no ${token} — closing a room is an act of the calendar, and it has its own doors there`);
+  }
 
-  // the door is wired to THAT, so no second, stack-happy path can grow beside it
-  assert.match(booking, /className="bw-hd-btn bw-close-room"[\s\S]{0,240}?onClick=\{openClosureShortcut\}/,
-    "the header's door+lock button calls openClosureShortcut");
-  assert.doesNotMatch(booking, /onClick=\{\(\) => setClosurePrefill\(/,
-    "…and nothing opens the closure form by setting its state directly, which would skip the wizard's exit entirely");
+  // …and those doors are real, on BOTH boards. This is what makes the removal a
+  // simplification rather than a deletion of the capability.
+  const screen = stripComments(read(SCREEN));
+  assert.match(screen, /className="cb-touch-close"/,
+    "the desktop tree carries a 'חסימת חדר' header button");
+  assert.match(screen, /className="cb-m-close"/,
+    "…and so does the mobile tree");
+  assert.match(grid, /סגור חדר/,
+    "…and the desktop grid's right-click menu still offers סגור חדר on the cell under the cursor");
+  // all of them open the ONE form, from the board's own panel state
+  assert.match(screen, /<ClosurePanel\s+open=\{panel\?\.kind === "closure"\}/,
+    "every door opens the same ClosurePanel, held by the board — one closure form in the app");
 
-  // the dirty branch: ask, park, and RETURN — it must not open anything yet
-  const dirtyBranch = braceBlock(shortcut, "if (dirty) {");
-  assert.ok(dirtyBranch, "the shortcut has an explicit dirty branch — typed-in work is never discarded silently");
-  assert.match(dirtyBranch, /closureAfterDiscard\.current = context/,
-    "…which PARKS the captured context rather than dropping it");
-  assert.match(dirtyBranch, /setConfirmDiscard\(true\)/,
-    "…and raises the wizard's OWN unsaved-changes confirmation — no second dialog, no new wording");
-  assert.doesNotMatch(dirtyBranch, /setClosurePrefill\(/,
-    "…and does NOT open the closure form behind the question it just asked");
-  assert.match(dirtyBranch, /return;/, "…and stops there");
-
-  // the clean path: close the wizard FIRST, then open the form.
-  // THIS is the assertion the defect breaks: delete the onClose() and the
-  // closure form goes up over a wizard that is still open.
-  const cleanPath = shortcut.slice(shortcut.indexOf(dirtyBranch) + dirtyBranch.length);
-  assert.match(cleanPath, /onClose\(\)/,
-    "a clean wizard is CLOSED by the shortcut — this is the bug: the form used to open over a wizard that stayed behind and then demanded its required fields");
-  assert.match(cleanPath, /setClosurePrefill\(context\)/,
-    "…and only then does the closure form open, carrying the captured context");
-  const closeAt = cleanPath.indexOf("onClose()");
-  const openAt = cleanPath.indexOf("setClosurePrefill(context)");
-  assert.ok(closeAt > -1 && openAt > -1 && closeAt < openAt,
-    "…in that order: the wizard is gone before the form arrives");
-
-  // and the discard confirmation RESUMES the shortcut instead of dead-ending
-  const confirmAt = booking.indexOf(") : confirmDiscard ? (");
-  assert.ok(confirmAt > -1, "the discard-confirmation footer branch was located");
-  const confirmBranch = confirmAt > -1 ? booking.slice(confirmAt, booking.indexOf("\n        ) : (", confirmAt)) : "";
-  assert.match(confirmBranch, /const next = closureAfterDiscard\.current;[\s\S]{0,120}if \(next\) setClosurePrefill\(next\)/,
-    "'סגור בלי לשמור' continues to the closure form when that is what the operator asked for — the shortcut is not lost to the question it raised");
-  assert.match(confirmBranch, /closureAfterDiscard\.current = null;[\s\S]{0,80}setConfirmDiscard\(false\)/,
-    "…and 'המשך עריכה' drops the parked intent, so staying in the wizard stays in the wizard");
-
-  // STRUCTURAL: the form must not live inside the wizard's own panel, or the
-  // very close that opens it would unmount the form mid-save.
-  const panelMount = booking.indexOf("<ClosurePanel");
-  const wizardEnd = booking.lastIndexOf("</SidePanel>");
-  assert.ok(panelMount > -1 && wizardEnd > -1, "both the wizard panel and the closure form were located in the wizard file");
-  assert.ok(panelMount > wizardEnd,
-    "the closure form is a SIBLING of the wizard's SidePanel, not a child — as a child it would unmount the moment the wizard closes, and the save would never happen");
-
-  ok("the wizard's closure shortcut leaves the wizard: clean → close then open, dirty → the existing confirmation then open, and the form outlives the close");
+  ok("the wizard has no closure shortcut to stack, and both boards carry a real door to the one closure form");
 }
 
 // ============================================================
 // 2. Opening from context arrives with the room and the dates already in
 // ============================================================
 {
-  const shortcut = braceBlock(booking, "const openClosureShortcut = () => {");
-  assert.match(shortcut, /const first = stays\[0\]/,
-    "the shortcut reads the wizard's first stay row — the row a calendar drag fills");
-  assert.match(shortcut, /roomId: first\?\.roomId/,
-    "…and carries the room");
-  assert.match(shortcut, /startDate: first\?\.checkIn/,
-    "…the check-in as the closure's start");
-  assert.match(shortcut, /endDate: first\?\.checkOut/,
-    "…and the check-OUT as the closure's end: both are the same exclusive boundary, so the drag maps 1:1 and is never retyped");
-  assert.doesNotMatch(booking, /<ClosurePanel\s+open=\{closurePrefill !== null\}\s+onClose=\{[^}]*\}\s+prefill=\{\{\}\}/,
-    "the form is no longer mounted with a hardcoded empty prefill");
-
-  // the calendar's own context route still prefills — it always did, and this
+  // the calendar's own context route prefills — it always did, and this
   // guard is what keeps it that way while the panel's props move around
   assert.match(grid, /onNewClosure\(\{ roomId: menu\.roomId, startDate: menu\.date, endDate: addDays\(menu\.date, 1\) \}\)/,
     "the board's right-click 'סגור חדר' sends the room and a one-night range from the cell under the cursor");
+
+  // …and opening an EXISTING closure hands over the whole row, from either
+  // board, through ONE translation — a second copy is how the desktop bar and
+  // the mobile card start disagreeing about what they are editing.
+  assert.match(panel, /export function closureEditOf\(c: CalendarClosure, room: CalendarRoom\): ClosureEdit/,
+    "closureEditOf is the one board-row → edit-payload translation");
+  for (const [field, why] of [
+    ["id: c.id", "the closure being edited"],
+    ["roomId: c.room_id", "its room"],
+    ["startDate: c.start_date", "its start"],
+    ["endDate: c.end_date", "its exclusive end"],
+    ["category: c.category", "its category"],
+    ["reason: c.reason", "its free text"],
+  ]) {
+    assert.ok(panel.includes(field), `…carrying ${why} (${field})`);
+  }
+  const screen = stripComments(read(SCREEN));
+  assert.match(grid, /onEditClosure\(closureEditOf\(c, room\)\)/,
+    "the desktop bar opens the panel through it");
+  assert.match(screen, /edit: closureEditOf\(closure, room\)/,
+    "…and the mobile board through the very same function");
 
   // …and the form actually SEEDS from what it is handed
   assert.match(panel, /setRoomId\(edit\?\.roomId \?\? prefill\.roomId/,
@@ -174,7 +170,7 @@ function braceBlock(src, marker) {
   assert.match(panel, /setStartDate\(edit\?\.startDate \?\? prefill\.startDate/, "…its start date");
   assert.match(panel, /setEndDate\(edit\?\.endDate \?\? prefill\.endDate/, "…and its end date");
 
-  ok("every context-carrying route hands the form a room and a range, and the form seeds itself from it");
+  ok("every context-carrying route hands the form a room and a range — a new closure from the cell it was drawn on, an existing one whole, through one translation used by both boards");
 }
 
 // ============================================================

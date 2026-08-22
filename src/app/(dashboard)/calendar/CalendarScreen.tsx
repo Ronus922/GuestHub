@@ -15,7 +15,7 @@ import { MobileCalendar } from "./MobileCalendar";
 import { MobileDetailSheet } from "./MobileDetailSheet";
 import { EditReservationPanel } from "@/components/reservations/EditReservationPanel";
 import { useNewReservation } from "@/components/reservations/NewReservationProvider";
-import { ClosurePanel, type ClosureEdit, type ClosurePrefill } from "./ClosurePanel";
+import { ClosurePanel, closureEditOf, type ClosureEdit, type ClosurePrefill } from "./ClosurePanel";
 
 export type LookupItem = { id: string; key: string; label: string; color: string | null };
 
@@ -265,7 +265,8 @@ export function CalendarScreen({
         <p className="cb-hint px-[30px] pb-[14px] pt-[6px]">
           גרירת הזמנה מזיזה תאריכים או חדר · הפס בקצה השמאלי משנה תאריך עזיבה · לחיצה על
           הזמנה פותחת עריכה · ריחוף מציג כרטיס פרטים · גרירה על תאים ריקים יוצרת הזמנה
-          חדשה · לחיצה על סטטוס תשלום מסננת
+          חדשה · סגירת חדר נגררת ומשתנה באותן מחוות ולחיצה עליה פותחת עריכה והסרה ·
+          לחיצה על סטטוס תשלום מסננת
         </p>
       </div>
 
@@ -343,11 +344,18 @@ export function CalendarScreen({
           data={data}
           days={mobileDays}
           canCreate={can.create}
+          canClose={can.close}
           flashId={flashId}
           onBarTap={(id) => can.viewReservation && setSheetId(id)}
           onEmptyTap={(roomId, checkIn) =>
             can.create &&
             openNewReservation({ roomId, checkIn, source: "calendar_mobile" })
+          }
+          /* the SAME panel the desktop bar opens, on the same closure — editing
+             and lifting a closure are not desktop-only acts */
+          onClosureTap={(closure, room) =>
+            can.close &&
+            setPanel({ kind: "closure", prefill: {}, edit: closureEditOf(closure, room) })
           }
         />
 
@@ -365,7 +373,8 @@ export function CalendarScreen({
           ))}
         </div>
         <p className="cb-m-hint">
-          לחיצה על פס הזמנה פותחת כרטיס פעולות · צבע הפס לפי סטטוס תשלום
+          לחיצה על פס הזמנה פותחת כרטיס פעולות · לחיצה על סגירת חדר פותחת עריכה והסרה ·
+          צבע הפס לפי סטטוס תשלום
         </p>
       </div>
 

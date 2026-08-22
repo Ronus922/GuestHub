@@ -49,7 +49,6 @@ export default async function DashboardLayout({
         canSaveCard: hasPermission(actor, "payments.card_manage"),
         canPriceOverride: hasPermission(actor, "reservations.price_override"),
         canCreate: hasPermission(actor, "reservations.create"),
-        canClose: hasPermission(actor, "rooms.edit"),
       }}
     >
       {children}

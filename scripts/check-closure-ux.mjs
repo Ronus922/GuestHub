@@ -18,6 +18,8 @@
 //   4. The "הקמת הזמנה חדשה" wizard drew תצוגה/הדפסה/PDF/וואטסאפ/מייל as
 //      buttons with no onClick. Before the reservation exists there is nothing
 //      to preview, print or send; they were noise that looked like function.
+//      The room+lock door beside them was wired, and it went too (owner ruling):
+//      closing a room is an act of the calendar, and it has its own doors there.
 //
 // Runtime where it can be (the pure range and date helpers are compiled and
 // CALLED), static where it cannot (a server action needs a DB to run).
@@ -191,12 +193,12 @@ function actionBody(name) {
   assert.ok(closureBlockMessage("long_term", "2027-01-01").includes("31.12"),
     "the blocked-surface sentence names the last closed night");
   const grid = stripComments(read(`${CAL}/CalendarGrid.tsx`));
-  const at = grid.indexOf("const onClosureClick");
-  assert.ok(at > -1, "the closure popover's opener was located");
-  const pop = at > -1 ? grid.slice(at, grid.indexOf("}, []);", at)) : "";
-  assert.match(pop, /closureLastNight\(c\.end_date\)/,
-    "the popover's range ends on closureLastNight(end_date) — the ONE subtraction, not a second one typed here");
-  assert.doesNotMatch(pop, /formatFullDate\(c\.end_date\)/,
+  const at = grid.indexOf("const ClosureBar = memo(");
+  assert.ok(at > -1, "the closure bar component was located");
+  const bar = at > -1 ? grid.slice(at) : "";
+  assert.match(bar, /closureLastNight\(closure\.end_date\)/,
+    "the bar's own range ends on closureLastNight(end_date) — the ONE subtraction, not a second one typed here");
+  assert.doesNotMatch(bar, /formatFullDate\(closure\.end_date\)/,
     "…and the raw exclusive boundary is not printed: 01/01/2027 is a night the room is FREE");
 
   // nobody re-derives it with an inline addDays(-1)
@@ -208,36 +210,52 @@ function actionBody(name) {
 }
 
 // ============================================================
-// 4. The create wizard's header carries no share icons — and the door WORKS
+// 4. The create wizard's header carries NOTHING — the share shells went first,
+//    and the room+lock door followed them (owner ruling)
 // ============================================================
 {
   const wiz = stripComments(read("src/components/reservations/BookingPanel.tsx"));
-  const at = wiz.indexOf("headerActions={");
-  assert.ok(at > -1, "the wizard's header cluster was located");
-  const header = at > -1 ? wiz.slice(at, wiz.indexOf("band={", at)) : "";
+  // the wizard's own chrome: everything the SidePanel is configured WITH, up to
+  // the stepper band. The body below it is a different thing — it legitimately
+  // draws a mail glyph inside the guest's email field, which is not a share
+  // button, so the header claim is asked of the header.
+  const chrome = wiz.slice(wiz.indexOf("return ("), wiz.indexOf("band={"));
+  assert.ok(chrome.length > 0, "the wizard's SidePanel configuration was located");
 
   // the five that were noise on CREATE — there is nothing to preview, print or
   // send before the reservation exists
   for (const [icon, label] of [["eye", "תצוגה מקדימה"], ["printer", "הדפסה"], ["pdf", "PDF"], ["whatsapp", "וואטסאפ"], ["mail", "מייל"]]) {
-    assert.doesNotMatch(header, new RegExp(`name="${icon}"`),
-      `the create wizard's header does not render the ${label} icon — it belongs to editing an EXISTING reservation`);
+    assert.doesNotMatch(chrome, new RegExp(`name="${icon}"`),
+      `the create wizard's chrome does not render the ${label} icon — it belongs to editing an EXISTING reservation`);
   }
-  assert.doesNotMatch(header, /TODO\(wire-up\)/,
-    "…and no wire-up TODO is left standing in the cluster: a button that does nothing is removed, not documented");
+  assert.doesNotMatch(wiz, /TODO\(wire-up\)/,
+    "…and no wire-up TODO is left standing: a button that does nothing is removed, not documented");
 
-  // the one that stays does something
-  assert.match(header, /className="bw-hd-btn bw-close-room"/,
-    "the room-closure button is still there");
-  assert.match(header, /onClick=\{\(\) => setClosureOpen\(true\)\}/,
-    "…and it OPENS something — this button had no onClick at all, which is the defect");
-  assert.match(wiz, /<ClosurePanel\s+open=\{closureOpen\}/,
-    "…namely the ClosurePanel the calendar uses — one closure form in the app, not a second one written for the wizard");
-  assert.match(wiz, /from "@\/app\/\(dashboard\)\/calendar\/ClosurePanel"/,
-    "…imported, not re-implemented");
-  assert.match(header, /canClose \?/,
-    "the shortcut renders only for an actor who may close a room (rooms.edit)");
-  assert.match(read("src/app/(dashboard)/layout.tsx"), /canClose: hasPermission\(actor, "rooms\.edit"\)/,
-    "…and that flag is the real permission, resolved server-side in the dashboard layout");
+  // …and the door is gone with them. A wizard for CREATING a reservation is not
+  // where a room gets closed: that act has its own doors on the board (the
+  // "חסימת חדר" header button, a right-click on the desktop grid), and a
+  // shortcut that had to close the wizard, ask about unsaved work and reopen
+  // elsewhere was a second route to a place that already had one.
+  assert.doesNotMatch(wiz, /headerActions=/,
+    "the wizard's SidePanel passes no headerActions at all — the cluster is empty, not hidden");
+  for (const token of ["bw-hd-btn", "bw-close-room", "bw-cr-badge", 'name="door-front"']) {
+    assert.doesNotMatch(wiz, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      `the room+lock door's ${token} is gone from the wizard`);
+  }
+  assert.doesNotMatch(wiz, /ClosurePanel/,
+    "…and the wizard no longer mounts the closure form: one form, reached from the board that owns the act");
+  assert.doesNotMatch(wiz, /canClose/,
+    "…so the rooms.edit flag is not threaded into the wizard either");
+  for (const rel of ["src/components/reservations/NewReservationProvider.tsx", "src/components/layout/Shell.tsx", "src/app/(dashboard)/layout.tsx"]) {
+    assert.doesNotMatch(read(rel), /canClose/,
+      `${rel} carries no leftover canClose — the prop existed for the door alone`);
+  }
+  // and the CSS that dressed it left with it (no orphan rules, §9)
+  const css = read("src/app/styles/booking-window.css");
+  for (const cls of [".bw-hd-btn", ".bw-close-room", ".bw-cr-badge"]) {
+    assert.doesNotMatch(css, new RegExp(`\\${cls}\\s*[{,:]`),
+      `${cls} is gone from booking-window.css — deleting the element and leaving its CSS is how dead rules accumulate`);
+  }
 
   // the EDIT panel keeps all five — this change is scoped to create
   const edit = stripComments(read("src/components/reservations/EditReservationPanel.tsx"));
@@ -252,7 +270,7 @@ function actionBody(name) {
     assert.match(edit, new RegExp(`${handler}=\\{`),
       `…and the edit panel passes a real ${handler} handler, unlike the shells that were removed from create`);
   }
-  ok("the create wizard's header is the room-closure door alone, and it opens the shared ClosurePanel; the edit panel's five actions are untouched");
+  ok("the create wizard's header is empty — no share shells, no room+lock door, no orphan CSS; the edit panel's five actions are untouched");
 }
 
 // ============================================================
@@ -265,26 +283,32 @@ function actionBody(name) {
   assert.match(panel, /createClosureAction\(/,
     "…and the create action otherwise — one form, two verbs, so a field added reaches both");
   assert.match(panel, /disabled=\{Boolean\(edit\)\}/,
-    "the room selector is disabled while editing — moving a closure to another room is a delete plus a create, each with its own availability check");
+    "the room selector is read-only while editing — a closure changes rooms by being DRAGGED to another row, which is one act with one availability check, not a form field");
 
-  // the server must not accept a room change either — the UI is not the gate
+  // …and the server DOES accept that move, as one write. It used to refuse,
+  // which made "move" mean delete-then-create: two audit rows and a window in
+  // between where the room was back on sale.
   const validation = read("src/lib/validation/reservation.ts");
   const upd = validation.slice(validation.indexOf("export const closureUpdateSchema"));
-  assert.doesNotMatch(upd.slice(0, upd.indexOf(";")), /roomId/,
-    "closureUpdateSchema carries no roomId — a disabled <select> is a courtesy, the schema is the rule");
+  assert.match(upd.slice(0, upd.indexOf(";")), /roomId: z\.uuid\(\)\.optional\(\)/,
+    "closureUpdateSchema carries an OPTIONAL roomId — absent means 'leave it where it is', present means a move");
 
-  // the popover offers the edit at all
+  // clicking the bar opens the panel directly; the two-item popover is gone
   const grid = stripComments(read(`${CAL}/CalendarGrid.tsx`));
-  const popAt = grid.indexOf("{closurePop && (");
-  assert.ok(popAt > -1, "the closure popover was located");
-  const popover = popAt > -1 ? grid.slice(popAt, grid.indexOf("<ReservationTooltip", popAt)) : "";
-  assert.match(popover, /עריכה/,
-    "the popover offers עריכה — without it, extending a lease is still delete-and-retype");
-  assert.match(popover, /onEditClosure\(/,
-    "…wired to the panel, not to a placeholder");
-  assert.match(popover, /deleteClosureAction\(/,
-    "…and הסר חסימה is still there beside it");
-  ok("one panel serves both verbs, the popover opens it, and no path lets an edit move a closure to a different room");
+  assert.doesNotMatch(grid, /closurePop/,
+    "the closure popover is gone — its עריכה opened this same panel, one click later, and its delete has moved into the panel behind a confirmation");
+  const openAt = grid.indexOf("const openClosurePanel = useCallback(");
+  assert.ok(openAt > -1, "the closure bar's opener was located");
+  const opener = openAt > -1 ? grid.slice(openAt, grid.indexOf("\n  );", openAt)) : "";
+  assert.match(opener, /onEditClosure\(closureEditOf\(c, room\)\)/,
+    "a click on a closure opens the panel on THAT closure — wired to the panel, not to a placeholder");
+  assert.match(opener, /can\.close/,
+    "…and an actor without rooms.edit is told so instead of meeting a dead bar");
+  assert.match(panel, /deleteClosureAction\(/,
+    "הסר חסימה lives in the panel now");
+  assert.match(panel, /<ConfirmDialog/,
+    "…behind the canonical §8 confirmation — lifting a closure puts a room back on sale");
+  ok("one panel serves both verbs, a click on the bar opens it, deletion asks first, and a room move is one server-validated write");
 }
 
 console.log(`\nAll ${n} closure-UX claim groups hold.`);

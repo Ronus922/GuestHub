@@ -786,6 +786,7 @@
   flex: none;
 }
 .cb-resbar .cb-nm,
+.cb-blockbar .cb-nm,
 .cb-ghost .cb-nm {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -808,11 +809,13 @@
    RIGHT (RTL earliest=right) → flatten the RIGHT corners (inline-start). cutL =
    continues off the LEFT → flatten the LEFT corners (inline-end). Matches the
    reference §3.3 and the mobile .cb-m-bar rules. */
-.cb-resbar.cutR {
+.cb-resbar.cutR,
+.cb-blockbar.cutR {
   border-start-start-radius: 0;
   border-end-start-radius: 0;
 }
-.cb-resbar.cutL {
+.cb-resbar.cutL,
+.cb-blockbar.cutL {
   border-start-end-radius: 0;
   border-end-end-radius: 0;
 }
@@ -839,10 +842,12 @@
   box-shadow: var(--shadow-float);
   z-index: 4;
 }
-.cb-resbar.src {
+.cb-resbar.src,
+.cb-blockbar.src {
   opacity: 0.18; /* original card while its ghost is being dragged */
 }
-.cb-resbar.pending {
+.cb-resbar.pending,
+.cb-blockbar.pending {
   animation: pulse 1.6s ease-in-out infinite;
   cursor: progress;
 }
@@ -880,7 +885,9 @@
   transition: opacity 0.12s;
 }
 .cb-resbar:hover .cb-rh::after,
-.cb-resbar:focus-within .cb-rh::after {
+.cb-resbar:focus-within .cb-rh::after,
+.cb-blockbar:hover .cb-rh::after,
+.cb-blockbar:focus-within .cb-rh::after {
   opacity: 0.45;
 }
 
@@ -904,6 +911,18 @@
   z-index: 1;
   font-family: inherit;
   cursor: pointer;
+  /* the block is dragged, so the browser must not claim the gesture as a
+     pan/scroll first — the same rule the reservation pill carries */
+  touch-action: none;
+}
+/* draggable: the grab cursor a reservation pill has, and room at the inline end
+   for the resize handle so a short label never sits underneath it */
+.cb-blockbar.drg {
+  cursor: grab;
+  padding-inline: 12px 13px;
+}
+.cb-blockbar:hover {
+  box-shadow: var(--shadow-card);
 }
 
 /* ---------- unassigned holds lane ----------
@@ -952,6 +971,11 @@
 .cb-ghost.live {
   display: flex;
 }
+/* a dragged CLOSURE keeps the block's dashed edge, so the ghost reads as the
+   thing being moved and not as a reservation being created */
+.cb-ghost.blk {
+  border-style: dashed;
+}
 /* While ANY drag session is live, pills must not out-stack the ghost:
    .cb-resbar:hover/.sel jump to z-index 4, which buried the SHORTEN band
    (it overlaps its own pill, and the pointer keeps hovering that pill
@@ -959,7 +983,10 @@
    only shortening seemed to have no preview. */
 .cb-calin.dragging .cb-resbar,
 .cb-calin.resizing .cb-resbar,
-.cb-calin.selecting .cb-resbar {
+.cb-calin.selecting .cb-resbar,
+.cb-calin.dragging .cb-blockbar,
+.cb-calin.resizing .cb-blockbar,
+.cb-calin.selecting .cb-blockbar {
   z-index: 2 !important;
   box-shadow: var(--shadow-card) !important;
 }
