@@ -49,6 +49,7 @@ import {
   barGeometry,
   canDragCard,
   cellRangeGeometry,
+  closureDragEndAction,
   createActivated,
   createRangeTarget,
   describeReschedule,
@@ -1164,12 +1165,16 @@ export function CalendarGrid({
     (e: React.PointerEvent, closure: CalendarClosure, room: CalendarRoom) => {
       const s = sessionRef.current;
       if (!s || e.pointerId !== s.pointerId) return;
-      const action = dragEndAction(s.mode, s.activated);
+      // NOT dragEndAction: a closure bar can be one day column wide, and that
+      // rule would spend a fifth of it on a handle that answers a click with
+      // nothing. See closureDragEndAction — on a bar this small the only
+      // question is whether the pointer moved.
+      const action = closureDragEndAction(s.activated);
       endDrag();
       phaseRef.current = "idle";
       if (action === "open") {
         openClosurePanel(closure, room);
-      } else if (action === "confirm") {
+      } else {
         // the ONE synthetic click that follows a completed drag is marked for
         // the capture-phase suppressor, exactly as it is for a reservation —
         // without it the release would reopen the panel on top of the commit

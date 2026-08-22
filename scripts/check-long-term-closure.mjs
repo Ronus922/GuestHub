@@ -204,9 +204,13 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
 
   assert.match(cell, /const cover = roomSellable \? coverOn\(room\.id, d\)/,
     "the cell asks ONE dated-closure question, the same coverOn() the row label uses — not a second overlap predicate");
-  assert.match(cell, /:\s*cover\s*\?\s*canClose\s*\?\s*\(\)\s*=>\s*onClosureTap\(cover, room\)/,
-    "a covered cell taps into the closure itself — the same panel the desktop bar opens, on that closure");
-  assert.match(cell, /:\s*\(\)\s*=>\s*toast\.\w+\(\s*closureBlockMessage\(cover\.category, cover\.end_date\)\)/,
+  assert.match(cell, /:\s*cover\s*\?\s*\(\)\s*=>\s*tapClosure\(cover, room\)/,
+    "a covered cell taps into the closure itself — through tapClosure, the SAME function the bar's own tap calls");
+  // …and THAT function is where the permission and the sentence live, once
+  const tap = mobile.slice(mobile.indexOf("const tapClosure = useCallback("));
+  assert.match(tap, /if \(canClose\) onClosureTap\(c, room\);/,
+    "tapClosure opens the panel for an actor who may close a room");
+  assert.match(tap, /else toast\.\w+\(closureBlockMessage\(c\.category, c\.end_date\)\);/,
     "…and without rooms.edit it still carries the canonical closure sentence, rather than answering a deliberate tap with nothing");
   assert.ok(cover_precedes_closed(cell),
     "the closure branch is asked BEFORE the stop-sell branch — physical outranks commercial in the handler exactly as it does in the label");
@@ -223,9 +227,16 @@ const win = (cell, days = 21) => Array.from({ length: days }, () => ({ ...cell }
   assert.match(cell, /\{closed && !cover && <span className="cb-m-cx">/,
     "…including the tag's text node, not only its class");
 
-  // the sign the closure bar draws must not eat the tap it is drawn over
-  assert.match(read("src/app/styles/calendar-mobile.css"), /\.cb-m-block \{[^}]*pointer-events: none/,
-    ".cb-m-block is pointer-events:none — an absolutely positioned SIGN must not swallow the tap the cell beneath it answers");
+  // The bar OWNS the pixels it is drawn on — see check:closure-bar-hit for the
+  // geometry that makes this necessary. It used to be pointer-events:none so the
+  // cell beneath answered the whole row; that handed the bar's trailing half —
+  // which overhangs the CHECKOUT date's cell, a date the room is free on — to
+  // the empty-cell branch, and a finger there opened the booking wizard.
+  const mobileCss = read("src/app/styles/calendar-mobile.css");
+  assert.doesNotMatch(mobileCss, /\.cb-m-block \{[^}]*pointer-events: none/,
+    ".cb-m-block is NOT pointer-events:none — a bar that does not catch its own pixels hands them to whatever is underneath");
+  assert.match(mobileCss, /\.cb-m-block \{[^}]*top: 0;\s*\n\s*bottom: 0;/,
+    "…and its hit area is the FULL row height, so nothing above or below the 34px visual can fall through either");
   ok("the mobile closure cell looks physically blocked, drops the commercial tag, and answers a tap about the closure — the panel for whoever may close a room, the sentence for whoever may not, never a booking");
 }
 

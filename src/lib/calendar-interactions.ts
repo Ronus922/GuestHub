@@ -47,6 +47,23 @@ export function dragEndAction(
   return "commit"; // empty-cell create → new-reservation panel
 }
 
+// The same question for a CLOSURE bar, which is NOT a reservation pill.
+//
+// dragEndAction's "the resize handle never opens" is the pill's rule, and it is
+// right there: the handle is a 12px sliver of a card that is usually many day
+// columns wide, so a stray click on it must not throw a window open. A closure
+// bar can be ONE day column wide — ~60px on a 1440px board — of which the same
+// 12px handle is a fifth. At that size the rule stops protecting anything and
+// starts eating clicks: the operator presses the bar, nothing moves, nothing
+// happens, and there is no way to tell which fifth of the bar was to blame.
+//
+// So on a closure the only question is whether the pointer MOVED. A press that
+// never crossed the threshold is a click, wherever on the bar it landed; one
+// that did is a drag, and the release commits it.
+export function closureDragEndAction(activated: boolean): "open" | "confirm" {
+  return activated ? "confirm" : "open";
+}
+
 // The five operations a move/resize can represent (§2). Pure: derives the
 // operation purely from before/after so the pill, the dialog and the server
 // agree. "none" means nothing actually changed.

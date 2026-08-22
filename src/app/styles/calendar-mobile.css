@@ -386,24 +386,50 @@
   white-space: nowrap;
   min-width: 0;
 }
-/* The closure block is a SIGN, not a control: it is absolutely positioned over
-   the cells it spans, so without this it would swallow the tap on its middle
-   34px of a 50px row and the cell's toast would fire only from the 8px strips
-   above and below it — the same tap answering two different ways depending on
-   how high the finger landed. The cell underneath owns the tap and names the
-   closure in a toast; this element has nothing to handle. (`title` goes with
-   it, which costs nothing: a touch device never showed that tooltip anyway.) */
+/* THE closure block, and the reason it is shaped like this.
+
+   It used to be `pointer-events: none` — a SIGN — because a 34px box floating in
+   a 50px row swallows the tap on its middle and lets the 8px strips above and
+   below fall through to the cell: one finger, two answers, decided by height.
+   True symptom, wrong cure. Handing the whole row to the cell meant the bar's
+   own trailing half answered as a cell — and a bar is drawn MID-CELL to
+   MID-CELL while a cell is a whole DATE, so that half sits over the checkout
+   date's cell, which the room is FREE on. A finger there opened the new-booking
+   wizard. A one-night closure is half trailing overhang; a long lease clipped at
+   both window edges has none at all, which is exactly the difference the owner
+   saw between two taps on the same board.
+
+   So: the CONTROL is the full row height (top/bottom 0 — nothing can fall
+   through above or below it, because there is no above or below), and the 34px
+   dashed bar is a child centred inside it. That also makes the target 50px tall
+   rather than 34, which is what the 44px touch minimum asks for. */
 .cb-m-block {
   position: absolute;
-  pointer-events: none;
-  top: 8px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+  z-index: 1;
+}
+/* a physically unsellable room is silent everywhere — the button still consumes
+   the touch (nothing beneath it may answer instead) and does nothing with it */
+.cb-m-block:disabled {
+  cursor: default;
+}
+.cb-m-block-bar {
+  flex: 1;
+  min-width: 0;
   height: 34px;
   border-radius: 9px; /* ds-allow: reference block radius */
   border: 1.5px dashed;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1;
 }
 
 /* ---------- legend + hint ---------- */
