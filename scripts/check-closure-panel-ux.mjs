@@ -54,7 +54,10 @@ writeFileSync(
       rootDir: join(ROOT, "src"), outDir: out,
       typeRoots: [join(ROOT, "node_modules/@types")], types: ["node"],
     },
-    include: [join(ROOT, "src/lib/closures/categories.ts")],
+    include: [
+      join(ROOT, "src/lib/closures/categories.ts"),
+      join(ROOT, "src/lib/closures/occupancy.ts"),
+    ],
   }),
 );
 execSync(`npx tsc --project ${join(tmp, "tsconfig.json")}`, { cwd: ROOT, stdio: "inherit" });
@@ -67,6 +70,7 @@ Module._resolveFilename = function (request, ...rest) {
   return origResolve.call(this, request, ...rest);
 };
 const { closureMinEnd, closureLastNight } = req(join(out, "lib/closures/categories.js"));
+const { pickNight } = req(join(out, "lib/closures/occupancy.js"));
 
 let n = 0;
 const ok = (msg) => { n++; console.log(`✓ ${n}. ${msg}`); };
@@ -174,7 +178,12 @@ function braceBlock(src, marker) {
 }
 
 // ============================================================
-// 3. "עד תאריך" can never be on or before "מתאריך"
+// 3. A closure can never be zero nights — now proven on the CALENDAR
+//
+//    The rule did not change; the control did. There is no "עד תאריך (לא
+//    כולל)" field left to floor, because the operator no longer types a
+//    checkout boundary: they click NIGHTS, and the panel converts the last one
+//    into the stored exclusive end through the same one function.
 // ============================================================
 {
   // ---- the floor is a REAL function and it is run here, not described ----
@@ -189,39 +198,69 @@ function braceBlock(src, marker) {
   assert.equal(closureLastNight(closureMinEnd("2026-08-21")), "2026-08-21",
     "the floor and the display rule are inverses: the shortest legal closure's last night IS its start");
 
+  // ---- and the pick transition can never produce a range shorter than that ----
+  const one = pickNight(null, "2026-08-21");
+  assert.deepEqual(one, { start: "2026-08-21", lastNight: "2026-08-21", pending: true },
+    "the FIRST click opens a one-night range — never an empty one waiting for a second date");
+  assert.equal(closureMinEnd(one.lastNight), "2026-08-22",
+    "…which stores as exactly one night");
+  assert.deepEqual(pickNight(one, "2026-08-25"),
+    { start: "2026-08-21", lastNight: "2026-08-25", pending: false },
+    "the SECOND click sets the last night, forward of the start");
+  assert.deepEqual(pickNight(one, "2026-08-18"),
+    { start: "2026-08-18", lastNight: "2026-08-18", pending: true },
+    "a click BEHIND the start re-anchors instead of producing an inverted range — the zero/negative range the old two-field form could hold has no representation here");
+  assert.deepEqual(pickNight({ start: "2026-08-21", lastNight: "2026-08-25", pending: false }, "2026-08-30"),
+    { start: "2026-08-30", lastNight: "2026-08-30", pending: true },
+    "a click on a COMPLETE range starts a new one — so a range is only ever built forward");
+
   // ---- and the form is the caller, in both directions ----
-  assert.match(panel, /const minEnd = startDate \? closureMinEnd\(startDate\) : ""/,
-    "the end field's floor comes from that one function — the '+1 night' arithmetic is not retyped in the form");
-  assert.match(panel, /type="date"[\s\S]{0,160}?value=\{endDate\}\s*min=\{minEnd\}/,
-    "…and the end field carries it as `min`, so the picker cannot offer an illegal day at all");
-  assert.doesNotMatch(panel, /min=\{startDate\}/,
-    "the floor is never the start date itself — that still permits a zero-night closure the server will reject");
-  assert.match(panel, /if \(v && endDate && endDate <= v\) setEndDate\(closureMinEnd\(v\)\)/,
-    "…and moving the START past the end REPAIRS the end instead of leaving a range the save will bounce");
-  assert.match(panel, /value=\{startDate\}[\s\S]{0,120}?onChange=\{\(e\) => pickStart\(e\.target\.value\)\}/,
-    "the start field goes through that repair, not straight to the setter");
+  assert.match(panel, /setEndDate\(closureMinEnd\(next\.lastNight\)\)/,
+    "the picked last night becomes the stored EXCLUSIVE end through that one function — the '+1 night' arithmetic is not retyped in the form");
+  assert.match(panel, /setEndDate\(closureMinEnd\(p\.lastNight\)\)/,
+    "…and so does a preset chip's range");
+  assert.match(panel, /const lastNight = endDate && endDate > startDate \? closureLastNight\(endDate\) : ""/,
+    "…and it is read back through the INVERSE function, so the calendar paints the last closed night and never the boundary after it");
+  assert.doesNotMatch(panel, /addDays\(\s*(endDate|startDate|lastNight)/,
+    "no call site does the boundary arithmetic by hand");
 
   // the schema still owns the rule — the UI is the courtesy, not the gate
   const validation = read("src/lib/validation/reservation.ts");
   assert.match(validation, /endDate > s\.startDate/,
-    "closureSchema/closureUpdateSchema still enforce at-least-one-night server-side — the form's repair is UX, and UX is never the guard");
+    "closureSchema/closureUpdateSchema still enforce at-least-one-night server-side — the form's shape is UX, and UX is never the guard");
 
-  ok("the end date is floored and self-repairing in the UI, proven by running closureMinEnd across month, year and leap boundaries — with the server rule untouched");
+  ok("a zero-night closure has no representation in the picker at all, proven by running the pick transition and closureMinEnd across month, year and leap boundaries — with the server rule untouched");
 }
 
 // ============================================================
-// 4. A date field answers its whole surface, not just its indicator glyph
+// 4. There is no native date field left to click in the wrong place
+//
+//    Defect 3 was "clicking the box does nothing; only the little indicator
+//    glyph opens the picker". The owner's ruling replaced the control rather
+//    than repairing it: <input type="date"> is BANNED in this panel — its
+//    indicator lands on the wrong side in RTL, it shows no conflicts, and
+//    "עד תאריך לא כולל" is not a thing an operator thinks in. A control that
+//    does not exist cannot answer in one place out of ten.
 // ============================================================
 {
-  assert.match(panel, /const openPicker = \(e: React\.MouseEvent<HTMLInputElement>\) => \{\s*e\.currentTarget\.showPicker\?\.\(\);/,
-    "the form opens the native picker through showPicker() — the platform's own opener, so nothing about the field's look is reimplemented");
-  const dateInputs = panel.match(/type="date"[\s\S]{0,220}?\/>/g) ?? [];
-  assert.equal(dateInputs.length, 2, "the form has exactly the two date fields this claim is about");
-  for (const [i, field] of dateInputs.entries()) {
-    assert.match(field, /onClick=\{openPicker\}/,
-      `date field ${i + 1} of 2 opens the picker from anywhere in the box — clicking the field used to answer only on the indicator glyph`);
-  }
-  ok("both date fields open their picker from the whole field, through the platform's own opener");
+  assert.doesNotMatch(panel, /type="date"/,
+    "the closure panel carries NO native date input — the dates come off the calendar");
+  assert.doesNotMatch(panel, /showPicker/,
+    "…and therefore no native-picker opener to route a click through");
+  assert.match(panel, /<ClosureCalendar/,
+    "the calendar IS the date control");
+  const cal = stripComments(read("src/app/(dashboard)/calendar/ClosureCalendar.tsx"));
+  assert.match(cal, /onClick=\{\(\) => onPick\(d\)\}/,
+    "…and every day in it is a real button with the whole cell as its target, not a glyph");
+  assert.match(cal, /const cls = \[\s*"cp-day",/,
+    "…dressed by the panel's own stylesheet, where the 44px cell height is declared");
+  assert.match(cal, /className=\{cls\}/, "…and that is the class the cell actually wears");
+  const css = read("src/app/styles/closure-panel.css");
+  const dayAt = css.indexOf("  .cp-day {");
+  assert.ok(dayAt > -1, "the day cell's rule was located");
+  assert.match(css.slice(dayAt, css.indexOf("}", dayAt)), /height:\s*44px/,
+    "…and it is 44px tall — iron rule #6, on the control an operator taps most in this panel");
+  ok("the panel has no native date field to mis-click: the control is a calendar of 44px day buttons");
 }
 
 console.log(`\nAll ${n} closure-panel claim groups hold.`);
