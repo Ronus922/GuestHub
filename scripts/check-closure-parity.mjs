@@ -325,10 +325,12 @@ function callbackBody(src, name) {
   assert.match(screen, /onClosureTap=\{\(closure, room\) =>[\s\S]{0,200}?closureEditOf\(closure, room\)/,
     "…and a tap on the mobile board does the same, through the same translation");
   const mobile = stripComments(read(`${CAL}/MobileCalendar.tsx`));
-  assert.match(mobile, /onClosureTap\(cover, room\)/,
+  assert.match(mobile, /tapClosure\(cover, room\)/,
     "the mobile tap passes the closure covering that night");
-  assert.match(read("src/app/styles/calendar-mobile.css"), /\.cb-m-block \{[^}]*pointer-events: none/,
-    "the mobile closure bar stays a SIGN: the cell beneath owns the whole 50px row, so one finger gets one answer");
+  // one finger, one answer — but now because the bar and the cell CALL THE SAME
+  // FUNCTION, not because one of them was made inert. See check:closure-bar-hit.
+  assert.match(mobile, /onTap=\{roomSellable \? \(\) => tapClosure\(c, room\) : undefined\}/,
+    "…and the bar itself answers through that same function, over exactly the pixels it is drawn on");
   ok("one panel, one closure, both boards");
 }
 

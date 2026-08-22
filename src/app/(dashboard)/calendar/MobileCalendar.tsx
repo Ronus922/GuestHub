@@ -130,6 +130,18 @@ export function MobileCalendar({
     [closuresByRoom],
   );
 
+  // ONE answer to "a closure was touched", whichever surface caught the touch —
+  // the bar itself or a cell it covers. Both call this, so the two can never
+  // answer differently: that is the entire defect class this file keeps hitting.
+  const tapClosure = useCallback(
+    (c: CalendarClosure, room: CalendarRoom) => {
+      if (canClose) onClosureTap(c, room);
+      // no rooms.edit → nothing to open, so the canonical sentence stays
+      else toast.error(closureBlockMessage(c.category, c.end_date));
+    },
+    [canClose, onClosureTap],
+  );
+
   return (
     // dir pinned like the desktop board (.cb-calwrap): the bars' insetInlineStart
     // and the header/cell flex order are GEOMETRY — they must never depend on the
@@ -237,27 +249,34 @@ export function MobileCalendar({
                           // wording lives — so this toast cannot drift from what the
                           // desktop gate and the server say.
                           //
-                          // The closure branch moved from "explain the block" to
-                          // "open the block": a closure is an object an operator
-                          // edits and lifts, exactly like a reservation, and this
-                          // is the only tap target it has on a phone. The bar
-                          // itself stays pointer-events:none (see .cb-m-block) so
-                          // the cell UNDER it owns the whole 50px row — otherwise
-                          // the same finger would get two different answers
-                          // depending on how high it landed. Without rooms.edit
-                          // there is nothing to open, so the sentence stays.
+                          // The closure branch is "open the block", not "explain
+                          // it": a closure is an object an operator edits and
+                          // lifts, exactly like a reservation. It answers through
+                          // tapClosure — the SAME function the bar itself calls.
                           //
-                          // canCreate no longer gates the whole cell either: it
-                          // is the permission to make a BOOKING, and it was
-                          // silently swallowing the closure's tap for anyone who
-                          // could close a room but not sell one.
+                          // This cell no longer owns the bar's pixels, and THAT
+                          // is the fix. A bar is drawn MID-CELL to MID-CELL
+                          // (barGeometry, so a checkout and a same-day check-in
+                          // can coexist) while a cell is a whole DATE, so both
+                          // ends of every bar hang half a column past the dates
+                          // the closure actually covers. While the bar was inert,
+                          // that trailing half sat over the CHECKOUT date's cell
+                          // — a date the room is free — and a finger landing
+                          // there opened the NEW-BOOKING wizard. A one-night
+                          // closure is HALF trailing overhang, which is why a
+                          // short bar misfired while a long lease, clipped at
+                          // both window edges (start 0%, end 100%, no overhang at
+                          // all), never did.
+                          //
+                          // canCreate does not gate the whole cell: it is the
+                          // permission to make a BOOKING, and it was silently
+                          // swallowing the closure's tap for anyone who could
+                          // close a room but not sell one.
                           onClick={
                             !roomSellable
                               ? undefined
                               : cover
-                                ? canClose
-                                  ? () => onClosureTap(cover, room)
-                                  : () => toast.error(closureBlockMessage(cover.category, cover.end_date))
+                                ? () => tapClosure(cover, room)
                                 : !canCreate
                                   ? undefined
                                   : closed
@@ -269,12 +288,23 @@ export function MobileCalendar({
                         </div>
                       );
                     })}
-                    {/* closures — dashed neutral block (non-interactive) */}
+                    {/* closures — the dashed neutral block, and a tap target of
+                        its own over exactly the pixels it is drawn on */}
                     {(closuresByRoom.get(room.id) ?? [])
                       .filter((c) => inWindow(c.start_date, c.end_date))
                       .map((c) => (
-                      <ClosureBlock key={c.id} closure={c} from={data.from} days={days} />
-                    ))}
+                        <ClosureBlock
+                          key={c.id}
+                          closure={c}
+                          from={data.from}
+                          days={days}
+                          /* AXIS A at ROW level still outranks everything: on a
+                             room that cannot be sold at all the whole row is
+                             silent, and a bar drawn on it is a mark like any
+                             other mark in that row. */
+                          onTap={roomSellable ? () => tapClosure(c, room) : undefined}
+                        />
+                      ))}
                     {/* reservation bars */}
                     {(staysByRoom.get(room.id) ?? [])
                       .filter((stay) => inWindow(stay.check_in, stay.check_out))
@@ -343,32 +373,62 @@ function StayBarMobile({
   );
 }
 
+// The closure block. It used to be a pointer-events:none SIGN, on the argument
+// that an absolutely positioned 34px box inside a 50px row would swallow the tap
+// on its middle and let the 8px strips above and below fall through to the cell
+// — one finger, two answers, by height. That argument was right about the
+// symptom and wrong about the cure: handing the whole row to the cell meant the
+// bar's own trailing half — which hangs over the CHECKOUT date's cell, a date
+// the room is free — answered as an empty cell and opened the booking wizard.
+//
+// So the block is a control, and its hit area is the FULL ROW HEIGHT: top:0,
+// bottom:0, with the 34px visual centred inside it. Nothing above or below the
+// bar can fall through any more, because there is no "above or below" left. It
+// is also the only way this target clears the 44px touch minimum — the drawn
+// bar is 34px tall.
+//
+// `disabled` carries the row-level physical axis: a room that cannot be sold at
+// all is silent everywhere, so the button consumes the touch and answers
+// nothing, exactly as the cell beneath it does.
 function ClosureBlock({
   closure,
   from,
   days,
+  onTap,
 }: {
   closure: CalendarClosure;
   from: DateOnly;
   days: number;
+  /** absent = this row is physically unsellable, so the bar is a mark, not a control */
+  onTap?: () => void;
 }) {
   const geo = barGeometry(from, days, closure.start_date, closure.end_date);
   return (
-    <div
+    <button
+      type="button"
       className="cb-m-block"
+      disabled={!onTap}
+      aria-label={`סגירת חדר · ${closure.reason || "סגור"}`}
       title={closure.reason || "סגור"}
+      onClick={onTap}
       style={{
         // same physical-first fallback as StayBarMobile above
         right: `${geo.start * 100}%`,
         insetInlineStart: `${geo.start * 100}%`,
         width: `${geo.width * 100}%`,
-        background: NEUTRAL_STATUS.bg,
-        borderColor: NEUTRAL_STATUS.bd,
-        color: NEUTRAL_STATUS.tx,
       }}
     >
-      <Icon name="circle-slash" size={13.5} />
-    </div>
+      <span
+        className="cb-m-block-bar"
+        style={{
+          background: NEUTRAL_STATUS.bg,
+          borderColor: NEUTRAL_STATUS.bd,
+          color: NEUTRAL_STATUS.tx,
+        }}
+      >
+        <Icon name="circle-slash" size={13.5} />
+      </span>
+    </button>
   );
 }
 
