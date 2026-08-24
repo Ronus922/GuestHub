@@ -556,10 +556,10 @@ export function EmployeeSidePanel({
               {detailsSection}
               {user ? (
                 // Read-only "מידע נוסף" per the edit reference — only fields the
-                // schema actually has (last sign-in from auth.users, join date).
+                // schema actually has (last activity from the audit trail, join date).
                 <Card title="מידע נוסף" icon="info">
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <InfoItem label="התחברות אחרונה" value={fmtMoment(user.last_sign_in_at)} />
+                    <InfoItem label="נראה לאחרונה" value={fmtMoment(user.last_seen_at)} />
                     <InfoItem label="הצטרפות" value={fmtMoment(user.created_at)} />
                   </div>
                 </Card>
@@ -597,7 +597,7 @@ const infoDateFmt = new Intl.DateTimeFormat("he-IL", {
 });
 
 function fmtMoment(iso: string | null): string {
-  if (!iso) return "לא התחבר";
+  if (!iso) return "לא נראה עדיין";
   const d = new Date(iso);
   return `${infoTimeFmt.format(d)} · ${infoDateFmt.format(d)}`;
 }

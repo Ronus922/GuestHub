@@ -27,9 +27,11 @@ const dateFmt = new Intl.DateTimeFormat("he-IL", {
   timeZone: "Asia/Jerusalem",
 });
 
-// "20:11 · 03.07.26" per the reference; "לא התחבר" when never signed in.
-function lastLogin(iso: string | null) {
-  if (!iso) return <span className="text-faint">לא התחבר</span>;
+// "20:11 · 03.07.26" per the reference; "לא נראה עדיין" when the user has never
+// authored an audit row. This is last ACTIVITY, not last sign-in — auth.users is
+// unreadable to guesthub_app (RLS on, zero policies), see page.tsx.
+function lastSeen(iso: string | null) {
+  if (!iso) return <span className="text-faint">לא נראה עדיין</span>;
   const d = new Date(iso);
   return (
     <bdi className="ltr-num text-text2">
@@ -123,25 +125,10 @@ export function StaffTable({
           </Badge>
         ),
     }),
-    col.accessor("last_sign_in_at", {
-      header: "כניסה אחרונה",
+    col.accessor("last_seen_at", {
+      header: "נראה לאחרונה",
       enableSorting: false,
-      cell: (c) => lastLogin(c.getValue()),
-    }),
-    col.display({
-      id: "actions",
-      header: "",
-      cell: (c) =>
-        canUpdate ? (
-          <button
-            type="button"
-            onClick={() => onEdit(c.row.original)}
-            title="עריכה"
-            className="icon-btn"
-          >
-            <Icon name="edit" size={20} label="עריכה" />
-          </button>
-        ) : null,
+      cell: (c) => lastSeen(c.getValue()),
     }),
   ];
 
@@ -186,16 +173,10 @@ export function StaffTable({
                     ),
                   },
                   { label: "טלפון", value: <bdi className="ltr-num">{u.phone || "—"}</bdi> },
-                  { label: "כניסה אחרונה", value: lastLogin(u.last_sign_in_at), wide: true },
+                  { label: "נראה לאחרונה", value: lastSeen(u.last_seen_at), wide: true },
                 ]}
-                actions={
-                  canUpdate ? (
-                    <button type="button" onClick={() => onEdit(u)} className="btn btn-secondary btn-sm">
-                      <Icon name="edit" size={20} label="" />
-                      עריכה
-                    </button>
-                  ) : undefined
-                }
+                onActivate={canUpdate ? () => onEdit(u) : undefined}
+                activateLabel={canUpdate ? `עריכת ${u.full_name ?? u.username}` : undefined}
               />
             ))}
           </MobileRecordList>
@@ -238,11 +219,26 @@ export function StaffTable({
           </thead>
           <tbody>
             {table.getRowModel().rows.map((row) => (
+              // The row IS the affordance — no pencil column. role/tabIndex/keydown
+              // keep it operable by keyboard, same shape as ReservationRow.
               <tr
                 key={row.id}
+                {...(canUpdate
+                  ? {
+                      role: "button",
+                      tabIndex: 0,
+                      onClick: () => onEdit(row.original),
+                      onKeyDown: (e: React.KeyboardEvent<HTMLTableRowElement>) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onEdit(row.original);
+                        }
+                      },
+                    }
+                  : {})}
                 className={`border-b border-line transition-colors last:border-0 hover:bg-hover ${
-                  row.original.is_active ? "" : "opacity-60"
-                }`}
+                  canUpdate ? "cursor-pointer" : ""
+                } ${row.original.is_active ? "" : "opacity-60"}`}
               >
                 {row.getVisibleCells().map((cell) => (
                   <td key={cell.id} className="px-4 py-3 align-middle">

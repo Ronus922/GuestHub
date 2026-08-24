@@ -21,10 +21,17 @@ export default async function StaffPage() {
     SELECT u.id, u.full_name, u.username, u.email, u.phone, u.is_active,
            u.allow_google_auth, u.role_id, r.key AS role_key, r.name AS role_name,
            u.created_at,
-           au.last_sign_in_at
+           seen.last_seen_at
     FROM guesthub.users u
     LEFT JOIN guesthub.roles r ON r.id = u.role_id
-    LEFT JOIN auth.users au ON au.id = u.auth_user_id
+    -- "נראה לאחרונה" comes from the audit trail, NOT auth.users: RLS is enabled
+    -- on auth.users with zero policies, so guesthub_app reads it as empty and the
+    -- old LEFT JOIN handed every row a NULL last_sign_in_at.
+    LEFT JOIN LATERAL (
+      SELECT max(al.created_at) AS last_seen_at
+      FROM guesthub.audit_logs al
+      WHERE al.user_id = u.id AND al.tenant_id = u.tenant_id
+    ) seen ON true
     WHERE u.tenant_id = ${actor.tenantId}
     ORDER BY u.full_name NULLS LAST, u.username`;
 
