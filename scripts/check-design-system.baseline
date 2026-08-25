@@ -1,0 +1,50 @@
+# ============================================================
+# check:design — declared-frozen violations (D159)
+#
+# WHY THIS FILE EXISTS. Every entry below is a real GUIDELINES.md violation in
+# src/app/housekeeping/my-tasks/MyTasksScreen.tsx. They are NOT forgiven and NOT
+# exempt: they are recorded because the module they live in is frozen by owner
+# decision in STATE.md —
+#
+#     "מודול ניקיון/משימות מוקפא לפי החלטת הבעלים — ממתין לאיפיון UI מהבעלים;
+#      לא לגעת עד הודעה חדשה."
+#
+# — and all six were born with the file (b82eac2, 2026-07-21) while the guard was
+# already live, so they are original debt, not a regression. Fixing them means
+# editing a frozen module; leaving the suite permanently red means the guard stops
+# being a signal. This file is the third option: the debt is written down, named,
+# and counted, and everything else stays enforced. See DECISIONS.md D159.
+#
+# THE RULE FOR THIS FILE. No entry may be ADDED without an owner decision — a new
+# entry is a new licence to violate the design system, which is exactly what the
+# guard exists to prevent. Entries may only be REMOVED, as the violations are
+# fixed. The check enforces the ratchet in both directions:
+#
+#   * an entry that matches nothing FAILS the run ("stale baseline entry")
+#   * a violation with no entry FAILS the run, including a NEW violation of the
+#     same rule in the same file — one entry suppresses exactly ONE instance
+#
+# There is deliberately NO way for a run to write to this file: no flag, no
+# regeneration path, no --update-baseline. It is hand-edited or it is not edited.
+#
+# EXIT PLAN. When the owner respecifies the housekeeping UI, the violations are
+# fixed with that work and their lines are deleted from here. When the last line
+# goes, delete the file — the check treats a missing baseline as an empty one.
+#
+# FORMAT — one violation instance per line, four fields:
+#
+#     <rule> | <file> | <detail> | <source line, comments stripped, spaces collapsed>
+#
+# The fourth field is what makes an entry identify ONE instance rather than a
+# whole file+rule bucket: the two text-base violations below are told apart by it
+# and by nothing else. It is matched on content, never on line number, so the
+# baseline survives unrelated shifts in the file and goes stale the moment the
+# offending line itself is edited.
+# ============================================================
+
+radius | src/app/housekeeping/my-tasks/MyTasksScreen.tsx | rounded-[22px] — not an approved radius | className={`rounded-[22px] border border-line border-r-4 bg-surface p-5 shadow-sm ${ACCENT[task.status] ?? "border-r-slate-300"} ${
+font-size | src/app/housekeeping/my-tasks/MyTasksScreen.tsx | text-lg — resolves outside the §2 scale | <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-primary-050 text-lg font-bold text-primary">
+font-size | src/app/housekeeping/my-tasks/MyTasksScreen.tsx | text-base — resolves outside the §2 scale | <p className="text-base font-bold text-ink">{task.title ?? (task.roomNumber ? `חדר ${task.roomNumber}` : "משימה")}</p>
+font-size | src/app/housekeeping/my-tasks/MyTasksScreen.tsx | text-3xl — resolves outside the §2 scale | <p className="text-3xl font-extrabold tabular-nums text-primary" dir="ltr">
+font-size | src/app/housekeeping/my-tasks/MyTasksScreen.tsx | text-[11px] — not in the §2 scale | <p className="text-[11px] text-faint">שעת יציאה</p>
+font-size | src/app/housekeeping/my-tasks/MyTasksScreen.tsx | text-base — resolves outside the §2 scale | className={`mt-4 min-h-[56px] w-full rounded-xl px-4 text-base font-bold text-white disabled:opacity-60 ${
