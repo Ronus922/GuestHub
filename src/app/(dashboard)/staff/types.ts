@@ -10,8 +10,11 @@ export type StaffUser = {
   role_key: string | null;
   role_name: string | null;
   created_at: string;
-  // from auth.users (LEFT JOIN) — null when the user never signed in / has no auth identity
-  last_sign_in_at: string | null;
+  // newest guesthub.audit_logs row authored by this user. NOT auth.users —
+  // RLS is on there with zero policies, so guesthub_app reads it as empty and
+  // every last_sign_in_at came back NULL ("לא התחבר" for everyone, always).
+  // This is last ACTIVITY: browsing alone writes no audit row.
+  last_seen_at: string | null;
 };
 
 export type RoleOption = {
