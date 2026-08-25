@@ -4,6 +4,11 @@
 // Idempotent: truncates the guesthub schema, recreates the 5 Supabase auth users,
 // and regenerates all domain data. Only touches the `guesthub` schema + its own auth users.
 //
+// Refuses to run against a database that holds REAL DATA: any guesthub.users row
+// whose email this seed does not itself create (CHECK A), or the production
+// tenant (CHECK B). Both ask the database, not the environment, and neither can
+// be overridden — see "live-data guards" below.
+//
 // super_admin bootstrap: the `admin` user (admin@ginot.co.il) is part of this seed —
 // after any DB reset/reseed, run `pnpm db:seed` and log in as admin / SEED_PASSWORD.
 // This is the only sanctioned way to (re)create a super_admin: the seed runs server-side
@@ -84,6 +89,15 @@ const overlaps = (aIn, aOut, bIn, bOut) => aIn < bOut && aOut > bIn;
 // approved disposable dev/test DB. Default (no env) = BLOCKED.
 export const PROD_MARKERS = ["bios-vps", "guesthub.bios.co.il", "db.bios.co.il"];
 
+// The live production tenant. Used by CHECK B below as a LIVE-DATA check: the
+// seed asks the target database whether this row is there, instead of trusting
+// an env string. PROD_MARKERS can silently stop matching — the marker currently
+// in play is a substring of the connection user, so a pooler swap, a different
+// connection method or a new domain (stayme.co.il matches nothing here) makes
+// the env guard pass against production. A tenant row cannot vanish that way.
+// Deliberately NOT overridable: no flag, no env var, no escape hatch.
+export const PROD_TENANT_ID = "68139d06-58c4-4043-b256-4691f83e1556";
+
 // Parse a libpq URL into safe identifiers only — never returns the password.
 export function parseDbTarget(url) {
   try {
@@ -160,9 +174,115 @@ export function ownerUserRow(tenantId, superAdminRoleId) {
   };
 }
 
+// ---------- the accounts this seed creates ----------
+// Module scope (not inside main) so the live-data guard below can derive its
+// allowlist from the very list the seed inserts — one source of truth, so a new
+// seed account can never be mistaken for a real one, or vice versa.
+export const SEED_USER_DEFS = [
+  { username: "admin", full_name: "מנהל-על", email: "admin@ginot.co.il", role: "super_admin", phone: "050-1000000" },
+  { username: "manager", full_name: "מנהל המלון", email: "manager@ginot.co.il", role: "manager", phone: "050-1000001" },
+  { username: "reception", full_name: "פקידת קבלה", email: "reception@ginot.co.il", role: "receptionist", phone: "050-1000002" },
+  { username: "staff", full_name: "איש צוות", email: "staff@ginot.co.il", role: "staff", phone: "050-1000003" },
+  { username: "cleaner", full_name: "עובד ניקיון", email: "cleaner@ginot.co.il", role: "cleaner", phone: "050-1000004" },
+  { username: "maintenance", full_name: "עובד תחזוקה", email: "maintenance@ginot.co.il", role: "maintenance", phone: "050-1000005" },
+];
+// Every email the seed itself (re)creates: the role users + the owner mapping.
+export const SEED_EMAILS = [...SEED_USER_DEFS.map((u) => u.email), OWNER.email];
+
+// ---------- live-data guards (fail-closed, NOT overridable) ----------
+// The env guard above reads strings only; it never looks at the database it is
+// about to destroy. These two ask the database itself, and each fails on its own:
+//
+//   CHECK A  any guesthub.users row this seed does not create would be TRUNCATEd
+//            and never recreated. That already happened to a real staff account:
+//            its auth.users row survived in GoTrue, so the person could still
+//            authenticate while the actor lookup found nothing — locked out
+//            silently. Categorical by design: the check protects EVERY account
+//            the seed does not own; no address is named here or special-cased.
+//   CHECK B  the production tenant is present (PROD_TENANT_ID above).
+//
+// Both refuse BEFORE the TRUNCATE, print their own distinct reason, and exit(1).
+// A database that cannot be read is treated as "refuse", never as "pass".
+// There is no flag and no env var to bypass either one.
+
+// Never let a driver error carry a connection string into the log.
+const safeErrText = (err) =>
+  String(err?.message ?? err).replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[redacted-connection-string]");
+
+// A fresh install has no schema/table yet — nothing to destroy, so the check passes.
+const NO_SUCH_RELATION = new Set(["42P01", "3F000"]);
+
+// Pure: the emails present in the target DB that this seed does NOT create.
+// Case-insensitive. A blank/NULL email counts as foreign — every seed account
+// has an address, so such a row is someone else's and refusing is the safe read.
+export function foreignEmails(emails) {
+  const own = new Set(SEED_EMAILS.map((e) => e.toLowerCase()));
+  return emails
+    .map((e) => String(e ?? "").trim())
+    .filter((e) => !own.has(e.toLowerCase()));
+}
+
+// CHECK A — refuse when the target DB holds accounts the seed does not recreate.
+// `client` is the postgres tag; `exit` is injectable so tests can assert without dying.
+export async function assertNoForeignUsers(client, exit = (c) => process.exit(c)) {
+  let rows;
+  try {
+    rows = await client`SELECT email FROM guesthub.users`;
+  } catch (err) {
+    if (NO_SUCH_RELATION.has(err?.code)) {
+      console.log("✓ live-user check — guesthub.users does not exist yet (fresh install), nothing to destroy.");
+      return true;
+    }
+    console.error("✗ DESTRUCTIVE SEED BLOCKED (fail-closed) — could not read guesthub.users, so it is unknown whose data would be destroyed:");
+    console.error(`  - ${err?.code ?? "error"}: ${safeErrText(err)}`);
+    exit(1);
+    return false;
+  }
+  const foreign = foreignEmails(rows.map((r) => r.email));
+  if (foreign.length > 0) {
+    console.error("✗ DESTRUCTIVE SEED BLOCKED — the target database holds real user accounts that this seed would TRUNCATE and never recreate:");
+    for (const e of foreign) console.error(`  - ${e || "(a user row with no email address)"}`);
+    console.error("These accounts are not part of the seed. Truncating them leaves their auth identity alive with no application user — they can still sign in and are then locked out silently.");
+    console.error("Reseed only a disposable database whose users are the seed's own accounts.");
+    exit(1);
+    return false;
+  }
+  console.log(`✓ live-user check — ${rows.length} user row(s), all seed-owned.`);
+  return true;
+}
+
+// CHECK B — refuse when the production tenant is present in the target DB.
+export async function assertNoProductionTenant(client, exit = (c) => process.exit(c)) {
+  let rows;
+  try {
+    rows = await client`SELECT id FROM guesthub.tenants WHERE id = ${PROD_TENANT_ID} LIMIT 1`;
+  } catch (err) {
+    if (NO_SUCH_RELATION.has(err?.code)) {
+      console.log("✓ production-tenant check — guesthub.tenants does not exist yet (fresh install).");
+      return true;
+    }
+    console.error("✗ DESTRUCTIVE SEED BLOCKED (fail-closed) — could not read guesthub.tenants, so it is unknown whether this is production:");
+    console.error(`  - ${err?.code ?? "error"}: ${safeErrText(err)}`);
+    exit(1);
+    return false;
+  }
+  if (rows.length > 0) {
+    console.error("✗ DESTRUCTIVE SEED BLOCKED — the target database contains PRODUCTION data:");
+    console.error(`  - the production tenant ${PROD_TENANT_ID} is present`);
+    console.error("This check reads the database itself because the env markers can silently stop matching. It is not overridable.");
+    exit(1);
+    return false;
+  }
+  console.log("✓ production-tenant check — the production tenant is not in this database.");
+  return true;
+}
+
 // ---------- seed ----------
 async function main() {
   assertSafeToSeed(); // fail-closed — exits before any TRUNCATE unless target is an approved dev/test DB
+  // Live-data guards — each exits(1) before any TRUNCATE; DB errors refuse too.
+  if (!(await assertNoForeignUsers(sql))) return;
+  if (!(await assertNoProductionTenant(sql))) return;
   console.log("→ truncating guesthub schema…");
   await sql.unsafe(`TRUNCATE
     guesthub.tenants, guesthub.roles, guesthub.permissions, guesthub.role_permissions,
@@ -293,16 +413,8 @@ async function main() {
   await sql`INSERT INTO guesthub.role_permissions ${sql(rpRows, "role_id", "permission_id")}`;
 
   // --- users (5, one per key role incl. super_admin) + Supabase auth ---
-  const userDefs = [
-    { username: "admin", full_name: "מנהל-על", email: "admin@ginot.co.il", role: "super_admin", phone: "050-1000000" },
-    { username: "manager", full_name: "מנהל המלון", email: "manager@ginot.co.il", role: "manager", phone: "050-1000001" },
-    { username: "reception", full_name: "פקידת קבלה", email: "reception@ginot.co.il", role: "receptionist", phone: "050-1000002" },
-    { username: "staff", full_name: "איש צוות", email: "staff@ginot.co.il", role: "staff", phone: "050-1000003" },
-    { username: "cleaner", full_name: "עובד ניקיון", email: "cleaner@ginot.co.il", role: "cleaner", phone: "050-1000004" },
-    { username: "maintenance", full_name: "עובד תחזוקה", email: "maintenance@ginot.co.il", role: "maintenance", phone: "050-1000005" },
-  ];
   const userRows = [];
-  for (const u of userDefs) {
+  for (const u of SEED_USER_DEFS) {
     const authId = SKIP_AUTH
       ? localAuthId(u.email)
       : await upsertAuthUser(u.email, { full_name: u.full_name, tenant: "ginot-hayam" });
