@@ -584,6 +584,15 @@ export async function runBeds24AriReadback(
     // real but it can wait, and merging the two into one hedged sentence would
     // make the urgent half unreadable. The exact split always travels in the
     // context, so nothing is lost by leading with the danger.
+    //
+    // Both messages END IN THE ACTION (owner decision, 2026-08-27). A diagnosis
+    // with no instruction makes the operator go looking for one, and the
+    // instruction is the same in both cases — the Full Sync button on THIS
+    // screen (channels/Beds24Section.tsx), which re-states the canonical
+    // calendar to Beds24. The two differ in urgency, not in remedy, and the
+    // wording says so: the oversell is an order, the commercial gap is a
+    // reconciliation ("לגישור"). check:beds24-ari-readback pins BOTH strings
+    // in full, so the guidance cannot quietly fall off again.
     await alertOnce(db, conn, {
       code:
         oversell > 0
@@ -593,9 +602,9 @@ export async function runBeds24AriReadback(
             : "ari_readback_drift",
       message:
         oversell > 0
-          ? `Beds24 מוכר ${oversell} לילות שתפוסים/סגורים אצלנו — סכנת overbooking`
+          ? `Beds24 מוכר ${oversell} לילות שתפוסים/סגורים אצלנו — סכנת overbooking — הרץ סנכרון מלא`
           : commercial > 0
-            ? `Beds24 מוכר ${commercial} לילות שחסומים אצלנו מסחרית (stop-sell או ללא מחיר) — פער מסחרי, לא סכנת double-booking`
+            ? `Beds24 מוכר ${commercial} לילות שחסומים אצלנו מסחרית (stop-sell או ללא מחיר) — פער מסחרי, לא סכנת double-booking — הרץ סנכרון מלא לגישור`
             : `נמצאו ${summary.driftCells} הפרשים בין המלאי שפורסם ל-Beds24 לבין המצב אצלנו`,
       dateFrom: from, dateTo: toInclusive,
       context: {
