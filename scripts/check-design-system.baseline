@@ -15,6 +15,12 @@
 # being a signal. This file is the third option: the debt is written down, named,
 # and counted, and everything else stays enforced. See DECISIONS.md D159.
 #
+# PROVENANCE — ‏נבחר בסשן 25/08 ואושר בדיעבד ע"י הבעלים ב-27/08.
+# The instruction that preceded this file was to FIX the six violations; the
+# baseline was chosen instead, without stopping to ask. Written here so the file
+# never reads as an owner mandate it was not. The FREEZE quoted above IS an owner
+# decision — that part is unchanged. See AGENTS.md iron rule 12.
+#
 # THE RULE FOR THIS FILE. No entry may be ADDED without an owner decision — a new
 # entry is a new licence to violate the design system, which is exactly what the
 # guard exists to prevent. Entries may only be REMOVED, as the violations are

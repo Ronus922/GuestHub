@@ -89,6 +89,7 @@
     "build:worker": "tsc -p tsconfig.worker.json",
     "worker": "node --env-file-if-exists=.env.local scripts/channel-worker.cjs",
     "check:agents-concurrency": "grep -q 'git add -p' AGENTS.md && grep -q 'git add -p' CLAUDE.md || { echo 'Concurrency section missing — a gen-catalog regen wiped it from AGENTS.md; restore from CLAUDE.md and add it to the DevOPS kit template on ai2u-vs1 (DECISIONS D90)'; exit 1; }",
+    "check:agents-rule12": "for f in AGENTS.md CLAUDE.md; do grep -q 'אין החלפה שקטה' \"$f\" && grep -q 'לא הכריע בו' \"$f\" || { echo 'Iron rule 12 (no silent substitution) missing from AGENTS.md and/or CLAUDE.md — a gen-catalog regen wiped it; restore both copies (DECISIONS D159 provenance, AGENTS.md rule 12)'; exit 1; }; done",
     "check:channels-fullsync-ui": "node scripts/check-channels-fullsync-ui.mjs",
     "check:hydration-browser": "node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs",
     "check:status-default": "node scripts/check-status-default.mjs",
