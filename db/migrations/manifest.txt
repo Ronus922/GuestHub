@@ -91,3 +91,4 @@
 083_ttlock_circuit.sql
 084_closure_categories_restriction_override.sql
 085_closure_category_long_term.sql
+086_sync_errors_lifecycle.sql

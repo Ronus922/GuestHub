@@ -59,7 +59,8 @@ export async function getChannelStatusAction(): Promise<Result<unknown>> {
     const errors = await sql`
       SELECT id, connection_id, room_type_id, date_from, date_to,
              error_code, error_message, http_status, response_body,
-             response_truncated, created_at
+             response_truncated, created_at,
+             occurrence_count, last_seen_at
       FROM guesthub.channel_sync_errors
       WHERE tenant_id = ${actor.tenantId} AND resolved_at IS NULL
       ORDER BY created_at DESC LIMIT 10`;

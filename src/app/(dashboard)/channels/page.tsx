@@ -60,6 +60,10 @@ type SyncErrorRow = {
   response_body: string | null;
   response_truncated: boolean;
   created_at: string | Date;
+  /** 086 — how many cycles raised this same open row. 1 = seen once. */
+  occurrence_count: number;
+  /** 086 — the most recent sighting. NULL on rows written before 086. */
+  last_seen_at: string | Date | null;
 };
 
 // P0-4 — the Beds24 credit window as the worker last measured it (parked on the
@@ -101,6 +105,25 @@ function fmtDate(v: string | Date | null): string {
   if (!v) return "—";
   const d = typeof v === "string" ? new Date(v) : v;
   return Number.isNaN(d.getTime()) ? "—" : dFormatter.format(d);
+}
+
+const rtFormatter = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
+const RELATIVE_STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["second", 60], ["minute", 60], ["hour", 24], ["day", 7], ["week", 4.348], ["month", 12],
+];
+
+/** 086 — "לפני 12 דקות". Null (a row written before 086 ever fired again)
+ *  returns null so the caller renders nothing rather than a fabricated time. */
+function fmtRelative(v: string | Date | null): string | null {
+  if (!v) return null;
+  const d = typeof v === "string" ? new Date(v) : v;
+  if (Number.isNaN(d.getTime())) return null;
+  let value = (d.getTime() - Date.now()) / 1000;
+  for (const [unit, span] of RELATIVE_STEPS) {
+    if (Math.abs(value) < span) return rtFormatter.format(Math.round(value), unit);
+    value /= span;
+  }
+  return rtFormatter.format(Math.round(value), "year");
 }
 
 const STATE_LABELS: Record<string, { label: string; tone: "success" | "warning" | "muted" }> = {
@@ -309,6 +332,17 @@ function StatusView({ data }: { data: ChannelStatus }) {
                     <td data-label="הודעה" className="px-4 py-3 text-text2">
                       <div className="flex flex-col gap-1">
                         <span>{e.error_message ?? "—"}</span>
+                        {/* 086 — a suppressed repeat is no longer invisible:
+                            the row says how many cycles raised it and when it
+                            was last true. Silent for a single sighting. */}
+                        {e.occurrence_count > 1 ? (
+                          <span className="text-xs text-faint">
+                            <bdi className="ltr-num">×{e.occurrence_count}</bdi>
+                            {fmtRelative(e.last_seen_at)
+                              ? ` · נראתה לאחרונה ${fmtRelative(e.last_seen_at)}`
+                              : ""}
+                          </span>
+                        ) : null}
                         {/* D112 — the provider's raw answer, as stored (2KB,
                             truncation marked). Internal operator surface. */}
                         {e.response_body ? (

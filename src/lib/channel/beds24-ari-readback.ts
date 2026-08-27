@@ -27,7 +27,15 @@ import { logChannelError } from "./queue";
 // keeps selling a bed we already sold. Nothing in the outbound path ever looked
 // at what Beds24 actually HOLDS; it only looked at what we sent.
 //
-// STRICTLY READ-ONLY — DETECT AND ALERT, NEVER CORRECT.
+// STRICTLY READ-ONLY TOWARDS BEDS24 — DETECT AND ALERT, NEVER CORRECT.
+// The module still never corrects Beds24 state and never writes a dirty range,
+// a mapping or a connection field. What it DOES now write is the lifecycle of
+// its OWN alert rows in guesthub.channel_sync_errors: it refreshes the open
+// ari_readback_* row each cycle (occurrence_count, last_seen_at, message,
+// context, window) and RESOLVES it on a clean cycle. That is bookkeeping about
+// its own alarm, not a correction of the drift it found — the correction is
+// still the operator's decision (Full Sync / drain), never an automatic write
+// triggered by a read.
 // The ONE network call this module can make is
 //   GET /inventory/rooms/calendar
 // (READBACK_PATH + method "GET", a single call site). It imports NOTHING from
@@ -121,8 +129,12 @@ export type Beds24Drift = {
   kind: Beds24DriftKind;
   expected: number | null;
   remote: number | null;
-  /** THE overbooking signature: we hold the room, Beds24 still sells it */
+  /** THE overbooking signature: the room is PHYSICALLY taken (occupied here, or
+   *  closed out of inventory) and Beds24 is still selling it. A real bed. */
   oversell: boolean;
+  /** we publish 0 for a COMMERCIAL reason only — stop-sell, or no sellable
+   *  price — and Beds24 sells anyway. Money, not a double-booking. */
+  commercialBlock: boolean;
 };
 
 /** A calendar range as it appears on EITHER side of the comparison. `to` is
@@ -235,9 +247,28 @@ export function parseBeds24CalendarBody(body: unknown): {
 //     documents that a calendar without a minStay/maxStay returns the ROOM's
 //     value instead, so a mismatch there does not distinguish drift from a
 //     room-level default. Comparing them would be noise, not evidence.
+//
+// WHY THE CAUSE MATTERS. `numAvail: 0` is one wire value with two very
+// different meanings on our side, and beds24-ari-payloads.ts is where they get
+// flattened: available = physicallyAvailable && !stopSell && !blocked. So a
+// cell Beds24 still sells is EITHER a bed somebody is already sleeping in (or a
+// room we took out of inventory) — a genuine overbooking risk — OR a date we
+// merely declined to sell: stop-sell, or no resolvable price. Calling both
+// "overbooking" cried wolf on the second kind, which is the loudest way to
+// train an operator to ignore the first. `physicalAvail` un-flattens it: the
+// SAME `availability` half of the projection the payload builder read, keyed by
+// (beds24RoomId|date).
+//
+// FAIL LOUD, in both directions of ignorance:
+//   · a key MISSING from the map is physically unavailable — the exact `?? 0`
+//     the payload builder applies, so the two halves cannot disagree.
+//   · the map ABSENT entirely (a caller with no projection in hand) means the
+//     cause is unknowable, and an unknown cause is reported as the dangerous
+//     one. Never the quiet one.
 export function diffBeds24Calendar(
   expected: Map<string, Beds24DayCell>,
   remote: Map<string, Beds24DayCell>,
+  physicalAvail?: ReadonlyMap<string, number>,
 ): Beds24Drift[] {
   const drift: Beds24Drift[] = [];
   for (const [key, want] of expected) {
@@ -247,22 +278,29 @@ export function diffBeds24Calendar(
         beds24RoomId: want.beds24RoomId, date: want.date, kind: "missing",
         expected: want.numAvail, remote: null,
         // no statement at the provider is not proof it is selling — but it is
-        // not proof it is closed either. Never counted as a confirmed oversell.
-        oversell: false,
+        // not proof it is closed either. Never counted as a confirmed oversell,
+        // and never as a commercial gap either: a partial page is not evidence.
+        oversell: false, commercialBlock: false,
       });
       continue;
     }
     if (got.numAvail !== want.numAvail) {
+      const stillSelling = want.numAvail === 0 && got.numAvail > 0;
+      // absent map ⇒ unknowable cause ⇒ the dangerous reading (see above)
+      const physicallyTaken =
+        physicalAvail === undefined || (physicalAvail.get(key) ?? 0) === 0;
       drift.push({
         beds24RoomId: want.beds24RoomId, date: want.date, kind: "availability",
         expected: want.numAvail, remote: got.numAvail,
-        oversell: want.numAvail === 0 && got.numAvail > 0,
+        oversell: stillSelling && physicallyTaken,
+        commercialBlock: stillSelling && !physicallyTaken,
       });
     }
     if (want.price1 !== null && (got.price1 === null || Math.abs(got.price1 - want.price1) > 0.005)) {
       drift.push({
         beds24RoomId: want.beds24RoomId, date: want.date, kind: "price",
-        expected: want.price1, remote: got.price1, oversell: false,
+        expected: want.price1, remote: got.price1,
+        oversell: false, commercialBlock: false,
       });
     }
   }
@@ -282,7 +320,11 @@ export type Beds24ReadbackSummary = {
   requests: number;
   comparedCells: number;
   driftCells: number;
+  /** drift cells where a PHYSICALLY taken room is still on sale at Beds24 */
   oversellCells: number;
+  /** drift cells we closed for a COMMERCIAL reason only (stop-sell / no price)
+   *  and Beds24 sells anyway — a revenue/policy gap, not a double-booking */
+  commercialBlockCells: number;
   /** the provider had more pages than the bound allows — reported, never silent */
   truncated: boolean;
   drift: Beds24Drift[];
@@ -295,7 +337,8 @@ const SAMPLE_LIMIT = 25;
 
 const emptySummary = (): Beds24ReadbackSummary => ({
   rooms: 0, days: BEDS24_READBACK_DAYS, requests: 0, comparedCells: 0,
-  driftCells: 0, oversellCells: 0, truncated: false, drift: [], errors: [],
+  driftCells: 0, oversellCells: 0, commercialBlockCells: 0,
+  truncated: false, drift: [], errors: [],
 });
 
 // One unresolved alert per (connection, code): the cycle repeats every
@@ -303,6 +346,15 @@ const emptySummary = (): Beds24ReadbackSummary => ({
 // every cycle would push the 10-row /channels error list into a single repeating
 // message and bury everything else. The per-cycle detail still lands in the
 // append-only evidence ledger, which is the trail, not the alarm.
+//
+// 086 — the suppression used to be SILENCE: the second sighting and the
+// three-hundredth were both a no-op, so the row froze at its first message,
+// its first window and its first timestamp. An operator reading a row created
+// two weeks ago could not tell whether the condition fired once or is firing
+// right now, and the counts in `context` were whatever the FIRST cycle saw.
+// The row is now REFRESHED instead: same one row per (connection, code) — the
+// list still cannot flood — carrying the CURRENT message, context and window,
+// a sighting counter and the last-seen timestamp.
 async function alertOnce(
   db: Sql,
   conn: Beds24AriConnection,
@@ -312,12 +364,30 @@ async function alertOnce(
     raw?: RawResponseEvidence | null;
   },
 ): Promise<void> {
-  const [existing] = await db<{ x: number }[]>`
-    SELECT 1 AS x FROM guesthub.channel_sync_errors
+  const [existing] = await db<{ id: string }[]>`
+    SELECT id FROM guesthub.channel_sync_errors
     WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
       AND error_code = ${e.code} AND resolved_at IS NULL
     LIMIT 1`;
-  if (existing) return;
+  if (existing) {
+    // the raw provider evidence is refreshed too, INCLUDING back to NULL: a
+    // drift cycle that follows a failed one must not leave the failure's body
+    // standing next to a message that no longer describes it (D112).
+    await db`
+      UPDATE guesthub.channel_sync_errors
+      SET occurrence_count     = occurrence_count + 1,
+          last_seen_at         = now(),
+          error_message        = ${e.message},
+          context              = ${db.json((e.context ?? {}) as never)},
+          date_from            = ${e.dateFrom},
+          date_to              = ${e.dateTo},
+          http_status          = ${e.raw?.httpStatus ?? null},
+          response_body        = ${e.raw?.body ?? null},
+          response_truncated   = ${e.raw?.truncated ?? false},
+          response_received_at = ${e.raw?.receivedAt ?? null}
+      WHERE id = ${existing.id}`;
+    return;
+  }
   await logChannelError(db, {
     tenantId: conn.tenant_id, connectionId: conn.id,
     dateFrom: e.dateFrom, dateTo: e.dateTo,
@@ -327,6 +397,33 @@ async function alertOnce(
     responseTruncated: e.raw?.truncated ?? false,
     responseReceivedAt: e.raw?.receivedAt ?? null,
   });
+  // first sighting: last_seen_at IS created_at. Left to the INSERT's own
+  // now() rather than a second write, so the two can never disagree.
+  await db`
+    UPDATE guesthub.channel_sync_errors
+    SET last_seen_at = created_at
+    WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+      AND error_code = ${e.code} AND resolved_at IS NULL AND last_seen_at IS NULL`;
+}
+
+// The other half of the lifecycle. A read-back alert describes a condition the
+// NEXT clean cycle disproves, so leaving it open until somebody remembers to
+// close it by hand made the /channels list report problems that no longer
+// existed — and a list known to be stale stops being read.
+//
+// SCOPE, deliberately narrow: only this connection, and only the codes this
+// module itself raises (ari_readback_%). A clean read-back proves the published
+// calendar matches for THIS connection's 14-day window and nothing else; it is
+// no evidence at all about an import failure, a token error on another
+// connection, or any other producer's row. Closing those would be a lie the
+// operator has no way to notice.
+async function resolveReadbackAlerts(db: Sql, conn: Beds24AriConnection): Promise<void> {
+  await db`
+    UPDATE guesthub.channel_sync_errors
+    SET resolved_at = now()
+    WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+      AND error_code LIKE 'ari_readback_%'
+      AND resolved_at IS NULL`;
 }
 
 /** ONE page of the read-back. GET only — the sole network call of this module. */
@@ -407,7 +504,25 @@ export async function runBeds24AriReadback(
 
   const access = await getBeds24AccessToken(db, conn);
   if (!access.ok) {
+    // Until 086 this returned in silence: the cycle recorded the error on a
+    // summary the worker discards, wrote no ledger row and raised no alert, so
+    // a connection whose token stopped refreshing simply STOPPED being compared
+    // and looked exactly like a connection with nothing to report. That is the
+    // one failure mode this module exists to make impossible — an unverified
+    // published calendar that nobody knows is unverified.
+    //
+    // The two exits above stay silent on purpose and are NOT the same thing:
+    // no mappings and no expected cells mean there is nothing published to
+    // compare, which is a true "nothing to report", not a failure to look.
     summary.errors.push(access.error);
+    await alertOnce(db, conn, {
+      code: "ari_readback_failed",
+      message: "בדיקת ההשוואה מול Beds24 נכשלה — לא ניתן לאמת שהמלאי המפורסם מעודכן",
+      dateFrom: from, dateTo: toInclusive,
+      context: { rooms: summary.rooms, requests: summary.requests, stage: "token" },
+      raw: null,
+    });
+    await recordReadbackEvidence(db, conn, jobId ?? null, summary, from, toInclusive, "failed");
     return summary;
   }
   const creds = { token: access.token, baseUrl: beds24BaseUrl() };
@@ -444,28 +559,63 @@ export async function runBeds24AriReadback(
   }
 
   const remote = expandBeds24Calendar(remoteEntries, { from, toInclusive });
-  summary.drift = diffBeds24Calendar(expected, remote);
+  // the physical half of the SAME projection the payload builder flattened,
+  // re-keyed onto the wire (beds24RoomId|date) so the diff can say WHY we
+  // published 0. No new query: `projection` is already in hand.
+  const physicalAvail = new Map<string, number>();
+  for (const m of mappings) {
+    const beds24RoomId = Number(m.beds24RoomId);
+    if (!Number.isInteger(beds24RoomId) || beds24RoomId <= 0) continue;
+    for (const a of projection.availability) {
+      if (a.roomId !== m.roomId) continue;
+      physicalAvail.set(`${beds24RoomId}|${a.date}`, a.availability);
+    }
+  }
+  summary.drift = diffBeds24Calendar(expected, remote, physicalAvail);
   summary.driftCells = summary.drift.length;
   summary.oversellCells = summary.drift.filter((d) => d.oversell).length;
+  summary.commercialBlockCells = summary.drift.filter((d) => d.commercialBlock).length;
 
   if (summary.driftCells > 0) {
     const oversell = summary.oversellCells;
+    const commercial = summary.commercialBlockCells;
+    // ONE code and ONE message per cycle, picked by the WORST thing found. A
+    // cycle holding both kinds is an overbooking cycle: the commercial gap is
+    // real but it can wait, and merging the two into one hedged sentence would
+    // make the urgent half unreadable. The exact split always travels in the
+    // context, so nothing is lost by leading with the danger.
     await alertOnce(db, conn, {
-      code: oversell > 0 ? "ari_readback_oversell" : "ari_readback_drift",
+      code:
+        oversell > 0
+          ? "ari_readback_oversell"
+          : commercial > 0
+            ? "ari_readback_commercial"
+            : "ari_readback_drift",
       message:
         oversell > 0
-          ? `Beds24 מוכר ${oversell} לילות שתפוסים אצלנו — סכנת overbooking; הרץ סנכרון מלא`
-          : `נמצאו ${summary.driftCells} הפרשים בין המלאי שפורסם ל-Beds24 לבין המצב אצלנו`,
+          ? `Beds24 מוכר ${oversell} לילות שתפוסים/סגורים אצלנו — סכנת overbooking`
+          : commercial > 0
+            ? `Beds24 מוכר ${commercial} לילות שחסומים אצלנו מסחרית (stop-sell או ללא מחיר) — פער מסחרי, לא סכנת double-booking`
+            : `נמצאו ${summary.driftCells} הפרשים בין המלאי שפורסם ל-Beds24 לבין המצב אצלנו`,
       dateFrom: from, dateTo: toInclusive,
       context: {
         rooms: summary.rooms, days: summary.days,
         compared_cells: summary.comparedCells,
         drift_cells: summary.driftCells,
         oversell_cells: summary.oversellCells,
+        commercial_block_cells: summary.commercialBlockCells,
         truncated: summary.truncated,
         sample: summary.drift.slice(0, SAMPLE_LIMIT),
       },
     });
+  } else if (summary.requests > 0 && summary.errors.length === 0 && summary.comparedCells > 0) {
+    // THE clean cycle, and the only place an alert may be closed: cells were
+    // actually compared, at least one request actually went out, no transport
+    // error occurred, and the diff came back empty. Every weaker version of
+    // this predicate closes on ignorance — a partial page (errors + some
+    // entries) reaches the diff with `missing` cells and therefore never gets
+    // here, and the failed and silent exits returned long before.
+    await resolveReadbackAlerts(db, conn);
   }
 
   await recordReadbackEvidence(
@@ -497,13 +647,17 @@ async function recordReadbackEvidence(
     dateFrom: from,
     dateTo: toInclusive,
     outcome,
+    // the SAME precedence the operator alert uses — the ledger must not
+    // categorise a cycle differently from the alarm it raised for it.
     errorCode: summary.oversellCells > 0
       ? "ari_readback_oversell"
-      : summary.driftCells > 0
-        ? "ari_readback_drift"
-        : summary.errors.length > 0
-          ? "ari_readback_failed"
-          : null,
+      : summary.commercialBlockCells > 0
+        ? "ari_readback_commercial"
+        : summary.driftCells > 0
+          ? "ari_readback_drift"
+          : summary.errors.length > 0
+            ? "ari_readback_failed"
+            : null,
     errorMessage: summary.errors[0] ?? null,
     jobId,
     context: {
@@ -512,6 +666,7 @@ async function recordReadbackEvidence(
       comparedCells: summary.comparedCells,
       driftCells: summary.driftCells,
       oversellCells: summary.oversellCells,
+      commercialBlockCells: summary.commercialBlockCells,
       truncated: summary.truncated,
       sample: summary.drift.slice(0, SAMPLE_LIMIT),
     },
