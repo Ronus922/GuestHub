@@ -71,7 +71,7 @@ branch ייעודי ישירות בעץ הזה (worktree — רק בבקשה מ�
 | Data | PostgreSQL (schema `guesthub`, 46 מיגרציות ב-`db/migrations/`) דרך porsager `postgres` (`lib/db.ts`) · Supabase Auth self-hosted = **אימות בלבד** |
 | טפסים/State | react-hook-form + Zod · nuqs · @tanstack/react-table |
 | Channels | ספק יחיד: Beds24 (פרודקשן, poll-based inbound + ARI outbound) · PM2 channel worker |
-| Runtime | dev + prod תחת pm2, פורט 3007 · prod נפרד: `/var/www/guesthub-production` (`PROD_DEPLOY_OK=1 npm run deploy:prod`) |
+| Runtime | pm2, פורט 3007 · `/var/www/guesthub` **הוא** עץ הפרודקשן (`.production-runtime`) — ראה פרק Production Runtime; פריסה רק ב-`PROD_DEPLOY_OK=1 npm run deploy:prod` |
 | בדיקות | ‎90+ סקריפטי `check:*` ב-package.json (כולל `check:design`, `check:status-default`) · `pnpm typecheck && pnpm lint && pnpm build` בסוף כל שלב |
 
 14 מסכי dashboard (`src/app/(dashboard)/`): calendar, reservations, rates, rate-plans, rooms, guests, channels, communications, settings, staff, permissions, dashboard (+housekeeping/tasks — קפואים, ראה STATE.md). Env (שמות בלבד): DATABASE_URL, SUPABASE_*, CARD_VAULT_KEY, CHANNEL_SECRETS_KEY, MESSAGING_SECRETS_ENCRYPTION_KEY, GOOGLE_MAPS.
