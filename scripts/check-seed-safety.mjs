@@ -275,7 +275,7 @@ async function runGuard(guard, client) {
     assert.ok(/BLOCKED/.test(r.out), `${name} must say why`);
   }
   // a driver error must never carry a connection string into the log
-  const leaky = pgError("28P01", 'auth failed for postgresql://postgres.bios-vps:SUPERSECRET@db:5432/postgres');
+  const leaky = pgError("28P01", 'auth failed for postgresql://postgres.bios-vps:SUPERSECRET@db:5432/postgres'); // no-secrets-allow: synthetic DSN — this line IS the redaction fixture
   const red = await runGuard(assertNoForeignUsers, clientFailing(leaky));
   assert.equal(red.passed, false);
   assert.ok(!/SUPERSECRET/.test(red.out) && !/postgresql:\/\//.test(red.out), "must not print connection strings or passwords");
