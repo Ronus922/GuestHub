@@ -513,8 +513,13 @@ try {
   assert.equal(await errorsWithCode("ari_readback_oversell"), 1,
     "the oversell row from scenario 2 is untouched — one row per code, still");
   const commercialRow = await openRow("ari_readback_commercial");
-  assert.match(commercialRow.error_message, /פער מסחרי, לא סכנת double-booking/,
-    "and says so in words the operator can act on");
+  // pinned in FULL, guidance included. The tail "— הרץ סנכרון מלא לגישור" is an
+  // owner decision (2026-08-27) and a substring match would have kept passing
+  // if it fell off again, so the whole sentence is the assertion.
+  assert.equal(
+    commercialRow.error_message,
+    "Beds24 מוכר 7 לילות שחסומים אצלנו מסחרית (stop-sell או ללא מחיר) — פער מסחרי, לא סכנת double-booking — הרץ סנכרון מלא לגישור",
+    `the commercial wording, verbatim, ending in the action; got: ${commercialRow.error_message}`);
   assert.equal(commercialRow.context.commercial_block_cells, 7, "the split travels in the context");
   assert.equal(commercialRow.context.oversell_cells, 0, "both halves, always");
   await sql`UPDATE guesthub.pricing_plans SET valid_until = NULL WHERE id = ${plan.id}`;
@@ -545,8 +550,11 @@ try {
     a.equal(sum.commercialBlockCells, 0, "and is never filed as a commercial gap");
     const row = await openRow("ari_readback_oversell");
     a.ok(row, "the overbooking code is what reaches the operator");
-    a.match(row.error_message, /תפוסים\/סגורים אצלנו — סכנת overbooking/,
-      `the physical wording, got: ${row?.error_message}`);
+    // pinned in FULL, guidance included — see the note in scenario 5.
+    a.equal(
+      row.error_message,
+      "Beds24 מוכר 1 לילות שתפוסים/סגורים אצלנו — סכנת overbooking — הרץ סנכרון מלא",
+      `the physical wording, verbatim, ending in the action; got: ${row?.error_message}`);
     a.equal(row.context.oversell_cells, 1, "the split travels in the context");
     a.equal(row.context.commercial_block_cells, 0, "both halves, always");
   };
