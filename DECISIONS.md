@@ -4236,3 +4236,106 @@ commercial: Beds24 מוכר N לילות שחסומים אצלנו מסחרית 
 חמישה תרחישים חדשים (`S-close`, `S-noclose-failed`, `S-noclose-partial`,
 `S-physical`, `S-411`), כל אחד עם הוכחת מוטציה בתקן B2: הפרדיקט מנוטרל
 בארטיפקט המהודר, התרחיש חייב **למות**, הקובץ מוחזר ומאומת ב-sha256.
+
+---
+
+## D164 — ‏247 שורות ה-quarantine הן הזמנה אחת שכבר יובאה; נסגרות כממצא, לא כתקלה (2026-08-28)
+
+**הרקע.** ‏`/channels` הציגה 247 שורות `inbound_quarantine` פתוחות. אודיט
+read-only מלא (‏28/08) מצא ש-**כולן שייכות להזמנה אחת**: `booking_id`
+בודד `90904497`, ‏`revision_id` בודד `90904497:2026-08-03T22:04:38Z`
+(‏Expedia, ‏`ota_reservation_code` 2503722138). לא 247 בעיות — בעיה אחת
+שנרשמה 247 פעם.
+
+**למה 247 ולא אחת.** נתיב ה-quarantine ב-
+[booking-import.ts:812-819](src/lib/channel/booking-import.ts#L812-L819)
+קורא ל-`logChannelError` **הגולמי**
+([queue.ts:162](src/lib/channel/queue.ts#L162)) — `INSERT` ללא שום דיכוי.
+‏`alertOnce` (‏D161) חי **רק** ב-`beds24-ari-readback.ts` ואינו חל כאן. לכן
+sweep ההתכנסות, שמנסה מחדש כל ~5 דקות, רשם שורה חדשה בכל מחזור: ‏12 לשעה
+במשך ~21 שעות רצופות, ‏03/08 22:09 → 04/08 18:50.
+
+**מה עצר את זה — ולא מיגרציה.** הסיבה הייתה `התנגשות מקומית בחדר` על
+06–07/08 בחדר 1424. יומן הביקורת מתעד מפעיל אנושי: `reschedule` על השהות
+החופפת ב-18:53:11, ‏`request_full_sync` ב-18:53:25, ו-`channel_import_create`
+ב-18:55:09. מאותו רגע — אפס שורות חדשות (נמדד:
+`count(*) filter (where created_at >= '2026-08-05') = 0`).
+
+> **תיקון עובדתי שנרשם במפורש:** מיגרציה 082 **אינה** קשורה. היא הוחלה
+> ‏08/08 15:32, ארבעה ימים **אחרי** השורה האחרונה, ועניינה
+> ‏DEFAULT PRIVILEGES (‏D144). ייחוס העצירה אליה היה שגוי.
+
+**גורל ההזמנה — יובאה במלואה.** הרוויזיה היום `import_status='imported'`,
+‏`attempts=247`, ‏`mapping_error` NULL, מקושרת להזמנה `ccb2f46b` (#1085,
+‏`checked_out`). התאמה מלאה ל-payload: `arrival`/`departure` = `check_in`/
+`check_out` (‏06→07/08), ‏`roomId 707492` דרך מיפוי `mapped` = חדר 1424
+שבהזמנה, `numAdult 2` = `adults`, ‏`price 769.37` = `total_price`.
+**אפס הזמנות חסרות, אפס חשיפה עתידית.** השהות היסטורית — האורח כבר עזב.
+
+**המחיר התפעולי שהצדיק את הסגירה.** רשימת השגיאות היא
+`ORDER BY created_at DESC LIMIT 10`
+([admin.ts:65](src/lib/channel/admin.ts#L65)) — ולכן **7 מתוך 10 המשבצות**
+של המפעיל היו תפוסות ע"י ההזמנה המתה הזאת, ומסתירות 7 בעיות אמיתיות
+שונות (‏422 validation מ-28/07, ‏`cancellation_reconciled`, ועוד). רשימה
+שידוע שהיא מיושנת — מפסיקים לקרוא.
+
+**ההכרעה.** כל 247 השורות **בטוחות לסגירה, אפס חריגים**:
+
+1. התנאי שיצר אותן הופרך בראיה — ההזמנה יובאה, לא נשארה בעיה פתוחה.
+2. הסגירה אינה מחמשת שום דיכוי, כי אין דיכוי בנתיב הזה מלכתחילה.
+3. הכרטיס `quarantined_revisions` שבמסך נשען על טבלה אחרת
+   (`channel_booking_revisions`) ועומד ממילא על 0 — הוא לא יזוז.
+4. ההשפעה היחידה היא שעון הרטנציה: `purge_channel_sync_errors(30, 180)`
+   (מיגרציה 043) מעביר שורה סגורה מ-180 יום ל-30 — ואין לו timer כלל
+   (נבדק: `crontab` ו-`systemctl list-timers`), כך שבפועל דבר לא נמחק.
+
+**מה שהרשומה הזאת אינה עושה.** היא **אינה** מבצעת את הסגירה. הסגירה היא
+ריצה נפרדת באישור בעלים: טרנזקציה מפורשת, מסומנת לפי tenant + connection
++ `error_code='inbound_quarantine'` + `resolved_at IS NULL` + ה-`revision_id`
+היחיד, חסומה ב-`created_at <= 2026-08-04`, עם אימות `rowcount = 247`
+לפני `COMMIT`. בלי מחיקה, בלי כיווץ — הראיה נשמרת. ‏`occurrence_count`
+ו-`last_seen_at` לא נגעים: ‏086 אינה עושה backfill במכוון, ושורות אלה
+מעולם לא נספרו.
+
+**החוב שנשאר פתוח ולא הוכרע כאן:** נתיב ה-quarantine עדיין חסר דיכוי.
+אם תנאי דומה יחזור, הוא ישחזר את אותו הצפה של 12 שורות בשעה. החלת דפוס
+`alertOnce` של D161 גם על היצרן הזה היא שינוי התנהגות שדורש הכרעה נפרדת.
+
+---
+
+## D165 — ‏super_admin שני: אפרת מקס מקודמת דרך ה-UI, לא דרך SQL (2026-08-28)
+
+**ההכרעה.** ‏`efratmax76@gmail.com` (‏`d0518219`, כיום `admin`) מקודמת
+ל-`super_admin`, כדי שהטננט יחזיק **שני** מנהלי-על פעילים במקום אחד.
+הנימוק אינו נוחות אלא שחזור הדדי: כל עוד `r@bios.co.il` הוא ה-super_admin
+היחיד, אין אף חשבון שיכול לשחזר אותו.
+
+**הקידום מתבצע דרך מסך הצוות, ולא בכתיבת SQL ידנית.** זו עצם ההכרעה
+כאן. נבדקה השרשרת המלאה מול actor=בעלים (`super_admin`), target=אפרת
+(`admin`), תפקיד חדש `super_admin`, וכל שער בה מתיר את הפעולה:
+
+| שער | הסיבה שהוא מתיר |
+|---|---|
+| `requirePermission(actor,"staff.update")` | [permission-check.ts:14](src/lib/auth/permission-check.ts#L14) — `actor.roleKey === "super_admin"` עוקף בדיקה גרנולרית |
+| `canManageTarget` | [guards.ts:20-22](src/lib/auth/guards.ts#L20-L22) — `rank('admin')=2 <= rank('super_admin')=3` |
+| `canChangeRole` (‏לא-עצמי) | [guards.ts:50](src/lib/auth/guards.ts#L50) — `d0518219 ≠ db214c1c` |
+| `canAssignRole` | [guards.ts:39](src/lib/auth/guards.ts#L39) — `rank(new) > rank(actor)` הוא `3 > 3` = **false**, ולכן אינו חוסם |
+| `assertControlsRole` / `assertControlsUser` | [guards.ts:70](src/lib/auth/guards.ts#L70) — `PROTECTED_ROLE_KEYS.includes('super_admin')` מחזיר `ok` מיידית |
+| הדרופדאון עצמו | [EmployeeSidePanel.tsx:99-103](src/app/(dashboard)/staff/EmployeeSidePanel.tsx#L99-L103) מסנן ב-`canAssignRole(...).ok` — "מנהל-על" **מוצג** |
+
+**למה זה נרשם כהחלטה ולא כפעולה טכנית.** הפיתוי היה להריץ
+`UPDATE guesthub.users SET role_id = …` מול הפרודקשן. זה נדחה: כשהאפליקציה
+עצמה מתירה את הפעולה, כתיבה ידנית עוקפת את יומן הביקורת שהאפליקציה כותבת,
+ומייצרת רשומת `role_changed` מזויפת או חסרה. **כתיבה ידנית ל-`users` היא
+מוצא אחרון לשערים חסומים בלבד** — וכאן אף שער אינו חסום.
+
+**מצב הביצוע.** נמדד ‏2026-08-28 19:52 UTC: אפרת עדיין `admin`
+(‏`updated_at` ‏2026-08-05), ומספר ה-super_admin הפעילים הוא **1**.
+הקידום עצמו הוא קליק של הבעלים במסך הצוות; הרשומה הזאת מתעדת את ההכרעה
+ואת הנתיב, לא את השלמתו.
+
+**מה שמשתנה כשהקליק קורה.** אפרת עוברת את השערים שבהם `admin` **אינו**
+מספיק: `canManageChannels` ([guards.ts:129](src/lib/auth/guards.ts#L129),
+שם נכתב במפורש ש-`admin` לא כשיר), `canManageMessaging` ו-`canManageTTLock`
+([settings/page.tsx:46,55](src/app/(dashboard)/settings/page.tsx#L46)) —
+ומקבלת יכולת לנהל את חשבון הבעלים. שחזור הדדי מושג.
