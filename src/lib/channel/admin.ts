@@ -53,7 +53,8 @@ export async function getChannelStatusAction(): Promise<Result<unknown>> {
         (SELECT COUNT(*)::int FROM guesthub.channel_dirty_ranges
           WHERE tenant_id = ${actor.tenantId} AND status = 'pending') AS dirty_ranges,
         (SELECT COUNT(*)::int FROM guesthub.channel_booking_revisions
-          WHERE tenant_id = ${actor.tenantId} AND import_status = 'quarantined') AS quarantined_revisions`;
+          WHERE tenant_id = ${actor.tenantId}
+            AND import_status IN ('quarantined', 'failed')) AS stuck_revisions`;
     // D112 — the raw provider evidence (verbatim status + body) is part of the
     // operator's error surface, not just the mapped category.
     const errors = await sql`

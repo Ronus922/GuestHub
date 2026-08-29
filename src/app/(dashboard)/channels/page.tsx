@@ -42,7 +42,7 @@ type CountsRow = {
   failed_jobs: number;
   dead_letter_jobs: number;
   dirty_ranges: number;
-  quarantined_revisions: number;
+  stuck_revisions: number;
 };
 
 // D112 — the raw provider evidence rides on the error record: verbatim HTTP
@@ -223,7 +223,7 @@ function StatusView({ data }: { data: ChannelStatus }) {
     { label: "עבודות שנכשלו", value: counts.failed_jobs, danger: counts.failed_jobs > 0 },
     { label: "בהמתנה סופית (dead-letter)", value: counts.dead_letter_jobs, danger: counts.dead_letter_jobs > 0 },
     { label: "טווחים ממתינים לסנכרון", value: counts.dirty_ranges },
-    { label: "הזמנות בהסגר (quarantine)", value: counts.quarantined_revisions, danger: counts.quarantined_revisions > 0 },
+    { label: "הזמנות תקועות (הסגר/כשל)", value: counts.stuck_revisions, danger: counts.stuck_revisions > 0 },
   ];
 
   return (
