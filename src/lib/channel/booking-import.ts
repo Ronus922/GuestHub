@@ -854,6 +854,21 @@ export async function importNormalizedRevision(
           ? await applyCancellation(tx, conn, norm)
           : await applyLiveRevision(tx, conn, norm, resolveRoom);
       await markRevisionImported(tx, conn.tenant_id, revisionRowId, id);
+      // D164/D167 — the closing half of the lifecycle, the analogue of
+      // resolveReadbackAlerts (086/D161): the import that just succeeded IS
+      // the proof that this revision's parked condition no longer exists, so
+      // its open quarantine rows close in the SAME transaction — "imported"
+      // and "still listed as parked" can never both be durably true. In
+      // D164 the booking imported on 04/08 and its rows sat open for 24 days.
+      // SCOPE, deliberately narrow: only this connection, only
+      // inbound_quarantine, only THIS revision. A successful import proves
+      // nothing about another revision's row or any other producer's code.
+      await tx`
+        UPDATE guesthub.channel_sync_errors
+        SET resolved_at = now()
+        WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+          AND error_code = 'inbound_quarantine' AND resolved_at IS NULL
+          AND context->>'revision_id' = ${norm.revisionId}`;
       return id;
     });
     return { status: "imported", reservationId: reservationId ?? null };
