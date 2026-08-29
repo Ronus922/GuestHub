@@ -18,6 +18,7 @@ import {
   roomLabelsFor,
 } from "./external-changes";
 import { logChannelError } from "./queue";
+import { reportOtaRestrictionViolations } from "./ota-restriction-report";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import {
   blocksAutomaticRelease,
@@ -417,6 +418,8 @@ async function applyLiveRevision(
   const sourceId = await lookupSourceId(tx, conn.tenant_id, norm.otaName);
 
   let reservationId: string;
+  // the human-facing number, for operator-facing reports on both branches
+  let reservationNumber: string | null = null;
   if (existing) {
     const status = PRESERVED_STATUSES.has(existing.status) ? existing.status : "confirmed";
     // THE single totals source (D106): OTA rooms figure sovereign, local
@@ -467,6 +470,7 @@ async function applyLiveRevision(
       DELETE FROM guesthub.reservation_rooms
       WHERE reservation_id = ${existing.id} AND tenant_id = ${conn.tenant_id}`;
     reservationId = existing.id;
+    reservationNumber = existing.reservation_number;
   } else {
     const number = await allocateReservationNumber(tx, conn.tenant_id);
     // imported OTA reservations receive the tenant's default workflow status
@@ -518,6 +522,7 @@ async function applyLiveRevision(
               ${norm.insertedAt}, ${wf?.id ?? null})
       RETURNING id`;
     reservationId = created.id;
+    reservationNumber = number;
     // THE OTA CONFIRMATION SEAM (D119). An imported reservation comes into
     // existence AS 'confirmed' (the literal in the INSERT above) — so THIS, and
     // only this, is the moment an OTA reservation reaches a confirmed state.
@@ -549,6 +554,13 @@ async function applyLiveRevision(
     // + price_mode='manual_night' mark "not engine-priced"; pricing_snapshot
     // stays NULL — there is no engine quote to snapshot, and inventing one
     // would be dishonest.
+    //
+    // Stay RESTRICTIONS are likewise not enforced here, and that is deliberate
+    // (D153), not an omission: the booking already happened at the channel, so
+    // refusing the row would hide a sold room rather than un-sell it. They ARE
+    // checked and reported after the write — see reportOtaRestrictionViolations
+    // below. Availability is a different matter and IS checked above (:396-400),
+    // because a double-booked room must surface as a conflict.
     const ratePerNight = round2(stay.nights > 0 ? stay.amount / stay.nights : stay.amount);
     await tx`
       INSERT INTO guesthub.reservation_rooms
@@ -591,6 +603,41 @@ async function applyLiveRevision(
     },
     norm.otaName,
   );
+
+  // D153 — stay restrictions are CHECKED but never enforced on an OTA import.
+  // The booking already happened at the channel; refusing it here would not
+  // un-sell the room, only hide it. A violation still means a real defect (the
+  // ARI projection published the wrong restriction, or somebody overrode it by
+  // hand in the extranet), so it is reported to the operator's error surface
+  // and to this reservation's audit trail. Wrapped so the report can never
+  // fail the import — the reporter swallows its own errors too, and this is
+  // the second belt.
+  try {
+    const violations = await reportOtaRestrictionViolations(
+      tx,
+      {
+        tenantId: conn.tenant_id,
+        connectionId: conn.id,
+        reservationId,
+        reservationNumber,
+        bookingId: norm.bookingId,
+        otaName: norm.otaName,
+      },
+      stays,
+    );
+    if (violations.length > 0) {
+      await channelAudit(
+        tx,
+        conn.tenant_id,
+        reservationId,
+        "channel_import_restriction_violation",
+        { booking_id: norm.bookingId, revision_id: norm.revisionId, violations },
+        norm.otaName,
+      );
+    }
+  } catch {
+    /* reporting must never fail the import */
+  }
 
   // an external revision MOVED an existing stay → one reconcilable
   // notification per revision, riding this transaction (exists iff durable)
