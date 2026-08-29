@@ -829,6 +829,56 @@ export type ImportCoreOptions = {
   resolveRoom: RoomResolver;
 };
 
+// D164/D166 — one OPEN row per parked revision, not one per sweep cycle.
+// The convergence sweep retries a quarantined revision every ~5 minutes; the
+// raw logChannelError INSERT recorded every attempt, so a single parked
+// booking once produced 247 rows and buried 7 real problems behind the
+// operator list's LIMIT 10. Same REFRESH semantics as alertOnce (086/D161) —
+// current message, sighting counter, last-seen — but keyed by the REVISION,
+// not by the error code alone: a quarantine row describes one parked booking,
+// and two different parked bookings must never merge into one row whose
+// refresh silently overwrites the evidence of the other.
+async function logQuarantineOnce(
+  db: Sql,
+  conn: ImportConnection,
+  norm: NormalizedRevision,
+  message: string,
+): Promise<void> {
+  const [existing] = await db<{ id: string }[]>`
+    SELECT id FROM guesthub.channel_sync_errors
+    WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+      AND error_code = 'inbound_quarantine' AND resolved_at IS NULL
+      AND context->>'revision_id' = ${norm.revisionId}
+    LIMIT 1`;
+  if (existing) {
+    // context is the KEY here (fixed revision_id + booking_id), so unlike
+    // alertOnce there is nothing in it to refresh — only the live parts move.
+    await db`
+      UPDATE guesthub.channel_sync_errors
+      SET occurrence_count = occurrence_count + 1,
+          last_seen_at     = now(),
+          error_message    = ${message}
+      WHERE id = ${existing.id}`;
+    return;
+  }
+  await logChannelError(db, {
+    tenantId: conn.tenant_id,
+    connectionId: conn.id,
+    code: "inbound_quarantine",
+    message,
+    context: { revision_id: norm.revisionId, booking_id: norm.bookingId },
+  });
+  // first sighting: last_seen_at IS created_at — copied from the row itself
+  // rather than a second now(), so the two can never disagree (alertOnce's
+  // idiom).
+  await db`
+    UPDATE guesthub.channel_sync_errors
+    SET last_seen_at = created_at
+    WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+      AND error_code = 'inbound_quarantine' AND resolved_at IS NULL
+      AND context->>'revision_id' = ${norm.revisionId} AND last_seen_at IS NULL`;
+}
+
 // The post-normalize import core (D77) — the SHARED half of importRevisionRow,
 // lifted mechanically so a second provider can feed its own
 // normalized revisions through the identical transaction / quarantine /
@@ -851,19 +901,28 @@ export async function importNormalizedRevision(
           ? await applyCancellation(tx, conn, norm)
           : await applyLiveRevision(tx, conn, norm, resolveRoom);
       await markRevisionImported(tx, conn.tenant_id, revisionRowId, id);
+      // D164/D167 — the closing half of the lifecycle, the analogue of
+      // resolveReadbackAlerts (086/D161): the import that just succeeded IS
+      // the proof that this revision's parked condition no longer exists, so
+      // its open quarantine rows close in the SAME transaction — "imported"
+      // and "still listed as parked" can never both be durably true. In
+      // D164 the booking imported on 04/08 and its rows sat open for 24 days.
+      // SCOPE, deliberately narrow: only this connection, only
+      // inbound_quarantine, only THIS revision. A successful import proves
+      // nothing about another revision's row or any other producer's code.
+      await tx`
+        UPDATE guesthub.channel_sync_errors
+        SET resolved_at = now()
+        WHERE tenant_id = ${conn.tenant_id} AND connection_id = ${conn.id}
+          AND error_code = 'inbound_quarantine' AND resolved_at IS NULL
+          AND context->>'revision_id' = ${norm.revisionId}`;
       return id;
     });
     return { status: "imported", reservationId: reservationId ?? null };
   } catch (e) {
     if (e instanceof QuarantineError) {
       await quarantineRevision(db, revisionRowId, e.message);
-      await logChannelError(db, {
-        tenantId: conn.tenant_id,
-        connectionId: conn.id,
-        code: "inbound_quarantine",
-        message: e.message,
-        context: { revision_id: norm.revisionId, booking_id: norm.bookingId },
-      });
+      await logQuarantineOnce(db, conn, norm, e.message);
       // a PARKED revision that moves an EXISTING stay must still be visible as
       // an unresolved external change — the calendar keeps the old dates and
       // the OTA already regards the new ones as confirmed. Best-effort: a
