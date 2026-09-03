@@ -15,22 +15,38 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 
-const sql = postgres(process.env.DATABASE_URL, { prepare: false, max: 1 });
+const url = process.env.DATABASE_URL;
+for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
+  if (url?.includes(marker)) throw new Error(`refusing production-like database marker: ${marker}`);
+}
+const sql = postgres(url, { prepare: false, max: 1 });
 const DAY = "2027-03-15"; // far-future, collision-free window
 const NEXT = "2027-03-16";
 let n = 0;
 const ok = (name) => { console.log(`  ✓ ${name}`); n++; };
 
+// The guard's OWN tenant, created afresh inside every rolled-back transaction.
+// Nothing is read from live rows: the suite hands each DB-backed guard an empty
+// clone of the from-zero template, where the former
+// `SELECT id FROM guesthub.tenants LIMIT 1` was an empty destructure (the crash
+// GUARD_INTEGRITY §2.1 recorded).
+let tenant;
 class Rollback extends Error {}
 async function inTx(fn) {
   try {
-    await sql.begin(async (tx) => { await fn(tx); throw new Rollback(); });
+    await sql.begin(async (tx) => {
+      const [t] = await tx`
+        INSERT INTO guesthub.tenants (name, slug)
+        VALUES ('rate-grid-check', ${"grid-" + crypto.randomUUID().slice(0, 8)}) RETURNING id`;
+      tenant = t.id;
+      await fn(tx);
+      throw new Rollback();
+    });
   } catch (e) {
     if (!(e instanceof Rollback)) throw e;
   }
 }
 
-const [{ id: tenant }] = await sql`SELECT id FROM guesthub.tenants LIMIT 1`;
 let seq = 0;
 const uniq = (p) => `${p}-${Date.now?.() ?? ""}-${seq++}`;
 
