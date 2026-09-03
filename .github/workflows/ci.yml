@@ -1,0 +1,138 @@
+# ============================================================
+# CI — the check:* suite finally runs on its own.
+#
+# Why this shape (DECISIONS.md said "אין CI" twice; 48 merges/30d without it):
+#   * GitHub-hosted runners, not a self-hosted one on the VPS: the repo is
+#     PUBLIC, and a self-hosted runner on the production host would execute
+#     fork pull requests on that host. Switching later is a one-line
+#     `runs-on` change; nothing else here depends on the runner.
+#   * The database is the SAME image as guesthub-testdb
+#     (supabase/postgres:15.8.1.085) mapped to host port 5433 — the default
+#     admin DSN in scripts/run-checks.mjs, and NOT :5432, which both the suite
+#     and scripts/db/migrate.mjs refuse as a production marker.
+#   * The migration chain GRANTs to guesthub_app (53 references); a fresh
+#     cluster has no such role, so it is created NOLOGIN before the suite
+#     builds its template. Rehearsed 2026-09-03 on a fresh container: 88/88
+#     migrations applied with that one role and nothing else.
+#   * fetch-depth: 0 because check:no-secrets scans `git log --all` for env
+#     files that were ever committed; a shallow clone would pass vacuously.
+#   * Guards the harness cannot serve here (a live authenticated app + Chrome)
+#     report cannot-run — a third state, never counted as pass or fail.
+#
+# Verdicts are whatever the guards say. There is deliberately no "known-red"
+# baseline in this file (D159): a red guard on main is a finding for the
+# owner, not something CI is allowed to hide.
+# ============================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Jerusalem
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
+  suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: supabase/postgres:15.8.1.085
+        env:
+          POSTGRES_PASSWORD: guesthub_test_local
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U supabase_admin -h 127.0.0.1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      SUITE_ADMIN_DB_URL: postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: psql client
+        run: command -v psql >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client)
+
+      - name: Bootstrap guesthub_app role
+        run: |
+          psql "$SUITE_ADMIN_DB_URL" -X -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='guesthub_app') THEN CREATE ROLE guesthub_app NOLOGIN; END IF; END \$\$;"
+
+      - name: Run check:* suite
+        run: pnpm suite --json "$RUNNER_TEMP/suite-results.json"
+
+      - name: Suite summary
+        if: always()
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const p = process.env.RUNNER_TEMP + "/suite-results.json";
+            if (!fs.existsSync(p)) { console.log("no results file"); process.exit(0); }
+            const { results } = JSON.parse(fs.readFileSync(p, "utf8"));
+            const n = (v) => results.filter((r) => r.verdict === v).length;
+            const rows = results.filter((r) => r.verdict !== "pass")
+              .map((r) => `| ${r.name} | ${r.verdict} | ${(r.why || "").replace(/\|/g, "/")} |`);
+            const md = [
+              `## check:* suite — pass ${n("pass")} · fail ${n("fail")} · cannot-run ${n("cannot-run")} of ${results.length}`,
+              "", "| guard | verdict | why |", "|---|---|---|", ...rows, "",
+            ].join("\n");
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+            console.log(md);
+          '
+
+      - name: Upload guard logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-logs
+          path: |
+            node_modules/.cache/check-suite/logs
+            ${{ runner.temp }}/suite-results.json
+          if-no-files-found: ignore
+          retention-days: 14
