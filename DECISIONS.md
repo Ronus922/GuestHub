@@ -3557,6 +3557,13 @@ present: false`, ‏`NEXT_PUBLIC_* keys: none` — בעוד האתר שירת �
 הדפלוי לא יגיע יותר לתהליך. זו הכוונה: ערוץ התצורה המוצהר היחיד הוא
 ‏`.env.local`, ומשתנה שאינו בו אינו אמור להשפיע על פרודקשן.
 
+**תוספת 2026-09-04.** ‏guesthub וה-worker נרשמו מחדש מ-shell נקי דרך
+`env -i … pm2 start ecosystem.config.cjs`; ה-env החי ירד מ-64 ל-11 מפתחות.
+נצפה: ‏`pm2 restart <name>` (שורה 69 בסקריפט הדפלוי) **מוחק את `filter_env`
+מהרישום החי** (‏8→0). לא מזיק כל עוד `--update-env` נשאר מחוץ לשורה; המשמעות
+היא שהרישום החי אינו נושא שום מסנן אם מישהו אי-פעם יריץ רסטארט עם
+`--update-env` מ-shell מזוהם. ההגנה היא הסרת הדגל של D150, לא `filter_env`.
+
 ---
 
 ## D151 — ‏`Failed to find Server Action` הוא כשל רוחבי של מעבר גרסה, לא באג של כפתור (2026-08-17)
@@ -4629,3 +4636,48 @@ no-store`. ‏`BUILD_ID` נקרא מ-`.next/BUILD_ID` בזמן הבקשה, קר�
 `https://guesthub.bios.co.il/api/health` → אותו גוף, ‏Cache-Control של
 nginx; ‏(ג) מסלול ה-503 **לא נבדק** — הוא דורש ניתוק DB, ואין דרך בטוחה
 לעשות זאת בפרודקשן; ההוכחה שלו היא קוד בלבד (`Promise.race` + `catch`).
+
+---
+
+## D171 — כותרות אבטחה ב-nginx + הגבלת קצב ל-`/api/health` (2026-09-04)
+
+**ההכרעה (בעלים).** ארבע כותרות אבטחה נוספות ברמת nginx לבלוק
+`guesthub.bios.co.il` / `stayme.co.il`: ‏`Strict-Transport-Security
+"max-age=31536000; includeSubDomains"`, ‏`X-Content-Type-Options nosniff`,
+‏`X-Frame-Options SAMEORIGIN`, ‏`Referrer-Policy strict-origin-when-cross-origin`,
+כולן `always`, דרך snippet `/etc/nginx/snippets/guesthub-security-headers.conf`
+שמוכלל ברמת ה-server ובתוך `location /`. ‏`/api/health` (D170) מקבל
+`location = /api/health` עם `limit_req zone=health burst=10 nodelay` על
+`limit_req_zone $binary_remote_addr zone=health:1m rate=30r/m` ברמת http{},
+ועם **`limit_req_status 429` — התקבל**: מבדיל חסימת-קצב מה-503 של DB-down
+שהנתיב עצמו מחזיר. אין `preload`.
+
+**למה nginx ולא האפליקציה.** אף אחת מהכותרות לא נשלחה משום שכבה;
+‏next.config.ts ללא `headers()`. ‏nginx הוא נקודת הכניסה היחידה של שלושת
+השמות, ושינוי בו אינו דורש build ו-restart של Next.
+
+**למה SAMEORIGIN ולא DENY.** מציג המסמכים ב-`BookingDocuments.tsx` ממסגר
+ב-iframe את `/uploads/bookings/<id>/<name>` מאותו origin. ‏DENY היה שובר
+אותו. שאר ה-iframes הם `srcDoc`+`sandbox` ואינם מושפעים; תצוגת ההדפסה
+וה-PDF נפתחים בטאב חדש.
+
+**למה includeSubDomains נשאר.** הכותרת מ-`guesthub.bios.co.il` חלה רק על
+`*.guesthub.bios.co.il`, לא על pms/vps/invoice וכו' (אחים, לא צאצאים). אין שם
+שירות; ה-wildcard DNS מוביל ל-catch-all של :80 בלבד. על ה-apex
+`stayme.co.il` אין תת-דומיינים, אין wildcard ואין MX, וכל תת-דומיין עתידי
+יעבור ב-Cloudflare. לא נמצא תת-דומיין http-only.
+
+**מלכודת הירושה.** ‏`location /` מוסיף Cache-Control ולכן אינו יורש
+`add_header` מרמת ה-server. ה-snippet מוכלל בשני המקומות. ‏`/_next/`
+ו-`= /api/health` נשארים ללא `add_header` ויורשים; ה-`Cache-Control:
+no-store` של הנתיב עובר כפי שהוא.
+
+**יושם 2026-09-04 על ידי רונן.** קבצים: ‏`/etc/nginx/snippets/guesthub-security-headers.conf`
+(חדש), ‏`/etc/nginx/sites-available/guesthub.bios.co.il` (גיבוי
+`backup-<timestamp>` נשמר לצדו). **אומת:** ארבע הכותרות על `/login` ועל
+`/api/health`; הגבלת הקצב — ‏10 × 200 ואז 429.
+
+**סייגים.** דרך `stayme.co.il` ה-`$binary_remote_addr` הוא IP של Cloudflare,
+כי אין `real_ip`; המוניטורים פוגעים ישירות דרך guesthub ולכן זה לא משנה
+בפועל. **מחוץ להיקף, הכרעות נפרדות:** ‏`X-Powered-By`, ‏`server_tokens`,
+‏Content-Security-Policy, ‏`real_ip` לטווחי Cloudflare.
