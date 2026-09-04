@@ -4587,3 +4587,45 @@ sweep ההתכנסות, שמנסה מחדש כל ~5 דקות, רשם שורה ח
 
 **היקף:** שני צרכנים בלבד (admin.ts + page.tsx), מסך פנימי, אפס
 מיגרציה; ה-alias שונה ל-`stuck_revisions` כדי שהשם לא ישקר על התוכן.
+
+---
+
+## D170 — נקודת בריאות `/api/health`: ללא אימות, בודקת DB, חתומה ב-BUILD_ID; פטורה מה-middleware דרך דגל-נתיב (2026-09-04)
+
+**ההכרעה (בעלים).** נתיב `GET /api/health` ב-`src/app/api/health/route.ts`,
+ללא אימות, ללא קריאת cookies, ללא הקשר דייר, ללא PII וללא dump של env.
+מחזיר `200 {"ok":true,"db":true,"build":"<BUILD_ID>"}` כאשר `SELECT 1` על
+החיבור הקיים (`sql` מ-`@/lib/db`) עונה בתוך 2 שניות, ואחרת
+`503 {"ok":false,"db":false}`. לעולם לא זורק: כשל בבדיקה הוא 503 עם שורת
+לוג אחת, לא 500 עם stack. ‏`dynamic = "force-dynamic"` ו-`Cache-Control:
+no-store`. ‏`BUILD_ID` נקרא מ-`.next/BUILD_ID` בזמן הבקשה, קריאה מצליחה
+נשמרת ל-scope המודול לחיי התהליך (התהליך מתאפס בכל דפלוי), כשל = `"unknown"`.
+
+**מנגנון הפטור — קיים, לא חדש.** ‏`src/middleware.ts` פוטר נתיבים חסרי-סשן
+דרך דגלי-נתיב בוליאניים (`isOauthCallback`, `isMessagingWebhook`,
+`isPublicBookingApi`) שמורכבים לתנאי ההפניה ל-`/login`. נוסף דגל רביעי,
+`isHealth = path === "/api/health"` (התאמה מדויקת, בלי תת-נתיבים), לאותו
+תנאי. **נדחה:** הוספת הנתיב ל-negative lookahead של ה-`matcher` — זה המנגנון
+של נכסים סטטיים ו-manifest, לא של נתיבי API, והוא היה מכניס מנגנון שני
+לאותה מטרה. המחיר של הבחירה: ה-middleware עדיין מריץ `supabase.auth.getUser()`
+על כל בקשת health; בלי cookie זו קריאה מקומית שמחזירה `user=null` בלי
+פנייה לרשת, זהה לנתיבי ה-webhook.
+
+**מה חשוף ומה לא.** nginx (`sites-enabled/guesthub.bios.co.il`) מעביר את
+`location /` כולו ל-3007 בלי rate-limit ובלי auth, ולכן הנתיב נגיש מהאינטרנט
+בדיוק כמו `/api/public/*` (ראה NIGHT_AUDIT ח3). הוא חושף שלושה ביטים בלבד:
+חי/לא, DB נגיש/לא, ו-BUILD_ID (מזהה build אקראי, לא commit ולא גרסה). כל
+פגיעה = שאילתת `SELECT 1` אחת מה-pool (‏max 10). ‏nginx גם דורס את ה-
+`Cache-Control` של האפליקציה ב-`no-store, must-revalidate` שלו, כך שמול
+ה-origin ההדר מגיע מ-nginx ומול loopback מהנתיב — בשני המקרים no-store.
+
+**סייג ידוע.** ‏porsager אינו מבטל שאילתה; ב-timeout הבדיקה מחזירה 503 אבל
+ה-`SELECT 1` ממשיך לחכות ב-pool עד שיסתיים. תחת ניתוק DB ממושך ומוניטור
+אגרסיבי זה עלול לתפוס חיבורים. אם זה יימדד — הפתרון הוא `limit_req` על
+`/api/health` ב-nginx, לא שינוי בנתיב.
+
+**אימות אחרי דפלוי (ידני):** ‏(א) `curl -s localhost:3007/api/health` →
+‏200 עם שלושת השדות ו-`build` זהה ל-`cat .next/BUILD_ID`; ‏(ב) אותו URL מול
+`https://guesthub.bios.co.il/api/health` → אותו גוף, ‏Cache-Control של
+nginx; ‏(ג) מסלול ה-503 **לא נבדק** — הוא דורש ניתוק DB, ואין דרך בטוחה
+לעשות זאת בפרודקשן; ההוכחה שלו היא קוד בלבד (`Promise.race` + `catch`).

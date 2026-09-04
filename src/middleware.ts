@@ -46,6 +46,10 @@ export async function middleware(request: NextRequest) {
   // session. Authenticated inside the route via the x-booking-secret header
   // (timingSafeEqual against PUBLIC_BOOKING_API_SECRET; env unset = API off).
   const isPublicBookingApi = path.startsWith("/api/public/");
+  // Health probe (D170): monitors and the deploy script call it with NO session.
+  // The route reads no cookies and no tenant context — it answers ok/db/build
+  // only — so it must bypass the login redirect. Exact match: no sub-paths.
+  const isHealth = path === "/api/health";
 
   // Redirect while carrying over any refreshed auth cookies staged on `response`
   // (a fresh NextResponse.redirect would otherwise drop a rotated refresh token).
@@ -58,7 +62,14 @@ export async function middleware(request: NextRequest) {
     return res;
   };
 
-  if (!user && !isLogin && !isOauthCallback && !isMessagingWebhook && !isPublicBookingApi)
+  if (
+    !user &&
+    !isLogin &&
+    !isOauthCallback &&
+    !isMessagingWebhook &&
+    !isPublicBookingApi &&
+    !isHealth
+  )
     return redirectTo("/login");
   if (user && isLogin) return redirectTo("/");
 
