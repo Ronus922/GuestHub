@@ -1,23 +1,28 @@
-// Live-DB verification for Phase-3 inventory integrity (§Q/§AH):
+// Inventory-integrity verification (§Q/§AH) on a disposable database:
 //  - the TS blocking-status mirror equals guesthub.inventory_blocking_statuses()
 //  - check_room_availability and room_type_inventory AGREE for every
 //    room-type/day in a sampled window
 //  - availability is never negative
 //  - closures/holds affect both consistently (inside a ROLLED-BACK tx)
 //  - tenant isolation, job idempotency, duplicate-revision rejection
-//  - no dirty-range/job backlog exists while no connection is active
-// All writes happen inside transactions that ROLL BACK — the live data is
-// never modified. Usage: node --env-file=.env.local scripts/check-inventory.mjs
+// The guard reads NO live rows. It builds its own tenant, room type and rooms
+// inside a transaction that ROLLS BACK: the suite hands every DB-backed guard
+// an empty clone of the from-zero template, where the former
+// `SELECT id FROM guesthub.tenants LIMIT 1` was an empty destructure (the crash
+// GUARD_INTEGRITY §2.1 recorded). A production DSN is refused outright.
+// Usage: node --env-file=.env.local scripts/check-inventory.mjs
 import postgres from "postgres";
 import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
-const sql = postgres(process.env.DATABASE_URL, { prepare: true, max: 1 });
+const url = process.env.DATABASE_URL;
+for (const marker of ["bios-vps", ":5432/", "guesthub.bios.co.il", "db.bios.co.il"]) {
+  if (url?.includes(marker)) throw new Error(`refusing production-like database marker: ${marker}`);
+}
+const sql = postgres(url, { prepare: true, max: 1 });
 const FROM = "2026-08-01";
 const TO = "2026-08-15"; // exclusive
 
 try {
-  const [{ id: tenantId }] = await sql`SELECT id FROM guesthub.tenants LIMIT 1`;
-
   // ---- blocking statuses: TS mirror === SQL source ----
   const [{ statuses }] = await sql`SELECT guesthub.inventory_blocking_statuses() AS statuses`;
   // D126 — every status except cancelled consumes inventory (migration 073)
@@ -32,66 +37,79 @@ try {
   const tsStatuses = m[1].split(",").map((s) => s.trim().replace(/["']/g, "")).filter(Boolean);
   assert.deepEqual(tsStatuses, statuses, "TS mirror equals guesthub.inventory_blocking_statuses()");
 
-  // ---- agreement: projection availability === per-room availability-fn count ----
-  async function assertAgreement(db, label) {
-    const proj = await db`
-      SELECT room_type_id, day::text AS day, sellable_rooms, hold_rooms, availability
-      FROM guesthub.room_type_inventory(${tenantId}, ${FROM}, ${TO})`;
-    assert.ok(proj.length > 0, "projection returns rows");
-    for (const row of proj) {
-      assert.ok(row.availability >= 0, `availability never negative (${label})`);
-      const rooms = await db`
-        SELECT id FROM guesthub.rooms
-        WHERE tenant_id = ${tenantId} AND room_type_id = ${row.room_type_id}
-          AND status = 'available' AND is_active`;
-      assert.equal(rooms.length, row.sellable_rooms, `sellable count agrees (${label})`);
-      if (rooms.length === 0) continue;
-      const conflicts = await db`
-        SELECT DISTINCT room_id FROM guesthub.check_room_availability(
-          ${tenantId}, ${rooms.map((r) => r.id)}::uuid[],
-          ${row.day}, (${row.day}::date + 1)::date)`;
-      const freePhysical = rooms.length - conflicts.length;
-      assert.equal(
-        Math.max(0, freePhysical - row.hold_rooms),
-        row.availability,
-        `projection agrees with check_room_availability for type ${row.room_type_id} on ${row.day} (${label})`,
-      );
+  // ---- the guard's own tenant: one room type, two sellable rooms (rolled back) ----
+  await sql.begin(async (db) => {
+    const [{ id: tenantId }] = await db`
+      INSERT INTO guesthub.tenants (name, slug)
+      VALUES ('inventory-check', ${"inv-" + crypto.randomUUID().slice(0, 8)}) RETURNING id`;
+    const [rt] = await db`
+      INSERT INTO guesthub.room_types (tenant_id, name, base_price)
+      VALUES (${tenantId}, 'inventory-check type', 500) RETURNING id`;
+    for (const roomNumber of ["INV-1", "INV-2"]) {
+      await db`
+        INSERT INTO guesthub.rooms (tenant_id, room_number, room_type_id, status, is_active)
+        VALUES (${tenantId}, ${roomNumber}, ${rt.id}, 'available', true)`;
     }
-    return proj;
-  }
-  await assertAgreement(sql, "live");
 
-  // ---- closure + hold affect both models identically (rolled back) ----
-  await sql.begin(async (tx) => {
-    const [room] = await tx`
+    // ---- agreement: projection availability === per-room availability-fn count ----
+    async function assertAgreement(conn, label) {
+      const proj = await conn`
+        SELECT room_type_id, day::text AS day, sellable_rooms, hold_rooms, availability
+        FROM guesthub.room_type_inventory(${tenantId}, ${FROM}, ${TO})`;
+      assert.ok(proj.length > 0, "projection returns rows");
+      for (const row of proj) {
+        assert.ok(row.availability >= 0, `availability never negative (${label})`);
+        const rooms = await conn`
+          SELECT id FROM guesthub.rooms
+          WHERE tenant_id = ${tenantId} AND room_type_id = ${row.room_type_id}
+            AND status = 'available' AND is_active`;
+        assert.equal(rooms.length, row.sellable_rooms, `sellable count agrees (${label})`);
+        if (rooms.length === 0) continue;
+        const conflicts = await conn`
+          SELECT DISTINCT room_id FROM guesthub.check_room_availability(
+            ${tenantId}, ${rooms.map((r) => r.id)}::uuid[],
+            ${row.day}, (${row.day}::date + 1)::date)`;
+        const freePhysical = rooms.length - conflicts.length;
+        assert.equal(
+          Math.max(0, freePhysical - row.hold_rooms),
+          row.availability,
+          `projection agrees with check_room_availability for type ${row.room_type_id} on ${row.day} (${label})`,
+        );
+      }
+      return proj;
+    }
+    await assertAgreement(db, "baseline");
+
+    // ---- closure + hold affect both models identically ----
+    const [room] = await db`
       SELECT id, room_type_id FROM guesthub.rooms
       WHERE tenant_id = ${tenantId} AND status = 'available' AND is_active
         AND room_type_id IS NOT NULL LIMIT 1`;
-    await tx`
+    await db`
       INSERT INTO guesthub.room_closures (tenant_id, room_id, start_date, end_date, reason)
       VALUES (${tenantId}, ${room.id}, '2026-08-03', '2026-08-05', 'check-inventory test')`;
     // the closed room must conflict via the availability fn…
-    const conflicts = await tx`
+    const conflicts = await db`
       SELECT * FROM guesthub.check_room_availability(
         ${tenantId}, ARRAY[${room.id}]::uuid[], '2026-08-03', '2026-08-04')`;
     assert.ok(conflicts.some((c) => c.conflict_kind === "closure"), "closure blocks the room");
     // …and adjacent dates must NOT conflict with it (end-exclusive)
-    const adjacent = await tx`
+    const adjacent = await db`
       SELECT * FROM guesthub.check_room_availability(
         ${tenantId}, ARRAY[${room.id}]::uuid[], '2026-08-05', '2026-08-06')`;
     assert.ok(!adjacent.some((c) => c.conflict_kind === "closure"), "closure end date is exclusive");
     // …and the projection must agree everywhere, including the closed days
-    await assertAgreement(tx, "with closure");
+    await assertAgreement(db, "with closure");
 
     // active inventory hold reduces room-type availability (§R)
-    const before = await tx`
+    const before = await db`
       SELECT availability FROM guesthub.room_type_inventory(${tenantId}, '2026-08-10', '2026-08-11')
       WHERE room_type_id = ${room.room_type_id}`;
-    await tx`
+    await db`
       INSERT INTO guesthub.channel_inventory_holds
         (tenant_id, room_type_id, check_in, check_out, rooms_count)
       VALUES (${tenantId}, ${room.room_type_id}, '2026-08-10', '2026-08-11', 1)`;
-    const after = await tx`
+    const after = await db`
       SELECT availability FROM guesthub.room_type_inventory(${tenantId}, '2026-08-10', '2026-08-11')
       WHERE room_type_id = ${room.room_type_id}`;
     assert.equal(
@@ -99,21 +117,21 @@ try {
       Math.max(0, before[0].availability - 1),
       "active hold reduces room-type availability immediately",
     );
-    await assertAgreement(tx, "with hold");
+    await assertAgreement(db, "with hold");
+
+    // ---- tenant isolation: foreign/unknown room ids are conflicts, not free ----
+    const foreign = await db`
+      SELECT * FROM guesthub.check_room_availability(
+        ${tenantId}, ARRAY['00000000-0000-0000-0000-000000000001']::uuid[],
+        '2026-08-01', '2026-08-02')`;
+    assert.ok(
+      foreign.some((c) => c.conflict_kind === "room_missing"),
+      "unknown/foreign room id reports room_missing — never looks available",
+    );
     throw new Error("ROLLBACK");
   }).catch((e) => {
     if (e.message !== "ROLLBACK") throw e;
   });
-
-  // ---- tenant isolation: foreign/unknown room ids are conflicts, not free ----
-  const foreign = await sql`
-    SELECT * FROM guesthub.check_room_availability(
-      ${tenantId}, ARRAY['00000000-0000-0000-0000-000000000001']::uuid[],
-      '2026-08-01', '2026-08-02')`;
-  assert.ok(
-    foreign.some((c) => c.conflict_kind === "room_missing"),
-    "unknown/foreign room id reports room_missing — never looks available",
-  );
 
   // ---- queue idempotency + duplicate revision rejection (rolled back) ----
   await sql.begin(async (tx) => {

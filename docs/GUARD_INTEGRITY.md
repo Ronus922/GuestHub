@@ -85,10 +85,10 @@ plus the fact that `.env.local` exists only in the production runtime tree.
 | `check:beds24-ari` | **NO** | **PRODUCTION** | 9 | **FAIL** | **FAIL** | Same, and its rebuilt version proves the old one printed `2 PASSED` **on an empty database**. Rebuilt: 10 assertions, exit 0, verified. |
 | `check:beds24` | **NO** | **PRODUCTION** | 9 | n/a | n/a | Aggregate of the four above. Inert wherever they are. |
 | `check:beds24-credit-headers` | **NO** | **PRODUCTION** | 9 | — | — | New in PR #113. Same `--env-file=.env.local` defect as the other nine. |
-| `check:inventory` | **NO** | **PRODUCTION** | 9 | **FAIL** | **FAIL** | **Detached on `stab/guard-inventory-staging`**; that branch also proves the guard never calls `checkRoomAvailability` — the double-booking path can be deleted and it stays green. |
-| `check:effective-state` | **NO** | **PRODUCTION** | 9 | — | — | Detached on the same branch. |
-| `check:rate-grid` | **NO** | **PRODUCTION** | 9 | — | — | Detached on the same branch. |
-| `check:sellability` | **NO** | **PRODUCTION** | 9 | — | — | Detached on the same branch. Its own header always said `.env.test`; `package.json` said `.env.local`. |
+| `check:inventory` | **NO** | **PRODUCTION** | 9 | **FAIL** | **FAIL** | **Detached on `stab/guard-inventory-staging`**; that branch also proves the guard never calls `checkRoomAvailability` — the double-booking path can be deleted and it stays green. **Fixed 2026-09-03:** builds its own tenant inside the rolled-back tx, reads no live rows, refuses production markers. |
+| `check:effective-state` | **NO** | **PRODUCTION** | 9 | — | — | Detached on the same branch. **Fixed 2026-09-03:** builds its own tenant inside the rolled-back tx, reads no live rows, refuses production markers. |
+| `check:rate-grid` | **NO** | **PRODUCTION** | 9 | — | — | Detached on the same branch. **Fixed 2026-09-03:** builds its own tenant inside the rolled-back tx, reads no live rows, refuses production markers. |
+| `check:sellability` | **NO** | **PRODUCTION** | 9 | — | — | Detached on the same branch. Its own header always said `.env.test`; `package.json` said `.env.local`. **Fixed 2026-09-03:** builds its own tenant inside the rolled-back tx, reads no live rows, refuses production markers. |
 | `check:hydration-browser` | **NO** | **PRODUCTION** + real Chrome | 9 | — | — | Needs a running staging app + credentials. |
 
 ### 2.2 Everything else
@@ -112,7 +112,7 @@ were B2-tested (§5) — this is the "believe with care" band.
 | `check:design` | yes | pure | **1** | 6 violations, all in `src/app/housekeeping/my-tasks/MyTasksScreen.tsx`, a **frozen** screen (STATE.md). Red for a real but out-of-scope reason. |
 | `check:e2e-safety` | yes | pure | 0 | |
 | `check:guest-communications` | yes | pure (3 scripts) | 0 | |
-| `check:guest-communications-db` | **NO** | shared :5433 (assumed schema) | **1** | §3.4 — diagnosed here, **not fixed**. |
+| `check:guest-communications-db` | **NO** | shared :5433 (assumed schema) | **1** | §3.4 — diagnosed here; **fixed 2026-09-03** (see the end of §3.4). |
 | `check:housekeeping` | yes | staging :5434 | 0 | |
 | `check:israel-market` | yes | staging :5434 | 0 | |
 | `check:maps-picker` | yes | pure | 0 | |
@@ -201,6 +201,16 @@ half-fix would have been a lie:
 `seedBeforeReplay` hook so the tenant exists before migration 000 runs. Then
 assertion 4 has something to be true about. Do not "fix" this guard by relaxing
 assertion 4.
+
+**Fixed 2026-09-03** — without a `seedBeforeReplay` hook, because the guard no
+longer replays a chain: under the suite it receives a clone of the from-zero
+template, and it now runs entirely inside one rolled-back transaction. Before
+replaying 036 (on its own connection, `sql.unsafe(...).simple()` — dropping
+`psql` also drops the owner problem from step 1), it inserts a tenant plus the
+`email`/`booking_confirmation` row that 020 seeds for every tenant present at
+chain time; 036 then versions, publishes and seeds the draft automation from
+it, so assertion 4 compares `['draft']` to `['draft']` and goes red the moment
+the seed stops being born a draft. Assertion 4 itself is untouched.
 
 ---
 
@@ -490,7 +500,7 @@ four production hostname markers and refuses a remote maintenance database.
    `check:pricing-equality`, `check:room-identity` and `check:su-lifecycle` —
    self-contained and DB-backed, so they are the cheapest to test and the most
    likely to be real.
-3. **`check:guest-communications-db`** — §3.4, needs `seedBeforeReplay`.
+3. ~~**`check:guest-communications-db`** — §3.4, needs `seedBeforeReplay`.~~ Fixed 2026-09-03 (end of §3.4).
 4. **`check:beds24-checkin-cancellation-guard`** — §7.2, patch ready.
 5. **Merge the phase-2 sibling branches.** Sixteen rows in §2 are "fixed on a
    branch". Until they merge, `main`'s guard set is the broken one.
