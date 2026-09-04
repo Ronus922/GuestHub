@@ -1,5 +1,5 @@
 import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
-import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
 const url = process.env.TEST_DATABASE_URL
@@ -16,79 +16,93 @@ const expectDbError = async (tx, statement, predicate) => {
   try { await tx.savepoint(statement); } catch (error) { thrown = error; }
   assert.equal(predicate(thrown), true, `expected DB error, received ${thrown?.code ?? thrown?.message ?? "none"}`);
 };
-const counts = async () => (await sql`
+const counts = async (tx) => (await tx`
   SELECT
     (SELECT count(*)::int FROM guesthub.communication_events) AS events,
     (SELECT count(*)::int FROM guesthub.outbound_messages) AS deliveries,
     (SELECT count(*)::int FROM guesthub.message_template_versions) AS versions,
     (SELECT count(*)::int FROM guesthub.communication_automations) AS automations`)[0];
 
-// Reapply twice so the assertion does not depend on whether the local test DB
-// was already current when this test started. Neither pass may emit work.
-execSync(
-  `psql "${url}" -v ON_ERROR_STOP=1 -q < db/migrations/036_guest_communications.sql`,
-  { stdio: "inherit", shell: "/bin/bash" },
-);
-const afterFirst = await counts();
-execSync(
-  `psql "${url}" -v ON_ERROR_STOP=1 -q < db/migrations/036_guest_communications.sql`,
-  { stdio: "inherit", shell: "/bin/bash" },
-);
-const afterSecond = await counts();
-assert.deepEqual(afterSecond, afterFirst);
-ok("migration reapplies idempotently without events, deliveries, versions, or automations backfill duplication");
-
-const permissionKeys = (await sql`
-  SELECT key FROM guesthub.permissions WHERE key LIKE 'communications.%' ORDER BY key`).map((row) => row.key);
-for (const key of [
-  "communications.templates.view",
-  "communications.deliveries.view",
-  "communications.templates.edit",
-  "communications.templates.publish",
-  "communications.automations.manage",
-  "communications.automations.activate",
-  "communications.channels.manage",
-  "communications.credentials.replace",
-  "communications.test.send",
-  "communications.messages.resend",
-]) assert.equal(permissionKeys.includes(key), true, `missing permission ${key}`);
-ok("migration installs every granular view, edit, publish, activation, channel, test, and resend permission");
-
-const invalidActivation = await sql`
-  SELECT count(*)::int AS count
-  FROM guesthub.communication_automations a
-  JOIN guesthub.message_templates t ON t.id = a.template_id AND t.tenant_id = a.tenant_id
-  WHERE a.name = 'אישור הזמנה לאורח' AND a.status = 'active'
-    AND (
-      t.current_published_version_id IS NULL
-      OR NOT EXISTS (
-        SELECT 1 FROM guesthub.messaging_provider_connections c
-        WHERE c.tenant_id = a.tenant_id AND c.provider IN ('gmail','gmail_smtp')
-          AND c.status = 'connected' AND c.last_tested_at IS NOT NULL
-          AND c.secret_ciphertext IS NOT NULL
-      )
-    )`;
-assert.equal(invalidActivation[0].count, 0);
-ok("default confirmation automation is active only with a published version and tested provider");
-
-// The stronger invariant: applying the migration must never, on ANY tenant, put
-// a guest-emailing automation into a sending state. Enabling it is a human act.
-// (A connected Gmail channel used to make the seed 'active' — that would have
-// emailed the next confirmed booking the moment this shipped.)
-const bornSending = await sql`
-  SELECT count(*)::int AS count FROM guesthub.communication_automations
-  WHERE status = 'active'`;
-assert.equal(bornSending[0].count, 0, "the migration must not activate any automation");
-const seeded = await sql`
-  SELECT DISTINCT status FROM guesthub.communication_automations
-  WHERE name = 'אישור הזמנה לאורח'`;
-assert.deepEqual(seeded.map((row) => row.status), ["draft"], "the seeded automation is born a draft");
-ok("migration never starts sending: every seeded automation is born a draft, activation stays a human act");
+// Migration 036 is replayed on the guard's own connection, INSIDE the rolled-
+// back transaction below (the file is many statements — hence the simple
+// protocol). Replayed twice so the assertion does not depend on whether the
+// database was already current when this test started. Neither pass may emit
+// work.
+const migration036 = readFileSync("db/migrations/036_guest_communications.sql", "utf8");
+const replay036 = (tx) => tx.unsafe(migration036).simple();
 
 class Rollback extends Error {}
 const slug = `communications-test-${Date.now()}`;
 try {
   await sql.begin(async (tx) => {
+    // 036 seeds its default automation only for a tenant that ALREADY owns the
+    // email booking_confirmation template migration 020 creates for every
+    // tenant present at chain time. The suite's clone holds no tenant at all,
+    // so without this fixture the "born a draft" assertion below compared []
+    // to ['draft'] — vacuous, exactly what GUARD_INTEGRITY §3.4 recorded. The
+    // row is the one 020 seeds; 036 then versions, publishes and seeds from it.
+    const [seedTenant] = await tx`
+      INSERT INTO guesthub.tenants (name, slug)
+      VALUES ('Communications seed', ${`${slug}-seed`}) RETURNING id`;
+    await tx`
+      INSERT INTO guesthub.message_templates (tenant_id, channel, slug, name, subject, body, is_system)
+      VALUES (${seedTenant.id}, 'email', 'booking_confirmation', 'אישור הזמנה',
+              'אישור הזמנה #{{booking_number}}', 'seed body', true)`;
+
+    await replay036(tx);
+    const afterFirst = await counts(tx);
+    await replay036(tx);
+    const afterSecond = await counts(tx);
+    assert.deepEqual(afterSecond, afterFirst);
+    ok("migration reapplies idempotently without events, deliveries, versions, or automations backfill duplication");
+
+    const permissionKeys = (await tx`
+      SELECT key FROM guesthub.permissions WHERE key LIKE 'communications.%' ORDER BY key`).map((row) => row.key);
+    for (const key of [
+      "communications.templates.view",
+      "communications.deliveries.view",
+      "communications.templates.edit",
+      "communications.templates.publish",
+      "communications.automations.manage",
+      "communications.automations.activate",
+      "communications.channels.manage",
+      "communications.credentials.replace",
+      "communications.test.send",
+      "communications.messages.resend",
+    ]) assert.equal(permissionKeys.includes(key), true, `missing permission ${key}`);
+    ok("migration installs every granular view, edit, publish, activation, channel, test, and resend permission");
+
+    const invalidActivation = await tx`
+      SELECT count(*)::int AS count
+      FROM guesthub.communication_automations a
+      JOIN guesthub.message_templates t ON t.id = a.template_id AND t.tenant_id = a.tenant_id
+      WHERE a.name = 'אישור הזמנה לאורח' AND a.status = 'active'
+        AND (
+          t.current_published_version_id IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM guesthub.messaging_provider_connections c
+            WHERE c.tenant_id = a.tenant_id AND c.provider IN ('gmail','gmail_smtp')
+              AND c.status = 'connected' AND c.last_tested_at IS NOT NULL
+              AND c.secret_ciphertext IS NOT NULL
+          )
+        )`;
+    assert.equal(invalidActivation[0].count, 0);
+    ok("default confirmation automation is active only with a published version and tested provider");
+
+    // The stronger invariant: applying the migration must never, on ANY tenant, put
+    // a guest-emailing automation into a sending state. Enabling it is a human act.
+    // (A connected Gmail channel used to make the seed 'active' — that would have
+    // emailed the next confirmed booking the moment this shipped.)
+    const bornSending = await tx`
+      SELECT count(*)::int AS count FROM guesthub.communication_automations
+      WHERE status = 'active'`;
+    assert.equal(bornSending[0].count, 0, "the migration must not activate any automation");
+    const seeded = await tx`
+      SELECT DISTINCT status FROM guesthub.communication_automations
+      WHERE name = 'אישור הזמנה לאורח'`;
+    assert.deepEqual(seeded.map((row) => row.status), ["draft"], "the seeded automation is born a draft");
+    ok("migration never starts sending: every seeded automation is born a draft, activation stays a human act");
+
     const [tenantA] = await tx`
       INSERT INTO guesthub.tenants (name, slug) VALUES ('Communications A', ${`${slug}-a`}) RETURNING id`;
     const [tenantB] = await tx`
