@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { renderTemplate } from "@/lib/messaging/templates";
+import { renderManualSubject } from "@/lib/messaging/render-manual";
 import {
   getMessagingContextAction,
   sendBookingEmailAction,
@@ -172,11 +173,16 @@ export function MessageComposer({
   };
 
   const vars = ctx?.variables ?? {};
-  const previewSubject = renderTemplate(subject, vars);
+  // Subject preview = the server's own chain (legacy vars → communications
+  // renderer, D172), so the preview can never show a {{group.key}} token the
+  // send would resolve — or hide one the send would refuse.
+  const subjectRender = isEmail && ctx?.renderContext ? renderManualSubject(subject, vars, ctx.renderContext) : null;
+  const previewSubject = subjectRender ? subjectRender.value : renderTemplate(subject, vars);
+  const subjectBlocked = subjectRender !== null && !subjectRender.canSend;
   const previewBody = renderTemplate(body, vars);
 
   const canSend =
-    !pending && providerConfigured && recipientValid && previewBody.trim().length > 0 && sendState !== "sent";
+    !pending && providerConfigured && recipientValid && !subjectBlocked && previewBody.trim().length > 0 && sendState !== "sent";
 
   const doSend = () =>
     startSend(async () => {
@@ -259,6 +265,13 @@ export function MessageComposer({
                     ? "לאורח אין כתובת אימייל תקינה. עדכן אותה בפרטי האורח לפני השליחה."
                     : "לאורח אין מספר טלפון תקין. עדכן אותו בפרטי האורח לפני השליחה."}
                 </span>
+              </div>
+            )}
+
+            {subjectBlocked && (
+              <div className="bk-cmp-alert danger">
+                <Icon name="warning" size={17} />
+                <span>הנושא מכיל משתנה שלא ניתן לשלוח — {subjectRender?.detail}</span>
               </div>
             )}
 

@@ -506,6 +506,19 @@ export async function loadPreviewDatasets(tenantId: string, limit = 3): Promise<
   );
 }
 
+/**
+ * The render context of ONE reservation — the booking composer's manual send
+ * renders its subject through this (D172), so a manual message resolves exactly
+ * the values an automation would. null = reservation not found for this tenant.
+ */
+export async function reservationRenderContext(
+  tenantId: string,
+  reservationId: string,
+): Promise<CommunicationRenderContext | null> {
+  const row = await loadReservationSnapshot(tenantId, reservationId);
+  return row ? buildRenderContext(row) : null;
+}
+
 /** The property-only context — what a preview falls back to when the tenant has no reservations yet. */
 export async function propertyOnlyContext(tenantId: string): Promise<CommunicationRenderContext> {
   const profile = await getBusinessProfile(tenantId);
