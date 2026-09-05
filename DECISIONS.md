@@ -4851,3 +4851,33 @@ CONFLICT DO NOTHING` הוא הנעילה — מי שהניח את השורה ש�
 ‏20/20 · `check:maps-picker` 111 · `check:business-profile` ✔ · `check:settings-regression`
 ✔ · `check:dashboard-shell` ✔. **לא אומת:** תצוגה בדפדפן — אין build בעץ הפרודקשן (D147);
 אימות ויזואלי אחרי deploy, עם rollback מוכן.
+
+### D175 — תוספת פריסה ואימות (2026-09-05)
+
+**פריסה.** ‏#235 מוזג ל-main (merge commit c2f68e86) ונפרס דרך `PROD_DEPLOY_OK=1 npm
+run deploy:prod`: ‏0 מיגרציות ממתינות, build `iUidJgbHP9iJNQz-ICz6e`, שני תהליכי PM2
+(‏guesthub + guesthub-channel-worker) online, `/api/health` מחזיר 200 ב-loopback
+וב-https בשני השמות (guesthub.bios.co.il, stayme.co.il). קדם לכך תיקון ה-CI של
+D175 (השומר `check:check-in-check-out` שהוצמד לקלאסים הישנים של ה-Shell).
+
+**אימות בדפדפן (טכניקת magic-link + CDP read-only, ראה [[channel-health-d173]]).**
+צולם `/settings?section=business` בפרודקשן ב-1440/1000/390. תואם לעיצוב המאושר:
+ניווט 256px דביק עם שורה פעילה (רקע ‎#EEF1FD, פס פנימי כחול), קריסה לעמודה אחת ב-1000
+(הניווט מעל התוכן) ו-select במובייל; באנר נסגר; כרטיס מוכנות שתי עמודות עם צ'יפים
+ירוקים ("תקין"/"מוכן לחיבור"); לוגו עגול 84px עם התמונה; סיכום מיקום 4 עמודות (2 במובייל)
+עם tz/lat/lng במונו ו"סומן והותאם ב-Google" בירוק; אקורדיון סגור שנפתח ל-lat/lng/מיקוד/
+אזור-זמן; פונט Assistant, אייקוני רשימה 17px. ‏0 שגיאות קונסול מלבד אזהרת ה-Marker
+הצפויה (D62).
+
+**סטייה שתוקנה (‏#236, ענף `fix/bp-card-icon-layer`).** ריבוע האייקון בכותרות הכרטיסים
+נמדד בפרוד 36×36/‏radius 12 במקום 38×38/‏11 של העיצוב: הכלל `.bp .card-ic` ישב ב-`@layer
+components` והפסיד ל-utilities `h-9 w-9 rounded-xl` של `SettingsCard` המשותף (utilities
+= שכבה מאוחרת יותר). הועבר מחוץ ל-`@layer`, כמו `.card-hd > .min-w-0` ב-responsive.css.
+
+**מה לא אומת ויזואלית: המפה עצמה ושדה החיפוש של Google.** מפתח ה-Maps מוגבל ב-referer
+לדומיינים של הפרודקשן, וה-CDP רץ מול `localhost:3007` — ולכן קפצה `RefererNotAllowedMapError`
+וה-`<gmp-place-autocomplete>` לא שודרג. זו מגבלת שיטת-האימות, לא רגרסיה: מחזור ה-SDK של
+`LocationPicker` לא שונה (D61/D62), רק המעטפת (‏`.bp-map` 340px/‏radius 14, מאומת מוצהר
+ב-CSS; במעבר 1000px אף נמדד `canvas` חי). **סיכום המיקום השמור מוצג בלי ה-SDK ולכן נראה
+מלא ותקין — בדיוק תכונת החוסן של D62.** אימות ויזואלי של המפה/החיפוש דורש הרצה מול הדומיין
+החי ונשאר פתוח.

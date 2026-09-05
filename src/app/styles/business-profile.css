@@ -121,14 +121,10 @@
     flex-direction: column;
     gap: 18px;
   }
-  /* card header per the reference: 16px vertical padding, 38px icon square */
+  /* card header per the reference: 16px vertical padding (the 38px icon
+     square is at the bottom of this file — it must be unlayered) */
   .bp .card-hd {
     padding: 16px 20px;
-  }
-  .bp .card-ic {
-    width: 38px;
-    height: 38px; /* ds-allow: approved design — 38px icon square */
-    border-radius: 11px; /* ds-allow: approved design — 11px icon-square radius */
   }
 
   /* info banner — compact, dismissible */
@@ -548,4 +544,20 @@
     padding: 16px;
     border-top: 1px solid var(--line);
   }
+}
+
+/* ============================================================
+   DELIBERATELY UNLAYERED.
+   The card's icon square carries Tailwind's `h-9 w-9 rounded-xl` utilities
+   (the shared SettingsCard: 36px / 12px on every other tab). Utilities are a
+   LATER cascade layer than @layer components, so a layered override loses to
+   them no matter how specific it is — measured live after the D175 deploy:
+   36×36 and 12px, the rule above never painted. An unlayered rule beats every
+   layer (the same reason responsive.css unlayers `.card-hd > .min-w-0`), so
+   the reference's 38px / 11px square lives here, and only here.
+   ============================================================ */
+.bp .card-ic {
+  width: 38px;
+  height: 38px; /* ds-allow: approved design — 38px icon square */
+  border-radius: 11px; /* ds-allow: approved design — 11px icon-square radius */
 }
