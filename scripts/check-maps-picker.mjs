@@ -307,9 +307,14 @@ await (async () => {
   passed += 3;
 }
 
-// map container has an explicit non-zero height in the component
-assert.ok(/ref=\{mapHostRef\}[\s\S]{0,220}h-72/.test(COMPONENT_SRC), "map container has an explicit height (h-72)");
-passed++;
+// map container has an explicit non-zero height: the .bp-map class, whose 340px
+// lives in business-profile.css (approved design "הגדרות - פרופיל העסק", D175)
+assert.ok(/ref=\{mapHostRef\}[\s\S]{0,220}bp-map/.test(COMPONENT_SRC), "map container carries the explicit-height class (bp-map)");
+assert.ok(
+  /\.bp-map\s*\{[^}]*height:\s*340px/.test(readFileSync("src/app/styles/business-profile.css", "utf8")),
+  "bp-map declares the explicit 340px height",
+);
+passed += 2;
 
 // ============================================================
 // 5. marker movement requires confirmation; nothing auto-saves

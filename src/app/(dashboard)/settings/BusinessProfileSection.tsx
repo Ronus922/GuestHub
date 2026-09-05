@@ -3,8 +3,8 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Icon } from "@/components/shared/Icon";
-import { PROPERTY_TYPES } from "@/lib/business/profile";
+import { Icon, type IconName } from "@/components/shared/Icon";
+import { PROPERTY_TYPES, type ProfileCheckItem } from "@/lib/business/profile";
 import { Field, FormGrid, SettingsCard } from "./controls";
 import {
   getBusinessProfileContextAction,
@@ -14,10 +14,14 @@ import {
 } from "./business-actions";
 import { LocationPicker } from "./LocationPicker";
 
-// פרופיל העסק — canonical Business/Property identity, separate from the GuestHub
-// application brand. Identity + contact save through saveBusinessProfileAction;
-// logo through /api/branding/logo; location through LocationPicker. Nothing here
-// prefills "GuestHub" or an invented name — empty fields stay empty.
+// פרופיל העסק — approved design "הגדרות - פרופיל העסק.dc.html" (D175): a compact
+// dismissible banner, ONE readiness card split into two columns with a status
+// pill each, uniform titled cards (icon square + title + subtitle), the blue
+// primary "שמירת פרטי העסק" after the contact card, and the location card.
+// Canonical Business/Property identity, separate from the GuestHub application
+// brand. Identity + contact save through saveBusinessProfileAction; logo through
+// /api/branding/logo; location through LocationPicker. Nothing here prefills
+// "GuestHub" or an invented name — empty fields stay empty.
 
 const PROPERTY_TYPE_LABELS: Record<string, string> = {
   apartment: "דירה",
@@ -57,11 +61,20 @@ function toForm(ctx: BusinessProfileContext): IdentityForm {
   };
 }
 
-export function BusinessProfileSection({ initial }: { initial: BusinessProfileContext }) {
+export function BusinessProfileSection({
+  initial,
+  showBanner = true,
+}: {
+  initial: BusinessProfileContext;
+  /** the identity note above the readiness card — a display setting; the
+   *  operator can also dismiss it for the session */
+  showBanner?: boolean;
+}) {
   const [ctx, setCtx] = useState(initial);
   const [form, setForm] = useState<IdentityForm>(toForm(initial));
   const [logo, setLogo] = useState<string | null>(initial.profile.logo);
   const [uploading, setUploading] = useState(false);
+  const [bannerOpen, setBannerOpen] = useState(showBanner);
   const [saving, startSave] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -73,6 +86,8 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
   // renders the sidebar account card, is above it and is not re-rendered by a
   // Server Action. router.refresh() refetches the whole tree, so the sidebar picks
   // up the new property identity with no logout, hard refresh or redeploy.
+  // The readiness card re-computes from the reloaded context, so a postal code
+  // saved in the location card flips its pill on the same round-trip.
   async function reload() {
     const res = await getBusinessProfileContextAction();
     if (res.success && res.data) {
@@ -138,27 +153,57 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
   const { status } = ctx;
 
   return (
-    <div className="flex flex-col gap-5" dir="rtl">
+    <div className="bp" dir="rtl">
       {/* Identity note — GuestHub is the application, not the business */}
-      <div className="flex items-start gap-2.5 rounded-xl border border-line bg-primary-050 p-3">
-        <Icon name="info" size={17} className="mt-0.5 shrink-0 text-primary" />
-        <p className="text-xs font-semibold leading-relaxed text-text2">
-          GuestHub הוא שם מערכת הניהול בלבד. כאן מגדירים את זהות <strong>העסק</strong> ו<strong>הנכס</strong> הציבורית
-          — השם המופיע ללקוחות, במסמכים, בהודעות ובחיבור לערוצי הזמנות. השם אינו נגזר אוטומטית משם המערכת.
-        </p>
-      </div>
+      {bannerOpen && (
+        <div className="bp-banner" role="note">
+          <Icon name="info" size={20} />
+          <p>
+            GuestHub הוא שם מערכת הניהול בלבד. כאן מגדירים את זהות העסק והנכס הציבורית — השם שמופיע
+            ללקוחות, במסמכים, בהודעות ובחיבור לערוצי הזמנות.
+          </p>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="סגירת ההודעה"
+            onClick={() => setBannerOpen(false)}
+          >
+            <Icon name="close" size={20} />
+          </button>
+        </div>
+      )}
 
-      {/* completion + channel readiness */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <ChecklistCard title="פרטי עסק בסיסיים" items={status.businessItems} done={status.businessComplete} />
-        <ChecklistCard title="מוכנות לחיבור ערוצים (Booking/Expedia)" items={status.channelItems} done={status.channelReady} />
-      </div>
+      {/* completion + channel readiness — one card, two columns, a pill each */}
+      <section className="card bp-ready" aria-label="מוכנות פרופיל העסק">
+        <ReadinessColumn
+          icon="verified"
+          tone="ok"
+          title="פרטי עסק בסיסיים"
+          items={status.businessItems}
+          done={status.businessComplete}
+          doneLabel="תקין"
+        />
+        <ReadinessColumn
+          icon="crown"
+          tone="warn"
+          title="מוכנות לחיבור ערוצים (Booking/Expedia)"
+          items={status.channelItems}
+          done={status.channelReady}
+          doneLabel="מוכן לחיבור"
+          twoColumns
+        />
+      </section>
 
       {/* Business identity */}
-      <SettingsCard icon="building" title="זהות העסק">
+      <SettingsCard
+        icon="building"
+        title="זהות העסק"
+        subtitle="השם והלוגו של העסק כפי שמופיעים ללקוחות, במסמכים ובהודעות"
+      >
         <div className="flex flex-col gap-4">
           <LogoField
             logo={logo}
+            initials={initials(ctx.profile.publicBusinessName)}
             uploading={uploading || saving}
             fileRef={fileRef}
             onPick={onUploadLogo}
@@ -178,13 +223,17 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
       </SettingsCard>
 
       {/* Property identity */}
-      <SettingsCard icon="hotel" title="זהות הנכס / מקום האירוח">
+      <SettingsCard
+        icon="hotel"
+        title="זהות הנכס / מקום האירוח"
+        subtitle="השם והסוג של מקום האירוח כפי שיוצגו לאורחים ולערוצי ההזמנות"
+      >
         <FormGrid>
-          <Field label="שם הנכס / מקום האירוח">
+          <Field label="שם הנכס">
             <input className="field-input" value={form.propertyName} maxLength={200}
               onChange={(e) => set("propertyName", e.target.value)} placeholder="השם הציבורי של מקום האירוח" />
           </Field>
-          <Field label="כותרת משנה לנכס">
+          <Field label="כותרת משנה">
             <input className="field-input" value={form.propertySubtitle} maxLength={200}
               onChange={(e) => set("propertySubtitle", e.target.value)} placeholder="אופציונלי" />
           </Field>
@@ -198,8 +247,12 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
         </FormGrid>
       </SettingsCard>
 
-      {/* Public contact */}
-      <SettingsCard icon="phone" title="פרטי קשר ציבוריים">
+      {/* Public contact — email + phone on one row, the website full width */}
+      <SettingsCard
+        icon="phone"
+        title="פרטי קשר ציבוריים"
+        subtitle="אמצעי הקשר שמוצגים לאורחים ומועברים לערוצי ההזמנות"
+      >
         <FormGrid>
           <Field label="דוא״ל">
             <input className="field-input" dir="ltr" inputMode="email" value={form.email} maxLength={320}
@@ -209,14 +262,14 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
             <input className="field-input" dir="ltr" inputMode="tel" value={form.phone} maxLength={40}
               onChange={(e) => set("phone", e.target.value)} placeholder="+972…" />
           </Field>
-          <Field label="אתר">
+          <Field label="אתר" full>
             <input className="field-input" dir="ltr" inputMode="url" value={form.website} maxLength={300}
               onChange={(e) => set("website", e.target.value)} placeholder="https://…" />
           </Field>
         </FormGrid>
       </SettingsCard>
 
-      <div className="flex items-center gap-3">
+      <div className="bp-save-row">
         <button type="button" className="btn btn-primary" disabled={saving || !dirty} onClick={onSave}>
           <Icon name="check" size={20} />
           {saving ? "שומר…" : "שמירת פרטי העסק"}
@@ -224,8 +277,12 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
         {dirty && <span className="field-hint">יש שינויים שלא נשמרו</span>}
       </div>
 
-      {/* Location (Google Maps) */}
-      <SettingsCard icon="globe" title="מיקום">
+      {/* Location (Google Maps) — its own save, its own API call */}
+      <SettingsCard
+        icon="location"
+        title="מיקום"
+        subtitle="כתובת, קואורדינטות ואזור זמן של הנכס — מקור אחד לכל הערוצים"
+      >
         <LocationPicker
           profile={ctx.profile}
           googleMapsConfigured={ctx.googleMapsConfigured}
@@ -237,32 +294,41 @@ export function BusinessProfileSection({ initial }: { initial: BusinessProfileCo
   );
 }
 
+// Up to two initials of the public business name, for the logo circle when no
+// image is set. publicBusinessName always has a value (tenant fallback), and it
+// is never the application name.
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map((p) => p.charAt(0)).join("") || "—";
+}
+
 function LogoField({
   logo,
+  initials,
   uploading,
   fileRef,
   onPick,
   onRemove,
 }: {
   logo: string | null;
+  initials: string;
   uploading: boolean;
   fileRef: React.RefObject<HTMLInputElement | null>;
   onPick: (f: File) => void;
   onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-4">
-      <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-xl border border-line bg-hover/40">
+    <div className="bp-logo-row">
+      <div className="bp-logo">
         {logo ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={logo} alt="לוגו העסק" className="h-full w-full object-contain" />
+          <img src={logo} alt="לוגו העסק" />
         ) : (
-          <Icon name="image" size={24} className="text-faint" />
+          <span aria-hidden="true">{initials}</span>
         )}
       </div>
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-semibold text-text2">לוגו העסק</p>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="bp-logo-acts">
+        <div className="bp-logo-btns">
           <input
             ref={fileRef}
             type="file"
@@ -279,42 +345,57 @@ function LogoField({
             disabled={uploading}
             onClick={() => fileRef.current?.click()}
           >
-            <Icon name="image" size={20} />
+            <Icon name="photo-camera" size={20} />
             {uploading ? "מעלה…" : logo ? "החלפת לוגו" : "העלאת לוגו"}
           </button>
           {logo && (
-            <button type="button" className="btn btn-secondary" disabled={uploading} onClick={onRemove}>
-              <Icon name="trash" size={20} />
+            <button type="button" className="btn bp-btn-remove" disabled={uploading} onClick={onRemove}>
               הסרה
             </button>
           )}
         </div>
-        <p className="field-hint">PNG, JPG או WEBP · עד 15MB</p>
+        <p className="bp-note">PNG, JPG או WEBP · עד 15MB</p>
       </div>
     </div>
   );
 }
 
-function ChecklistCard({
+const missingLabel = (n: number) => (n === 1 ? "חסר שדה אחד" : `חסרים ${n} שדות`);
+
+// One readiness column: icon + title + a status pill, then the field list.
+// Present → check_circle in success green; missing → cancel in the reference's
+// red with the label faded. The list icon is the reference's 18px, snapped by
+// <Icon> to the §10 size 17.
+function ReadinessColumn({
+  icon,
+  tone,
   title,
   items,
   done,
+  doneLabel,
+  twoColumns,
 }: {
+  icon: IconName;
+  tone: "ok" | "warn";
   title: string;
-  items: { key: string; label: string; present: boolean }[];
+  items: ProfileCheckItem[];
   done: boolean;
+  doneLabel: string;
+  twoColumns?: boolean;
 }) {
+  const missing = items.filter((i) => !i.present).length;
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-line p-4">
-      <div className="flex items-center gap-2">
-        <Icon name={done ? "shield-check" : "warning"} size={17} className={done ? "text-status-success" : "text-status-warning"} />
-        <p className="text-sm font-bold text-ink">{title}</p>
+    <div className="bp-ready-col">
+      <div className="bp-ready-hd">
+        <Icon name={icon} size={20} className={tone} />
+        <span className="bp-ready-t">{title}</span>
+        <span className={`bp-status ${done ? "ok" : "warn"}`}>{done ? doneLabel : missingLabel(missing)}</span>
       </div>
-      <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
+      <ul className={`bp-ready-list${twoColumns ? " two" : ""}`}>
         {items.map((i) => (
-          <li key={i.key} className="flex items-center gap-1.5 text-xs font-semibold">
-            <Icon name={i.present ? "check" : "close"} size={13.5} className={i.present ? "text-status-success" : "text-faint"} />
-            <span className={i.present ? "text-text2" : "text-faint"}>{i.label}</span>
+          <li key={i.key} className={`bp-ready-item${i.present ? "" : " miss"}`}>
+            <Icon name={i.present ? "check-circle" : "cancel"} size={17} />
+            <span>{i.label}</span>
           </li>
         ))}
       </ul>

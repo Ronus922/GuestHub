@@ -13,12 +13,15 @@ import { Icon } from "@/components/shared/Icon";
 export function SettingsCard({
   icon,
   title,
+  subtitle,
   action,
   id,
   children,
 }: {
   icon: Parameters<typeof Icon>[0]["name"];
   title: string;
+  /** one-line 13.5px/600 faint description under the title (approved profile design) */
+  subtitle?: string;
   /** trailing control on the header row (e.g. "הוסף מדיניות") */
   action?: React.ReactNode;
   /** fragment anchor, so a deep link (e.g. the dashboard's red channel row) lands on this card */
@@ -28,10 +31,13 @@ export function SettingsCard({
   return (
     <section className="card" id={id}>
       <header className="card-hd">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
+        <span className="card-ic grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
           <Icon name={icon} size={20} />
         </span>
-        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <span className="min-w-0 flex-1 leading-snug">
+          <span className="block truncate">{title}</span>
+          {subtitle && <span className="block text-[13.5px] font-semibold text-faint">{subtitle}</span>}
+        </span>
         {action}
       </header>
       <div className="card-bd">{children}</div>

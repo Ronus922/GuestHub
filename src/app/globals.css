@@ -20,5 +20,6 @@
 @import "./styles/communications.css";
 @import "./styles/locks.css";
 @import "./styles/install-prompt.css";
+@import "./styles/business-profile.css";
 /* last — the cross-cutting mobile layer overrides the canonical primitives */
 @import "./styles/responsive.css";
