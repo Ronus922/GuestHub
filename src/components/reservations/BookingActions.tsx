@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { renderTemplate } from "@/lib/messaging/templates";
-import { renderManualSubject } from "@/lib/messaging/render-manual";
+import { renderManualText } from "@/lib/messaging/render-manual";
 import {
   getMessagingContextAction,
   sendBookingEmailAction,
@@ -173,16 +173,21 @@ export function MessageComposer({
   };
 
   const vars = ctx?.variables ?? {};
-  // Subject preview = the server's own chain (legacy vars → communications
-  // renderer, D172), so the preview can never show a {{group.key}} token the
-  // send would resolve — or hide one the send would refuse.
-  const subjectRender = isEmail && ctx?.renderContext ? renderManualSubject(subject, vars, ctx.renderContext) : null;
+  // Subject and body previews = the server's own chain (legacy vars →
+  // communications renderer, D172 + addendum 2026-09-05), so the preview can
+  // never show a {{group.key}} token the send would resolve — or hide one the
+  // send would refuse. Without a render context the legacy pass is shown and
+  // the server refuses on its own.
+  const subjectRender = isEmail && ctx?.renderContext ? renderManualText(subject, vars, ctx.renderContext) : null;
   const previewSubject = subjectRender ? subjectRender.value : renderTemplate(subject, vars);
   const subjectBlocked = subjectRender !== null && !subjectRender.canSend;
-  const previewBody = renderTemplate(body, vars);
+  const bodyRender = ctx?.renderContext ? renderManualText(body, vars, ctx.renderContext) : null;
+  const previewBody = bodyRender ? bodyRender.value : renderTemplate(body, vars);
+  const bodyBlocked = bodyRender !== null && !bodyRender.canSend;
 
   const canSend =
-    !pending && providerConfigured && recipientValid && !subjectBlocked && previewBody.trim().length > 0 && sendState !== "sent";
+    !pending && providerConfigured && recipientValid && !subjectBlocked && !bodyBlocked
+    && previewBody.trim().length > 0 && sendState !== "sent";
 
   const doSend = () =>
     startSend(async () => {
@@ -272,6 +277,13 @@ export function MessageComposer({
               <div className="bk-cmp-alert danger">
                 <Icon name="warning" size={17} />
                 <span>הנושא מכיל משתנה שלא ניתן לשלוח — {subjectRender?.detail}</span>
+              </div>
+            )}
+
+            {bodyBlocked && (
+              <div className="bk-cmp-alert danger">
+                <Icon name="warning" size={17} />
+                <span>תוכן ההודעה מכיל משתנה שלא ניתן לשלוח — {bodyRender?.detail}</span>
               </div>
             )}
 
