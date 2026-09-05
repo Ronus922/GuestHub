@@ -202,6 +202,13 @@ const ICONS = {
   // install_mobile/add_to_home_screen; the banner shows the real app icon PNG
   // instead, and `more`/`plus`/`check` above cover the other steps.
   "ios-share": "ios_share",
+  // --- settings → פרופיל העסק (approved design, D175): the readiness card's
+  // verified mark, the logo "החלפת לוגו" camera, the external Google Maps link
+  // and the drag-hint hand. `crown` above already covers workspace_premium.
+  verified: "verified",
+  "photo-camera": "photo_camera",
+  "open-in-new": "open_in_new",
+  "pan-tool": "pan_tool_alt",
 } as const;
 
 export type IconName = keyof typeof ICONS;

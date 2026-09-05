@@ -1,0 +1,551 @@
+/* ============================================================
+   Settings shell grid (sg-) + Settings → פרופיל העסק (bp-).
+   Approved design: "הגדרות - פרופיל העסק.dc.html" (2026-09-05, DECISIONS D175).
+
+   Only what the design system has no primitive for lives here. Cards, card
+   headers, buttons, fields, icon buttons and the toast come from
+   design-system.css and are consumed, not re-declared. The handful of values
+   the approved reference fixes OUTSIDE the closed sets (48px fields, the 11px /
+   14px radii, its own chip and surface colours) carry a `ds-allow:` marker
+   naming that reference — check:design's own contract for an owner-supplied
+   reference — so every one of them is reviewable in one grep.
+   ============================================================ */
+
+@layer components {
+  /* ---- settings shell: page, two-pane grid, right-hand nav ---------------- */
+  .sg-page {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 26px;
+    max-width: 1380px;
+  }
+  .sg-grid {
+    display: grid;
+    /* nav 256px on the inline-start (right, RTL) + content that may shrink */
+    grid-template-columns: 256px minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+  .sg-nav {
+    position: sticky;
+    top: 18px;
+    padding: 12px;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sg-grp {
+    display: flex;
+    flex-direction: column;
+  }
+  .sg-lbl {
+    padding: 0 12px 6px;
+    letter-spacing: 0.05em;
+  }
+  .sg-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    /* ds-allow: approved design — 40px nav row; a coarse pointer gets 44 below */
+    height: 40px;
+    padding: 0 12px;
+    /* ds-allow: approved design — 11px nav-row radius */
+    border-radius: 11px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    text-align: start;
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+  .sg-item:hover {
+    /* ds-allow: approved design — nav hover surface #F5F7FB */
+    background: #f5f7fb;
+  }
+  .sg-item.on {
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+  /* the 3px inner bar on the inline-start edge of the active row (logical, so
+     it sits on the right in RTL as the reference shows) */
+  .sg-item.on::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 3px;
+    background: var(--brand);
+  }
+  .sg-item > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* iron rule #6 — a touch target is never under 44px; the painted desktop row
+     stays the reference's 40px */
+  @media (pointer: coarse) {
+    .sg-item {
+      height: 44px;
+    }
+  }
+  /* Below 1120px the approved design collapses to ONE column with the nav card
+     above the content (never split into a grid — a group label must stay glued
+     to its rows). 1120 is the reference's own value, not a ladder step: it is
+     where 256 + 18 + the content's four-column location summary stop fitting. */
+  @media (max-width: 1119.98px) {
+    .sg-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .sg-nav {
+      position: static;
+    }
+  }
+  @media (max-width: 767.98px) {
+    .sg-page {
+      padding: 16px;
+    }
+  }
+
+  /* ---- פרופיל העסק --------------------------------------------------------- */
+  .bp {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  /* card header per the reference: 16px vertical padding, 38px icon square */
+  .bp .card-hd {
+    padding: 16px 20px;
+  }
+  .bp .card-ic {
+    width: 38px;
+    height: 38px; /* ds-allow: approved design — 38px icon square */
+    border-radius: 11px; /* ds-allow: approved design — 11px icon-square radius */
+  }
+
+  /* info banner — compact, dismissible */
+  .bp-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--brand-soft);
+    border: 1px solid var(--brand-line);
+    border-radius: var(--r-md);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    /* ds-allow: approved design — banner ink #2C3A7E */
+    color: #2c3a7e;
+  }
+  .bp-banner > .ms-icon {
+    color: var(--brand);
+  }
+  .bp-banner > p {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .bp-banner > .icon-btn {
+    margin-inline-start: auto;
+  }
+
+  /* readiness card: two columns split by a hairline */
+  .bp-ready {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bp-ready-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 20px;
+    min-width: 0;
+  }
+  .bp-ready-col + .bp-ready-col {
+    /* ds-allow: approved design — column divider #EEF0F5 */
+    border-inline-start: 1px solid #eef0f5;
+  }
+  .bp-ready-hd {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .bp-ready-hd > .ms-icon.ok {
+    color: var(--ok);
+  }
+  .bp-ready-hd > .ms-icon.warn {
+    color: var(--warn);
+  }
+  .bp-ready-t {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--ink);
+    min-width: 0;
+  }
+  /* the reference's status pill: 12px/700, 3px 10px, fully round */
+  .bp-status {
+    margin-inline-start: auto;
+    flex: none;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .bp-status.ok {
+    /* ds-allow: approved design — success pill #E7F6EC / #15803D */
+    background: #e7f6ec;
+    color: #15803d; /* ds-allow: approved design — success pill ink */
+  }
+  .bp-status.warn {
+    /* ds-allow: approved design — warning pill #FEF3E2 / #B45309 */
+    background: #fef3e2;
+    color: #b45309; /* ds-allow: approved design — warning pill ink */
+  }
+  .bp-ready-list {
+    display: grid;
+    gap: 8px 16px;
+  }
+  .bp-ready-list.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .bp-ready-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+    min-width: 0;
+  }
+  .bp-ready-item > .ms-icon {
+    color: var(--ok);
+  }
+  .bp-ready-item.miss {
+    color: var(--faint);
+  }
+  .bp-ready-item.miss > .ms-icon {
+    /* ds-allow: approved design — missing-field mark #E11D48 */
+    color: #e11d48;
+  }
+  @media (max-width: 767.98px) {
+    .bp-ready {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .bp-ready-col + .bp-ready-col {
+      border-inline-start: none;
+      /* ds-allow: approved design — column divider #EEF0F5 */
+      border-top: 1px solid #eef0f5;
+    }
+    .bp-ready-list.two {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  /* identity: 84px round logo (image or initials) + its actions */
+  .bp-logo-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .bp-logo {
+    width: 84px;
+    height: 84px;
+    border-radius: 50%;
+    background: var(--brand-soft);
+    border: 1px solid var(--brand-line);
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    flex: none;
+    font-size: 21px;
+    font-weight: 800;
+    color: var(--brand);
+  }
+  .bp-logo > img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .bp-logo-acts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .bp-logo-btns {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  /* "הסרה": a transparent red text button (composes with .btn) */
+  .bp-btn-remove {
+    background: transparent;
+    /* ds-allow: approved design — remove-logo ink #B4231F */
+    color: #b4231f;
+  }
+  .bp-btn-remove:hover:not(:disabled) {
+    /* ds-allow: approved design — remove-logo hover #FDECEC */
+    background: #fdecec;
+  }
+  .bp-note {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+
+  /* fields per the reference: 48px, tinted at rest, borderless until focus */
+  .bp .field-input {
+    /* ds-allow: approved design — 48px field */
+    height: 48px;
+    /* ds-allow: approved design — field surface #EFF2FB */
+    background: #eff2fb;
+    border-color: transparent;
+    font-weight: 600;
+  }
+  .bp .field-input:focus {
+    background: #fff;
+    border-color: var(--brand);
+  }
+  .bp .field-input:disabled {
+    background: var(--field-bg);
+  }
+  /* technical values (coordinates, time zone): monospace, tabular */
+  .bp-mono {
+    font-family:
+      ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* the two primary save rows (business profile / location) */
+  .bp-save-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  /* ---- location card ------------------------------------------------------ */
+  .bp-loc {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  /* saved-location summary: 4 columns on a tinted surface (2 when narrow) */
+  .bp-sum {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px 16px;
+    padding: 16px;
+    background: var(--field-bg);
+    /* ds-allow: approved design — summary border #EEF0F5 */
+    border: 1px solid #eef0f5;
+    border-radius: var(--r-md);
+  }
+  .bp-sum-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .bp-sum-k {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .bp-sum-v {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bp-sum-v.ltr {
+    direction: ltr;
+    text-align: start;
+  }
+  .bp-sum-v.empty {
+    /* ds-allow: approved design — empty value #C2C8D6 */
+    color: #c2c8d6;
+  }
+  .bp-sum-v.ok {
+    /* ds-allow: approved design — Google-sourced value #15803D */
+    color: #15803d;
+  }
+  @media (max-width: 767.98px) {
+    .bp-sum {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  /* actions row: the Google Maps link + the place search */
+  .bp-loc-acts {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .bp-maps-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    color: var(--brand);
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+    flex: none;
+  }
+  .bp-maps-link:hover {
+    color: var(--brand-hover);
+  }
+  /* The search is Google's own <gmp-place-autocomplete> web component; its input
+     lives in a shadow root we cannot restyle, so the field look is composed
+     AROUND it: our search glyph at the inline-start, the element filling the
+     rest, one tinted surface behind both. The element keeps its own clear (×). */
+  .bp-search {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 280px;
+    min-width: 0;
+    /* ds-allow: approved design — field surface #EFF2FB */
+    background: #eff2fb;
+    border-radius: var(--r-md);
+    padding-inline-start: 14px;
+    /* Google's suggestion dropdown must float above the cards that follow */
+    z-index: 30;
+  }
+  .bp-search > .ms-icon {
+    color: var(--faint);
+  }
+  .bp-search-host {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .bp-search-host gmp-place-autocomplete {
+    display: block;
+    width: 100%;
+    --gmp-mat-font-family: inherit;
+    /* ds-allow: approved design — field surface #EFF2FB */
+    --gmp-mat-color-surface: #eff2fb;
+    --gmp-mat-color-on-surface: var(--ink);
+    --gmp-mat-color-on-surface-variant: var(--muted);
+    --gmp-mat-color-primary: var(--brand);
+    --gmp-mat-color-outline: transparent;
+  }
+
+  /* the map: 340px, the reference's 14px radius */
+  .bp-map {
+    width: 100%;
+    height: 340px;
+    flex: none;
+    overflow: hidden;
+    /* ds-allow: approved design — 14px map radius */
+    border-radius: 14px;
+    border: 1px solid var(--line);
+  }
+  .bp-map-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .bp-map-note > .ms-icon {
+    color: var(--faint);
+  }
+
+  /* an unsaved selection / marker adjustment, waiting for "שמירת מיקום" */
+  .bp-pending {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 16px;
+    background: var(--brand-soft);
+    border: 1px solid var(--brand-line);
+    border-radius: var(--r-md);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .bp-pending-hd {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .bp-pending-hd > .bp-status {
+    margin-inline-start: 0;
+  }
+  .bp-pending > dl {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 12px;
+  }
+  .bp-pending dt {
+    color: var(--muted);
+  }
+  .bp-pending dd {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* "מיקום ידני מתקדם": an accordion, collapsed by default */
+  .bp-acc {
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+  .bp-acc-hd {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 16px;
+    /* ds-allow: approved design — accordion head #FBFCFE */
+    background: #fbfcfe;
+    border: none;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    text-align: start;
+    cursor: pointer;
+  }
+  .bp-acc-hd > .ms-icon:first-child {
+    color: var(--muted);
+  }
+  .bp-acc-chev {
+    margin-inline-start: auto;
+    color: var(--faint);
+    transition: transform 0.15s ease;
+  }
+  .bp-acc.open .bp-acc-chev {
+    transform: rotate(180deg);
+  }
+  .bp-acc-bd {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+    border-top: 1px solid var(--line);
+  }
+}

@@ -89,8 +89,15 @@ const bizActions = readFileSync("src/app/(dashboard)/settings/business-actions.t
 assert.ok(bizActions.includes("validateBusinessProfileInput"), "postal code goes through the canonical validator");
 const picker = readFileSync("src/app/(dashboard)/settings/LocationPicker.tsx", "utf8");
 assert.ok(picker.includes("saveBusinessProfileAction({ postalCode:"), "postal code saves to the Business Profile immediately");
-assert.ok(/streetNumber[\s\S]{0,400}PostalCodeField[\s\S]{0,400}label="עיר"/.test(picker), "postal field sits after street/number and before city/country");
-assert.ok(!/type="number"|inputMode="numeric"/.test(picker.slice(picker.indexOf("function PostalCodeField"))), "postal input is text, not numeric-only");
+// Approved design (D175): the saved postal code is READ in the four-column
+// location summary, from the profile, and EDITED inside the "מיקום ידני מתקדם"
+// accordion — for every settings.edit user; only the coordinate fields there are
+// super_admin-gated (check-maps-picker asserts that gate).
+assert.ok(/label="מיקוד" value=\{profile\.postalCode\}/.test(picker), "the saved postal code renders in the location summary from the profile");
+assert.ok(/מיקום ידני מתקדם[\s\S]*?<Field label="מיקוד">/.test(picker), "the postal code is edited inside the advanced manual-location accordion");
+const postalInput = picker.match(/<Field label="מיקוד">[\s\S]{0,600}?<\/Field>/)?.[0] ?? "";
+assert.ok(postalInput.includes("<input"), "found the postal input inside its field");
+assert.ok(!/type="number"|inputMode="numeric"/.test(postalInput), "postal input is text, not numeric-only");
 
 // location validation
 assert.equal(p.validateLocationInput({ source: "google_place", latitude: null, longitude: null }).ok, false, "no coords → error");

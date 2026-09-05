@@ -24,8 +24,10 @@ import type {
   TTLockSettingsView,
 } from "./types";
 
-// Two-pane settings shell (approved design): right-hand grouped nav + content
-// pane. The active section lives in ?section= so it is linkable and survives a
+// Two-pane settings shell (approved design "הגדרות - פרופיל העסק.dc.html", D175):
+// a 256px right-hand grouped nav card, sticky, next to the content pane; one
+// column with the nav above the content under 1120px; the compact select on a
+// phone. The active section lives in ?section= so it is linkable and survives a
 // refresh. Data is loaded server-side (page.tsx) and passed down.
 export function SettingsShell({
   propertyIdentity,
@@ -77,7 +79,7 @@ export function SettingsShell({
   })).filter((group) => group.items.length > 0);
 
   return (
-    <div className="flex flex-col gap-5 p-[26px]" dir="rtl">
+    <div className="sg-page" dir="rtl">
       {section !== "check-in-check-out" && (
         <div>
           <h1 className="h1">הגדרות</h1>
@@ -87,7 +89,10 @@ export function SettingsShell({
         </div>
       )}
 
-      <label className="field xl:hidden">
+      {/* Below md the stacked nav card would push every section a full screen
+          down, so the phone keeps the compact select of the mobile pass
+          (D145/D146); from md up the approved grid applies. */}
+      <label className="field md:hidden">
         <span className="field-label">קטגוריית הגדרות</span>
         <select
           className="field-input"
@@ -105,13 +110,13 @@ export function SettingsShell({
         </select>
       </label>
 
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
+      <div className="sg-grid">
         {/* right-hand settings navigation — first child = right side in RTL (like Shell's Sidebar) */}
-        <nav className="card hidden shrink-0 p-3 xl:block xl:w-[280px]" aria-label="ניווט הגדרות">
+        <nav className="card sg-nav hidden md:flex" aria-label="ניווט הגדרות">
           {groups.map((group) => (
-            <div key={group.title} className="mb-3 last:mb-0">
-              {/* Hebrew group titles — never letter-spaced (audit F-4) */}
-              <p className="t-label px-3 pb-1 text-faint">{group.title}</p>
+            <div key={group.title} className="sg-grp">
+              {/* 12px/700 group label, tracked .05em per the approved reference */}
+              <p className="t-label sg-lbl">{group.title}</p>
               <ul className="flex flex-col gap-0.5">
                 {group.items.map((item) => (
                   <li key={item.key}>
@@ -129,7 +134,7 @@ export function SettingsShell({
         </nav>
 
         {/* content pane */}
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0">
           <SectionBody
             section={section}
             businessProfile={businessProfile}
@@ -163,18 +168,18 @@ function SettingsNavRow({
   label: string;
   onClick: () => void;
 }) {
+  // .sg-item paints the 40px / 15px-700 row, the active surface and the 3px
+  // inline-start bar (business-profile.css); the icon is the reference's 19px,
+  // which <Icon> snaps to the nearest §10 size, 20.
   return (
     <button
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className={`relative flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start text-sm transition-colors ${
-        active ? "bg-primary-050 font-semibold text-primary" : "text-text2 hover:bg-hover"
-      }`}
+      className={`sg-item${active ? " on" : ""}`}
     >
-      {active && <span className="pointer-events-none absolute inset-y-2 start-0 w-1 rounded-full bg-primary" />}
-      <Icon name={icon} size={20} className="shrink-0" />
-      <span className="truncate">{label}</span>
+      <Icon name={icon} size={20} />
+      <span>{label}</span>
     </button>
   );
 }

@@ -30,11 +30,20 @@ import { saveBusinessLocationAction, saveBusinessProfileAction } from "./busines
 // Raw Google responses are never stored (only normalized fields). The saved
 // canonical location is rendered independently of the SDK, so a Maps failure can
 // never blank or replace it.
+//
+// Layout per the approved design (D175): the saved location as a 4-column
+// summary on a tinted surface, the Google Maps link + place search on one row,
+// the 340px map with its drag hint, the collapsed "מיקום ידני מתקדם" accordion
+// (coordinates for super_admin, the postal code + the canonical time zone for
+// everyone) and ONE primary "שמירת מיקום" at the bottom. That button saves
+// whatever is pending: a selected place / dragged marker, a manual override, or
+// a postal code on its own.
 
 const BROWSER_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_BROWSER_KEY;
 
 type SdkStatus = "idle" | "loading" | "ready" | "error";
 type Pending = { place: NormalizedPlace; source: LocationSource } | null;
+type ManualForm = { lat: string; lng: string; postal: string };
 
 export function LocationPicker({
   profile,
@@ -58,9 +67,17 @@ export function LocationPicker({
   const [pending, setPending] = useState<Pending>(null);
   const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
-  const [manual, setManual] = useState({ lat: "", lng: "" });
+  const [manual, setManual] = useState<ManualForm>({ lat: "", lng: "", postal: profile.postalCode ?? "" });
   const [manualConfirm, setManualConfirm] = useState(false);
   const [saving, startSave] = useTransition();
+
+  // Re-sync the postal input when a save changes the canonical value underneath
+  // it (a Google place that carried a postal_code, or our own save coming back).
+  const [lastSavedPostal, setLastSavedPostal] = useState(profile.postalCode ?? "");
+  if ((profile.postalCode ?? "") !== lastSavedPostal) {
+    setLastSavedPostal(profile.postalCode ?? "");
+    setManual((m) => ({ ...m, postal: profile.postalCode ?? "" }));
+  }
 
   const savedCenter: LatLngLiteral | null =
     profile.latitude !== null && profile.longitude !== null
@@ -203,7 +220,7 @@ export function LocationPicker({
       setResolvedAddress(null);
       setManualOpen(false);
       setManualConfirm(false);
-      setManual({ lat: "", lng: "" });
+      setManual((m) => ({ ...m, lat: "", lng: "" }));
       await onSaved();
     });
   }
@@ -214,12 +231,43 @@ export function LocationPicker({
     if (savedCenter) markerRef.current?.setPosition(savedCenter); // snap back to the saved location
   }
 
+  // A postal code typed while a place / marker move is pending rides along with
+  // it: the pending place is what "שמירת מיקום" saves, so the code is merged into
+  // it here instead of being saved separately.
+  function onPostalChange(v: string) {
+    setManual((m) => ({ ...m, postal: v }));
+    const t = v.trim();
+    setPending((p) => (p ? { ...p, place: { ...p.place, postalCode: t === "" ? null : t } } : p));
+  }
+
   function onManualSave() {
     const lat = Number(manual.lat.trim());
     const lng = Number(manual.lng.trim());
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return toast.error("קואורדינטות לא תקינות");
-    saveLocation({ ...emptyPlace(), latitude: lat, longitude: lng }, "manual_override");
+    const postal = manual.postal.trim();
+    saveLocation(
+      { ...emptyPlace(), latitude: lat, longitude: lng, postalCode: postal === "" ? null : postal },
+      "manual_override",
+    );
   }
+
+  // The postal code alone — the one field Google does not always return — writes
+  // the Business Profile directly; /channels never asks for it again.
+  function onPostalSave() {
+    startSave(async () => {
+      const res = await saveBusinessProfileAction({ postalCode: manual.postal.trim() });
+      if (!res.success) {
+        toast.error(res.error ?? "אירעה שגיאה");
+        return;
+      }
+      toast.success("המיקום נשמר");
+      await onSaved();
+    });
+  }
+
+  const coordsTyped = manual.lat.trim() !== "" || manual.lng.trim() !== "";
+  const postalDirty = manual.postal.trim() !== (profile.postalCode ?? "");
+  const unsaved = !!pending || coordsTyped || postalDirty;
 
   const linkTarget = pending?.place ?? profile;
   const mapsHref = googleMapsLink({
@@ -227,235 +275,211 @@ export function LocationPicker({
     latitude: linkTarget.latitude,
     longitude: linkTarget.longitude,
   });
+  const fromGoogle =
+    profile.locationSource === "google_place" || profile.locationSource === "google_marker_adjustment";
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="bp-loc">
       {/* Saved canonical location — rendered from the profile alone, so a Maps
           failure or an unconfirmed edit can never blank or replace it. The postal
-          code sits with the address fields (after street/number, before
-          city/country) and is the ONE canonical source the channel reads zip_code from. */}
-      <div className="grid gap-x-4 gap-y-1.5 rounded-xl border border-line bg-hover/30 p-4 text-sm sm:grid-cols-2">
-        <Row label="כתובת מלאה" value={profile.formattedAddress} span />
-        <Row label="רחוב" value={profile.street} />
-        <Row label="מספר בית" value={profile.streetNumber} />
-        <div className="sm:col-span-2">
-          <PostalCodeField postalCode={profile.postalCode} onSaved={onSaved} />
-        </div>
-        <Row label="עיר" value={profile.city} />
-        <Row label="מדינה" value={profile.country ?? profile.countryCode} />
-        <Row label="אזור זמן (קנוני)" value={profile.timezone} />
-        <Row label="קו רוחב" value={profile.latitude !== null ? String(profile.latitude) : null} />
-        <Row label="קו אורך" value={profile.longitude !== null ? String(profile.longitude) : null} />
-        <Row label="מקור המיקום" value={sourceLabel(profile.locationSource)} />
+          code shown here is the ONE canonical source the channel reads zip_code
+          from; it is edited in the accordion below. */}
+      <div className="bp-sum">
+        <Cell label="כתובת מלאה" value={profile.formattedAddress} />
+        <Cell label="עיר" value={profile.city} />
+        <Cell label="מדינה" value={profile.country ?? profile.countryCode} />
+        <Cell label="מיקוד" value={profile.postalCode} />
+        <Cell label="אזור זמן" value={profile.timezone} mono />
+        <Cell label="קו רוחב" value={profile.latitude !== null ? String(profile.latitude) : null} mono />
+        <Cell label="קו אורך" value={profile.longitude !== null ? String(profile.longitude) : null} mono />
+        <Cell label="מקור המיקום" value={sourceLabel(profile.locationSource)} ok={fromGoogle} />
       </div>
-      {mapsHref && (
-        <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="btn btn-secondary w-fit">
-          <Icon name="globe" size={20} />
-          פתיחה ב-Google Maps
-        </a>
+
+      <div className="bp-loc-acts">
+        {mapsHref && (
+          <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="bp-maps-link">
+            <Icon name="open-in-new" size={17} />
+            פתיחה ב-Google Maps
+          </a>
+        )}
+        {googleMapsConfigured ? (
+          // The autocomplete host must always exist while configured — Google's
+          // widget is appended into it once the places library has actually loaded.
+          <div className="bp-search" role="search" aria-label="חיפוש כתובת ב-Google Maps">
+            <Icon name="search" size={20} />
+            <div ref={acHostRef} className="bp-search-host" />
+          </div>
+        ) : (
+          <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
+            Google Maps אינו מוגדר. הוסף מפתח Google Maps מוגבל כדי לאפשר חיפוש כתובת וקואורדינטות אוטומטיות.
+          </p>
+        )}
+      </div>
+      {googleMapsConfigured && status === "loading" && <p className="field-hint">טוען את Google Maps…</p>}
+
+      {status === "error" && sdkError && (
+        <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
+          {sdkError.message}
+          <span className="mx-1 font-mono text-[12px] opacity-70">[{sdkError.code}]</span>
+        </p>
       )}
 
-      {!googleMapsConfigured ? (
-        <p className="rounded-lg bg-status-warning-050 px-3 py-2 text-xs font-semibold text-status-warning">
-          Google Maps אינו מוגדר. הוסף מפתח Google Maps מוגבל כדי לאפשר חיפוש כתובת וקואורדינטות אוטומטיות.
-        </p>
-      ) : (
+      {/* Rendered only when there is a location to show, never merely hidden:
+          a Map initialized inside a display:none container mis-sizes its tiles.
+          .bp-map carries the explicit 340px height; the flex-column parent
+          cannot collapse it. */}
+      {center && (
         <>
-          {/* The autocomplete host must always exist while configured — the widget
-              is appended into it once the places library has actually loaded.
-              relative + z-30 keeps Google's dropdown above the following cards. */}
-          <Field label="כתובת / חיפוש ב-Google Maps">
-            <div className="relative z-30">
-              <div ref={acHostRef} className="w-full [&_gmp-place-autocomplete]:w-full" />
-              {status === "loading" && (
-                <p className="mt-1 text-xs font-semibold text-faint">טוען את Google Maps…</p>
-              )}
-            </div>
-          </Field>
-
-          {status === "error" && sdkError && (
-            <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
-              {sdkError.message}
-              <span className="mx-1 font-mono text-[12px] opacity-70">[{sdkError.code}]</span>
-            </p>
-          )}
-
-          {/* Rendered only when there is a location to show, never merely hidden:
-              a Map initialized inside a display:none container mis-sizes its tiles.
-              Explicit non-zero height; the flex-column parent cannot collapse it. */}
-          {center && (
-            <>
-              <div ref={mapHostRef} className="h-72 w-full shrink-0 overflow-hidden rounded-xl border border-line" />
-              <p className="text-xs font-medium text-faint">
-                גרור את הסמן כדי לתקן את המיקום המדויק של הבניין. שינוי אינו נשמר עד לאישור.
-              </p>
-            </>
-          )}
+          <div ref={mapHostRef} className="bp-map" />
+          <p className="bp-map-note">
+            <Icon name="pan-tool" size={17} />
+            גרירת הסמן מכוונת את המיקום המדויק של הבניין — השינוי לא נשמר עד לחיצה על ״שמירת מיקום״.
+          </p>
         </>
       )}
 
-      {/* Pending selection / marker adjustment — nothing is persisted until confirmed. */}
+      {/* Pending selection / marker adjustment — nothing is persisted until saved. */}
       {pending && pendingCenter && (
-        <div className="flex flex-col gap-3 rounded-xl border border-brand/40 bg-brand/5 p-4">
-          <h4 className="text-sm font-bold text-ink">
-            {pending.source === "google_place" ? "מיקום נבחר — ממתין לאישור" : "התאמת סמן — ממתינה לאישור"}
-          </h4>
-          <dl className="grid grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
-            <Dt>כתובת</Dt>
-            <Dd className="col-span-2">{pending.place.formattedAddress ?? "—"}</Dd>
-            <Dt>עיר</Dt>
-            <Dd className="col-span-2">{pending.place.city ?? "—"}</Dd>
-            <Dt>מיקוד</Dt>
-            <Dd className="col-span-2">
-              {pending.place.postalCode ?? "לא הוחזר מ-Google — ניתן להזין ידנית לאחר השמירה"}
-            </Dd>
-            <Dt>קואורדינטות</Dt>
-            <Dd className="col-span-2 font-mono text-xs" dir="ltr">
-              {pendingCenter.lat}, {pendingCenter.lng}
-            </Dd>
-            {pending.source === "google_marker_adjustment" && (
-              <>
-                <Dt>כתובת לפי הסמן</Dt>
-                <Dd className="col-span-2 text-xs">
-                  {resolvedAddress ?? "לא זוהתה כתובת עבור הנקודה שנבחרה"}
-                </Dd>
-              </>
-            )}
-          </dl>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={saving}
-              onClick={() => saveLocation(pending.place, pending.source)}
-            >
-              <Icon name="check" size={20} />
-              אישור ושמירת המיקום
-            </button>
-            <button type="button" className="btn btn-secondary" disabled={saving} onClick={discardPending}>
+        <div className="bp-pending">
+          <div className="bp-pending-hd">
+            <span>{pending.source === "google_place" ? "מיקום נבחר" : "התאמת סמן"}</span>
+            <span className="bp-status warn">ממתין לשמירה</span>
+            <button type="button" className="btn btn-tertiary ms-auto" disabled={saving} onClick={discardPending}>
               ביטול
             </button>
           </div>
+          <dl>
+            <dt>כתובת</dt>
+            <dd>{pending.place.formattedAddress ?? "—"}</dd>
+            <dt>עיר</dt>
+            <dd>{pending.place.city ?? "—"}</dd>
+            <dt>מיקוד</dt>
+            <dd>{pending.place.postalCode ?? "לא הוחזר מ-Google — ניתן להזין ב״מיקום ידני מתקדם״"}</dd>
+            <dt>קואורדינטות</dt>
+            <dd className="bp-mono" dir="ltr">
+              {pendingCenter.lat}, {pendingCenter.lng}
+            </dd>
+            {pending.source === "google_marker_adjustment" && (
+              <>
+                <dt>כתובת לפי הסמן</dt>
+                <dd>{resolvedAddress ?? "לא זוהתה כתובת עבור הנקודה שנבחרה"}</dd>
+              </>
+            )}
+          </dl>
         </div>
       )}
 
-      {/* Advanced manual fallback — super_admin only, collapsed, never the main flow. */}
-      {isSuperAdmin && (
-        <div className="rounded-xl border border-line">
+      {/* Advanced manual location — collapsed by default. The postal code and the
+          canonical time zone are here for every operator; the coordinate
+          override stays super_admin-only and, once typed, demands the explicit
+          confirmation the server requires (§6). */}
+      <div className={`bp-acc${manualOpen ? " open" : ""}`}>
+        <button
+          type="button"
+          className="bp-acc-hd"
+          aria-expanded={manualOpen}
+          aria-controls="bp-manual"
+          onClick={() => setManualOpen((v) => !v)}
+        >
+          <Icon name="edit" size={20} />
+          מיקום ידני מתקדם
+          <Icon name="chevron" size={20} className="bp-acc-chev" />
+        </button>
+        {manualOpen && (
+          <div id="bp-manual" className="bp-acc-bd">
+            <FormGrid>
+              {isSuperAdmin && (
+                <>
+                  <Field label="קו רוחב">
+                    <input
+                      className="field-input bp-mono"
+                      dir="ltr"
+                      inputMode="decimal"
+                      value={manual.lat}
+                      onChange={(e) => setManual((m) => ({ ...m, lat: e.target.value }))}
+                      placeholder="‎-90 עד 90"
+                    />
+                  </Field>
+                  <Field label="קו אורך">
+                    <input
+                      className="field-input bp-mono"
+                      dir="ltr"
+                      inputMode="decimal"
+                      value={manual.lng}
+                      onChange={(e) => setManual((m) => ({ ...m, lng: e.target.value }))}
+                      placeholder="‎-180 עד 180"
+                    />
+                  </Field>
+                </>
+              )}
+              <Field label="מיקוד">
+                <input
+                  className="field-input"
+                  dir="ltr"
+                  value={manual.postal}
+                  maxLength={40}
+                  onChange={(e) => onPostalChange(e.target.value)}
+                  placeholder="לדוגמה: 3303210"
+                />
+              </Field>
+              <Field label="אזור זמן">
+                <select className="field-input bp-mono" value={profile.timezone} disabled aria-describedby="bp-tz-hint">
+                  <option value={profile.timezone}>{profile.timezone}</option>
+                </select>
+              </Field>
+            </FormGrid>
+            <p id="bp-tz-hint" className="field-hint">
+              המיקוד מתמלא מ-Google כשקיים ועשוי לכלול אותיות במדינות מסוימות; שמירתו מעדכנת מיד את מוכנות
+              הערוצים. אזור הזמן הקנוני נקבע ברמת הארגון ואינו נערך כאן.
+            </p>
+            {isSuperAdmin && coordsTyped && (
+              <>
+                <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
+                  Google Maps הוא המקור המועדף למיקום. דריסה ידנית מבטלת את המיקום שנבחר ב-Google — יש להזין
+                  קואורדינטות מדויקות ולאשר במפורש.
+                </p>
+                <label className="flex items-center gap-2 text-xs font-semibold text-text2">
+                  <input
+                    type="checkbox"
+                    checked={manualConfirm}
+                    onChange={(e) => setManualConfirm(e.target.checked)}
+                  />
+                  אני מאשר/ת דריסה ידנית של המיקום
+                </label>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ONE primary save. Which action it runs follows what is pending: a
+          selected place / dragged marker first, then a typed coordinate override,
+          then the postal code on its own. */}
+      <div className="bp-save-row">
+        {pending ? (
           <button
             type="button"
-            onClick={() => setManualOpen((v) => !v)}
-            className="flex w-full items-center justify-between gap-2 px-4 py-3 text-sm font-bold text-ink"
+            className="btn btn-primary"
+            disabled={saving}
+            onClick={() => saveLocation(pending.place, pending.source)}
           >
-            <span className="flex items-center gap-2">
-              <Icon name="edit" size={20} className="text-muted" />
-              מיקום ידני מתקדם
-            </span>
-            <Icon name={manualOpen ? "arrow-up" : "arrow-down"} size={20} className="text-faint" />
+            <Icon name="check" size={20} />
+            {saving ? "שומר…" : "שמירת מיקום"}
           </button>
-          {manualOpen && (
-            <div className="flex flex-col gap-3 border-t border-line p-4">
-              <p className="rounded-lg bg-status-danger-050 px-3 py-2 text-xs font-semibold text-status-danger">
-                Google Maps הוא המקור המועדף למיקום. דריסה ידנית מבטלת את המיקום שנבחר ב-Google — יש להזין
-                קואורדינטות מדויקות ולאשר במפורש.
-              </p>
-              <FormGrid>
-                <Field label="קו רוחב (-90..90)">
-                  <input
-                    className="field-input"
-                    dir="ltr"
-                    inputMode="decimal"
-                    value={manual.lat}
-                    onChange={(e) => setManual((m) => ({ ...m, lat: e.target.value }))}
-                  />
-                </Field>
-                <Field label="קו אורך (-180..180)">
-                  <input
-                    className="field-input"
-                    dir="ltr"
-                    inputMode="decimal"
-                    value={manual.lng}
-                    onChange={(e) => setManual((m) => ({ ...m, lng: e.target.value }))}
-                  />
-                </Field>
-              </FormGrid>
-              <label className="flex items-center gap-2 text-xs font-semibold text-text2">
-                <input
-                  type="checkbox"
-                  checked={manualConfirm}
-                  onChange={(e) => setManualConfirm(e.target.checked)}
-                />
-                אני מאשר/ת דריסה ידנית של המיקום
-              </label>
-              <button
-                type="button"
-                className="btn btn-primary w-fit"
-                disabled={saving || !manualConfirm}
-                onClick={onManualSave}
-              >
-                <Icon name="check" size={20} />
-                שמירת מיקום ידני
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The canonical postal code, always visible and always editable. Google fills it
-// automatically when a selected place carries a postal_code component; when it
-// does not (or returns a partial one) the operator types it here. Saving writes
-// the Business Profile immediately — /channels never asks for it again.
-function PostalCodeField({
-  postalCode,
-  onSaved,
-}: {
-  postalCode: string | null;
-  onSaved: () => Promise<void> | void;
-}) {
-  const [value, setValue] = useState(postalCode ?? "");
-  const [saving, startSave] = useTransition();
-  // Re-sync when a Google place selection changes the saved value underneath us.
-  const [lastSaved, setLastSaved] = useState(postalCode ?? "");
-  if ((postalCode ?? "") !== lastSaved) {
-    setLastSaved(postalCode ?? "");
-    setValue(postalCode ?? "");
-  }
-  const dirty = value.trim() !== (postalCode ?? "");
-
-  function save() {
-    startSave(async () => {
-      const res = await saveBusinessProfileAction({ postalCode: value.trim() });
-      if (!res.success) {
-        toast.error(res.error ?? "אירעה שגיאה");
-        return;
-      }
-      toast.success("המיקוד נשמר");
-      await onSaved();
-    });
-  }
-
-  return (
-    <Field label="מיקוד">
-      <div className="flex items-center gap-2">
-        <input
-          className="field-input ltr-num"
-          value={value}
-          maxLength={40}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="לדוגמה 6688101"
-        />
-        <button type="button" className="btn btn-secondary shrink-0" disabled={saving || !dirty} onClick={save}>
-          <Icon name="check" size={20} />
-          {saving ? "שומר…" : "שמירה"}
-        </button>
+        ) : coordsTyped ? (
+          <button type="button" className="btn btn-primary" disabled={saving || !manualConfirm} onClick={onManualSave}>
+            <Icon name="check" size={20} />
+            {saving ? "שומר…" : "שמירת מיקום"}
+          </button>
+        ) : (
+          <button type="button" className="btn btn-primary" disabled={saving || !postalDirty} onClick={onPostalSave}>
+            <Icon name="check" size={20} />
+            {saving ? "שומר…" : "שמירת מיקום"}
+          </button>
+        )}
+        {unsaved && <span className="field-hint">יש שינויים שלא נשמרו</span>}
       </div>
-      <p className="field-hint">
-        מתמלא אוטומטית מ-Google כשקיים. ניתן לערוך ידנית — מיקוד עשוי לכלול אותיות במדינות מסוימות.
-      </p>
-    </Field>
+    </div>
   );
 }
 
@@ -488,33 +512,38 @@ const profileAsPlace = (p: BusinessProfile): NormalizedPlace => ({
 });
 
 function sourceLabel(s: LocationSource | null): string | null {
-  if (s === "google_place") return "בחירה מ-Google";
-  if (s === "google_marker_adjustment") return "התאמת סמן ב-Google";
+  if (s === "google_place") return "נבחר ב-Google";
+  if (s === "google_marker_adjustment") return "סומן והותאם ב-Google";
   if (s === "manual_override") return "דריסה ידנית";
   return null;
 }
 
-function Row({ label, value, span }: { label: string; value: string | null | undefined; span?: boolean }) {
+// One summary cell: 13.5px/700 label over a 15px/700 value. Technical values
+// (time zone, coordinates) are monospace and LTR; an empty value prints "—" in
+// the reference's faint tint; a Google-sourced origin reads green.
+function Cell({
+  label,
+  value,
+  mono,
+  ok,
+}: {
+  label: string;
+  value: string | null | undefined;
+  mono?: boolean;
+  ok?: boolean;
+}) {
+  const empty = !value;
+  const cls =
+    "bp-sum-v" +
+    (empty ? " empty" : "") +
+    (mono && !empty ? " ltr bp-mono" : "") +
+    (ok && !empty ? " ok" : "");
   return (
-    <div className={span ? "sm:col-span-2" : ""}>
-      <p className="text-xs font-medium text-faint">{label}</p>
-      <p className="truncate font-semibold text-text2" title={value ?? undefined}>
+    <div className="bp-sum-cell">
+      <span className="bp-sum-k">{label}</span>
+      <span className={cls} title={value ?? undefined}>
         {value || "—"}
-      </p>
+      </span>
     </div>
   );
 }
-const Dt = ({ children }: { children: React.ReactNode }) => <dt className="text-faint">{children}</dt>;
-const Dd = ({
-  children,
-  className = "",
-  dir,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  dir?: "ltr" | "rtl";
-}) => (
-  <dd dir={dir} className={`font-semibold text-text2 ${className}`}>
-    {children}
-  </dd>
-);

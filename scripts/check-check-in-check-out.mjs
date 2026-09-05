@@ -185,9 +185,11 @@ assert.match(shell, /backdrop-blur-sm md:hidden/);
 assert.match(shell, /\[pathname\]/);
 assert.match(topbar, /aria-controls="dashboard-sidebar"/);
 assert.match(topbar, /aria-expanded=\{expanded\}/);
-assert.match(settingsShell, /xl:hidden/);
+// D175 settings grid: the compact <select> is hidden from md up, the nav card
+// (256px, sticky) is hidden below md — the same pair, on the ladder's md step.
+assert.match(settingsShell, /md:hidden/);
 assert.match(settingsShell, /<select/);
-assert.match(settingsShell, /hidden shrink-0 p-3 xl:block/);
+assert.match(settingsShell, /card sg-nav hidden md:flex/);
 assert.match(checkHoursCss, /@container \(min-width: 680px\)/);
 ok("responsive shell reclaims mobile width and exposes accessible compact Settings navigation");
 
