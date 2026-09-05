@@ -60,9 +60,9 @@ try {
   // 1. crashed worker (processing, lease expired 2×LEASE) -> reclaimed
   const [j1]=await mkJob(C1,'processing',LEASE*2,'dead-worker');
   const r1=await sql.begin((tx)=>claim(tx,'worker-A'));
-  (r1.length===1 && r1[0].id===j1.id && r1[0].locked_by==='worker-A')
-    ? ok(`crashed job (locked ${LEASE*2}m ago, lease ${LEASE}m) reclaimed by a new worker`)
-    : bad("expired-lease reclaim", JSON.stringify(r1));
+  if (r1.length===1 && r1[0].id===j1.id && r1[0].locked_by==='worker-A')
+    ok(`crashed job (locked ${LEASE*2}m ago, lease ${LEASE}m) reclaimed by a new worker`);
+  else bad("expired-lease reclaim", JSON.stringify(r1));
   // reset j1 to done so it doesn't interfere
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${j1.id}`;
 
@@ -72,31 +72,32 @@ try {
   // cannot explain either outcome — the lease is the sole discriminator.
   const [jIn]=await mkJob(C1,'processing',LEASE-1,'still-alive');
   const rIn=await sql.begin((tx)=>claim(tx,'worker-A'));
-  (rIn.length===0)
-    ? ok(`inside the lease (locked ${LEASE-1}m ago < ${LEASE}m): NOT reclaimed — a live worker keeps its job`)
-    : bad(`lease boundary: a job locked ${LEASE-1}m ago was stolen from a live worker`, JSON.stringify(rIn));
+  if (rIn.length===0)
+    ok(`inside the lease (locked ${LEASE-1}m ago < ${LEASE}m): NOT reclaimed — a live worker keeps its job`);
+  else bad(`lease boundary: a job locked ${LEASE-1}m ago was stolen from a live worker`, JSON.stringify(rIn));
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${jIn.id}`;
 
   const [jOut]=await mkJob(C1,'processing',LEASE+1,'dead-worker');
   const rOut=await sql.begin((tx)=>claim(tx,'worker-A'));
-  (rOut.length===1 && rOut[0].id===jOut.id)
-    ? ok(`past the lease (locked ${LEASE+1}m ago > ${LEASE}m): reclaimed`)
-    : bad(`lease boundary: a job locked ${LEASE+1}m ago was not reclaimed`, JSON.stringify(rOut));
+  if (rOut.length===1 && rOut[0].id===jOut.id)
+    ok(`past the lease (locked ${LEASE+1}m ago > ${LEASE}m): reclaimed`);
+  else bad(`lease boundary: a job locked ${LEASE+1}m ago was not reclaimed`, JSON.stringify(rOut));
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${jOut.id}`;
 
   // 2. fresh queued job on C1 -> claimed
   const [j2]=await mkJob(C1,'queued',null,null);
   const r2=await sql.begin((tx)=>claim(tx,'worker-A'));
-  (r2.length===1 && r2[0].id===j2.id) ? ok("fresh queued job claimed") : bad("queued claim", JSON.stringify(r2));
+  if (r2.length===1 && r2[0].id===j2.id) ok("fresh queued job claimed");
+  else bad("queued claim", JSON.stringify(r2));
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null where id=${j2.id}`;
 
   // 3. one-live-job-per-connection: C2 has a LIVE processing job; a queued sibling is NOT claimed
   await mkJob(C2,'processing',1,'worker-live');           // locked 1m ago = live
   const [j3b]=await mkJob(C2,'queued',null,null);
   const r3=await sql.begin((tx)=>claim(tx,'worker-B'));
-  (r3.length===0 || r3[0].id!==j3b.id)
-    ? ok("sibling job NOT claimed while connection has a live in-flight job")
-    : bad("one-live-per-connection violated", JSON.stringify(r3));
+  if (r3.length===0 || r3[0].id!==j3b.id)
+    ok("sibling job NOT claimed while connection has a live in-flight job");
+  else bad("one-live-per-connection violated", JSON.stringify(r3));
 
   // 4. SKIP LOCKED: two concurrent claimers, one eligible job -> at most one gets it
   const [j4]=await mkJob(C1,'queued',null,null);
@@ -106,9 +107,9 @@ try {
     const b=await sql.begin((txB)=>claim(txB,'B'));        // txB must SKIP it
     got=[...a.map(x=>x.id),...b.map(x=>x.id)];
   });
-  (got.filter(id=>id===j4.id).length===1)
-    ? ok("FOR UPDATE SKIP LOCKED: concurrent claimers never double-grab a job")
-    : bad("skip-locked double grab", JSON.stringify(got));
+  if (got.filter(id=>id===j4.id).length===1)
+    ok("FOR UPDATE SKIP LOCKED: concurrent claimers never double-grab a job");
+  else bad("skip-locked double grab", JSON.stringify(got));
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null, locked_by=null where id=${j4.id}`;
 
   // ---- §24 fault-injection (Stage 6): DB-behavioral proofs on the disposable DB ----
@@ -133,19 +134,19 @@ try {
   await sql.begin((tx)=>claim(tx,'worker-A'));                 // attempts -> 1
   await failJob(j5a.id,{code:'validation_error',message:'corrupted payload'});
   const [s5a]=await sql`select status from guesthub.channel_sync_jobs where id=${j5a.id}`;
-  (s5a.status==='dead_letter') ? ok("§24 poison payload (permanent error) → dead_letter immediately")
-    : bad("permanent-error dead-letter", s5a.status);
+  if (s5a.status==='dead_letter') ok("§24 poison payload (permanent error) → dead_letter immediately");
+  else bad("permanent-error dead-letter", s5a.status);
   //   (b) a transient error at the attempts ceiling dead-letters (retry exhaustion).
   const [j5b]=await mkJob(C1,'queued',null,null);
   await sql`update guesthub.channel_sync_jobs set attempts=max_attempts where id=${j5b.id}`;
   await failJob(j5b.id,{message:'still failing'});
   const [s5b]=await sql`select status from guesthub.channel_sync_jobs where id=${j5b.id}`;
-  (s5b.status==='dead_letter') ? ok("§24 retry exhaustion (attempts>=max) → dead_letter")
-    : bad("retry-exhaustion dead-letter", s5b.status);
+  if (s5b.status==='dead_letter') ok("§24 retry exhaustion (attempts>=max) → dead_letter");
+  else bad("retry-exhaustion dead-letter", s5b.status);
   //   (c) a dead_letter job is inert — the claim predicate never picks it up again.
   const r5=await sql.begin((tx)=>claim(tx,'worker-A'));
-  (!r5.some(x=>x.id===j5a.id||x.id===j5b.id)) ? ok("§24 dead_letter job is never re-claimed")
-    : bad("dead-letter re-claimed", JSON.stringify(r5.map(x=>x.id)));
+  if (!r5.some(x=>x.id===j5a.id||x.id===j5b.id)) ok("§24 dead_letter job is never re-claimed");
+  else bad("dead-letter re-claimed", JSON.stringify(r5.map(x=>x.id)));
   await sql`update guesthub.channel_sync_jobs set status='succeeded', locked_at=null, locked_by=null
     where id in (${r5.map(x=>x.id)}) and status='processing'`.catch(()=>{});
 
@@ -156,12 +157,12 @@ try {
   try { await sql.begin(async(tx)=>{ await claim(tx,'crashing-worker'); throw new Error('db dropped mid-claim'); }); }
   catch { /* expected */ }
   const [s6]=await sql`select status,locked_by,attempts from guesthub.channel_sync_jobs where id=${j6.id}`;
-  (s6.status==='queued' && s6.locked_by==null)
-    ? ok("§24 mid-claim DB failure rolls back → job intact, no leaked lock (no work lost)")
-    : bad("mid-claim rollback", JSON.stringify(s6));
+  if (s6.status==='queued' && s6.locked_by==null)
+    ok("§24 mid-claim DB failure rolls back → job intact, no leaked lock (no work lost)");
+  else bad("mid-claim rollback", JSON.stringify(s6));
   const r6=await sql.begin((tx)=>claim(tx,'worker-A'));
-  (r6.some(x=>x.id===j6.id)) ? ok("§24 the rolled-back job is re-claimable by the next worker")
-    : bad("post-rollback reclaim", JSON.stringify(r6.map(x=>x.id)));
+  if (r6.some(x=>x.id===j6.id)) ok("§24 the rolled-back job is re-claimable by the next worker");
+  else bad("post-rollback reclaim", JSON.stringify(r6.map(x=>x.id)));
 
 } catch(e){ bad("run", e.message); }
 finally { if(T) await sql`delete from guesthub.tenants where id=${T}`.catch(()=>{}); await sql.end(); }

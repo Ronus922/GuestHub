@@ -16,8 +16,16 @@
 #     migrations applied with that one role and nothing else.
 #   * fetch-depth: 0 because check:no-secrets scans `git log --all` for env
 #     files that were ever committed; a shallow clone would pass vacuously.
-#   * Guards the harness cannot serve here (a live authenticated app + Chrome)
-#     report cannot-run — a third state, never counted as pass or fail.
+#   * check:reservations-ui renders in the runner's preinstalled Google Chrome
+#     (headless, --no-sandbox). Run #8 (2026-09-04) lost it to a 10s CDP
+#     start-up budget on a cold runner — run #10 passed on the same image —
+#     so the guard now waits 30s and reports Chrome's exit/stderr, and the
+#     step below fails by name if the image ever drops Chrome.
+#   * check:hydration-browser needs a live authenticated app. Without the
+#     HYDRATION_* secrets it reports skip — a third state, never counted as
+#     pass or fail. Configure them (Settings → Secrets and variables →
+#     Actions) and it runs. Infrastructure the harness expected and did not
+#     get reports cannot-run — also never pass or fail.
 #
 # Verdicts are whatever the guards say. There is deliberately no "known-red"
 # baseline in this file (D159): a red guard on main is a finding for the
@@ -85,6 +93,14 @@ jobs:
           --health-retries 30
     env:
       SUITE_ADMIN_DB_URL: postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres
+      # check:hydration-browser — a real login against a live app. Unset → the
+      # suite reports "skip". Point them at a staging app, never production;
+      # a pull request from a fork receives no secrets and skips.
+      HYDRATION_BASE_URL: ${{ secrets.HYDRATION_BASE_URL }}
+      HYDRATION_EMAIL: ${{ secrets.HYDRATION_EMAIL }}
+      HYDRATION_PASSWORD: ${{ secrets.HYDRATION_PASSWORD }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.HYDRATION_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.HYDRATION_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,6 +120,15 @@ jobs:
           psql "$SUITE_ADMIN_DB_URL" -X -v ON_ERROR_STOP=1 -c \
             "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='guesthub_app') THEN CREATE ROLE guesthub_app NOLOGIN; END IF; END \$\$;"
 
+      - name: Chrome for the browser guards
+        # ubuntu-latest ships Google Chrome at the path the guards default to.
+        # Fail here, by name, if the image ever stops shipping it — and print
+        # the version so a rendering difference can be traced to a Chrome bump.
+        run: |
+          test -x /opt/google/chrome/chrome || { echo "::error::Google Chrome is missing from the runner image (/opt/google/chrome/chrome)"; exit 1; }
+          /opt/google/chrome/chrome --version
+          echo "CHROME_BIN=/opt/google/chrome/chrome" >> "$GITHUB_ENV"
+
       - name: Run check:* suite
         run: pnpm suite --json "$RUNNER_TEMP/suite-results.json"
 
@@ -119,7 +144,7 @@ jobs:
             const rows = results.filter((r) => r.verdict !== "pass")
               .map((r) => `| ${r.name} | ${r.verdict} | ${(r.why || "").replace(/\|/g, "/")} |`);
             const md = [
-              `## check:* suite — pass ${n("pass")} · fail ${n("fail")} · cannot-run ${n("cannot-run")} of ${results.length}`,
+              `## check:* suite — pass ${n("pass")} · fail ${n("fail")} · skip ${n("skip")} · cannot-run ${n("cannot-run")} of ${results.length}`,
               "", "| guard | verdict | why |", "|---|---|---|", ...rows, "",
             ].join("\n");
             fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
