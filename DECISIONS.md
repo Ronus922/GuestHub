@@ -4881,3 +4881,47 @@ components` והפסיד ל-utilities `h-9 w-9 rounded-xl` של `SettingsCard` �
 ב-CSS; במעבר 1000px אף נמדד `canvas` חי). **סיכום המיקום השמור מוצג בלי ה-SDK ולכן נראה
 מלא ותקין — בדיוק תכונת החוסן של D62.** אימות ויזואלי של המפה/החיפוש דורש הרצה מול הדומיין
 החי ונשאר פתוח.
+
+## D176 — שורות מזומן-פנטום: void ל-38, התאמה ל-2 — כתיבה ישירה לפרודקשן לפי סקירת בעלים (2026-09-05)
+
+**הכלל (בעלים).** שורת תשלום שנוצרה אוטומטית ביצירת ההזמנה (ברירת המחדל paid=total של
+האשף, D87 §2 — מבוטלת ב-D174, טרם נפרס) **אינה תשלום**. לפי סקירת הבעלים
+(`phantom-cash-review-2026-09-05-v2.csv`, מקור האמת היחיד לבחירת השורות): void לשורה
+שאין מאחוריה כסף; התאמה של סכום ואמצעי במקום שבו נרשם כסף אמיתי; השאר ללא שינוי.
+
+**מנגנון (PART 0).** ‏`payments.status` — `text`, ‏CHECK ‏`IN ('paid','pending','failed',
+'voided','refunded')` (מיגרציה 019 §2; העמודה מ-000). void = `status='voided'`, בדיוק
+המסלול של `voidPayment` ב-`lib/payments/mutations.ts`; אין `voided_at`, אין soft-delete,
+DELETE לא בא בחשבון. הסיבה ב-`payments.notes` (‏`text`, ‏000). ‏`payments.method` מאחסן את
+**מפתח** ה-lookup (‏`lookup_items.category='payment_methods'`): ביט = `bit`, העברה
+בנקאית = `bank_transfer` (ערכים קיימים: bank_transfer 7, bit 7, cash 77, credit_card 7,
+pm-0a26b2ad 1, NULL 1). ‏`total_now` ב-CSV = `reservations.total_price`. **היתרה
+מאוחסנת:** `reservations.paid_amount` ו-`balance` הם מטמונים (D51), נוסחה קנונית:
+paid = SUM(amount) FILTER (status='paid'), balance = total_price − paid, לא floored
+(‏`ledger.ts recomputePaymentAggregates`, זהה ל-019 §3). אין טריגר ביקורת ב-DB —
+רק `set_updated_at` על שתי הטבלאות ו-`res_propagate_blocking` (רק על שינוי `status`);
+לוג הביקורת של האפליקציה (`guesthub.audit_logs`, ‏`writeAudit`) הוא ברמת האפליקציה
+בלבד ולכן **הכתיבה הישירה עקפה אותו** — הפרק הזה הוא התיעוד. לפני הכתיבה אומת שכל 75
+השורות חיות, ‏status=paid, ‏method=cash, טננט אחד, ותואמות ל-CSV (0 סטיות), והמטמונים
+עקביים עם הלדג'ר (0 סחף).
+
+**הכתיבה (PART 1, ‏guesthub_app, שלוש טרנזקציות נפרדות, assert על rowcount, rollback
+בכל סטייה).** ‏T1: ‏38 שורות → `status='voided'`, ‏`notes='phantom cash row auto-created at
+reservation create (D174 review 2026-09-05)'` — rowcount 38. ‏T2: ‏1091 ‏2980→3400 ו-
+`method='bit'`; ‏1149 ‏17290→4500 ו-`method='bank_transfer'` — rowcount 1+1 (הסכום הישן
+ב-WHERE כתנאי מקדים). ‏T3: ‏1091 ‏`total_price` 6000→3400 — rowcount 1; חישוב-מחדש של
+המטמונים בנוסחה הקנונית ל-1091, 1149 ו-38 המבוטלות — **40 הזמנות עודכנו**. בין
+COMMIT של T1 ל-COMMIT של T3 היו המטמונים של 40 ההזמנות לא-עקביים למשך אלפיות שנייה
+(עיצוב שלוש הטרנזקציות הוא הוראת הבעלים).
+
+**ספירות.** void 38 · keep 34 · review 3 (‏1022 ללא שינוי; 1091 ו-1149 הותאמו). אחרי:
+מבוטלות מתוך 75 = 38; ‏paid = 37; ‏35 השורות שלא נגעו בהן (34 keep + 1022) זהות ל-CSV
+(0 סטיות); סחף מטמון 0. ‏1091: תשלום 3400 ‏bit, ‏total 3400, יתרה 0.00. ‏1149: תשלום 4500
+‏bank_transfer, יתרה 12790.00. מחוץ לתחום (קריאה בלבד): 2 הזמנות נוצרו אחרי השורה
+האחרונה ב-CSV (‏2026-09-04 09:52:42), 0 מהן בתבנית מזומן-אוטומטי; 0 נוצרו אחרי
+2026-09-05.
+
+**רשומת השחזור.** ‏`/home/ubuntu/guesthub-scratch/phantom-cash-before-2026-09-05.csv`
+(40 שורות התשלום המלאות כפי שהיו) + `phantom-cash-before-reservations-2026-09-05.csv`
+(‏total_price/paid_amount/balance של 40 ההזמנות). שחזור = החזרת הערכים מהקבצים
+והרצת הנוסחה הקנונית על אותן 40 הזמנות.
