@@ -24,7 +24,8 @@ let fail = 0; const ok=(m)=>console.log(`  ✓ ${m}`); const bad=(m,d)=>{fail++;
 
 // 1. the exclusion constraint exists
 const hasCon = q(`select count(*) from pg_constraint where conname='rr_no_double_booking'`);
-hasCon==="1" ? ok("rr_no_double_booking exclusion constraint present") : bad("exclusion constraint missing");
+if (hasCon==="1") ok("rr_no_double_booking exclusion constraint present");
+else bad("exclusion constraint missing");
 
 // 2. no two BLOCKING stays overlap on the same room (half-open) — data obeys it
 const overlaps = q(`
@@ -33,26 +34,31 @@ const overlaps = q(`
     on a.room_id = b.room_id and a.id < b.id
    and a.is_blocking and b.is_blocking
    and daterange(a.check_in,a.check_out,'[)') && daterange(b.check_in,b.check_out,'[)')`);
-overlaps==="0" ? ok("no overlapping blocking stays in data") : bad("overlapping blocking stays", overlaps);
+if (overlaps==="0") ok("no overlapping blocking stays in data");
+else bad("overlapping blocking stays", overlaps);
 
 // 3. is_blocking is consistent with (room_id set AND parent status ∈ blocking set)
 const inconsistent = q(`
   select count(*) from guesthub.reservation_rooms rr
   join guesthub.reservations r on r.id = rr.reservation_id
   where rr.is_blocking <> ((rr.room_id is not null) and r.status = any(guesthub.inventory_blocking_statuses()))`);
-inconsistent==="0" ? ok("is_blocking flag consistent with parent status") : bad("is_blocking drift", inconsistent);
+if (inconsistent==="0") ok("is_blocking flag consistent with parent status");
+else bad("is_blocking drift", inconsistent);
 
 // 4. no blocking row without a room
 const blockingNoRoom = q(`select count(*) from guesthub.reservation_rooms where is_blocking and room_id is null`);
-blockingNoRoom==="0" ? ok("no blocking row lacks a room") : bad("blocking rows without room", blockingNoRoom);
+if (blockingNoRoom==="0") ok("no blocking row lacks a room");
+else bad("blocking rows without room", blockingNoRoom);
 
 // 5. stay ranges are valid (check_out > check_in) — enforced by CHECK, verify data
 const badRanges = q(`select count(*) from guesthub.reservation_rooms where check_out <= check_in`);
-badRanges==="0" ? ok("all stays have check_out > check_in") : bad("invalid stay ranges", badRanges);
+if (badRanges==="0") ok("all stays have check_out > check_in");
+else bad("invalid stay ranges", badRanges);
 
 // 6. reservations.status CHECK present (H2)
 const hasStatusCheck = q(`select count(*) from pg_constraint where conname='reservations_status_check'`);
-hasStatusCheck==="1" ? ok("reservations_status_check present") : bad("status CHECK missing");
+if (hasStatusCheck==="1") ok("reservations_status_check present");
+else bad("status CHECK missing");
 
 console.log(fail ? `\ncheck:inventory-integrity FAILED (${fail})` : "\ncheck:inventory-integrity PASSED");
 process.exit(fail?1:0);
