@@ -58,7 +58,6 @@ if (isLocal && port === "5432" && !allow5432) {
 
 const psql = (args, input) => execFileSync("psql", [url, "-v", "ON_ERROR_STOP=1", "-X", ...args],
   { input, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] });
-const scalar = (s) => psql(["-tAc", s]).trim();
 
 // --- ordered manifest ---
 const manifest = readFileSync(join(MIG_DIR, "manifest.txt"), "utf8")
