@@ -15,6 +15,8 @@
 //   node --experimental-websocket --env-file=.env.local scripts/check-hydration-browser.mjs
 //
 // Node 20 has no global WebSocket without --experimental-websocket.
+// Without the five env values above the guard SKIPS (exit 3, "skip" in the
+// suite) — it never fails for credentials it was not given.
 // ============================================================
 import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 import { spawn } from "node:child_process";
@@ -30,9 +32,14 @@ const CDP_PORT = Number(process.env.CDP_PORT || 9444);
 const SUP = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-for (const [k, v] of Object.entries({ HYDRATION_BASE_URL: BASE, HYDRATION_EMAIL: EMAIL, HYDRATION_PASSWORD: PASSWORD, NEXT_PUBLIC_SUPABASE_URL: SUP, NEXT_PUBLIC_SUPABASE_ANON_KEY: ANON })) {
-  if (!v) { console.error(`missing required env ${k}`); process.exit(1); }
-}
+// Absent credentials are a SKIP (exit 3 — run-checks.mjs maps it to the "skip"
+// verdict), not a failure: this guard needs a live authenticated app, which a
+// checkout without the HYDRATION_* secrets — CI without them configured, a PR
+// from a fork — legitimately does not have. Present-but-wrong credentials still
+// FAIL below (login 4xx), so a misconfiguration can never hide behind a skip.
+const REQUIRED = { HYDRATION_BASE_URL: BASE, HYDRATION_EMAIL: EMAIL, HYDRATION_PASSWORD: PASSWORD, NEXT_PUBLIC_SUPABASE_URL: SUP, NEXT_PUBLIC_SUPABASE_ANON_KEY: ANON };
+const missing = Object.entries(REQUIRED).filter(([, v]) => !v).map(([k]) => k);
+if (missing.length) { console.log(`skip — needs: ${missing.join(", ")}`); process.exit(3); }
 if (typeof WebSocket === "undefined") { console.error("run with: node --experimental-websocket"); process.exit(1); }
 
 let n = 0;

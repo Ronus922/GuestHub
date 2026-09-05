@@ -25,9 +25,12 @@
 //               generated .env.local (some guards run with --env-file). The
 //               three encryption keys are supplied as ephemeral per-run values
 //               (product code sha256-hashes them; guards only round-trip their
-//               own fixtures). Guards needing env this harness cannot supply
-//               (live app + browser, npm registry) are CANNOT-RUN — a third
-//               state, never counted as pass or fail.
+//               own fixtures). A guard whose credentials the caller may
+//               legitimately not hold (the browser guard's live authenticated
+//               app) is SKIP when they are absent; infrastructure the harness
+//               expected and did not get (npm registry, a clone that failed,
+//               a timeout) is CANNOT-RUN. Both are third states — never
+//               counted as pass or fail, and only fail sets the exit code.
 //   CLOCK       TZ=Asia/Jerusalem is pinned for every guard, matching the
 //               product's default property timezone.
 //
@@ -95,12 +98,18 @@ const REPLAYERS = new Set([
   "check:totals-parity", "check:public-quote", "check:room-picker-window",
   "check:su-lifecycle", "check:room-identity", "check:beds24-failure-evidence",
 ]);
-// Env the harness cannot supply: a live authenticated app + Chrome; the npm
-// registry (probed below). Anything here is CANNOT-RUN unless the caller
-// exported the requirement themselves.
-const CANNOT_RUN = {
+// SKIP: credentials the caller may legitimately not hold. The browser guard
+// needs a live authenticated app (the five values below); absent → "skip",
+// present → it RUNS (and a wrong value fails inside the guard). The guard
+// itself exits 3 for the same condition when run directly.
+const SKIP_IF_MISSING = {
   "check:hydration-browser": () =>
-    ["HYDRATION_BASE_URL", "HYDRATION_EMAIL", "HYDRATION_PASSWORD"].filter((k) => !process.env[k]),
+    ["HYDRATION_BASE_URL", "HYDRATION_EMAIL", "HYDRATION_PASSWORD",
+     "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"].filter((k) => !process.env[k]),
+};
+// CANNOT-RUN: infrastructure the harness expected and did not get — the npm
+// registry (probed below), a database that failed to clone, a timeout.
+const CANNOT_RUN = {
   "check:supply-chain": () => (registryReachable ? [] : ["npm registry unreachable"]),
 };
 
@@ -201,6 +210,14 @@ try {
     i++;
     const slug = name.replace(/^check:/, "").replace(/[^a-z0-9]/g, "_");
 
+    const skipFor = SKIP_IF_MISSING[name]?.() ?? [];
+    if (skipFor.length) {
+      writeFileSync(join(OUT_DIR, "logs", `${slug}.txt`), `skip — needs: ${skipFor.join(", ")}\n`);
+      results.push({ name, mode: "static", verdict: "skip", why: `needs: ${skipFor.join(", ")}`, ms: 0 });
+      console.log(`${String(i).padStart(2)}/${checks.length} skip           ${name} (${skipFor.join(", ")})`);
+      continue;
+    }
+
     const missing = CANNOT_RUN[name]?.() ?? [];
     if (missing.length) {
       writeFileSync(join(OUT_DIR, "logs", `${slug}.txt`), `cannot-run — needs: ${missing.join(", ")}\n`);
@@ -281,7 +298,12 @@ try {
       verdict = "cannot-run";
       why = `timeout ${TIMEOUT_MS}ms`;
     } else if (r.status === 0) verdict = "pass";
-    else if (r.status === 2) {
+    else if (r.status === 3) {
+      verdict = "skip";
+      // the guard's own "skip — needs: …" line, not pnpm's ELIFECYCLE trailer
+      const lines = out.split("\n").filter((l) => l.trim());
+      why = (lines.find((l) => /^skip\b/.test(l.trim())) ?? lines.slice(-1).join("")).trim().slice(0, 200);
+    } else if (r.status === 2) {
       verdict = "cannot-run";
       why = out.split("\n").filter((l) => l.trim()).slice(-2).join(" | ").slice(0, 200);
     } else {
@@ -315,6 +337,6 @@ try {
 
 writeFileSync(JSON_OUT, JSON.stringify({ seed: SHUFFLE ? SEED : null, template: TEMPLATE, results }, null, 1));
 const n = (v) => results.filter((r) => r.verdict === v).length;
-console.log(`\n=== TOTALS: pass=${n("pass")} fail=${n("fail")} cannot-run=${n("cannot-run")} of ${results.length}`);
+console.log(`\n=== TOTALS: pass=${n("pass")} fail=${n("fail")} skip=${n("skip")} cannot-run=${n("cannot-run")} of ${results.length}`);
 console.log(`=== results: ${JSON_OUT}`);
 if (n("fail") > 0) process.exitCode = 1;
