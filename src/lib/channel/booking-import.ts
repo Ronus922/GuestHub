@@ -13,7 +13,6 @@ import {
 import { markAriDirty } from "./outbox";
 import { enqueueReservationCancelled, enqueueReservationConfirmed } from "@/lib/communications/outbox";
 import {
-  dispatchExternalChangeEmails,
   recordExternalDateChange,
   roomLabelsFor,
 } from "./external-changes";
@@ -361,17 +360,6 @@ export type ImportOutcome =
   | { status: "already"; reservationId: string | null }
   | { status: "quarantined"; reason: string }
   | { status: "failed"; error: string };
-
-type RevisionRow = {
-  id: string;
-  tenant_id: string;
-  provider_booking_id: string;
-  provider_revision_id: string;
-  revision_kind: "new" | "modified" | "cancelled";
-  payload: unknown;
-  import_status: string;
-  local_reservation_id: string | null;
-};
 
 async function applyLiveRevision(
   tx: TransactionSql,
