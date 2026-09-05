@@ -490,9 +490,15 @@ export async function createReservationAction(
 // ---------------------------------------------------------------
 // update (full edit panel — never cancels; see cancelReservationAction)
 // ---------------------------------------------------------------
+// D174 — an edit never reduces the ledger: when a removed room pulls the new
+// total under what is already recorded, the caller is TOLD, never blocked.
+export type UpdateReservationOutcome = {
+  paidExceedsTotal: { paid: number; total: number } | null;
+};
+
 export async function updateReservationAction(
   raw: UpdateReservationInput,
-): Promise<ActionResult> {
+): Promise<ActionResult<UpdateReservationOutcome>> {
   try {
     const actor = await getActor();
     requirePermission(actor, "reservations.edit");
@@ -500,7 +506,7 @@ export async function updateReservationAction(
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "קלט לא תקין");
     const input = parsed.data;
 
-    await sql.begin(async (tx) => {
+    const outcome = await sql.begin(async (tx): Promise<UpdateReservationOutcome> => {
       const [existing] = await tx<
         { id: string; status: string; booking_origin: string; primary_guest_id: string | null; check_in: string; check_out: string;
           discount_amount: string; discount_mode: DiscountMode; discount_value: string;
@@ -768,7 +774,7 @@ export async function updateReservationAction(
                   ${input.paymentMethod ?? null}, 'paid', now())`;
       }
       // paid_amount/balance derive from the payments LEDGER (D51)
-      await recomputePaymentAggregates(tx, actor.tenantId, input.id);
+      const ledger = await recomputePaymentAggregates(tx, actor.tenantId, input.id);
 
       await writeAudit(actor, {
         entityType: "reservation",
@@ -817,12 +823,18 @@ export async function updateReservationAction(
           reservationId: input.id,
         });
       }
+      // D174 — a removed room can leave the recorded payments above the new
+      // total; the ledger is not touched here, the operator is warned
+      return {
+        paidExceedsTotal:
+          ledger.paid > ledger.total ? { paid: ledger.paid, total: ledger.total } : null,
+      };
     });
 
     revalidatePath("/calendar");
     revalidatePath("/reservations");
     revalidatePath("/dashboard");
-    return { success: true };
+    return { success: true, data: outcome };
   } catch (e) {
     return fail(errorMessage(e));
   }

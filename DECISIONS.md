@@ -787,6 +787,7 @@ The 7-stage hardening program (branch `feat/pms-hardening-channex-certification`
 1. **Holder auto-fill.** שם בעל הכרטיס now defaults to the guest's `firstName lastName`, editable. BookingPanel syncs it via an effect until the operator edits the field (a `holderTouched` ref); EditReservationPanel seeds it when the operator opts into manual entry.
 
 2. **Paid-amount default = total (create only).** In BookingPanel סכום ששולם defaults to the running סה״כ לתשלום until the operator edits it or picks another payment chip (`paidTouched` ref). Deliberately NOT applied to EditReservationPanel: its "תשלום נוסף" field feeds the append-only ledger, and auto-defaulting it to the balance would record a phantom payment on any incidental save.
+   ↳ **בוטל ב-D174 (2026-09-05):** ברירת המחדל ביצירה היא 0 ושורת תשלום נכתבת רק מקלט מפורש של המפעיל — הברירה הזו יצרה שורת מזומן ב-75 הזמנות בלי שאיש רשם תשלום (#1159: ₪3,939 → יתרה −760 אחרי הסרת חדר). ראה D174.
 
 3. **CVV storage restored — reverses D52 for the MANUAL card only** (migration 047 re-adds `reservation_cards.cvv_encrypted`; migration 018 is the drop template). Encrypted at rest with the same AES-256-GCM vault (`encryptCvv`/`decryptCvv`), validated 3–4 digits, never logged/audited/echoed, returned only by the audited reveal. The channel-ingest path is UNTOUCHED — an OTA-attached card is always `cvv_encrypted IS NULL`, and the only cvv column in the schema is the manual card's.
    ⚠️ **PCI-DSS Req. 3.2 ceiling:** retaining a CVV after authorization is a violation. This is accepted ONLY because no PSP authorizes inside GuestHub. The moment a real gateway is wired, DROP the column again and collect the CVV transiently per-authorization.
@@ -4778,3 +4779,43 @@ CONFLICT DO NOTHING` הוא הנעילה — מי שהניח את השורה ש�
 התשובה של הספק ("Instance account is expired") — התרגום לעברית של `green_400` נכתב
 מהראיה של הפרק הזה, לא מגוף התשובה בזמן אמת; שמירת 120 תווים מגוף השגיאה, כמו
 ב-`gmail.ts`, היא שינוי נפרד.
+
+---
+
+## D174 — ברירת המחדל של "סכום ששולם" ביצירת הזמנה = 0; שורת תשלום נכתבת רק מקלט מפורש של המפעיל. מבטל את D87 §2 (2026-09-05)
+
+> מספור: ההנחיה נקבה ב-"D173", אך D173 כבר תפוס (כרטיס "ערוצי שליחה", אותו יום).
+> הפרק נרשם כ-D174; שם הענף נשאר `fix/d173-paid-default-zero` כפי שהתבקש.
+
+**הראיה.** #1159 — ברירת המחדל של האשף (D87 §2: "סכום ששולם" = סה״כ עד עריכה ידנית)
+יצרה ברגע היצירה שורת תשלום מזומן ₪3,939 בלי שאיש רשם תשלום; הסרת חדר אחר כך
+הורידה את הסה״כ ל-₪3,179 והיתרה נעשתה −760 — זיכוי פנטום. ספירה בפרודקשן (05/09/2026,
+`BEGIN READ ONLY`): מתוך 109 הזמנות `back_office`, ל-**75** יש שורת תשלום יחידה,
+מזומן/`paid`, שנוצרה באותה שנייה עם ההזמנה (אותה טרנזקציה); ב-**70** מהן הסכום שווה
+לסה״כ בזמן היצירה (מיומן הביקורת של `create`); ב-12 מהן הסה״כ השתנה מאז; **10** עומדות
+היום ביתרה שלילית (סה״כ ₪19,589, בין ₪190 ל-₪9,000). אף הזמנת OTA (40) או אתר (11) לא
+נפגעה — בשני המקורות אין שורות תשלום כלל. הביטול נעשה ב-`BookingPanel` בלבד: הייבוא
+(`booking-import.ts`, "no payment row is fabricated") וה-API הציבורי (`create-booking.ts`,
+‏`paid_amount` 0) מעולם לא כתבו תשלום; צ'יפ "שולם מלא" ביצירה ובעריכה ממלא סכום
+בלחיצה מפורשת — קלט של המפעיל, לא ברירת מחדל — ונשאר.
+
+**ההכרעה (בעלים).** ביצירה, "סכום ששולם" מתחיל ב-0 ואמצעי התשלום אינו נבחר; שורת
+`payments` נכתבת רק כשהמפעיל רשם סכום > 0, ואז אמצעי תשלום הוא חובה. הסרת חדר
+שמותירה תשלום רשום מעל הסה״כ החדש מציגה אזהרה בפאנל — "התשלום הרשום (₪X) עולה על
+הסה״כ החדש (₪Y)" — ולא חוסמת. D87 §2 מבוטל; D87 §1/§3/§4 עומדים.
+
+**המימוש.** `BookingPanel.tsx`: ה-`useEffect` שסנכרן paid=total הוסר; `initialMethod = ""`;
+`handleCreate` עוצר עם הודעה כש-`paid > 0` בלי אמצעי תשלום (וה-select מסומן
+`field-error`). `paidTouched`/`autoFilled` נשארים כהגנת dirty-state (check:closure-dirty,
+שהאמת שלו התהפכה ועודכן). `actions.ts`: היצירה כבר כתבה תשלום רק תחת `if (paid > 0)` —
+אומת בהרצה, לא שונה; `updateReservationAction` מחזיר `paidExceedsTotal` מתוצאת
+`recomputePaymentAggregates`. `EditReservationPanel.tsx`: אזהרה חיה כש-`paidAfter > total`,
+ו-toast אחרי שמירה עם המספרים מהשרת. שומר `check:paid-default`: מקמפל ומריץ את
+`createReservationAction` האמיתי מול `sql` מזויף שרושם כל statement (בלי DB) — בלי paid →
+0 שורות `payments`; ‏paid=500 → שורה אחת של 500; ובדיקה סטטית שאף `useEffect` באשף לא
+כותב ל-paid חוץ מאיפוס ל-0. B2 בתוך השומר: החזרת שורת הסנכרון לאשף, ו-`paid >= 0`
+בפעולה המקומפלת — שני המוטנטים נתפסים.
+
+**מה לא נעשה.** 10 ההזמנות ביתרה שלילית לא תוקנו — תיקון דאטה הוא הכרעה נפרדת (ביטול
+או החזר בלדג'ר, לעולם לא מחיקה של שורת תשלום). אין אכיפה שרתית של "אמצעי תשלום חובה
+עם סכום" — הכלל הוא של האשף; ה-schema עדיין מקבל `paidAmount` בלי `paymentMethod`.

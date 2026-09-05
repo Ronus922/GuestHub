@@ -95,15 +95,13 @@ const CANCEL_POLICY_OPTIONS: { value: string; label: string; explain: string }[]
 
 // dirty-state fingerprint of everything the user can edit.
 //
-// "שולם" is NOT ordinary input: an effect below copies the live quote into it
-// the moment the quote lands, so a wizard opened from a calendar drag rewrites
-// that field by itself a few hundred milliseconds after it appears. Comparing
-// the rewritten value against the 0 the baseline was taken with made an
-// untouched wizard report unsaved changes — and every exit (X, Escape, the
-// room-closure shortcut) then demanded an answer nobody had. It goes through
-// autoFilled() with the SAME paidTouched flag that stops the effect from
-// overwriting a hand-edited amount: while the form owns the field it does not
-// speak, and the instant the operator takes it over it counts in full.
+// "שולם" used to be written by the form itself (D87 §2: the live quote was
+// copied into it the moment it landed), which is why it is compared through
+// autoFilled() behind the paidTouched flag: while the form owns the field it
+// does not speak, and the instant the operator takes it over it counts in
+// full. D174 removed that auto-fill — the field now starts at 0 and only an
+// explicit input (typing, a payment chip) moves it — and the flag stays as the
+// one source of truth for "this is theirs now".
 function formSnapshot(
   guest: GuestForm,
   sourceId: string,
@@ -191,8 +189,9 @@ export function BookingPanel({
   // resolver the create action snapshots with
   const [policyPreview, setPolicyPreview] = useState<CancellationPolicySnapshot | null>(null);
   const paidRef = useRef<HTMLInputElement | null>(null);
-  // ברירות מחדל אוטומטיות: שם בעל הכרטיס נגזר משם האורח, וסכום ששולם נגזר
-  // מהסה"כ — עד שהמשתמש עורך את השדה ידנית, ואז המערכת מפסיקה לדרוס אותו
+  // ברירת מחדל אוטומטית: שם בעל הכרטיס נגזר משם האורח — עד שהמשתמש עורך את
+  // השדה ידנית, ואז המערכת מפסיקה לדרוס אותו. סכום ששולם אינו נגזר מכלום
+  // (D174): מתחיל ב-0 ומשתנה רק מקלט מפורש; paidTouched מסמן שהמפעיל נגע בו
   const holderTouched = useRef(false);
   const paidTouched = useRef(false);
   const [saving, startSaving] = useTransition();
@@ -226,9 +225,9 @@ export function BookingPanel({
   useEffect(() => {
     if (!open) return;
     const initialSource = bookingSources[0]?.id ?? "";
-    // אמצעי תשלום — ברירת מחדל מזומן (MD ש'25/ש'112); absent a cash method
-    // in the tenant list, no method is preselected
-    const initialMethod = paymentMethods.find((m) => m.key === "cash")?.key ?? "";
+    // אמצעי תשלום — מתחיל לא-נבחר (D174, מבטל את ברירת המחדל "מזומן" של
+    // MD ש'25/ש'112): נדרש רק כשנרשם סכום ששולם, ראה handleCreate
+    const initialMethod = "";
     const initialStays: StayDraft[] = [
       {
         key: newStayKey(),
@@ -401,12 +400,8 @@ export function BookingPanel({
     if (holderTouched.current) return;
     setCc((p) => (p.holder === guestFullName ? p : { ...p, holder: guestFullName }));
   }, [guestFullName]);
-  // סכום ששולם = סה"כ לתשלום (עד עריכה ידנית / בחירת סטטוס תשלום אחר)
-  useEffect(() => {
-    if (paidTouched.current) return;
-    const t = total; // exact to the agora (D106) — never round the money
-    setPaid((prev) => (prev === t ? prev : t));
-  }, [total]);
+  // סכום ששולם אינו מסונכרן מהסה"כ (D174): 0 עד לקלט מפורש של המפעיל —
+  // ברירת המחדל של D87 §2 יצרה שורת תשלום מזומן על כל הזמנה (#1159)
 
   useEffect(() => {
     if (step !== SUMMARY_STEP) return;
@@ -432,6 +427,8 @@ export function BookingPanel({
     lastName: showErrors && step === 0 && guest.lastName.trim() === "",
     phone: showErrors && step === 0 && guest.phone.trim() === "",
   };
+  // D174 — אמצעי תשלום הוא חובה רק כשנרשם סכום ששולם
+  const methodErr = showErrors && paid > 0 && !method;
 
   // move to `to` cleanly — navigation always leaves the error state behind
   const goStep = (to: number) => {
@@ -470,6 +467,12 @@ export function BookingPanel({
     if (ccState === "invalid") {
       setShowErrors(true);
       toast.error("פרטי הכרטיס אינם תקינים — השלימו אותם או נקו את השדות");
+      return;
+    }
+    // D174 — a recorded amount needs a method; no amount needs nothing
+    if (paid > 0 && !method) {
+      setShowErrors(true);
+      toast.error("נרשם סכום ששולם — יש לבחור אמצעי תשלום");
       return;
     }
     submit();
@@ -1191,7 +1194,8 @@ export function BookingPanel({
                 <div className="bw-grid3 mt-5">
                   <Field label="אמצעי תשלום">
                     <select
-                      className="field-input"
+                      className={`field-input${methodErr ? " field-error" : ""}`}
+                      aria-invalid={methodErr || undefined}
                       value={method}
                       onChange={(e) => {
                         setMethod(e.target.value);

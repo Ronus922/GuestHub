@@ -376,6 +376,14 @@ export function EditReservationPanel({
       });
       if (res.success) {
         toast.success("ההזמנה עודכנה");
+        // D174 — the server re-derived paid/total from the ledger after the
+        // edit; a total that fell under the recorded payments is said, not blocked
+        if (res.data?.paidExceedsTotal) {
+          const { paid, total: newTotal } = res.data.paidExceedsTotal;
+          toast.warning(
+            `התשלום הרשום (₪${paid.toLocaleString()}) עולה על הסה״כ החדש (₪${newTotal.toLocaleString()})`,
+          );
+        }
         onClose();
       } else {
         toast.error(res.error);
@@ -1085,6 +1093,18 @@ export function EditReservationPanel({
                   <PayChip state="overpaid" label="שולם ביתר" on disabled />
                 )}
               </div>
+              {/* D174 — removing a room can pull the total under what the ledger
+                  already holds. The ledger is never reduced from here, so the
+                  fact is SAID, with both numbers, and the operator decides —
+                  a warning, never a block. */}
+              {paidAfter > total && (
+                <div role="status" className="mt-3 flex items-start gap-2.5 rounded-xl border border-status-warning bg-status-warning-050 p-3">
+                  <Icon name="warning" size={17} className="mt-0.5 shrink-0 text-status-warning" />
+                  <p className="t-label leading-relaxed text-status-warning">
+                    התשלום הרשום (₪<bdi className="ltr-num">{paidAfter.toLocaleString()}</bdi>) עולה על הסה״כ החדש (₪<bdi className="ltr-num">{total.toLocaleString()}</bdi>)
+                  </p>
+                </div>
+              )}
 
               {/* payment-ADJUSTMENT row (method / additional payment / discount).
                   Hidden — not disabled — while the operator is explicitly keying

@@ -170,8 +170,12 @@ const region = (src, from, to) => {
   const live = region(booking, "const dirty =", ";");
   assert.match(live, /paidTouched\.current/,
     "the live fingerprint asks the SAME flag that stops the auto-fill from overwriting a hand-edited amount — one source of truth for 'this is theirs now'");
-  assert.match(booking, /if \(paidTouched\.current\) return;[\s\S]{0,200}setPaid\(/,
-    "the wizard still fills \"שולם\" from the live total by itself — which is exactly WHY that field is compared through autoFilled");
+  // D174 inverted this claim: the wizard no longer fills "שולם" by itself (the
+  // D87 §2 default wrote a cash payment row on every create — #1159). The
+  // autoFilled comparison stays as defense in depth; a RETURN of the sync is
+  // the regression check:paid-default names, and this guard refuses it too.
+  assert.doesNotMatch(booking, /if \(paidTouched\.current\) return;[\s\S]{0,200}setPaid\(/,
+    "the wizard does NOT fill \"שולם\" from the live total by itself any more (D174) — the field is the operator's from the first keystroke");
 
   // a baseline may only hardcode a value the open-reset actually restores
   const resetAt = booking.indexOf("setStays(initialStays)");
