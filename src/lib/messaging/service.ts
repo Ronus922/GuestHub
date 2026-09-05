@@ -4,6 +4,7 @@ import { writeAudit } from "@/lib/audit";
 import { normalizePhone } from "@/lib/phone";
 import { resolveEmailProvider, resolveWhatsAppProvider } from "./providers";
 import { createOutboundMessage, applySendResult } from "./messages";
+import { notifyChannelFailureStreak } from "./channel-failure-alert";
 import type { MessageStatus } from "./types";
 
 export type SendOutcome = {
@@ -60,6 +61,8 @@ export async function sendEmailMessage(
     html: params.html ?? null,
   });
   await applySendResult(messageId, result);
+  // D173 — a provider failure may complete a streak; the alert-once row decides.
+  if (result.status === "failed") await notifyChannelFailureStreak(actor.tenantId, "email");
   await writeAudit(actor, {
     entityType: "reservation", entityId: params.reservationId,
     action: result.status === "failed" ? "email_failed" : "email_sent",
@@ -92,6 +95,8 @@ export async function sendWhatsAppMessage(
   });
   const result = await resolved.provider.sendMessage({ to: n.e164, body: params.body });
   await applySendResult(messageId, result);
+  // D173 — same as email; validation_failed is a recipient fact, not a channel one.
+  if (result.status === "failed") await notifyChannelFailureStreak(actor.tenantId, "whatsapp");
   await writeAudit(actor, {
     entityType: "reservation", entityId: params.reservationId,
     action: result.status === "failed" || result.status === "validation_failed" ? "whatsapp_failed" : "whatsapp_sent",

@@ -343,7 +343,7 @@ function GmailCard({ view, disabled }: { view: GmailSettingsView; disabled: bool
   };
 
   return (
-    <SettingsCard icon="mail" title="הגדרות Gmail" action={<StatusChip status={view.status} />}>
+    <SettingsCard id="gmail" icon="mail" title="הגדרות Gmail" action={<StatusChip status={view.status} />}>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm font-bold text-text2">שיטת חיבור</span>
         <Segmented
@@ -461,7 +461,7 @@ function WhatsAppBlock({ data, disabled }: { data: MessagingSettingsView; disabl
   };
 
   return (
-    <SettingsCard icon="whatsapp" title="WhatsApp">
+    <SettingsCard id="whatsapp" icon="whatsapp" title="WhatsApp">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-sm font-bold text-text2">ספק פעיל</span>
         <Segmented
