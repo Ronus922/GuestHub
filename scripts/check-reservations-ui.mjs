@@ -254,18 +254,19 @@ const cleanup = async () => {
 
 try {
   // CI run #8 (2026-09-04): a cold first Chrome launch on a fresh GitHub runner
-  // needed ~8s and the old 40×250ms budget expired; run #10 passed on the very
-  // same image. 30s is the budget now — and a Chrome that has already exited
-  // ends the wait at once instead of polling a port nobody will open.
+  // outlived the old 40×250ms budget; run #10 passed on the very same image,
+  // and run #11 measured 21s for the same launch. 60s is the budget now — the
+  // wait ends the moment CDP answers, and a Chrome that has already exited
+  // ends it at once instead of polling a port nobody will open.
   let ver;
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + 60_000;
   while (!ver && !chromeExit && Date.now() < deadline) {
     try { ver = await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json(); } catch { await sleep(250); }
   }
   const stderrTail = chromeErr.trim() ? ` — stderr: ${chromeErr.trim().split("\n").slice(-3).join(" | ")}` : "";
   assert.ok(ver, chromeExit
     ? `Chrome exited (code ${chromeExit.code}, signal ${chromeExit.signal}) before exposing a CDP endpoint${stderrTail}`
-    : `Chrome did not expose a CDP endpoint within 30s${stderrTail}`);
+    : `Chrome did not expose a CDP endpoint within 60s${stderrTail}`);
   // collect-all records the failure and continues; nothing below can run
   // without a CDP endpoint, so stop here instead of dereferencing undefined.
   if (!ver) { await cleanup(); process.exit(1); }
