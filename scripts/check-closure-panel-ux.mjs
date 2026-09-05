@@ -86,19 +86,6 @@ const booking = stripComments(read(BOOKING));
 const panel = stripComments(read(PANEL));
 const grid = stripComments(read(GRID));
 
-/** the text from `marker` (which must end in "{") to its matching brace */
-function braceBlock(src, marker) {
-  const at = src.indexOf(marker);
-  if (at < 0) return "";
-  let depth = 1;
-  let i = at + marker.length;
-  for (; i < src.length && depth > 0; i++) {
-    if (src[i] === "{") depth++;
-    else if (src[i] === "}") depth--;
-  }
-  return src.slice(at, i);
-}
-
 // ============================================================
 // 1. The wizard has NO closure door at all — the strongest form of "it never
 //    stacks", and the owner's ruling this run

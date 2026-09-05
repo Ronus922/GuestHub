@@ -27,7 +27,9 @@ try {
 
   // capture 200
   await sql.begin(async tx=>{ await tx`insert into guesthub.payments(tenant_id,reservation_id,amount,status,paid_at) values(${T},${R},200,'paid',now())`; await recompute(tx,T,R); });
-  let a=await agg(T,R); (a.paid===200&&a.balance===100)?ok(`capture 200 → paid=200 balance=100`):bad("capture",JSON.stringify(a));
+  let a=await agg(T,R);
+  if (a.paid===200&&a.balance===100) ok(`capture 200 → paid=200 balance=100`);
+  else bad("capture",JSON.stringify(a));
 
   // refund 50 (contra -50)
   await sql.begin(async tx=>{
@@ -36,24 +38,31 @@ try {
     await tx`insert into guesthub.payments(tenant_id,reservation_id,amount,status,paid_at,idempotency_key) values(${T},${R},${-50},'paid',now(),'refund:r1') on conflict (tenant_id,idempotency_key) where idempotency_key is not null do nothing`;
     await recompute(tx,T,R);
   });
-  a=await agg(T,R); (a.paid===150&&a.balance===150)?ok(`refund 50 → paid=150 balance=150`):bad("refund",JSON.stringify(a));
+  a=await agg(T,R);
+  if (a.paid===150&&a.balance===150) ok(`refund 50 → paid=150 balance=150`);
+  else bad("refund",JSON.stringify(a));
 
   // duplicate refund (same key) suppressed
   await sql.begin(async tx=>{ await tx`insert into guesthub.payments(tenant_id,reservation_id,amount,status,paid_at,idempotency_key) values(${T},${R},${-50},'paid',now(),'refund:r1') on conflict (tenant_id,idempotency_key) where idempotency_key is not null do nothing`; await recompute(tx,T,R); });
-  a=await agg(T,R); a.paid===150?ok("duplicate refund (same key) suppressed → paid still 150"):bad("dup refund",JSON.stringify(a));
+  a=await agg(T,R);
+  if (a.paid===150) ok("duplicate refund (same key) suppressed → paid still 150");
+  else bad("dup refund",JSON.stringify(a));
 
   // over-refund fails closed (refund 1000 > net 150)
   let blocked=false;
   try { await sql.begin(async tx=>{ const [{paid:net}]=await tx`select coalesce(sum(amount) filter(where status='paid'),0)::float8 paid from guesthub.payments where reservation_id=${R} and tenant_id=${T}`; if(1000>net+1e-9) throw new Error("refund exceeds net captured"); }); }
   catch { blocked=true; }
-  blocked?ok("over-refund rejected (fail closed)"):bad("over-refund allowed");
+  if (blocked) ok("over-refund rejected (fail closed)");
+  else bad("over-refund allowed");
 
   // void a clean captured payment on a fresh reservation
   const [{id:R2}]=await sql`insert into guesthub.reservations(tenant_id,reservation_number,check_in,check_out,status,total_price) values(${T},'RV-2','2027-03-01','2027-03-03','confirmed',120) returning id`;
   const [{id:P2}]=await sql`insert into guesthub.payments(tenant_id,reservation_id,amount,status,paid_at) values(${T},${R2},120,'paid',now()) returning id`;
   await sql.begin(async tx=>{ await recompute(tx,T,R2); });
   await sql.begin(async tx=>{ await tx`update guesthub.payments set status='voided' where id=${P2} and tenant_id=${T} and status='paid'`; await recompute(tx,T,R2); });
-  a=await agg(T,R2); (a.paid===0&&a.balance===120)?ok("void captured 120 → paid=0 balance=120"):bad("void",JSON.stringify(a));
+  a=await agg(T,R2);
+  if (a.paid===0&&a.balance===120) ok("void captured 120 → paid=0 balance=120");
+  else bad("void",JSON.stringify(a));
 
 } catch(e){ bad("run",e.message); }
 finally { if(T) await sql`delete from guesthub.tenants where id=${T}`.catch(()=>{}); await sql.end(); }

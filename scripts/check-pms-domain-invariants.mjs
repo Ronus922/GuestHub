@@ -14,7 +14,7 @@ if(!url){console.error("need CHECK_DB_URL or STAGING_DATABASE_URL");process.exit
 const q=(sql)=>execFileSync("psql",[url,"-tAc",sql,"-X"],{encoding:"utf8"}).trim();
 let fail=0; const ok=(m)=>console.log(`  ✓ ${m}`); const bad=(m,d)=>{fail++;console.log(`  ✗ ${m}${d?": "+d:""}`);};
 
-const zero=(label,sql)=>{const c=q(sql); c==="0"?ok(label):bad(label,c+" offending rows");};
+const zero=(label,sql)=>{const c=q(sql); if (c==="0") ok(label); else bad(label,c+" offending rows");};
 
 // tenant consistency across the core graph (no cross-tenant references)
 zero("reservation_rooms share their reservation's tenant",

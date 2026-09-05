@@ -66,7 +66,7 @@ Module._resolveFilename = function (request, ...rest) {
 const { roomLabel } = req(join(out, "app/(dashboard)/calendar/cell-state.js"));
 const {
   closureBlockMessage, closureCategoryLabel, closureCategoryIcon,
-  CLOSURE_CATEGORY_VALUES, CLOSURE_CATEGORIES,
+  CLOSURE_CATEGORY_VALUES,
 } = req(join(out, "lib/closures/categories.js"));
 
 let n = 0;

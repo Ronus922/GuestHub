@@ -60,7 +60,7 @@ try {
       globalThis.__p2 = p2;
     });
     try { await globalThis.__p2; bad("A: overlapping blocking insert was NOT rejected"); }
-    catch (e) { isExcl(e) ? ok("A: concurrent overlapping blocking insert rejected by exclusion constraint") : bad("A: rejected but wrong error", e); }
+    catch (e) { if (isExcl(e)) ok("A: concurrent overlapping blocking insert rejected by exclusion constraint"); else bad("A: rejected but wrong error", e); }
   } catch (e) { bad("A: setup", e); }
 
   // ---- Scenario B0 (D126): a draft CONSUMES inventory, so two overlapping
@@ -98,8 +98,8 @@ try {
       globalThis.__pB = p2; firstOk=true;
     });
     try { await globalThis.__pB; } catch (e) { if (isExcl(e)) secondFailed=true; else throw e; }
-    (firstOk && secondFailed) ? ok("B: reinstating the second overlapping stay rejected by exclusion constraint")
-                              : bad("B: both reinstatements succeeded (double booking!)");
+    if (firstOk && secondFailed) ok("B: reinstating the second overlapping stay rejected by exclusion constraint");
+    else bad("B: both reinstatements succeeded (double booking!)");
   } catch (e) { bad("B: confirm race", e); }
 
   // ---- Scenario C: adjacency allowed ----
