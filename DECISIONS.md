@@ -4801,7 +4801,9 @@ CONFLICT DO NOTHING` הוא הנעילה — מי שהניח את השורה ש�
 שומרים שהצמידו את הפריסה הישנה עודכנו לעיצוב החדש: `check:maps-picker` (‏`h-72` →
 `.bp-map` עם 340px מוצהר ב-CSS) ו-`check:business-profile` (המיקוד נקרא בסיכום
 מ-`profile.postalCode` ונערך בתוך האקורדיון; עדיין טקסט, לא מספרי; עדיין
-`saveBusinessProfileAction({ postalCode:`).
+`saveBusinessProfileAction({ postalCode:`), ו-`check:check-in-check-out` (הצמיד את הקלאסים
+הישנים של ה-Shell — `xl:hidden` ו-`hidden shrink-0 p-3 xl:block` — ונפל ב-CI של PR ‏#235;
+מוצמד עכשיו ל-`md:hidden` ול-`card sg-nav hidden md:flex`, אותו זוג על מדרגת md).
 
 **ערכים שהעיצוב המאושר קובע מחוץ לסטים הסגורים של GUIDELINES — כולם עם
 `ds-allow:` בשם ההפניה (grep אחד מוצא את כולם):** שדות 48px על ‎#EFF2FB ללא מסגרת
