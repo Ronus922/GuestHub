@@ -32,9 +32,20 @@ let deliverySource = readFileSync(deliveryPath, "utf8")
   .replace('import "server-only";\n', "")
   .replace('"@/lib/db"', '"./test-db.js"')
   .replace('"@/lib/messaging/providers"', '"./test-provider.js"')
+  .replace('"@/lib/messaging/channel-failure-alert"', '"./test-alert.js"')
   .replace('"@/lib/phone"', '"../phone.js"')
   .replace('"@/lib/messaging/types"', '"../messaging/types.js"');
 writeFileSync(deliveryPath, deliverySource);
+// D173 — markFailed consults the once-per-streak owner alert on a FINAL failure.
+// Stubbed here: the alert reads the DB and mails through the tenant's Gmail,
+// neither of which exists in this harness; what THIS guard proves is the hook —
+// called exactly once per final failure with the row's tenant + channel, never
+// on a retry.
+writeFileSync(join(out, "communications/test-alert.js"), `
+export const alertCalls = [];
+export const notifyChannelFailureStreak = async (tenantId, channel) => { alertCalls.push({ tenantId, channel }); return "below_threshold"; };
+export const clearAlertCalls = () => { alertCalls.length = 0; };
+`);
 writeFileSync(join(out, "communications/test-db.js"), `
 export const calls = [];
 const tag = async (strings, ...values) => {
@@ -60,6 +71,7 @@ export const resolveWhatsAppProvider = async () => currentWhatsApp;
 const delivery = await import(deliveryPath);
 const db = await import(join(out, "communications/test-db.js"));
 const providers = await import(join(out, "communications/test-provider.js"));
+const alerts = await import(join(out, "communications/test-alert.js"));
 
 let checks = 0;
 const ok = (name) => { process.stdout.write(`  ✓ ${name}\n`); checks += 1; };
@@ -116,18 +128,24 @@ ok("mocked provider receives the immutable multipart snapshot and marks the same
 
 providers.setProvider({ id: "gmail", sendEmail: async () => ({ status: "failed", providerMessageId: null, errorCode: "gmail_503", errorDetail: "temporary" }) });
 db.clearCalls();
+alerts.clearAlertCalls();
 assert.equal(await delivery.deliverClaimedEmail(base, "worker-a"), "retried");
 assert.equal(db.calls.some((call) => call.values.includes(base.id)), true);
 assert.equal(db.calls.some((call) => call.values.includes("provider_transient")), true);
 assert.equal(db.calls.some((call) => call.values.includes("queued")), true);
+assert.equal(alerts.alertCalls.length, 0, "a retry is not a final failure — the streak alert is not consulted");
 ok("transient failure schedules a retry on the same delivery row");
 
 providers.setProvider({ id: "gmail", sendEmail: async () => ({ status: "failed", providerMessageId: null, errorCode: "gmail_403", errorDetail: "denied" }) });
 db.clearCalls();
+alerts.clearAlertCalls();
 assert.equal(await delivery.deliverClaimedEmail(base, "worker-a"), "failed");
 assert.equal(db.calls.some((call) => call.values.includes("provider_authentication")), true);
 assert.equal(db.calls.some((call) => call.values.includes("failed")), true);
-ok("permanent provider failure reaches a final state without a retry");
+// D173 — a FINAL failure consults the once-per-streak owner alert, exactly once,
+// with this row's tenant and channel; the alert itself decides whether to mail.
+assert.deepEqual(alerts.alertCalls, [{ tenantId: base.tenant_id, channel: "email" }]);
+ok("permanent provider failure reaches a final state without a retry, and consults the streak alert once");
 
 providers.setProvider(null);
 db.clearCalls();
@@ -178,8 +196,13 @@ assert.equal(db.calls.some((call) => call.values.includes("provider_not_configur
 ok("a missing WhatsApp provider fails explicitly and permanently");
 
 db.clearCalls();
+alerts.clearAlertCalls();
 assert.equal(await delivery.deliverClaimedWhatsApp({ ...waBase, to_address: "abc" }, "worker-a"), "failed");
 assert.equal(db.calls.some((call) => call.values.includes("invalid_recipient")), true);
-ok("an invalid phone fails permanently without invoking the provider");
+// the hook fires on every final failure; attributing the cause (a bad phone is
+// the recipient's, not the channel's) is the alert module's job, guarded by
+// check:channel-health — not this harness's.
+assert.deepEqual(alerts.alertCalls, [{ tenantId: waBase.tenant_id, channel: "whatsapp" }]);
+ok("an invalid phone fails permanently without invoking the provider; the final failure still consults the alert with channel=whatsapp");
 
 process.stdout.write(`\n✓ Guest Communications mocked-worker checks passed (${checks} groups)\n`);

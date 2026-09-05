@@ -14,16 +14,19 @@ export function SettingsCard({
   icon,
   title,
   action,
+  id,
   children,
 }: {
   icon: Parameters<typeof Icon>[0]["name"];
   title: string;
   /** trailing control on the header row (e.g. "הוסף מדיניות") */
   action?: React.ReactNode;
+  /** fragment anchor, so a deep link (e.g. the dashboard's red channel row) lands on this card */
+  id?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="card">
+    <section className="card" id={id}>
       <header className="card-hd">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-050 text-primary">
           <Icon name={icon} size={20} />

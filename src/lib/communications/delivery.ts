@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { resolveEmailProvider, resolveWhatsAppProvider } from "@/lib/messaging/providers";
 import { normalizePhone } from "@/lib/phone";
+import { notifyChannelFailureStreak } from "@/lib/messaging/channel-failure-alert";
 import type { SendResult } from "@/lib/messaging/types";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -247,6 +248,10 @@ async function markFailed(
           provider_response_meta = ${tx.json({ errorCode: code } as never)}
       WHERE delivery_id = ${delivery.id} AND attempt_number = ${delivery.attempt_count}`;
   });
+  // D173 — a FINAL failure may complete a channel's streak; the rule decides
+  // whether this cause even counts (a bad recipient does not), and the
+  // alert-once row decides whether the owner is mailed. Never throws.
+  if (final) await notifyChannelFailureStreak(delivery.tenant_id, delivery.channel);
   return final ? "failed" : "retried";
 }
 

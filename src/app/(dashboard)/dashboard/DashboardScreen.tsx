@@ -28,6 +28,12 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { Icon } from "@/components/shared/Icon";
 import { DashboardWindow } from "@/components/shared/DashboardWindow";
+import {
+  CHANNEL_LABEL,
+  IDLE_DAYS,
+  settingsHref,
+  type ChannelHealthVerdict,
+} from "@/lib/messaging/channel-health";
 import { useNewReservation } from "@/components/reservations/NewReservationProvider";
 import { saveDashboardLayoutAction } from "./actions";
 import { ArrivalsWindow } from "./windows/ArrivalsWindow";
@@ -139,6 +145,69 @@ function kpiCards(d: DashboardData): readonly KpiCard[] {
       value: ils(k.revenueTonight), sub: "כולל מע״מ",
     },
   ];
+}
+
+// ---- KPI 5: ערוצי שליחה (D173) ---------------------------------------------
+// The state of the two outbound channels, read from outbound_messages — what
+// happened to the SENDS — never from the connection-test row, which said
+// "מחובר" from its 30/07 test through nine consecutive green_400 failures
+// (2–5/09/2026). Green = the last send succeeded; red = it failed at the
+// provider (the code in Hebrew + how many in a row); grey = nothing sent for
+// IDLE_DAYS. Only a red row is a link — to the channel's own settings card;
+// the card icon wears the worst tone. lastAgo and errorLabel arrive rendered
+// from the server against the DB clock: a client-side "now" would hydrate
+// differently from the server's.
+function ChannelsKpi({ channels }: { channels: readonly ChannelHealthVerdict[] }) {
+  const tone = channels.some((c) => c.tone === "failed")
+    ? "bad"
+    : channels.some((c) => c.tone === "ok") ? "ok" : "mut";
+  return (
+    <div className="card kpi kpi-channels">
+      <span className={`kpi-icon kpi-${tone}`}>
+        <Icon name="lan" size={20} />
+      </span>
+      <div className="kpi-text kpi-chan-text">
+        <div className="kpi-label">ערוצי שליחה</div>
+        <ul className="kpi-chan-list">
+          {channels.map((c) => (
+            <ChannelHealthRow key={c.channel} c={c} />
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function channelStateText(c: ChannelHealthVerdict): string {
+  if (c.tone === "ok") return `נשלח בהצלחה · ${c.lastAgo}`;
+  if (c.tone === "failed") return `נכשל · ${c.consecutiveFailures} ברציפות`;
+  return c.lastAtMs === null ? "טרם נשלחו הודעות" : `אין שליחות ${IDLE_DAYS} ימים`;
+}
+
+function ChannelHealthRow({ c }: { c: ChannelHealthVerdict }) {
+  const body = (
+    <>
+      <span className={`dot kpi-chan-dot-${c.tone}`} aria-hidden="true" />
+      <span className="kpi-chan-name">{CHANNEL_LABEL[c.channel]}</span>
+      <span className={`kpi-chan-state${c.tone === "failed" ? " kpi-chan-state-failed" : ""}`}>
+        {channelStateText(c)}
+      </span>
+      {c.tone === "failed" && c.errorLabel && (
+        <span className="kpi-chan-detail">{c.errorLabel}</span>
+      )}
+    </>
+  );
+  return (
+    <li>
+      {c.tone === "failed" ? (
+        <Link className="kpi-chan-row kpi-chan-link" href={settingsHref(c.channel)} title="פתיחת הגדרות הערוץ">
+          {body}
+        </Link>
+      ) : (
+        <span className="kpi-chan-row">{body}</span>
+      )}
+    </li>
+  );
 }
 
 export function DashboardScreen({
@@ -359,6 +428,7 @@ export function DashboardScreen({
             </div>
           </div>
         ))}
+        <ChannelsKpi channels={data.channels} />
       </section>
 
       {/* ---- hidden-windows bar ---- */}

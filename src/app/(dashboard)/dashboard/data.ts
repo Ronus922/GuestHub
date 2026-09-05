@@ -3,6 +3,8 @@ import { sql } from "@/lib/db";
 import { sourceColor } from "@/lib/colors";
 import { addDays, formatDayMonth, type DateOnly } from "@/lib/dates";
 import { connectionHealth } from "@/lib/channel/connection-health";
+import { loadChannelHealth } from "@/lib/messaging/channel-health-db";
+import type { ChannelHealthVerdict } from "@/lib/messaging/channel-health";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
 import { nightlyRevenue } from "@/lib/reports/nightly-revenue";
 import { monthlyRevenue, type MonthlyRevenuePoint } from "@/lib/reports/monthly-revenue";
@@ -208,6 +210,9 @@ export type DashboardData = {
   inHouse: StayRow[];
   housekeeping: HousekeepingRow[];
   alerts: AlertRow[];
+  /** KPI 5 (D173) — email + WhatsApp, verdict from outbound_messages, in this
+      order; the tone, streak and Hebrew error label are decided server-side */
+  channels: ChannelHealthVerdict[];
   /** msg — the latest 3 threads by last activity */
   conversations: ConversationRow[];
   messagesSummary: MessagesSummary;
@@ -290,6 +295,8 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     reviewRows,
     reviewStats,
     rvwSync,
+    emailHealth,
+    whatsappHealth,
   ] = await Promise.all([
     // ---- KPI 1: occupancy tonight -----------------------------------------
     // D128 — the denominator is `status='available' AND is_active`, the SAME
@@ -627,6 +634,11 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
         JOIN guesthub.channel_sync_jobs j ON j.connection_id = c.id
        WHERE c.tenant_id = ${tenantId}
          AND j.job_type = 'pull_channel_reviews' AND j.status = 'succeeded'`,
+
+    // ---- KPI 5: ערוצי שליחה (D173) — what the SENDS say, never the test row.
+    // The same loader the failure-streak alert reads, so card and mail agree.
+    loadChannelHealth(tenantId, "email"),
+    loadChannelHealth(tenantId, "whatsapp"),
   ]);
 
   const tonight = revenue.days[0];
@@ -693,6 +705,7 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
       cleanedByName: (r.cleaned_by_name as string) ?? null,
     })),
     alerts,
+    channels: [emailHealth, whatsappHealth],
     conversations: conversationRows.map((r) => ({
       conversationId: r.conversation_id as string,
       guestName: (r.guest_name as string) ?? "אורח",
