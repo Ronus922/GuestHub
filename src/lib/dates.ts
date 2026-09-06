@@ -119,6 +119,12 @@ export function formatFullDate(d: DateOnly): string {
 
 export const HEBREW_DAY_LETTERS = ["א'", "ב'", "ג'", "ד'", "ה'", "ו'", "ש'"] as const;
 
+// Full weekday names — the same 0=Sunday index as HEBREW_DAY_LETTERS / dayOfWeek()
+// (the /rates cell drawer's subtitle, "… · יום חמישי").
+export const HEBREW_DAY_NAMES = [
+  "יום ראשון", "יום שני", "יום שלישי", "יום רביעי", "יום חמישי", "יום שישי", "שבת",
+] as const;
+
 export const HEBREW_MONTHS = [
   "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
   "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",

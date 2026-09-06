@@ -209,6 +209,14 @@ const ICONS = {
   "photo-camera": "photo_camera",
   "open-in-new": "open_in_new",
   "pan-tool": "pan_tool_alt",
+  // --- /rates cell drawer "מצב מכירה ליום" (approved design, D177): the header
+  // glyph, the final-sale-state card glyph and the unselected state of the
+  // sale selector. `check-circle`, `room-blocks` (block), `login`/`logout`,
+  // `storefront`, `rooms` (bed), `arrivals-departures` (sync_alt), `edit` and
+  // `info` above already cover the rest of that drawer.
+  "event-available": "event_available",
+  flag: "flag",
+  "radio-unchecked": "radio_button_unchecked",
 } as const;
 
 export type IconName = keyof typeof ICONS;
