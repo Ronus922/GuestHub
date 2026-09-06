@@ -180,6 +180,8 @@ const SAVED = {
   const heads = [...css.matchAll(/^[ \t]*([^{}\n@][^{}\n]*)\{/gm)].map((x) => x[1].trim());
   assert.ok(heads.length > 20, `the partial declares its rules (${heads.length})`);
   for (const h of heads) assert.match(h, /^\.rc-/, `every selector is rc-scoped: "${h}"`);
+  assert.match(css, /\.rc-sec\s*\{[^}]*flex:\s*none/,
+    "the section cards are flex:none — .rc-body is a flex column inside the scrolling .dw-bd, and an overflow:hidden card would otherwise SHRINK (min-height:auto → 0) instead of scrolling; measured clipped in production 2026-09-06 (D177 hotfix)");
   const globals = read("src/app/globals.css");
   const at = globals.indexOf('@import "./styles/rate-cell-panel.css";');
   assert.ok(at > 0, "globals.css imports the partial");
