@@ -187,9 +187,33 @@ assert.match(topbar, /aria-controls="dashboard-sidebar"/);
 assert.match(topbar, /aria-expanded=\{expanded\}/);
 // D175 settings grid: the compact <select> is hidden from md up, the nav card
 // (256px, sticky) is hidden below md — the same pair, on the ladder's md step.
-assert.match(settingsShell, /md:hidden/);
-assert.match(settingsShell, /<select/);
-assert.match(settingsShell, /card sg-nav hidden md:flex/);
+// Anchored to the ELEMENTS, not the file (the D175 B2 run neutralized the
+// whole-file regexes with the class names quoted in a comment): JSX comments are
+// stripped first, then a class only counts when it is a token of the className
+// attribute on the opening tag itself. No allowlist, no opt-out marker.
+const stripJsxComments = (src) =>
+  src.replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+const classTokens = (openingTagAttrs) =>
+  (openingTagAttrs.match(/className="([^"]*)"/)?.[1] ?? "").split(/\s+/).filter(Boolean);
+const settingsShellCode = stripJsxComments(settingsShell);
+const compactSelectLabel = [...settingsShellCode.matchAll(/<label\b([^>]*)>([\s\S]*?)<\/label>/g)].find(
+  (m) => {
+    const t = classTokens(m[1]);
+    return t.includes("field") && t.includes("md:hidden") && /<select\b/.test(m[2]);
+  },
+);
+assert.ok(
+  compactSelectLabel,
+  'SettingsShell: a <label className="field … md:hidden …"> must ENCLOSE the compact <select> — the phone-only settings picker',
+);
+const settingsNavCard = [...settingsShellCode.matchAll(/<nav\b([^>]*)>/g)].find((m) => {
+  const t = classTokens(m[1]);
+  return ["card", "sg-nav", "hidden", "md:flex"].every((c) => t.includes(c));
+});
+assert.ok(
+  settingsNavCard,
+  'SettingsShell: a <nav className="card sg-nav hidden md:flex …"> opening tag must exist — the md-up settings nav card',
+);
 assert.match(checkHoursCss, /@container \(min-width: 680px\)/);
 ok("responsive shell reclaims mobile width and exposes accessible compact Settings navigation");
 
