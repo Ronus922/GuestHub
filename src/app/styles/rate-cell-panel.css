@@ -46,6 +46,17 @@
   gap: 14px;
   padding: 18px 22px;
 }
+/* .dw-bd is the scroll container AND .rc-body makes it a flex column. A flex
+   item's `min-height: auto` resolves to 0 when its overflow is not visible —
+   and .card is `overflow: hidden` — so on any viewport shorter than the content
+   the four cards SHRANK to fit instead of overflowing, clipping their bodies with
+   nothing left to scroll. Measured in production on 2026-09-06 (D177 hotfix):
+   at 1440×900 "מצב מסחרי" showed 328 of its 528 content pixels, at 1366×768
+   262, at 390×844 311, and the final-status chip was not even hit-testable.
+   flex: none restores the content height, and the body scrolls as it should. */
+.rc-sec {
+  flex: none;
+}
 /* the reference's disabled primary: flat light blue, no shadow, no fade —
    both primaries in this drawer (price + footer) read the same way */
 .rc-panel .btn-primary:disabled {
