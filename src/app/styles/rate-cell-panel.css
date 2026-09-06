@@ -1,0 +1,420 @@
+/* ============================================================
+   /rates — the cell drawer "מצב מכירה ליום" (rc-).
+   Approved design: "מצב מכירה ליום.dc.html" (2026-09-06, DECISIONS D177).
+
+   Deliberately UNLAYERED (like group-update.css): SidePanel emits
+   `dw-bd thin-scroll p-0 <bodyClassName>` and `p-0` is a Tailwind utility —
+   the utilities layer beats anything inside @layer components, and only an
+   unlayered rule beats a utility (GUIDELINES §16 / D148). The same cascade
+   fact lets .rc-step-b paint a border over .icon-btn's `border: none` and
+   .rc-tile .tile-v grow past .tile-v's own size.
+
+   Only what the design system has no primitive for lives here. Cards, card
+   headers, buttons, icon buttons, fields, hints, the KPI tile and the toast
+   come from design-system.css and are consumed, not re-declared. Every value
+   the approved reference fixes OUTSIDE the closed sets (its pill / selector /
+   field / stepper heights, the mono value size, the selector radius, its own
+   status colours and focus rings) carries a `ds-allow:` marker naming that
+   reference on the line above, so one grep reviews them all. Owner rulings
+   (2026-09-06): the header keeps the canonical icon square and close button;
+   the hairlines are var(--line), not the reference's own grey; no second
+   webfont — a system mono stack that picks up JetBrains Mono where installed;
+   the toast is the system toast.
+   ============================================================ */
+
+/* ---- shell: width ladder + body ------------------------------------------
+   Full width up to 1100px (reference: "במסך ≤1100px — מלא"); above it 60% of
+   the viewport clamped to 700–960. `min(700px, 100%)`: the floor can never
+   exceed the viewport, and a bare pixel floor would read as a page-wide box
+   to check:responsive §8 (the V2 editor's precedent). 60% of 1100 is 660,
+   below the 700 floor, so under 1101 the floor would win anyway and leave an
+   inert sliver beside the panel. */
+.rc-panel {
+  width: 100%;
+}
+@media (min-width: 1101px) {
+  .rc-panel {
+    width: 60%;
+    min-width: min(700px, 100%);
+    max-width: 960px;
+  }
+}
+/* the drawer body: the reference's padding, 14px between cards */
+.rc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 22px;
+}
+/* the reference's disabled primary: flat light blue, no shadow, no fade —
+   both primaries in this drawer (price + footer) read the same way */
+.rc-panel .btn-primary:disabled {
+  /* ds-allow: מצב מכירה ליום.dc.html — disabled primary #C7CEE8 */
+  background: #c7cee8;
+  box-shadow: none;
+  opacity: 1;
+}
+
+/* ---- section card: icon square + title + optional hint at the far end ---- */
+.rc-sec .card-bd {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rc-sec-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.rc-sec-hint {
+  margin-inline-start: auto;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---- 1. final sale state: one pill + one sentence ----------------------- */
+.rc-final-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.rc-final {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  /* ds-allow: מצב מכירה ליום.dc.html — 40px status pill */
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.rc-final.is-open {
+  /* ds-allow: מצב מכירה ליום.dc.html — open pill surface #E7F6EC */
+  background: #e7f6ec;
+  /* ds-allow: מצב מכירה ליום.dc.html — open pill ink #15803D */
+  color: #15803d;
+}
+.rc-final.is-closed {
+  /* ds-allow: מצב מכירה ליום.dc.html — closed pill surface #FDECEF */
+  background: #fdecef;
+  /* ds-allow: מצב מכירה ליום.dc.html — closed pill ink #BE123C */
+  color: #be123c;
+}
+.rc-final-txt {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---- 2 + 4. read-only tiles: the canonical .tile, bordered, 19px value ----
+   88px columns: six across from the drawer's 700px floor (616px of card
+   width), three rows of two on a phone — content-driven, no media query. */
+.rc-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 10px;
+}
+.rc-tile {
+  min-width: 0;
+  padding-inline: 8px;
+  border: 1px solid var(--line);
+}
+.rc-tile .tile-v {
+  font-size: 19px;
+  line-height: 1.2;
+  /* a text value ("מושבת (לא פעיל)") wraps inside its tile instead of overflowing */
+  overflow-wrap: anywhere;
+}
+.rc-tile .tile-v.is-ok {
+  color: var(--ok);
+}
+.rc-tile .tile-v.is-warn {
+  /* ds-allow: מצב מכירה ליום.dc.html — pending-sync ink #B45309 */
+  color: #b45309;
+}
+.rc-tile .tile-v.is-danger {
+  color: var(--danger);
+}
+
+/* ---- 3. sale selector: two radio buttons, colour + glyph when chosen ---- */
+.rc-sale {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.rc-sale-b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* ds-allow: מצב מכירה ליום.dc.html — 52px sale selector */
+  height: 52px;
+  padding: 0 14px;
+  /* ds-allow: מצב מכירה ליום.dc.html — 13px selector radius */
+  border-radius: 13px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.rc-sale-b:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.rc-sale-b:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.rc-sale-b.is-open[aria-checked="true"] {
+  border-color: var(--ok);
+  /* ds-allow: מצב מכירה ליום.dc.html — open selector surface #F2FBF5 */
+  background: #f2fbf5;
+  /* ds-allow: מצב מכירה ליום.dc.html — open selector ink #15803D */
+  color: #15803d;
+  /* ds-allow: מצב מכירה ליום.dc.html — open selector ring */
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
+}
+.rc-sale-b.is-closed[aria-checked="true"] {
+  /* ds-allow: מצב מכירה ליום.dc.html — closed selector border #E11D48 */
+  border-color: #e11d48;
+  /* ds-allow: מצב מכירה ליום.dc.html — closed selector surface #FDF1F4 */
+  background: #fdf1f4;
+  /* ds-allow: מצב מכירה ליום.dc.html — closed selector ink #BE123C */
+  color: #be123c;
+  /* ds-allow: מצב מכירה ליום.dc.html — closed selector ring */
+  box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.1);
+}
+
+/* ---- 3. price: mono field with ₪ inside + its own save button ------------ */
+.rc-price-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+/* LTR wrapper: the digits start at the left and `inset-inline-end` resolves
+   to the physical RIGHT, which is where the reference puts the ₪ */
+.rc-price-wrap {
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 0;
+  direction: ltr;
+}
+.rc-price-in {
+  /* ds-allow: מצב מכירה ליום.dc.html — 48px price field */
+  height: 48px;
+  padding-inline-end: 34px;
+  /* ds-allow: מצב מכירה ליום.dc.html — field surface #EFF2FB */
+  background: #eff2fb;
+  border-color: transparent;
+  font-family: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.rc-price-in:focus {
+  background: #fff;
+  border-color: var(--brand);
+}
+.rc-price-in:disabled {
+  background: var(--field-bg);
+}
+.rc-price-cur {
+  position: absolute;
+  inset-inline-end: 14px;
+  inset-block: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* ---- 3. stay limits: three tiles, each an LTR [−] value [+] stepper ------ */
+.rc-stays {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.rc-stay {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+}
+.rc-stay-l {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.rc-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  direction: ltr;
+}
+.rc-step-b {
+  /* ds-allow: מצב מכירה ליום.dc.html — 38px stepper button */
+  height: 38px;
+  width: 38px;
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.rc-step-b:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.rc-step-v {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-family: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  /* ds-allow: מצב מכירה ליום.dc.html — 16px mono stepper value */
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.rc-step-v.is-null {
+  color: var(--faint);
+}
+
+/* ---- 3. arrival / departure: whole-row switches ------------------------- */
+.rc-sw-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.rc-sw-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.rc-sw-row:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.rc-sw-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.rc-sw-ic {
+  flex: none;
+  color: var(--brand);
+}
+.rc-sw-txt {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rc-sw-l {
+  font-size: 14px;
+  font-weight: 700;
+}
+.rc-sw-d {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* the 44×26 switch: off grey, on brand. The knob travels 18px (44 − 20 − 2×3)
+   along the INLINE axis, so it reads mirrored in RTL exactly like the
+   settings Switch — off at the inline start, on at the inline end. */
+.rc-sw {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  /* ds-allow: מצב מכירה ליום.dc.html — switch off track #D3D9E5 */
+  background: #d3d9e5;
+  transition: background-color 0.18s ease;
+}
+.rc-sw-row[aria-checked="true"] .rc-sw {
+  background: var(--brand);
+}
+.rc-sw-knob {
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-start: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: inset-inline-start 0.18s ease;
+}
+.rc-sw-row[aria-checked="true"] .rc-sw-knob {
+  inset-inline-start: 21px;
+}
+
+/* ---- 4. channel note + footer unsaved-changes note ---------------------- */
+.rc-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.rc-note > .ms-icon {
+  flex: none;
+  margin-block-start: 2px;
+  color: var(--brand);
+}
+.rc-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  /* ds-allow: מצב מכירה ליום.dc.html — unsaved-changes ink #B45309 */
+  color: #b45309;
+}
+
+/* ---- phones: tighter body, the section hint drops under its title ------- */
+/* the same breakpoint responsive.css uses to wrap .dw-ft */
+@media (max-width: 767px) {
+  .rc-body {
+    padding: 14px;
+  }
+  .rc-sec-hint {
+    flex-basis: 100%;
+    margin-inline-start: 0;
+  }
+}
