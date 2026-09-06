@@ -93,9 +93,26 @@ jobs:
           --health-retries 30
     env:
       SUITE_ADMIN_DB_URL: postgres://supabase_admin:guesthub_test_local@localhost:5433/postgres
-      # check:hydration-browser — a real login against a live app. Unset → the
-      # suite reports "skip". Point them at a staging app, never production;
-      # a pull request from a fork receives no secrets and skips.
+      # check:hydration-browser — a real login against a live app. These five
+      # secrets are DELIBERATELY UNSET (2026-09-06), so the guard reports
+      # "skip" on every run — a third verdict, never counted as pass or fail.
+      #
+      # Why unset, and not "we forgot": the guard loads /channels, and
+      # /channels is super_admin-only (canManageChannels, src/lib/auth/
+      # guards.ts) — it redirects every lesser role to /dashboard, so a
+      # low-privilege test account cannot satisfy it. There is no publicly
+      # reachable staging app either, and a GitHub-hosted runner can only
+      # reach a public URL. Filling these in today therefore means one thing:
+      # a live super_admin login against PRODUCTION from every pull request,
+      # including one opened by a stranger. That trade was declined by the
+      # owner; skip is the honest verdict until a public staging app exists.
+      #
+      # To switch it on later: point HYDRATION_BASE_URL at that staging app
+      # (never production), give it a dedicated super_admin, and set the five
+      # secrets under Settings → Secrets and variables → Actions. The guard is
+      # read-only — it opens and CANCELS the Full Sync confirmation and never
+      # triggers a sync. A pull request from a fork receives no secrets and
+      # keeps skipping regardless.
       HYDRATION_BASE_URL: ${{ secrets.HYDRATION_BASE_URL }}
       HYDRATION_EMAIL: ${{ secrets.HYDRATION_EMAIL }}
       HYDRATION_PASSWORD: ${{ secrets.HYDRATION_PASSWORD }}
