@@ -370,28 +370,22 @@
   color: var(--ink);
 }
 
-/* ---- footer (§7: primary hugs the LEFT edge, ביטול to its right) --------- */
-.sm-f {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: row-reverse;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 24px;
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-}
+/* ---- footer -------------------------------------------------------------
+   The footer IS the design system's .dw-ft (§7: row-reverse, so the primary
+   hugs the left edge and ביטול sits to its right, plus the safe-area inset).
+   Only the block reason and the disabled primary are this drawer's own. */
 .sm-f-warn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-inline-end: auto;
+  /* §7: tertiary footer content pushed to the far right uses margin-inline-start */
+  margin-inline-start: auto;
   font-size: 14px;
   font-weight: 600;
   /* ds-allow: שליחת מייל לאורח.dc.html — footer block reason #BE123C */
   color: #be123c;
 }
-.sm-f .btn-primary:disabled {
+.sm-panel .dw-ft .btn-primary:disabled {
   /* ds-allow: שליחת מייל לאורח.dc.html — disabled primary #C7CEE8 */
   background: #c7cee8;
   box-shadow: none;
@@ -409,12 +403,12 @@
   .sm-seg {
     flex-direction: column;
   }
-  .sm-f {
+  .sm-panel .dw-ft {
     flex-wrap: wrap;
   }
   .sm-f-warn {
     order: 3;
     width: 100%;
-    margin-inline-end: 0;
+    margin-inline-start: 0;
   }
 }

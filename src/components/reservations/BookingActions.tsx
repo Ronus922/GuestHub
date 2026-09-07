@@ -498,7 +498,7 @@ export function MessageComposer({
         )}
       </div>
 
-      <footer className="sm-f">
+      <footer className="dw-ft shrink-0">
         {sendState === "sent" ? (
           <span className="btn btn-primary pointer-events-none">
             <Icon name="check-circle" size={20} /> נשלח
