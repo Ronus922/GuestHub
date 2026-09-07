@@ -1,0 +1,420 @@
+/* ============================================================
+   The guest message drawer "שליחת מייל לאורח" (sm-).
+   Approved design: "שליחת מייל לאורח.dc.html" (2026-09-07, DECISIONS D178).
+
+   Scope: the in-panel composer OVERLAY (owner ruling 2026-09-07 — it stays an
+   overlay inside the booking drawer, not a second SidePanel, so the booking
+   stays mounted underneath and closing restores its exact scroll state, D53).
+   It therefore declares no width: it fills the booking drawer it lives in.
+   The OTHER two overlays in that slot (cancel booking, Booking.com reports)
+   keep the older .bk-cmp shell in booking-window.css — untouched here.
+
+   Deliberately UNLAYERED (like rate-cell-panel.css / group-update.css):
+   SidePanel emits `dw-bd thin-scroll p-0 <bodyClassName>` and `p-0` is a
+   Tailwind utility — only an unlayered rule beats a utility (GUIDELINES §16 /
+   D148).
+
+   Only what the design system has no primitive for lives here. Cards, card
+   headers, buttons, fields, chips and the toast come from design-system.css
+   and are CONSUMED, not re-declared. Every value the approved reference fixes
+   OUTSIDE the closed sets (its field/selector/avatar heights, the selector
+   radius, its own status colours and the disabled primary) carries a
+   `ds-allow:` marker naming that reference, so one grep reviews them all.
+
+   Owner rulings / where the SYSTEM overrides the reference (precedent D175,
+   D177): the header keeps the canonical 40px icon square and 36px close
+   button (§7), the hairlines are var(--line) not the reference's own grey
+   (§12.2), the card shadow is var(--shadow-card) (§6), and success is the
+   system toast at 2.8s (§9). Every other value is 1:1.
+   ============================================================ */
+
+/* ---- shell ---------------------------------------------------------------
+   Absolute over the whole booking drawer (header, body and footer alike), so
+   the composer owns the full panel while the booking keeps its scroll. */
+.sm-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+/* ---- header (§7: full brand bar) ---------------------------------------- */
+.sm-h {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 22px;
+  background: var(--brand);
+  color: #fff;
+}
+/* The header chrome is the design system's own §7 primitives — .dw-icon (40px
+   square), .dw-title, .dw-sub and .dw-close (36px) from design-system.css. The
+   reference's 42/38 pair loses to them (precedent D177). Nothing is redeclared
+   here; only the text column, which has no primitive. */
+.sm-h-txt {
+  min-width: 0;
+  flex: 1;
+}
+
+/* ---- body --------------------------------------------------------------- */
+.sm-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* the card-header icon square (§6: 34px / radius 10 / brand-soft). Scoped to
+   this drawer exactly as rate-cell-panel.css scopes its own — .bw-hi next door
+   is the booking window's 36px variant and is not this. */
+.sm-sec-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+/* ---- recipient card ----------------------------------------------------- */
+.sm-rcp {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sm-rcp-ava {
+  display: grid;
+  place-items: center;
+  flex: none;
+  /* ds-allow: שליחת מייל לאורח.dc.html — 46px recipient avatar */
+  width: 46px;
+  /* ds-allow: שליחת מייל לאורח.dc.html — 46px recipient avatar */
+  height: 46px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 17px;
+  font-weight: 800;
+}
+.sm-rcp-txt {
+  min-width: 0;
+  flex: 1;
+}
+.sm-rcp-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.sm-rcp-src {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* the email/phone status pill — its own two colour pairs (the system's --ok is
+   a saturated green built for status dots, not for a filled pill) */
+.sm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.sm-pill.ok {
+  /* ds-allow: שליחת מייל לאורח.dc.html — recipient pill surface #E7F6EC */
+  background: #e7f6ec;
+  /* ds-allow: שליחת מייל לאורח.dc.html — recipient pill ink #15803D */
+  color: #15803d;
+}
+.sm-pill.none {
+  /* ds-allow: שליחת מייל לאורח.dc.html — missing-address pill surface #FDECEF */
+  background: #fdecef;
+  /* ds-allow: שליחת מייל לאורח.dc.html — missing-address pill ink #BE123C */
+  color: #be123c;
+}
+
+/* the focused warning that replaced the old full-width pink banner */
+.sm-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  /* ds-allow: שליחת מייל לאורח.dc.html — recipient warning surface #FDF1F4 */
+  background: #fdf1f4;
+  /* ds-allow: שליחת מייל לאורח.dc.html — recipient warning border #F5C9D4 */
+  border: 1px solid #f5c9d4;
+  font-size: 14px;
+  font-weight: 600;
+  /* ds-allow: שליחת מייל לאורח.dc.html — recipient warning ink #9F1239 */
+  color: #9f1239;
+}
+.sm-warn .ms-icon {
+  flex: none;
+  /* ds-allow: שליחת מייל לאורח.dc.html — warning glyph #BE123C */
+  color: #be123c;
+}
+
+/* the provider-not-configured notice keeps the system's warn token */
+.sm-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--warn) 10%, #fff);
+  border: 1px solid var(--warn);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--warn) 62%, var(--ink));
+}
+.sm-note-link {
+  margin-inline-start: auto;
+  text-decoration: underline;
+  font-weight: 700;
+  white-space: nowrap;
+}
+/* D172 — a variable the renderer cannot resolve blocks the send and is named */
+.sm-blocked {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  /* ds-allow: שליחת מייל לאורח.dc.html — blocked-variable surface #FDF1F4 */
+  background: #fdf1f4;
+  /* ds-allow: שליחת מייל לאורח.dc.html — blocked-variable border #F5C9D4 */
+  border: 1px solid #f5c9d4;
+  font-size: 13.5px;
+  font-weight: 600;
+  /* ds-allow: שליחת מייל לאורח.dc.html — blocked-variable ink #9F1239 */
+  color: #9f1239;
+}
+
+/* the "עדכון פרטי האורח" link that sits in the recipient card's header */
+.sm-hd-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-inline-start: auto;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--brand);
+}
+.sm-hd-link:hover {
+  color: var(--brand-hover);
+}
+
+/* ---- mode selector (segmented) ------------------------------------------ */
+.sm-seg {
+  display: flex;
+  gap: 10px;
+}
+.sm-seg-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* ds-allow: שליחת מייל לאורח.dc.html — 52px mode selector */
+  height: 52px;
+  /* ds-allow: שליחת מייל לאורח.dc.html — 13px mode selector radius */
+  border-radius: 13px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.sm-seg-btn .ms-icon {
+  color: var(--faint);
+}
+.sm-seg-btn.on {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+  /* ds-allow: שליחת מייל לאורח.dc.html — selected mode ring rgba(37,64,200,.12) */
+  box-shadow: 0 0 0 3px rgba(37, 64, 200, 0.12);
+}
+.sm-seg-btn.on .ms-icon {
+  color: var(--brand);
+}
+
+/* ---- fields -------------------------------------------------------------
+   The reference gives the composer's own field surface and a taller control
+   than the canonical 44px; everything else (label, focus ring) is the
+   design-system .field / .field-label it is layered on top of. */
+.sm-field .field-input {
+  /* ds-allow: שליחת מייל לאורח.dc.html — composer field surface #EFF2FB */
+  background: #eff2fb;
+  border-color: transparent;
+}
+.sm-field .field-input:focus {
+  background: var(--surface);
+  border-color: var(--brand);
+}
+.sm-field input.field-input {
+  /* ds-allow: שליחת מייל לאורח.dc.html — 48px composer field */
+  height: 48px;
+}
+.sm-field textarea.field-input {
+  min-height: 170px;
+  resize: vertical;
+  line-height: 1.7;
+}
+
+/* ---- variable chips ----------------------------------------------------- */
+.sm-vars {
+  background: var(--field-bg);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+}
+.sm-vars-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.sm-vars-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sm-var {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-line);
+  background: var(--surface);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--brand);
+}
+.sm-var:hover {
+  background: var(--brand-soft);
+}
+
+/* ---- preview ------------------------------------------------------------ */
+.sm-pv-hint {
+  margin-inline-start: auto;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--faint);
+}
+.sm-pv-empty {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 26px 0;
+  text-align: center;
+  color: var(--faint);
+  font-size: 14px;
+  font-weight: 600;
+}
+.sm-pv-mail {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.sm-pv-head {
+  background: var(--field-bg);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.sm-pv-head b {
+  font-weight: 700;
+  color: var(--ink);
+}
+.sm-pv-body {
+  padding: 14px;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--ink);
+}
+
+/* ---- footer (§7: primary hugs the LEFT edge, ביטול to its right) --------- */
+.sm-f {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 24px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+.sm-f-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-end: auto;
+  font-size: 14px;
+  font-weight: 600;
+  /* ds-allow: שליחת מייל לאורח.dc.html — footer block reason #BE123C */
+  color: #be123c;
+}
+.sm-f .btn-primary:disabled {
+  /* ds-allow: שליחת מייל לאורח.dc.html — disabled primary #C7CEE8 */
+  background: #c7cee8;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* ---- mobile: the composer fills the phone, the selector stacks ---------- */
+@media (max-width: 640px) {
+  .sm-body {
+    padding: 14px;
+  }
+  .sm-h {
+    padding: 14px 16px;
+  }
+  .sm-seg {
+    flex-direction: column;
+  }
+  .sm-f {
+    flex-wrap: wrap;
+  }
+  .sm-f-warn {
+    order: 3;
+    width: 100%;
+    margin-inline-end: 0;
+  }
+}

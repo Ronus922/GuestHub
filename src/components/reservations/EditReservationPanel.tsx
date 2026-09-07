@@ -37,6 +37,7 @@ import { StayEditor, newStayKey, type StayDraft } from "./StayEditor";
 import { CardFields, EMPTY_CARD, cardDraftState, type CardDraft } from "./CardFields";
 import { PaymentBadge, PayChip, BookingCard, Field } from "./BookingPanel";
 import { BookingToolbar, MessageComposer } from "./BookingActions";
+import { EMPTY_DRAFT, type ComposerDraft } from "@/lib/messaging/composer-draft";
 import type { LookupItem } from "@/app/(dashboard)/calendar/CalendarScreen";
 
 // עריכת הזמנה — the single reservation detail/edit flow the calendar opens
@@ -128,6 +129,14 @@ export function EditReservationPanel({
   // in-panel message composer (email | whatsapp) — a full-panel overlay; the
   // booking stays mounted underneath (no navigation, scroll preserved)
   const [composer, setComposer] = useState<null | "email" | "whatsapp">(null);
+  // The composer's draft lives HERE, not in the composer (D178): fixing a
+  // missing guest email means closing the composer, so the draft has to
+  // outlive it. One draft per channel — email and WhatsApp never share text.
+  const [drafts, setDrafts] = useState<Record<"email" | "whatsapp", ComposerDraft>>({
+    email: EMPTY_DRAFT,
+    whatsapp: EMPTY_DRAFT,
+  });
+  const guestEmailRef = useRef<HTMLInputElement | null>(null);
 
   const open = reservationId !== null;
   const reservationIdRef = useRef(reservationId);
@@ -412,6 +421,20 @@ export function EditReservationPanel({
     }
     fn();
   };
+  // "עדכון פרטי האורח" from the composer (D178): close the overlay and put the
+  // cursor in the booking's own email field. The draft survives in `drafts`.
+  // Typing there makes the form dirty, so guardedToolbarAction above will hold
+  // the composer shut until it is SAVED — which is correct: the send reads the
+  // canonical saved reservation, never the open form.
+  const focusGuestEmail = () => {
+    setComposer(null);
+    requestAnimationFrame(() => {
+      const el = guestEmailRef.current;
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.focus();
+    });
+  };
   // Refresh only the read-only feeds (activity + payments) after a message send,
   // without touching the editable form fields.
   const refreshActivity = () => {
@@ -556,6 +579,9 @@ export function EditReservationPanel({
           <MessageComposer
             channel={composer}
             reservationId={detail.id}
+            draft={drafts[composer]}
+            onDraftChange={(next) => setDrafts((d) => ({ ...d, [composer]: next }))}
+            onEditGuest={focusGuestEmail}
             onClose={() => setComposer(null)}
             onSent={refreshActivity}
           />
@@ -764,7 +790,7 @@ export function EditReservationPanel({
                 <Field label="אימייל">
                   <div className="bw-fld-wrap">
                     <Icon name="mail" size={17} className="bw-fi" />
-                    <input className="field-input bw-ic" dir="ltr" type="email" value={guest.email} disabled={!canEditNow}
+                    <input ref={guestEmailRef} className="field-input bw-ic" dir="ltr" type="email" value={guest.email} disabled={!canEditNow}
                       onChange={(e) => setGuest({ ...guest, email: e.target.value })} />
                   </div>
                 </Field>
