@@ -6,14 +6,6 @@ import { Icon, type IconName } from "@/components/shared/Icon";
 import { renderTemplate } from "@/lib/messaging/templates";
 import { renderManualText } from "@/lib/messaging/render-manual";
 import {
-  insertToken,
-  manualSendGate,
-  sendBlockMessage,
-  guestInitials,
-  formatStayRange,
-  type ComposerDraft,
-} from "@/lib/messaging/composer-draft";
-import {
   getMessagingContextAction,
   sendBookingEmailAction,
   sendBookingWhatsAppAction,
@@ -108,44 +100,31 @@ export function BookingToolbar({
   );
 }
 
+type Mode = "custom" | "template";
 type SendState = "idle" | "sending" | "sent" | "failed";
 
-// The composer, rebuilt to the approved design "שליחת מייל לאורח.dc.html"
-// (D178). Owner rulings 2026-09-07: it STAYS an overlay inside the booking
-// drawer (the booking keeps its scroll, D53) and inherits that drawer's width;
-// BOTH channels wear this design (WhatsApp swaps the email chip for a phone
-// one and drops the subject); the preview stays truthful to the wire — a known
-// variable with no value renders EMPTY, exactly as it will be sent, and an
-// unresolvable one still blocks the send by name (D172); all 16 canonical
-// variables are offered as chips.
 export function MessageComposer({
   channel,
   reservationId,
-  draft,
-  onDraftChange,
-  onEditGuest,
   onClose,
   onSent,
 }: {
   channel: "email" | "whatsapp";
   reservationId: string;
-  /** lifted so closing the composer to fix the guest's email keeps the draft */
-  draft: ComposerDraft;
-  onDraftChange: (next: ComposerDraft) => void;
-  /** closes the composer and focuses the booking's own guest email field */
-  onEditGuest: () => void;
   onClose: () => void;
   onSent: () => void;
 }) {
   const [ctx, setCtx] = useState<ComposerContext | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("custom");
+  const [templateId, setTemplateId] = useState<string>("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
   const [sendState, setSendState] = useState<SendState>("idle");
   const [pending, startSend] = useTransition();
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   const isEmail = channel === "email";
-  const { mode, templateId, subject, body } = draft;
-  const patch = (next: Partial<ComposerDraft>) => onDraftChange({ ...draft, ...next });
 
   useEffect(() => {
     let alive = true;
@@ -168,25 +147,28 @@ export function MessageComposer({
   const recipient = ctx ? (isEmail ? ctx.email : ctx.phoneE164 ?? ctx.phone) : null;
 
   const applyTemplate = (id: string) => {
+    setTemplateId(id);
     const t = templates.find((x) => x.id === id);
-    if (!t) {
-      patch({ templateId: id });
-      return;
+    if (t) {
+      if (isEmail) setSubject(t.subject ?? "");
+      setBody(t.body);
     }
-    patch({ templateId: id, body: t.body, ...(isEmail ? { subject: t.subject ?? "" } : {}) });
   };
 
   const insertVar = (key: string) => {
     const token = `{{${key}}}`;
     const el = bodyRef.current;
-    const start = el?.selectionStart ?? body.length;
-    const end = el?.selectionEnd ?? body.length;
-    const next = insertToken(body, start, end, token);
-    patch({ body: next.text });
-    if (!el) return;
+    if (!el) {
+      setBody((b) => b + token);
+      return;
+    }
+    const start = el.selectionStart ?? body.length;
+    const end = el.selectionEnd ?? body.length;
+    setBody(body.slice(0, start) + token + body.slice(end));
     requestAnimationFrame(() => {
       el.focus();
-      el.setSelectionRange(next.caret, next.caret);
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
     });
   };
 
@@ -203,18 +185,9 @@ export function MessageComposer({
   const previewBody = bodyRender ? bodyRender.value : renderTemplate(body, vars);
   const bodyBlocked = bodyRender !== null && !bodyRender.canSend;
 
-  // ONE gate behind both the button and the footer's stated reason.
-  const gate = manualSendGate({
-    isEmail,
-    providerConfigured,
-    recipientValid,
-    subjectBlocked,
-    bodyBlocked,
-    subject,
-    renderedBody: previewBody,
-  });
-  const canSend = gate.canSend && !pending && sendState !== "sent";
-  const blockMessage = sendBlockMessage(gate.block, isEmail);
+  const canSend =
+    !pending && providerConfigured && recipientValid && !subjectBlocked && !bodyBlocked
+    && previewBody.trim().length > 0 && sendState !== "sent";
 
   const doSend = () =>
     startSend(async () => {
@@ -239,34 +212,27 @@ export function MessageComposer({
     });
 
   const title = isEmail ? "שליחת מייל לאורח" : "שליחת WhatsApp לאורח";
-  // the header's booking context line: "הזמנה #4112 · חדר 201 · 03–06/07/2026"
-  const contextLine = ctx
-    ? [
-        `הזמנה #${ctx.reservationNumber}`,
-        ctx.roomNumbers ? `חדר ${ctx.roomNumbers}` : null,
-        ctx.checkIn && ctx.checkOut ? formatStayRange(ctx.checkIn, ctx.checkOut) : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : null;
-  const hasPreview = (isEmail ? previewSubject.trim().length > 0 : true) && previewBody.trim().length > 0;
 
   return (
-    <div className="sm-panel" dir="rtl" role="dialog" aria-label={title}>
-      <header className="sm-h">
-        <span className="dw-icon">
-          <Icon name={isEmail ? "outgoing-mail" : "whatsapp"} size={20} />
-        </span>
-        <div className="sm-h-txt">
-          <p className="dw-title truncate">{title}</p>
-          {contextLine && <p className="dw-sub ltr-num truncate">{contextLine}</p>}
-        </div>
-        <button type="button" className="dw-close" onClick={onClose} aria-label="חזרה להזמנה">
-          <Icon name="close" size={20} />
+    <div className="bk-cmp" dir="rtl" role="dialog" aria-label={title}>
+      <header className="bk-cmp-h">
+        <button type="button" className="bk-cmp-back" onClick={onClose} aria-label="חזרה להזמנה">
+          <Icon name="chevron-right" size={20} />
         </button>
+        <span className="bk-cmp-icon">
+          <Icon name={isEmail ? "mail" : "whatsapp"} size={20} />
+        </span>
+        <div className="min-w-0">
+          <p className="h2 truncate">{title}</p>
+          {ctx && (
+            <p className="ltr-num truncate text-sm font-semibold text-white/80">
+              {ctx.guestName} · {recipient ?? "—"}
+            </p>
+          )}
+        </div>
       </header>
 
-      <div className="sm-body thin-scroll">
+      <div className="bk-cmp-body thin-scroll">
         {loadError ? (
           <div className="grid h-40 place-items-center text-center">
             <div>
@@ -282,241 +248,133 @@ export function MessageComposer({
           </div>
         ) : (
           <>
-            {/* ---- recipient ---- */}
-            <section className="card">
-              <div className="card-hd">
-                <span className="sm-sec-ic">
-                  <Icon name="user" size={17} />
+            {/* recipient + provider validation */}
+            {!providerConfigured && (
+              <div className="bk-cmp-alert warn">
+                <Icon name="warning" size={17} />
+                <span>
+                  {isEmail
+                    ? "שירות Gmail טרם הוגדר. ניתן להגדירו במסך ההגדרות."
+                    : "ספק WhatsApp טרם הוגדר. ניתן לבחור GREEN-API או Twilio במסך ההגדרות."}
                 </span>
-                נמען
-                {!recipientValid && (
-                  <button type="button" className="sm-hd-link" onClick={onEditGuest}>
-                    <Icon name="edit" size={17} />
-                    עדכון פרטי האורח
-                  </button>
-                )}
+                <a className="bk-cmp-alert-link" href="/settings?section=messaging">
+                  להגדרות
+                </a>
               </div>
-              <div className="card-bd">
-                <div className="sm-rcp">
-                  <span className="sm-rcp-ava">{guestInitials(ctx.guestName)}</span>
-                  <div className="sm-rcp-txt">
-                    <p className="sm-rcp-name truncate">{ctx.guestName}</p>
-                    {ctx.sourceLabel && (
-                      <p className="sm-rcp-src">
-                        <Icon name="globe-filled" size={13.5} />
-                        מקור: {ctx.sourceLabel}
-                      </p>
-                    )}
-                  </div>
-                  {recipientValid ? (
-                    <span className="sm-pill ok">
-                      <Icon name={isEmail ? "mail-read" : "phone"} size={13.5} />
-                      <span className="ltr-num">{recipient}</span>
-                    </span>
-                  ) : (
-                    <span className="sm-pill none">
-                      <Icon name={isEmail ? "mail-off" : "phone"} size={13.5} />
-                      {isEmail ? "אין כתובת אימייל" : "אין מספר טלפון"}
-                    </span>
-                  )}
-                </div>
-                {!recipientValid && (
-                  <p className="sm-warn">
-                    <Icon name="warning" size={17} />
-                    {isEmail
-                      ? "לאורח אין כתובת אימייל תקינה. עדכנו את כתובת האימייל בפרטי האורח — כפתור השליחה יישאר נעול עד אז."
-                      : "לאורח אין מספר טלפון תקין. עדכנו את מספר הטלפון בפרטי האורח — כפתור השליחה יישאר נעול עד אז."}
-                  </p>
-                )}
-              </div>
-            </section>
-
-            {/* ---- message content ---- */}
-            <section className="card">
-              <div className="card-hd">
-                <span className="sm-sec-ic">
-                  <Icon name="edit-note" size={17} />
+            )}
+            {providerConfigured && !recipientValid && (
+              <div className="bk-cmp-alert danger">
+                <Icon name="warning" size={17} />
+                <span>
+                  {isEmail
+                    ? "לאורח אין כתובת אימייל תקינה. עדכן אותה בפרטי האורח לפני השליחה."
+                    : "לאורח אין מספר טלפון תקין. עדכן אותו בפרטי האורח לפני השליחה."}
                 </span>
-                תוכן ההודעה
               </div>
-              <div className="card-bd flex flex-col gap-3">
-                {!providerConfigured && (
-                  <div className="sm-note">
-                    <Icon name="warning" size={17} />
-                    <span>
-                      {isEmail
-                        ? "שירות Gmail טרם הוגדר. ניתן להגדירו במסך ההגדרות."
-                        : "ספק WhatsApp טרם הוגדר. ניתן לבחור GREEN-API או Twilio במסך ההגדרות."}
-                    </span>
-                    <a className="sm-note-link" href="/settings?section=messaging">
-                      להגדרות
-                    </a>
-                  </div>
-                )}
+            )}
 
-                <div className="sm-seg">
-                  <button
-                    type="button"
-                    className={`sm-seg-btn${mode === "template" ? " on" : ""}`}
-                    aria-pressed={mode === "template"}
-                    onClick={() => patch({ mode: "template" })}
-                  >
-                    <Icon name="documents" size={20} />
-                    בחירה מתבנית
-                  </button>
-                  <button
-                    type="button"
-                    className={`sm-seg-btn${mode === "custom" ? " on" : ""}`}
-                    aria-pressed={mode === "custom"}
-                    onClick={() => patch({ mode: "custom" })}
-                  >
-                    <Icon name="stylus-note" size={20} />
-                    כתיבת הודעה חדשה
-                  </button>
-                </div>
-
-                {mode === "template" && (
-                  <label className="field sm-field">
-                    <span className="field-label">תבנית</span>
-                    <select className="field-input" value={templateId} onChange={(e) => applyTemplate(e.target.value)}>
-                      <option value="">בחירת תבנית…</option>
-                      {templates.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    {templates.length === 0 ? (
-                      <span className="field-hint">
-                        אין תבניות {isEmail ? "מייל" : "WhatsApp"} פעילות. ניתן לכתוב הודעה חדשה.
-                      </span>
-                    ) : templateId ? (
-                      <span className="field-hint">
-                        {isEmail
-                          ? "הנושא והתוכן מולאו מהתבנית — אפשר לערוך אותם לפני השליחה"
-                          : "התוכן מולא מהתבנית — אפשר לערוך אותו לפני השליחה"}
-                      </span>
-                    ) : null}
-                  </label>
-                )}
-
-                {isEmail && (
-                  <label className="field sm-field">
-                    <span className="field-label">נושא</span>
-                    <input
-                      className="field-input"
-                      value={subject}
-                      onChange={(e) => patch({ subject: e.target.value })}
-                      placeholder="נושא ההודעה"
-                    />
-                  </label>
-                )}
-
-                <label className="field sm-field">
-                  <span className="field-label">תוכן ההודעה</span>
-                  <textarea
-                    ref={bodyRef}
-                    className="field-input"
-                    value={body}
-                    onChange={(e) => patch({ body: e.target.value })}
-                    placeholder="כתבו את ההודעה… לחיצה על משתנה למטה מוסיפה אותו במיקום הסמן"
-                  />
-                </label>
-
-                {/* D172 — a variable the renderer cannot resolve is named, not shipped */}
-                {subjectBlocked && (
-                  <p className="sm-blocked">
-                    <Icon name="warning" size={17} />
-                    הנושא מכיל משתנה שלא ניתן לשלוח — {subjectRender?.detail}
-                  </p>
-                )}
-                {bodyBlocked && (
-                  <p className="sm-blocked">
-                    <Icon name="warning" size={17} />
-                    תוכן ההודעה מכיל משתנה שלא ניתן לשלוח — {bodyRender?.detail}
-                  </p>
-                )}
-
-                <div className="sm-vars">
-                  <p className="sm-vars-hd">
-                    <Icon name="variables" size={17} />
-                    משתני הזמנה — לחיצה מוסיפה לתוכן
-                  </p>
-                  <div className="sm-vars-list">
-                    {ctx.variableDefs.map((v) => (
-                      <button
-                        key={v.key}
-                        type="button"
-                        className="sm-var"
-                        title={`{{${v.key}}}`}
-                        onClick={() => insertVar(v.key)}
-                      >
-                        <Icon name="plus" size={13.5} />
-                        {v.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+            {subjectBlocked && (
+              <div className="bk-cmp-alert danger">
+                <Icon name="warning" size={17} />
+                <span>הנושא מכיל משתנה שלא ניתן לשלוח — {subjectRender?.detail}</span>
               </div>
-            </section>
+            )}
 
-            {/* ---- preview: the resolved message, exactly as it goes on the wire ---- */}
-            <section className="card">
-              <div className="card-hd">
-                <span className="sm-sec-ic">
-                  <Icon name="eye" size={17} />
-                </span>
+            {bodyBlocked && (
+              <div className="bk-cmp-alert danger">
+                <Icon name="warning" size={17} />
+                <span>תוכן ההודעה מכיל משתנה שלא ניתן לשלוח — {bodyRender?.detail}</span>
+              </div>
+            )}
+
+            <div className="bk-cmp-recipient">
+              <Icon name={isEmail ? "mail" : "phone"} size={20} className="text-primary" />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold text-ink">{ctx.guestName}</p>
+                <p className="ltr-num truncate text-xs text-muted">{recipient ?? "—"}</p>
+              </div>
+            </div>
+
+            {/* mode tabs */}
+            <div className="bk-cmp-tabs">
+              <button type="button" className={`bk-cmp-tab ${mode === "custom" ? "on" : ""}`} onClick={() => setMode("custom")}>
+                כתיבת הודעה חדשה
+              </button>
+              <button type="button" className={`bk-cmp-tab ${mode === "template" ? "on" : ""}`} onClick={() => setMode("template")}>
+                בחירה מתבנית
+              </button>
+            </div>
+
+            {mode === "template" && (
+              <label className="field">
+                <span className="field-label">תבנית</span>
+                <select className="field-input" value={templateId} onChange={(e) => applyTemplate(e.target.value)}>
+                  <option value="">בחר תבנית…</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                {templates.length === 0 && <span className="field-hint">אין תבניות {isEmail ? "מייל" : "WhatsApp"} פעילות. ניתן לכתוב הודעה חדשה.</span>}
+              </label>
+            )}
+
+            {isEmail && (
+              <label className="field">
+                <span className="field-label">נושא</span>
+                <input className="field-input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="נושא ההודעה" />
+              </label>
+            )}
+
+            <label className="field">
+              <span className="field-label">תוכן ההודעה</span>
+              <textarea
+                ref={bodyRef}
+                className="field-input bk-cmp-textarea"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder="כתוב את ההודעה… ניתן לשלב משתנים כמו {{guest_first_name}}"
+              />
+            </label>
+
+            {/* variable helper chips */}
+            <div className="bk-cmp-vars">
+              <span className="bk-cmp-vars-lbl">שדות הזמנה:</span>
+              {ctx.variableDefs.map((v) => (
+                <button key={v.key} type="button" className="chip clickable" title={`{{${v.key}}}`} onClick={() => insertVar(v.key)}>
+                  {v.label}
+                </button>
+              ))}
+            </div>
+
+            {/* preview (variables resolved from the real booking) */}
+            <div className="bk-cmp-preview">
+              <div className="bk-cmp-preview-h">
+                <Icon name="eye" size={17} />
                 תצוגה מקדימה
-                <span className="sm-pv-hint">כפי שהאורח יקבל, עם ערכי ההזמנה</span>
               </div>
-              <div className="card-bd">
-                {!hasPreview ? (
-                  <div className="sm-pv-empty">
-                    <Icon name="drafts" size={24} />
-                    {isEmail
-                      ? "התצוגה תופיע כאן ברגע שיהיו נושא ותוכן"
-                      : "התצוגה תופיע כאן ברגע שיהיה תוכן"}
-                  </div>
-                ) : (
-                  <div className="sm-pv-mail">
-                    <div className="sm-pv-head">
-                      <span>
-                        אל: <b className="ltr-num">{recipientValid ? recipient : "— (חסרה כתובת)"}</b>
-                      </span>
-                      {isEmail && (
-                        <span>
-                          נושא: <b>{previewSubject}</b>
-                        </span>
-                      )}
-                    </div>
-                    <p className="sm-pv-body">{previewBody}</p>
-                  </div>
-                )}
-              </div>
-            </section>
+              {isEmail && previewSubject && <p className="bk-cmp-preview-subj">{previewSubject}</p>}
+              <p className="bk-cmp-preview-body">{previewBody || "—"}</p>
+            </div>
           </>
         )}
       </div>
 
-      <footer className="dw-ft shrink-0">
+      <footer className="bk-cmp-f">
+        <button type="button" className="btn btn-tertiary" onClick={onClose}>
+          ביטול
+        </button>
+        <span className="flex-1" />
         {sendState === "sent" ? (
-          <span className="btn btn-primary pointer-events-none">
-            <Icon name="check-circle" size={20} /> נשלח
+          <span className="bk-cmp-ok">
+            <Icon name="check-circle" size={17} /> נשלח
           </span>
         ) : (
           <button type="button" className="btn btn-primary" disabled={!canSend} onClick={doSend}>
             <Icon name="send" size={20} />
-            {sendState === "sending" ? "שולח…" : isEmail ? "שליחת המייל" : "שליחת ההודעה"}
+            {sendState === "sending" ? "שולח…" : "שליחה"}
           </button>
-        )}
-        <button type="button" className="btn btn-secondary" onClick={onClose}>
-          ביטול
-        </button>
-        {ctx && blockMessage && (
-          <span className="sm-f-warn">
-            <Icon name="warning" size={17} />
-            {blockMessage}
-          </span>
         )}
       </footer>
     </div>
