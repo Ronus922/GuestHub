@@ -60,7 +60,7 @@
 | | `RoomWizard` · `AreaPanel` | drawer | `/rooms` |
 | | `RatePlanWizard` · `SimulatorPanel` · `OverridesPanel` | drawer | `/rate-plans` |
 | | `GroupUpdatePanel` | drawer | `/rates` |
-| | `CellDetailPanel` (`widthClassName="rc-panel"`: מלא עד 1100px, מעל זה 60% בטווח 700–960px — D177) | drawer | `/rates` → תא מחיר |
+| | `CellDetailPanel` (הסולם הקנוני של `SidePanel`: מלא <768 · 85% עד 1023 · 60% מעל — D177 §14; `rc-panel` הוא hook עיצוב בלבד) | drawer | `/rates` → תא מחיר |
 | | `EmployeeSidePanel` | drawer | `/staff` |
 | | `TemplateEditor` · `HtmlTemplateEditor` · `WhatsAppTemplateEditor` | drawer | `/communications/templates` |
 | | `SourcesDrawer` | drawer | `/dashboard` |
