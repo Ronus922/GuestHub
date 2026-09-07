@@ -97,6 +97,24 @@ export const SELL_REASON_TEXT: Record<SellReason, string> = {
   MAPPING_ERROR: "שגיאת מיפוי — אין חדר משויך ליחידת המכירה",
 };
 
+// The cell drawer's explanation sentence (D177 §2, owner ruling 2026-09-07). The
+// drawer already shows the verdict as a chip ("לא זמין למכירה"), so its sentence
+// must say WHY and nothing else — SELL_REASON_TEXT above repeats the verdict
+// ("לא ניתן למכירה — …") because it is the GRID's tooltip, where no chip stands
+// beside it. Keyed by exactly the codes blockingReasons() can return: the two the
+// draft owns (SELLABLE / COMMERCIAL_STOP_SELL) never reach this map.
+export const SELL_REASON_SENTENCE: Record<Exclude<SellReason, "SELLABLE" | "COMMERCIAL_STOP_SELL">, string> = {
+  PHYSICAL_INVENTORY_ZERO: "אין מלאי פיזי זמין ביום זה.",
+  ROOM_INACTIVE: "החדר אינו פעיל ביום זה.",
+  ROOM_OUT_OF_ORDER: "החדר מושבת עקב תקלה ביום זה.",
+  PHYSICAL_BLOCK: "קיימת חסימה פיזית ביום זה.",
+  RESERVED: "קיימת הזמנה פעילה ביום זה.",
+  NO_ACTIVE_RATE_PLAN: "אין תוכנית תמחור פעילה ליחידת המכירה.",
+  MISSING_EFFECTIVE_PRICE: "חסר מחיר אפקטיבי ליום זה.",
+  INVALID_EFFECTIVE_PRICE: "המחיר האפקטיבי אינו תקין.",
+  MAPPING_ERROR: "אין חדר משויך ליחידת המכירה.",
+};
+
 // Visual grouping → the price-cell state class. Keeps physical (hatch),
 // commercial stop-sell (red), missing-price (amber), and mapping/config error
 // (error box) visually DISTINCT so unrelated causes never look the same.

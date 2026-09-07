@@ -161,7 +161,27 @@ const SAVED = {
   assert.match(panel, /useTransition/, "router.refresh() runs inside a transition so 'busy' lasts until the fresh cell lands");
   assert.match(panel, /startTransition\(\(\) => router\.refresh\(\)\)/, "…and that is the refresh it wraps");
   assert.doesNotMatch(panel, /\b(CTA|CTD)\b/, "no English restriction abbreviation on screen (owner ruling 2026-09-06)");
-  assert.match(panel, /widthClassName="rc-panel"/, "the reference width ladder is the rc-panel rule");
+  // ---- owner rulings 2026-09-07 (D177 §§2, 4, 10, 12, 14) ----
+  assert.match(panel, /SELL_REASON_SENTENCE\[primary\]/,
+    "a blocked day is explained by the drawer's own sentence — SELL_REASON_TEXT repeats the chip's verdict (§2)");
+  assert.doesNotMatch(panel, /SELL_REASON_TEXT/, "…and that grid vocabulary is not used here at all");
+  assert.match(panel, /price: null/, "the price can be cleared back to the plan's base price (§4)");
+  assert.match(panel, /cell\.priceSource === "explicit" &&[\s\S]{0,200}rc-price-reset/,
+    "…and that control appears ONLY where a price is actually set on the day");
+  assert.match(panel, /priceValid = priceInput !== "" &&/, "…while an empty FIELD stays invalid (§4)");
+  assert.match(panel, /confirmDiscard && dirty \?/, "a dirty draft is confirmed before it is discarded (§10)");
+  assert.match(panel, /יש שינויים שלא נשמרו — לסגור בכל זאת\?/, "…in the EditReservationPanel wording");
+  assert.match(panel, /onClose=\{requestClose\}/, "…on EVERY close route (Esc / X / overlay), not just the button");
+  assert.match(panel, /const requestClose = \(\) => \{[\s\S]{0,200}dirty && !confirmDiscard/,
+    "…and that is what requestClose decides");
+  assert.match(panel, /visualVariant="booking"/, "the drawer uses the fast booking motion, not the 1.2s default (§12)");
+  const ladder = /w-full md:w-\[85%\] lg:w-\[60%\]/;
+  assert.match(panel, ladder, "the width is the CANONICAL §7 ladder (§14)");
+  assert.match(read("src/components/ui/SidePanel.tsx"), ladder,
+    "…byte-identical to SidePanel's own default, so the two can never drift apart");
+  assert.doesNotMatch(read("src/app/styles/rate-cell-panel.css"), /\.rc-panel\s*\{/,
+    "…and .rc-panel declares no width of its own any more (iron rule 9: no orphan CSS)");
+  assert.match(panel, /widthClassName="rc-panel /, "the rc- scope hook rides along with the canonical ladder");
   assert.match(panel, /bodyClassName="rc-body"/, "the reference body padding is the rc-body rule");
   assert.match(panel, /icon="event-available"/, "the header glyph is event_available");
   assert.match(panel, /HEBREW_DAY_NAMES\[dayOfWeek\(/, "the subtitle names the weekday");
@@ -180,6 +200,23 @@ const SAVED = {
   const heads = [...css.matchAll(/^[ \t]*([^{}\n@][^{}\n]*)\{/gm)].map((x) => x[1].trim());
   assert.ok(heads.length > 20, `the partial declares its rules (${heads.length})`);
   for (const h of heads) assert.match(h, /^\.rc-/, `every selector is rc-scoped: "${h}"`);
+  // ---- owner ruling 2026-09-07: never ONE tile alone on a line (320…1440) ----
+  assert.doesNotMatch(css, /\.rc-tiles[^{]*\{[^}]*auto-fit/,
+    "the tile rows do not use auto-fit — it picks any count that fits, which is how six tiles wrapped 5+1");
+  const counts = [...css.matchAll(/\.rc-tiles\.is-(\d)[^{]*\{[^}]*repeat\((\d+),/g)]
+    .map(([, tiles, cols]) => [Number(tiles), Number(cols)]);
+  assert.ok(counts.length >= 4, `both tile rows declare explicit column counts (${counts.length})`);
+  for (const [tiles, cols] of counts) {
+    assert.equal(tiles % cols, 0,
+      `${tiles} tiles in ${cols} columns leaves ${tiles % cols} alone on the last line — only a DIVISOR of the tile count may be used`);
+  }
+  assert.match(css, /\.rc-sec \.card-bd\s*\{[^}]*container-type:\s*inline-size/,
+    "…and the count is chosen by the CARD's width (a container query) — the drawer is a fraction of the viewport");
+  for (const [cls, n] of [["is-6", 6], ["is-3", 3]]) {
+    const grid = read("src/app/(dashboard)/rates/CellDetailPanel.tsx")
+      .match(new RegExp(`rc-tiles ${cls}"[^]*?</div>`))?.[0] ?? "";
+    assert.equal((grid.match(/<Tile /g) ?? []).length, n, `the .${cls} row really holds ${n} tiles`);
+  }
   assert.match(css, /\.rc-sec\s*\{[^}]*flex:\s*none/,
     "the section cards are flex:none — .rc-body is a flex column inside the scrolling .dw-bd, and an overflow:hidden card would otherwise SHRINK (min-height:auto → 0) instead of scrolling; measured clipped in production 2026-09-06 (D177 hotfix)");
   const globals = read("src/app/globals.css");
@@ -192,6 +229,33 @@ const SAVED = {
   }
   assert.match(read("src/lib/dates.ts"), /export const HEBREW_DAY_NAMES = \[/, "the full weekday names exist next to the letters");
   ok("the partial is rc-scoped and unlayered, imported before responsive.css; the ligatures and the weekday names exist");
+}
+
+// ============================================================
+// 9. the drawer's sentence vocabulary: one per blocking reason, and it never
+//    repeats the verdict the chip beside it already carries (§2)
+// ============================================================
+{
+  const types = read("src/app/(dashboard)/rates/types.ts");
+  const union = [...read("src/lib/rates/rules.ts")
+    .match(/export type SellReason =[\s\S]*?;/)[0]
+    .matchAll(/"([A-Z_]+)"/g)].map((x) => x[1]);
+  const blocking = union.filter((c) => c !== "SELLABLE" && c !== "COMMERCIAL_STOP_SELL");
+  assert.ok(blocking.length >= 9, `the blocking reasons are enumerated (${blocking.length})`);
+  const body = types.match(/export const SELL_REASON_SENTENCE[\s\S]*?\{([\s\S]*?)\n\};/)[1];
+  const sentences = new Map([...body.matchAll(/([A-Z_]+):\s*"([^"]+)"/g)].map((x) => [x[1], x[2]]));
+  for (const code of blocking) {
+    const t = sentences.get(code);
+    assert.ok(t, `${code} has a drawer sentence`);
+    if (!t) continue;
+    assert.doesNotMatch(t, /לא ניתן למכירה|לא זמין למכירה/,
+      `${code}'s sentence says WHY, not the verdict — the chip already reads "לא זמין למכירה" ("${t}")`);
+  }
+  assert.equal(sentences.size, blocking.length,
+    "…and the map holds exactly those codes — the two the draft owns never reach it");
+  assert.match(types, /SELL_REASON_TEXT: Record<SellReason, string>/,
+    "the grid's own tooltip vocabulary is untouched (it stands alone, with no chip beside it)");
+  ok("every blocking reason has a drawer sentence that explains instead of repeating the chip");
 }
 
 console.log(`\nAll ${n} cell-drawer claim groups hold.`);

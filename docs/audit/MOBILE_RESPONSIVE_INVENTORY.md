@@ -113,7 +113,7 @@
 | P-20 | `LocksBoard.tsx:1048` | ברירת מחדל | |
 | P-21 | `SourcesDrawer.tsx:101` | ברירת מחדל | |
 | P-22 | `EmployeeSidePanel.tsx:490` | ברירת מחדל | |
-| P-23 | `CellDetailPanel.tsx` (`widthClassName="rc-panel"`) | מלא ≤1100px · מעל זה 60% בטווח 700–960px (`rate-cell-panel.css`, D177) | |
+| P-23 | `CellDetailPanel.tsx` (`widthClassName="rc-panel w-full md:w-[85%] lg:w-[60%]"`) | הסולם הקנוני של `SidePanel` — מלא <768 · 85% ‏768–1023 · 60% ≥1024 (D177 §14) | |
 | P-24 | `OverridesPanel.tsx` | ברירת מחדל | |
 | P-25 | `SidePanel` עצמו | `w-[60%] max-sm:w-full`, `fixed inset-0 z-[90]`, `h-full` | |
 
