@@ -30,7 +30,7 @@
    60% clamped to 700–960) was measured against the canonical one on the
    deployed build: neither clips a tile at any width; the canonical one wraps
    the six inventory tiles as 5+1 where its panel falls under the 674px they
-   need — viewports 768–793 (85%) and 1024–1124 (60%). Measured, not derived
+   need — viewports 768–792 (85%) and 1024–1123 (60%). Measured, not derived
    (D177 addendum). */
 /* the drawer body: the reference's padding, 14px between cards */
 .rc-body {
@@ -64,6 +64,10 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* the QUERY CONTAINER for the tile rows below: the drawer is a fraction of
+     the viewport, so only the card knows how much room a tile row really has
+     (the group-update drawer's .gu-body does the same) */
+  container-type: inline-size;
 }
 .rc-sec-ic {
   display: inline-flex;
@@ -123,12 +127,35 @@
 }
 
 /* ---- 2 + 4. read-only tiles: the canonical .tile, bordered, 19px value ----
-   88px columns: six across from a 674px panel, five plus one below that, three
-   rows of two on a phone — content-driven, no media query. */
+   NEVER one tile alone on a line (owner ruling 2026-09-07). `auto-fit` took
+   whatever count fitted, so the six inventory tiles wrapped 5+1 on every card
+   between 480 and 577px wide — the two bands the canonical width ladder made
+   visible (viewports 768–792 and 1024–1123) and any other width that lands
+   there, a ~600px window included. The column count is therefore an explicit
+   DIVISOR of the tile count: six tiles do 6 / 3×2 / 2×3, three tiles always
+   do 3. The thresholds are what those layouts actually need — 578px = 6×88 +
+   5×10, 284px = 3×88 + 2×10 — so a phone keeps exactly the 3×2 (and 2×3 at
+   320) it has today. A CONTAINER query, not a media query: the drawer is a
+   fraction of the viewport, so a viewport width says nothing about the card. */
 .rc-tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
   gap: 10px;
+}
+.rc-tiles.is-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.rc-tiles.is-6 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container (min-width: 284px) {
+  .rc-tiles.is-6 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container (min-width: 578px) {
+  .rc-tiles.is-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
 }
 .rc-tile {
   min-width: 0;

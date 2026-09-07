@@ -234,7 +234,7 @@ function CellDetailDrawer({
 
       {/* 2. Axis A — physical inventory (read-only; links to operational screens) */}
       <Section title="מלאי פיזי" icon="rooms">
-        <div className="rc-tiles">
+        <div className="rc-tiles is-6">
           <Tile label="קיבולת" value={cell.totalRooms} />
           <Tile label="זמין" value={cell.availability} tone={cell.availability > 0 ? "ok" : undefined} />
           <Tile label="תפוסים" value={cell.occupiedRooms} />
@@ -347,7 +347,7 @@ function CellDetailDrawer({
       {/* 4. Synchronization projection (calculated; nothing sent this phase) — the
           summary follows the DRAFT, so it always describes what a save would send */}
       <Section title="סנכרון ערוצים" icon="arrivals-departures">
-        <div className="rc-tiles">
+        <div className="rc-tiles is-3">
           <Tile label="מצב סנכרון" value={SYNC_STATE_TEXT[cell.syncState]} tone={SYNC_TONE[cell.syncState]} />
           <Tile label="מיפוי ערוץ" value={cell.mappingValid ? "ממופה" : "לא ממופה"} tone={cell.mappingValid ? "ok" : "danger"} />
           <Tile label="זמינות ליציאה" value={cell.outboundAvailability} />

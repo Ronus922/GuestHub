@@ -200,6 +200,23 @@ const SAVED = {
   const heads = [...css.matchAll(/^[ \t]*([^{}\n@][^{}\n]*)\{/gm)].map((x) => x[1].trim());
   assert.ok(heads.length > 20, `the partial declares its rules (${heads.length})`);
   for (const h of heads) assert.match(h, /^\.rc-/, `every selector is rc-scoped: "${h}"`);
+  // ---- owner ruling 2026-09-07: never ONE tile alone on a line (320…1440) ----
+  assert.doesNotMatch(css, /\.rc-tiles[^{]*\{[^}]*auto-fit/,
+    "the tile rows do not use auto-fit — it picks any count that fits, which is how six tiles wrapped 5+1");
+  const counts = [...css.matchAll(/\.rc-tiles\.is-(\d)[^{]*\{[^}]*repeat\((\d+),/g)]
+    .map(([, tiles, cols]) => [Number(tiles), Number(cols)]);
+  assert.ok(counts.length >= 4, `both tile rows declare explicit column counts (${counts.length})`);
+  for (const [tiles, cols] of counts) {
+    assert.equal(tiles % cols, 0,
+      `${tiles} tiles in ${cols} columns leaves ${tiles % cols} alone on the last line — only a DIVISOR of the tile count may be used`);
+  }
+  assert.match(css, /\.rc-sec \.card-bd\s*\{[^}]*container-type:\s*inline-size/,
+    "…and the count is chosen by the CARD's width (a container query) — the drawer is a fraction of the viewport");
+  for (const [cls, n] of [["is-6", 6], ["is-3", 3]]) {
+    const grid = read("src/app/(dashboard)/rates/CellDetailPanel.tsx")
+      .match(new RegExp(`rc-tiles ${cls}"[^]*?</div>`))?.[0] ?? "";
+    assert.equal((grid.match(/<Tile /g) ?? []).length, n, `the .${cls} row really holds ${n} tiles`);
+  }
   assert.match(css, /\.rc-sec\s*\{[^}]*flex:\s*none/,
     "the section cards are flex:none — .rc-body is a flex column inside the scrolling .dw-bd, and an overflow:hidden card would otherwise SHRINK (min-height:auto → 0) instead of scrolling; measured clipped in production 2026-09-06 (D177 hotfix)");
   const globals = read("src/app/globals.css");
