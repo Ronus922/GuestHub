@@ -217,6 +217,20 @@ const ICONS = {
   "event-available": "event_available",
   flag: "flag",
   "radio-unchecked": "radio_button_unchecked",
+  // --- the guest message drawer "שליחת מייל לאורח" (approved design, D178):
+  // the header glyph, the two segmented-selector glyphs, the recipient card's
+  // email-status pair and origin globe, and the empty preview's drafts mark.
+  // `documents` (description), `variables` (data_object), `eye` (visibility),
+  // `user` (person), `plus` (add), `send`, `warning`, `edit` and `close` above
+  // already cover the rest of that drawer. All nine verified present in the
+  // vendored woff2 subset before being named here.
+  "outgoing-mail": "outgoing_mail",
+  "stylus-note": "stylus_note",
+  "mail-read": "mark_email_read",
+  "mail-off": "mail_off",
+  "globe-filled": "public",
+  "edit-note": "edit_note",
+  drafts: "drafts",
 } as const;
 
 export type IconName = keyof typeof ICONS;
