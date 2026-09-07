@@ -123,8 +123,15 @@ export function stepStay(value: number | null, dir: -1 | 1): number | null {
  * price, mapping). collectSellReasons() returns ["SELLABLE"] when nothing
  * blocks, otherwise every blocking code with COMMERCIAL_STOP_SELL among them.
  */
-export function blockingReasons<T extends string>(reasonCodes: readonly T[]): T[] {
-  return reasonCodes.filter((c) => c !== "SELLABLE" && c !== "COMMERCIAL_STOP_SELL");
+export function blockingReasons<T extends string>(
+  reasonCodes: readonly T[],
+): Exclude<T, "SELLABLE" | "COMMERCIAL_STOP_SELL">[] {
+  // the predicate is what lets the drawer index SELL_REASON_SENTENCE, whose keys
+  // are exactly these codes — the two the draft owns can never come out of here
+  return reasonCodes.filter(
+    (c): c is Exclude<T, "SELLABLE" | "COMMERCIAL_STOP_SELL"> =>
+      c !== "SELLABLE" && c !== "COMMERCIAL_STOP_SELL",
+  );
 }
 
 /**

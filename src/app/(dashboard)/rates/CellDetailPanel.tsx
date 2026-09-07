@@ -12,7 +12,7 @@ import {
 } from "@/lib/rates/cell-draft";
 import { getCellDetailAction, upsertRateCellAction, type CellDetailData } from "./actions";
 import {
-  ROOM_ADMIN_TEXT, SELL_REASON_TEXT, SYNC_STATE_TEXT,
+  ROOM_ADMIN_TEXT, SELL_REASON_SENTENCE, SYNC_STATE_TEXT,
   type RateCellState, type RateGridUnit, type SyncState,
 } from "./types";
 
@@ -47,7 +47,7 @@ export function CellDetailPanel(props: Props) {
 }
 
 type CellPatch = Parameters<typeof upsertRateCellAction>[0]["patch"];
-type SaveKind = "fields" | "price";
+type SaveKind = "fields" | "price" | "reset";
 type Tone = "ok" | "warn" | "danger";
 
 const SYNC_TONE: Record<SyncState, Tone | undefined> = {
@@ -69,6 +69,9 @@ function CellDetailDrawer({
   // null = untouched → the field shows the saved price
   const [priceEdit, setPriceEdit] = useState<string | null>(null);
   const [saving, setSaving] = useState<SaveKind | null>(null);
+  // Esc / X / overlay / "ביטול" ask before a draft is thrown away (owner ruling
+  // 2026-09-07 — the EditReservationPanel pattern, in this drawer's own footer)
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const inFlight = useRef(false);
 
   const unitId = unit.sellableUnitId;
@@ -118,7 +121,7 @@ function CellDetailDrawer({
   const primary = others[0];
   const sellable = liveSellable(cell.reasonCodes, draft.stopSell);
   const sentence = primary
-    ? SELL_REASON_TEXT[primary]
+    ? SELL_REASON_SENTENCE[primary]
     : draft.stopSell
       ? "היום סגור למכירה — הזמינות לערוצים תהיה 0 גם אם קיים מלאי פיזי."
       : "יש מלאי פיזי זמין והיום פתוח למכירה בערוצים.";
@@ -130,8 +133,8 @@ function CellDetailDrawer({
       return next;
     });
 
-  async function write(kind: SaveKind, p: CellPatch, okText: string) {
-    if (inFlight.current) return;
+  async function write(kind: SaveKind, p: CellPatch, okText: string): Promise<boolean> {
+    if (inFlight.current) return false;
     inFlight.current = true;
     setSaving(kind);
     const res = await upsertRateCellAction({
@@ -144,45 +147,78 @@ function CellDetailDrawer({
     setSaving(null);
     if (!res.success) {
       toast.error(res.error || "השמירה נכשלה");
-      return;
+      return false;
     }
     toast.success(okText);
     onSaved();
     // re-render the grid (server) without remounting → scroll kept; the
     // transition keeps `busy` up until the fresh cell has landed
     startTransition(() => router.refresh());
+    return true;
   }
   // ONE call for every changed commercial field — never the price
   const saveFields = () => write("fields", patch, `השינויים נשמרו ליום ${formatFullDate(date)}`);
   const savePrice = () => write("price", { price: Number(priceInput) }, `המחיר נשמר ליום ${formatFullDate(date)}`);
+  // The ONE way back to the plan's base price from the drawer (owner ruling
+  // 2026-09-07): price = NULL clears the day's override — never 0, which is a
+  // silent closure (lib/validation/rates.ts). An empty FIELD stays invalid.
+  const clearPrice = async () => {
+    const done = await write("reset", { price: null }, `המחיר הוחזר למחיר הבסיס ליום ${formatFullDate(date)}`);
+    if (done) setPriceEdit(null);
+  };
+
+  // every close route (Esc / X / overlay / "ביטול") lands here
+  const requestClose = () => {
+    if (saving) return;
+    if (dirty && !confirmDiscard) setConfirmDiscard(true);
+    else onClose();
+  };
 
   return (
     <SidePanel
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       title={`${unit.isPooled ? "מאגר" : "חדר"} ${unit.code} · ${formatFullDate(date)}`}
       subtitle={`${unit.roomTypeName ?? "ללא סוג"}${unit.isPooled ? ` · מאגר ${unit.roomCount}` : ""} · תוכנית בסיס · ${HEBREW_DAY_NAMES[dayOfWeek(date)]}`}
       icon="event-available"
-      widthClassName="rc-panel"
+      /* the CANONICAL §7 ladder, verbatim from SidePanel's own default (owner
+         ruling 2026-09-07) — `rc-panel` rides along only as this drawer's
+         scope hook, and declares no width of its own */
+      widthClassName="rc-panel w-full md:w-[85%] lg:w-[60%]"
       bodyClassName="rc-body"
+      /* the fast drawer motion (.45s), not the 1.2s default — owner ruling
+         2026-09-07: "כמו booking", i.e. the existing variant, overlay included */
+      visualVariant="booking"
       footer={
-        /* §7 via .dw-ft (row-reverse): DOM order = visual left→right — the
-           PRIMARY action is FIRST so it hugs the LEFT edge, "ביטול" to its
-           right; the unsaved-changes note is pushed to the far right. */
-        <>
-          <button type="button" className="btn btn-primary" disabled={!dirty || busy} onClick={saveFields}>
-            <Icon name="check" size={20} />
-            {saving === "fields" ? "שומר…" : "שמירת שינויים"}
-          </button>
-          <button type="button" className="btn btn-secondary" onClick={onClose}>ביטול</button>
-          <span className="flex-1" />
-          {dirty && !busy && (
-            <span className="rc-dirty">
-              <Icon name="edit" size={17} />
-              שינויים שלא נשמרו: {categories.map((c) => DRAFT_CATEGORY_TEXT[c]).join(" · ")}
-            </span>
-          )}
-        </>
+        confirmDiscard && dirty ? (
+          /* the discard confirmation, same .dw-ft geometry: the confirming
+             action is FIRST so it hugs the LEFT edge, the warning sits far right */
+          <>
+            <button type="button" className="btn btn-danger" onClick={onClose}>סגור בלי לשמור</button>
+            <button type="button" className="btn btn-secondary" onClick={() => setConfirmDiscard(false)}>המשך עריכה</button>
+            <span className="flex-1" />
+            <span className="text-sm font-bold text-ink">יש שינויים שלא נשמרו — לסגור בכל זאת?</span>
+            <Icon name="warning" size={17} className="text-status-danger" />
+          </>
+        ) : (
+          /* §7 via .dw-ft (row-reverse): DOM order = visual left→right — the
+             PRIMARY action is FIRST so it hugs the LEFT edge, "ביטול" to its
+             right; the unsaved-changes note is pushed to the far right. */
+          <>
+            <button type="button" className="btn btn-primary" disabled={!dirty || busy} onClick={saveFields}>
+              <Icon name="check" size={20} />
+              {saving === "fields" ? "שומר…" : "שמירת שינויים"}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={requestClose}>ביטול</button>
+            <span className="flex-1" />
+            {dirty && !busy && (
+              <span className="rc-dirty">
+                <Icon name="edit" size={17} />
+                שינויים שלא נשמרו: {categories.map((c) => DRAFT_CATEGORY_TEXT[c]).join(" · ")}
+              </span>
+            )}
+          </>
+        )
       }
     >
       {/* 1. Final sale state — one pill + one sentence, live */}
@@ -282,6 +318,12 @@ function CellDetailDrawer({
                 </button>
               </div>
               <p className="field-hint">המחיר חל על יום זה בלבד ודורס את מחיר תוכנית הבסיס</p>
+              {cell.priceSource === "explicit" && (
+                <button type="button" className="rc-price-reset" disabled={busy} onClick={clearPrice}>
+                  <Icon name="restore" size={17} />
+                  {saving === "reset" ? "מחזיר…" : `חזרה למחיר הבסיס (₪${Math.round(cell.inheritedRate)})`}
+                </button>
+              )}
             </div>
 
             <div className="field">
