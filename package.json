@@ -100,6 +100,7 @@
     "check:calendar-departure-edge": "node scripts/check-calendar-departure-edge.mjs",
     "check:design": "node scripts/check-design-system.mjs",
     "check:responsive": "node scripts/check-responsive.mjs",
+    "check:flex-card-shrink": "node scripts/check-flex-card-shrink.mjs",
     "check:dashboard-shell": "node scripts/check-dashboard-shell.mjs",
     "check:connection-health": "node scripts/check-connection-health.mjs",
     "check:channel-health": "node scripts/check-channel-health.mjs",
