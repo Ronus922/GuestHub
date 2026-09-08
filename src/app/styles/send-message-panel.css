@@ -68,6 +68,10 @@
   flex-direction: column;
   gap: 14px;
 }
+/* .card is overflow:hidden → min-height:auto resolves to 0 and it SHRINKS (D181) */
+.sm-body > .card {
+  flex: none;
+}
 
 /* the card-header icon square (§6: 34px / radius 10 / brand-soft). Scoped to
    this drawer exactly as rate-cell-panel.css scopes its own — .bw-hi next door
