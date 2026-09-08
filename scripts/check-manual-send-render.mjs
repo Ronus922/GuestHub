@@ -47,8 +47,23 @@ assert.equal((actions.match(/renderedBody\.canSend/g) ?? []).length, 2,
   "a blocked body refuses the send in BOTH channels instead of shipping a token");
 const composer = src("src/components/reservations/BookingActions.tsx");
 assert.equal((composer.match(/renderManualText\(/g) ?? []).length, 2, "the composer previews subject and body with the same renderer as the send");
-assert.ok(/subjectBlocked/.test(composer) && /!subjectBlocked/.test(composer), "the composer disables send while the subject is blocked");
-assert.ok(/bodyBlocked/.test(composer) && /!bodyBlocked/.test(composer), "the composer disables send while the body is blocked");
+// D178 moved the composer's send lock out of an inline `!subjectBlocked &&
+// !bodyBlocked` and into the ONE gate in lib/messaging/composer-draft.ts, so
+// this now follows the real path across both files: the composer must FEED
+// both flags to that gate, and the gate must lock on each of them. That is
+// stronger than the old grep for a bare negation, which a dead
+// `const x = !subjectBlocked` would also have satisfied.
+assert.ok(/manualSendGate\(\{[\s\S]*?subjectBlocked,[\s\S]*?\}\)/.test(composer),
+  "the composer feeds subjectBlocked into the send gate");
+assert.ok(/manualSendGate\(\{[\s\S]*?bodyBlocked,[\s\S]*?\}\)/.test(composer),
+  "the composer feeds bodyBlocked into the send gate");
+assert.ok(/canSend = gate\.canSend/.test(composer),
+  "…and the send button is driven by that gate's verdict");
+const gate = src("src/lib/messaging/composer-draft.ts");
+assert.ok(/if \(input\.subjectBlocked\) return "subject_blocked";/.test(gate),
+  "the composer disables send while the subject is blocked");
+assert.ok(/if \(input\.bodyBlocked\) return "body_blocked";/.test(gate),
+  "the composer disables send while the body is blocked");
 const automation = src("src/lib/communications/automation.ts");
 assert.ok(/export async function reservationRenderContext\(/.test(automation), "automation.ts exports the per-reservation render context");
 const module_ = src("src/lib/messaging/render-manual.ts");

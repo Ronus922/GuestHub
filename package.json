@@ -99,6 +99,7 @@
     "check:calendar-ui": "node scripts/check-calendar-ui.mjs",
     "check:calendar-departure-edge": "node scripts/check-calendar-departure-edge.mjs",
     "check:design": "node scripts/check-design-system.mjs",
+    "check:send-message-panel": "node scripts/check-send-message-panel.mjs",
     "check:responsive": "node scripts/check-responsive.mjs",
     "check:flex-card-shrink": "node scripts/check-flex-card-shrink.mjs",
     "check:dashboard-shell": "node scripts/check-dashboard-shell.mjs",
