@@ -1250,6 +1250,10 @@ aside.bw-win {
   flex-direction: column;
   gap: 16px;
 }
+/* .card is overflow:hidden, so min-height:auto → 0 and it would SHRINK instead of scroll (D181) */
+.bk-cmp-body > .card {
+  flex: none;
+}
 .bk-cmp-f {
   flex-shrink: 0;
   display: flex;
