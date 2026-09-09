@@ -53,6 +53,13 @@ async function safeRenderContext(tenantId: string, reservationId: string): Promi
 export type ComposerContext = {
   reservationId: string;
   guestName: string;
+  /** the booking context the composer's header + recipient card show (D178) —
+   *  already resolved by buildContext, so exposing it costs no extra query */
+  reservationNumber: string;
+  roomNumbers: string;
+  checkIn: string | null;
+  checkOut: string | null;
+  sourceLabel: string | null;
   email: string | null;
   emailValid: boolean;
   phone: string | null;
@@ -130,6 +137,11 @@ export async function getMessagingContextAction(reservationId: string): Promise<
       data: {
         reservationId,
         guestName: built.guestName,
+        reservationNumber: built.ctx.reservationNumber,
+        roomNumbers: built.ctx.roomNumbers,
+        checkIn: built.ctx.checkIn,
+        checkOut: built.ctx.checkOut,
+        sourceLabel: built.ctx.sourceLabel,
         email: built.email,
         emailValid: !!built.email && EMAIL_RE.test(built.email.trim()),
         phone: built.phone,
