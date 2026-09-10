@@ -128,10 +128,14 @@ export async function bulkUpdateRatesAction(
 
     const { earliest, latest } = await tenantWritableWindow(actor.tenantId);
     if (input.dateFrom < earliest) return fail("לא ניתן לעדכן תאריכים שעברו — התחל מהיום");
-    if (input.dateTo > latest) return fail(`ניתן לעדכן תעריפים עד ${latest}`);
+    // D182: dateTo is the CHECK-OUT, so it may land one day past the horizon — the
+    // last night it writes is still `latest`. Capping it at `latest` would have made
+    // that night unreachable. dateFrom needs no ceiling of its own: the schema
+    // enforces dateTo > dateFrom, so dateFrom <= latest follows.
+    if (input.dateTo > addDays(latest, 1)) return fail(`ניתן לעדכן תעריפים עד ${latest}`);
 
-    // dates in [from, to] inclusive, filtered by weekday chips (§7b)
-    const allDays = eachDay(input.dateFrom, addDays(input.dateTo, 1));
+    // dates in [from, to) — to is check-out, exclusive (D182), filtered by weekday chips (§7b)
+    const allDays = eachDay(input.dateFrom, input.dateTo);
     const wd = input.weekdays && input.weekdays.length ? new Set(input.weekdays) : null;
     const dates = wd ? allDays.filter((d) => wd.has(dayOfWeek(d))) : allDays;
     if (dates.length === 0) return fail("לא נמצאו תאריכים בטווח");

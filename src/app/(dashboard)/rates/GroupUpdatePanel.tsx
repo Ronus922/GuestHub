@@ -54,8 +54,15 @@ export function GroupUpdatePanel({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  // Clamp a requested date into [minDate, maxDate].
+  // D182: two ceilings, because the two ends are different things. dateFrom is a
+  // NIGHT and stops at maxDate; dateTo is the CHECK-OUT and may be one day past
+  // it — otherwise the last writable night (maxDate) could never be selected.
+  const maxCheckOut = addDays(maxDate, 1);
+  // Clamp a requested night into [minDate, maxDate].
   const clampDate = (d: DateOnly): DateOnly => (d < minDate ? minDate : d > maxDate ? maxDate : d);
+  // Clamp a requested check-out into [minDate, maxDate + 1].
+  const clampCheckOut = (d: DateOnly): DateOnly =>
+    d < minDate ? minDate : d > maxCheckOut ? maxCheckOut : d;
   const router = useRouter();
   const allCards: SuCard[] = useMemo(
     () =>
@@ -79,7 +86,9 @@ export function GroupUpdatePanel({
   const [search, setSearch] = useState("");
 
   const [dateFrom, setDateFrom] = useState<DateOnly>(clampDate(from));
-  const [dateTo, setDateTo] = useState<DateOnly>(clampDate(toInclusive));
+  // D182: dateTo is the check-OUT — one day AFTER the last night. The grid hands
+  // over its window as `toInclusive` (a night), so the seed adds that day back.
+  const [dateTo, setDateTo] = useState<DateOnly>(clampCheckOut(addDays(toInclusive, 1)));
   const [weekdays, setWeekdays] = useState<Set<number>>(new Set([0, 1, 2, 3, 4, 5, 6]));
 
   // field controls (each defaults to "no change")
@@ -114,7 +123,11 @@ export function GroupUpdatePanel({
     // clamp the reset window into the writable horizon (inline so the effect deps
     // stay primitive and it never re-fires mid-edit).
     setDateFrom(from < minDate ? minDate : from > maxDate ? maxDate : from);
-    setDateTo(toInclusive < minDate ? minDate : toInclusive > maxDate ? maxDate : toInclusive);
+    // D182: the check-OUT seed is the day AFTER the window's last night, and its
+    // ceiling is one day past the horizon (locals, so the deps stay primitive).
+    const maxOut = addDays(maxDate, 1);
+    const seedTo = addDays(toInclusive, 1);
+    setDateTo(seedTo < minDate ? minDate : seedTo > maxOut ? maxOut : seedTo);
     setWeekdays(new Set([0, 1, 2, 3, 4, 5, 6]));
     setPriceOn(false);
     setPriceMode("percent_add");
@@ -137,9 +150,12 @@ export function GroupUpdatePanel({
       (search.trim() === "" || c.code.includes(search.trim()) || c.name.includes(search.trim()) || c.typeName.includes(search.trim())),
   );
 
+  // D182: a hotel sells NIGHTS. dateTo is the check-OUT, so the nights are the
+  // half-open [dateFrom, dateTo) — 20/09→21/09 is ONE night, the 20th. eachDay is
+  // already half-open, so dateTo === dateFrom yields no nights and blocks apply().
   const effectiveDates = useMemo(() => {
     if (dateTo < dateFrom) return [];
-    return eachDay(dateFrom, addDays(dateTo, 1)).filter((d) => weekdays.has(dayOfWeek(d)));
+    return eachDay(dateFrom, dateTo).filter((d) => weekdays.has(dayOfWeek(d)));
   }, [dateFrom, dateTo, weekdays]);
 
   const cellCount = selected.size * effectiveDates.length;
@@ -321,27 +337,34 @@ export function GroupUpdatePanel({
           {/* 2 — Dates */}
           <Section n={2} title="תאריכים" badge={`${effectiveDates.length} לילות`}>
             <div className="gu-date-tools">
-              {/* mode="days": every picked date IS a night here, so the end is
-                  INCLUSIVE (13/07–11/08 = 30 nights) — unlike a stay, whose
-                  check-out is exclusive. min/max = the writable horizon. */}
+              {/* D182: a hotel sells NIGHTS, so this window is a stay-shaped range —
+                  mode="nights": "עד תאריך" is the check-OUT, EXCLUSIVE (13/07→12/08
+                  = 30 nights), and a same-day pick re-anchors instead of producing a
+                  zero-night range. The grid's pickable span ends at maxCheckOut, one
+                  day past the horizon, so the LAST writable night can still be given
+                  a check-out. `hint` is passed explicitly because the nights-mode
+                  default names a form's save button, and this panel applies from its
+                  own update button. */}
               <div className="gu-range">
                 <DateRangeField
-                  mode="days"
+                  mode="nights"
                   label="טווח תאריכים"
                   required={false}
                   from={dateFrom}
                   to={dateTo}
                   min={minDate}
-                  max={maxDate}
+                  max={maxCheckOut}
+                  hint="הטווח עודכן — ההחלה מתבצעת בכפתור העדכון של הפאנל"
                   onApply={(f, t) => {
                     setDateFrom(clampDate(f));
-                    setDateTo(clampDate(t));
+                    setDateTo(clampCheckOut(t));
                   }}
                 />
               </div>
+              {/* D182: n NIGHTS — the check-out lands n days after the first night */}
               <div className="gu-presets">
                 {([7, 14, 30] as const).map((n) => (
-                  <button type="button" key={n} className="btn btn-secondary btn-sm" onClick={() => setDateTo(earlier(addDays(dateFrom, n - 1), maxDate))}>{n} ימים</button>
+                  <button type="button" key={n} className="btn btn-secondary btn-sm" onClick={() => setDateTo(earlier(addDays(dateFrom, n), maxCheckOut))}>{n} לילות</button>
                 ))}
               </div>
             </div>
