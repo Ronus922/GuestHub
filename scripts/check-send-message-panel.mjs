@@ -49,6 +49,7 @@ const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
 
 const CSS = read("src/app/styles/send-message-panel.css");
+const BASE = read("src/app/styles/base.css");
 const TSX = read("src/components/reservations/BookingActions.tsx");
 const CODE = stripComments(TSX);
 const REFERENCE = "שליחת מייל לאורח.dc.html";
@@ -328,6 +329,45 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   assert.match(CODE, /const switchMode = \(next: ComposerDraft\["mode"\]\) =>\s*onDraftChange\(applyMode\(/,
     "…and that switch is the pure applyMode, so this section's assertions are about live code");
   ok('switching to "כתיבת הודעה חדשה" clears body AND subject, and switching back refills both from the template');
+}
+
+// ============================================================
+// 11. the composer's free-text fields are RTL by DECLARATION, not by content
+//     (D178, owner report 10/09/2026)
+// ============================================================
+{
+  // The bug was never a missing `direction`. base.css hands every input that
+  // does NOT declare a dir `unicode-bidi: plaintext` — the CSS spelling of
+  // dir="auto" — so the base direction is read off the first strong character
+  // of the VALUE. An empty field has no strong character, falls back to LTR and
+  // parks the caret on the left; measured in Chrome at 390x844, a lone neutral
+  // "5" landed 24px from the LEFT edge with 643px of space to its right.
+  // `:not([dir])` is that rule's own declared opt-out, so the attribute is the
+  // sanctioned fix rather than an ad-hoc one — these two assertions are the
+  // link that makes dir="rtl" load-bearing instead of decorative.
+  assert.match(BASE, /input:not\(\[dir\]\)/,
+    "base.css's bidi rule still exempts any input that declares its own dir");
+  assert.match(BASE, /textarea:not\(\[dir\]\)\s*\{\s*unicode-bidi:\s*plaintext/,
+    "…and the same exemption covers textarea — that is what dir=\"rtl\" switches off");
+
+  assert.match(CODE, /<input\b[\s\S]{0,200}?dir="rtl"[\s\S]{0,200}?placeholder="נושא ההודעה"/,
+    'the subject input declares dir="rtl"');
+  assert.match(CODE, /<textarea\b[\s\S]{0,200}?dir="rtl"[\s\S]{0,300}?placeholder="כתבו את ההודעה/,
+    'the body textarea declares dir="rtl"');
+  // the owner ruled dir="auto" OUT by name: deriving direction from content is
+  // the defect, not a milder form of it
+  assert.doesNotMatch(CODE, /dir="auto"/,
+    'no field in the composer derives its direction from content (dir="auto" is the bug, restated)');
+
+  // text-align resolves against the declared direction, so the value, the caret
+  // and the placeholder all sit on the right — the [dir="rtl"] attribute selector
+  // keeps the template <select> out of it, which never carried a dir and needs none
+  assert.match(
+    CSS,
+    /\.sm-field input\.field-input\[dir="rtl"\],\s*\.sm-field textarea\.field-input\[dir="rtl"\]\s*\{[^}]*text-align:\s*start/,
+    "the composer pins text-align: start on exactly the two fields that declare dir",
+  );
+  ok('the subject and body are RTL while EMPTY, by declaration — not because a Hebrew template happened to fill them');
 }
 
 console.log(`\nAll ${n} send-message-drawer claim groups hold.`);
