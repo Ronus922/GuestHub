@@ -22,6 +22,10 @@
 //   9.   a body with an unknown dotted key is blanked AND blocked, named;
 //   10.  a body with a known-but-missing optional value renders empty, allowed;
 //   11.  the live legacy email body still renders through the legacy pass.
+// Part C (runtime, no DB — D179): the REAL compiled manualSendGate, fed the
+//   REAL renderManualText verdicts. This closes the loop the guard only ever
+//   claimed: an unresolvable variable is not merely *detected* by the renderer,
+//   it actually LOCKS the send button and names its own reason in Hebrew.
 // ============================================================
 import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -60,10 +64,10 @@ assert.ok(/manualSendGate\(\{[\s\S]*?bodyBlocked,[\s\S]*?\}\)/.test(composer),
 assert.ok(/canSend = gate\.canSend/.test(composer),
   "…and the send button is driven by that gate's verdict");
 const gate = src("src/lib/messaging/composer-draft.ts");
-assert.ok(/if \(input\.subjectBlocked\) return "subject_blocked";/.test(gate),
-  "the composer disables send while the subject is blocked");
-assert.ok(/if \(input\.bodyBlocked\) return "body_blocked";/.test(gate),
-  "the composer disables send while the body is blocked");
+// D179: the gate's own two locks used to be asserted here as source text. A
+// grep cannot tell a live branch from a dead one — `if (input) return null;`
+// at the top of the IIFE left every character of those two lines in place and
+// this guard stayed green (measured 07/09/2026). Part C RUNS the gate instead.
 const automation = src("src/lib/communications/automation.ts");
 assert.ok(/export async function reservationRenderContext\(/.test(automation), "automation.ts exports the per-reservation render context");
 const module_ = src("src/lib/messaging/render-manual.ts");
@@ -82,7 +86,8 @@ writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({
     rootDir: join(ROOT, "src"), outDir: out,
     typeRoots: [join(ROOT, "node_modules/@types")], types: ["node"],
   },
-  include: [join(ROOT, "src/lib/messaging/render-manual.ts")],
+  include: [join(ROOT, "src/lib/messaging/render-manual.ts"),
+            join(ROOT, "src/lib/messaging/composer-draft.ts")],
 }));
 execSync(`npx tsc --project ${join(tmp, "tsconfig.json")}`, { cwd: ROOT, stdio: "inherit" });
 const stub = join(tmp, "server-only-stub.js");
@@ -208,4 +213,70 @@ assert.equal(r11.value, "שלום בוריס,\nמספר הזמנה: 1159\nנשמ
 assert.equal(r11.canSend, true, "a legacy body never blocks");
 
 console.log("✓ Part B: 11 runtime scenarios passed on the compiled renderer (6 subject + 5 body)");
+
+// ---- Part C: render → verdict → gate → locked button, all executed (D179) ----
+// Parts A and B stopped one hop short. The renderer said canSend:false, and the
+// claim "a guest never receives a raw token" rested on a grep proving the gate
+// still contained two lines of source. Below, the gate is COMPILED AND CALLED
+// with the renderer's own output, so the guard proves the chain it advertises.
+const { manualSendGate, sendBlockMessage } = req(join(out, "lib/messaging/composer-draft.js"));
+
+/**
+ * The composer's own wiring, reproduced from BookingActions.tsx:197-213.
+ * The `isEmail &&` on the subject is not a shortcut — it is the component's:
+ * WhatsApp renders no subject at all, so `subjectRender` is null there and
+ * `subjectBlocked` is false whatever the subject string happens to hold.
+ */
+const gateFor = (subjectText, bodyText, isEmail = true) => {
+  const rs = isEmail ? renderManualText(subjectText, legacyVars, bodyContext) : null;
+  const rb = renderManualText(bodyText, legacyVars, bodyContext);
+  return {
+    render: { subject: rs, body: rb },
+    ...manualSendGate({
+      isEmail, providerConfigured: true, recipientValid: true,
+      subjectBlocked: rs !== null && !rs.canSend, bodyBlocked: !rb.canSend,
+      subject: subjectText, renderedBody: rb.value,
+    }),
+  };
+};
+
+// C1 — a clean template must not be locked by the chain itself
+const c1 = gateFor("אישור הזמנה {{reservation.number}}", "שלום {{guest.first_name}}");
+assert.equal(c1.canSend, true, "C1: a fully resolved subject and body leave the send button live");
+assert.equal(c1.block, null, "C1: …and the footer states no reason");
+
+// C2 — the 2026-09-04 failure mode, end to end: unknown dotted key in the BODY
+const c2 = gateFor("אישור הזמנה {{reservation.number}}", "הסיסמה היא {{room.wifi_password}}");
+assert.equal(c2.render.body.canSend, false, "C2: the renderer refuses the unknown dotted key");
+assert.equal(c2.canSend, false, "C2: …and the SEND BUTTON is actually locked, not merely the render");
+assert.equal(c2.block, "body_blocked", "C2: …under the reason the footer will print");
+assert.match(sendBlockMessage(c2.block, true), /משתנה שלא ניתן לשלוח/, "C2: …and that sentence exists in Hebrew");
+assert.ok(!c2.render.body.value.includes("{{"), "C2: …while the token never survives literally either way");
+
+// C3 — the same, one field over: the subject
+const c3 = gateFor("אישור {{foo.bar}}", "שלום {{guest.first_name}}");
+assert.equal(c3.canSend, false, "C3: an unresolvable SUBJECT variable locks the send too");
+assert.equal(c3.block, "subject_blocked", "C3: …and the subject is named as the reason, not the body");
+
+// C4 — order: the upstream cause wins, so the operator is never sent chasing the wrong field
+const c4 = gateFor("אישור {{foo.bar}}", "הסיסמה היא {{room.wifi_password}}");
+assert.equal(c4.block, "subject_blocked", "C4: with BOTH fields blocked the subject is stated first");
+
+// C5 — the legacy hole has a floor. An unknown {{snake_case}} key is blanked
+// silently and never blocks (Part B scenario 6), but a body made only of such
+// tokens renders to nothing, and emptiness is its own lock.
+const c5 = gateFor("אישור הזמנה {{reservation.number}}", "{{totally_unknown}}");
+assert.equal(c5.render.body.canSend, true, "C5: an unknown legacy key still does not block the RENDER");
+assert.equal(c5.canSend, false, "C5: …but a body that renders to nothing cannot be sent");
+assert.equal(c5.block, "body_empty", "C5: …and the reason is emptiness, not a variable");
+
+// C6 — WhatsApp shows no subject field, so leftover subject text (blocked or
+// not) must never lock a WhatsApp send. The email case above proves the same
+// string DOES lock email, so this is a real asymmetry and not a vacuous pass.
+const c6 = gateFor("אישור {{foo.bar}}", "שלום {{guest.first_name}}", false);
+assert.equal(c3.block, "subject_blocked", "C6: the identical subject locks EMAIL…");
+assert.equal(c6.canSend, true, "C6: …and leaves WhatsApp live, because WhatsApp has no subject to fix");
+assert.equal(c6.block, null, "C6: …with no reason printed in the footer");
+
+console.log("✓ Part C: 6 runtime scenarios passed on the compiled send gate (D179)");
 console.log("check:manual-send-render — PASS");
