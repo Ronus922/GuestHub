@@ -6,6 +6,7 @@ import { Icon, type IconName } from "@/components/shared/Icon";
 import { renderTemplate } from "@/lib/messaging/templates";
 import { renderManualText } from "@/lib/messaging/render-manual";
 import {
+  applyMode,
   insertToken,
   manualSendGate,
   sendBlockMessage,
@@ -167,14 +168,11 @@ export function MessageComposer({
   const recipientValid = ctx ? (isEmail ? ctx.emailValid : ctx.phoneValid) : false;
   const recipient = ctx ? (isEmail ? ctx.email : ctx.phoneE164 ?? ctx.phone) : null;
 
-  const applyTemplate = (id: string) => {
-    const t = templates.find((x) => x.id === id);
-    if (!t) {
-      patch({ templateId: id });
-      return;
-    }
-    patch({ templateId: id, body: t.body, ...(isEmail ? { subject: t.subject ?? "" } : {}) });
-  };
+  const templateById = (id: string) => templates.find((x) => x.id === id) ?? null;
+  const applyTemplate = (id: string) =>
+    onDraftChange(applyMode({ ...draft, templateId: id }, "template", templateById(id), isEmail));
+  const switchMode = (next: ComposerDraft["mode"]) =>
+    onDraftChange(applyMode(draft, next, templateById(templateId), isEmail));
 
   const insertVar = (key: string) => {
     const token = `{{${key}}}`;
@@ -359,7 +357,7 @@ export function MessageComposer({
                     type="button"
                     className={`sm-seg-btn${mode === "template" ? " on" : ""}`}
                     aria-pressed={mode === "template"}
-                    onClick={() => patch({ mode: "template" })}
+                    onClick={() => switchMode("template")}
                   >
                     <Icon name="documents" size={20} />
                     בחירה מתבנית
@@ -368,7 +366,7 @@ export function MessageComposer({
                     type="button"
                     className={`sm-seg-btn${mode === "custom" ? " on" : ""}`}
                     aria-pressed={mode === "custom"}
-                    onClick={() => patch({ mode: "custom" })}
+                    onClick={() => switchMode("custom")}
                   >
                     <Icon name="stylus-note" size={20} />
                     כתיבת הודעה חדשה

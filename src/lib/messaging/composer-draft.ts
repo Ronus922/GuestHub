@@ -36,6 +36,31 @@ export function insertToken(
   return { text: text.slice(0, lo) + token + text.slice(hi), caret: lo + token.length };
 }
 
+/** what a template fills a draft with — structurally the composer's own template rows */
+export type DraftTemplate = { subject: string | null; body: string };
+
+/**
+ * The mode switch (D178). "כתיבת הודעה חדשה" is a BLANK page: the template's
+ * text — and with it the raw {{placeholders}} — must not linger in the textarea.
+ * It was misleading rather than merely sticky, because the preview beside the
+ * editor renders the SAME body with the values resolved, so the operator saw
+ * tokens and values for one message at the same moment.
+ *
+ * Switching back re-fills from the still-selected template. That half is not
+ * cosmetic: the <select> keeps its value, so re-picking the same option fires
+ * no change event and the select's own onChange would never run again.
+ */
+export function applyMode(
+  draft: ComposerDraft,
+  mode: ComposerDraft["mode"],
+  template: DraftTemplate | null,
+  isEmail: boolean,
+): ComposerDraft {
+  if (mode === "custom") return { ...draft, mode, body: "" };
+  if (!template) return { ...draft, mode };
+  return { ...draft, mode, body: template.body, ...(isEmail ? { subject: template.subject ?? "" } : {}) };
+}
+
 export type SendGateInput = {
   isEmail: boolean;
   /** the channel provider (Gmail / WhatsApp) is configured for this tenant */

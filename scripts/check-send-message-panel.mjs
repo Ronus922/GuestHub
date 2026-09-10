@@ -277,4 +277,47 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   ok("the partial, the icons, the lifted draft and the guest-details escape hatch are all wired");
 }
 
+// ============================================================
+// 10. the mode switch — "כתיבת הודעה חדשה" is a BLANK page (D178, owner ruling 10/09/2026)
+// ============================================================
+{
+  const tpl = { subject: "אישור הזמנה {{reservation.number}}", body: "שלום {{guest_first_name}},\nמספר {{reservation.number}}" };
+  const filled = { mode: "template", templateId: "t1", subject: tpl.subject, body: tpl.body };
+
+  const custom = m.applyMode(filled, "custom", tpl, true);
+  assert.equal(custom.body, "", 'switching to "כתיבת הודעה חדשה" empties the textarea');
+  assert.ok(!custom.body.includes("{{"), "…so no {{placeholder}} can linger on screen");
+  assert.equal(custom.mode, "custom", "…and the mode really changed");
+  assert.equal(custom.templateId, "t1",
+    "…while the chosen template is REMEMBERED — switching back has to have something to refill from");
+
+  const back = m.applyMode(custom, "template", tpl, true);
+  assert.equal(back.body, tpl.body, "switching back to a template repopulates the body");
+  assert.equal(back.subject, tpl.subject, "…and the subject, on email");
+  assert.equal(m.applyMode(custom, "template", tpl, false).subject, custom.subject,
+    "…but never the subject on WhatsApp, which has no subject field");
+
+  // the select keeps its value, so re-picking the same option fires no change
+  // event: without this branch the body could never come back at all
+  assert.notEqual(back.body, "", "the round trip template → custom → template is not one-way");
+
+  const orphan = m.applyMode({ ...filled, templateId: "gone" }, "template", null, true);
+  assert.equal(orphan.body, filled.body, "a templateId that matches nothing leaves the draft alone");
+  assert.equal(orphan.mode, "template", "…and still switches mode");
+
+  // an untouched custom draft must survive its own no-op switch intact
+  const typed = { mode: "custom", templateId: "", subject: "s", body: "מה שהמפעיל הקליד" };
+  assert.equal(m.applyMode(typed, "template", null, true).body, typed.body,
+    "with no template chosen, entering template mode keeps what the operator typed");
+
+  // wiring: both buttons must go through applyMode, or the runtime proof above is decoration
+  assert.doesNotMatch(CODE, /patch\(\{\s*mode:/,
+    "no mode switch still patches `mode` on its own (that is the bug: it spread the old body through)");
+  assert.match(CODE, /onClick=\{\(\) => switchMode\("template"\)\}/, 'the "בחירה מתבנית" button routes through the switch');
+  assert.match(CODE, /onClick=\{\(\) => switchMode\("custom"\)\}/, 'the "כתיבת הודעה חדשה" button routes through it too');
+  assert.match(CODE, /const switchMode = \(next: ComposerDraft\["mode"\]\) =>\s*onDraftChange\(applyMode\(/,
+    "…and that switch is the pure applyMode, so this section's assertions are about live code");
+  ok('switching to "כתיבת הודעה חדשה" clears the body, and switching back refills it from the template');
+}
+
 console.log(`\nAll ${n} send-message-drawer claim groups hold.`);
