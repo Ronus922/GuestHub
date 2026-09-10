@@ -1,24 +1,64 @@
-// Runnable check for the stay date-range picker (same pattern as
-// check-calendar.mjs): compiles the pure module, asserts the click semantics and
-// the month grid, and asserts the reservation editors no longer carry a raw
-// <input type="date"> for the stay dates. Usage: node scripts/check-datepicker.mjs
+// Runnable check for the date-range picker (same pattern as check-calendar.mjs):
+// compiles the pure modules AND the bulk-update schema, asserts the click
+// semantics and the month grid, and asserts the reservation editors no longer
+// carry a raw <input type="date"> for the stay dates.
+// Usage: node scripts/check-datepicker.mjs
+//
+// D181 — the Group Update window is NIGHTS, exactly like a stay: mode="nights",
+// "עד תאריך" is the check-OUT (EXCLUSIVE), and a zero-night range (to === from)
+// is rejected by the schema itself. The reservations LIST FILTER is the one
+// remaining mode="days" consumer, and it stays inclusive — locked below.
 import { execSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "./lib/collect-assert.mjs"; // D127 collect-all: same node:assert/strict semantics, reports every failure
 
-const out = mkdtempSync(join(tmpdir(), "datepicker-"));
-execSync(
-  `pnpm exec tsc src/lib/dates.ts src/lib/date-range.ts --outDir ${out} --module commonjs --target es2022 --moduleResolution node10 --skipLibCheck`,
-  { stdio: "inherit" },
+const ROOT = process.cwd();
+const tmp = mkdtempSync(join(tmpdir(), "datepicker-"));
+const out = join(tmp, "out");
+// tsconfig (not a bare CLI call) because the schema reaches @/lib/dates through
+// the path alias and pulls zod out of the repo's node_modules.
+writeFileSync(
+  join(tmp, "tsconfig.json"),
+  JSON.stringify({
+    compilerOptions: {
+      module: "commonjs", moduleResolution: "node10", target: "es2022",
+      esModuleInterop: true, skipLibCheck: true, strict: true,
+      baseUrl: join(ROOT, "src"), paths: { "@/*": ["*"] },
+      rootDir: join(ROOT, "src"), outDir: out,
+      typeRoots: [join(ROOT, "node_modules/@types")], types: ["node"],
+    },
+    include: [
+      join(ROOT, "src/lib/dates.ts"),
+      join(ROOT, "src/lib/date-range.ts"),
+      join(ROOT, "src/lib/validation/rates.ts"),
+    ],
+  }),
 );
-const require = createRequire(import.meta.url);
+execSync(`npx tsc --project ${join(tmp, "tsconfig.json")}`, { cwd: ROOT, stdio: "inherit" });
+
+const require = createRequire(join(ROOT, "package.json"));
+// resolved BEFORE the hook is installed: require.resolve goes through
+// _resolveFilename itself, so resolving inside the hook would recurse forever.
+const BARE = { zod: require.resolve("zod") };
+const Module = require("node:module");
+const origResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+  if (request.startsWith("@/")) {
+    return origResolve.call(this, join(out, request.slice(2)), ...rest);
+  }
+  // the compiled output sits in a temp dir with no node_modules beside it
+  if (BARE[request]) return BARE[request];
+  return origResolve.call(this, request, ...rest);
+};
+
 const { pickRange, monthCells, shiftMonth, monthOf, firstOfMonth } = require(
-  join(out, "date-range.js"),
+  join(out, "lib/date-range.js"),
 );
-const { nightsBetween } = require(join(out, "dates.js"));
+const { nightsBetween } = require(join(out, "lib/dates.js"));
+const { bulkUpdateRatesSchema } = require(join(out, "lib/validation/rates.js"));
 
 // ---- click semantics ----
 const empty = { start: null, end: null };
@@ -47,22 +87,24 @@ assert.deepEqual(
 // the picked range feeds the ONE hotel-night model
 assert.equal(nightsBetween("2026-07-10", "2026-07-16"), 6, "10→16 July = 6 nights");
 
-// ---- "days" semantics (Group Update): the end date is INCLUSIVE ----
+// ---- "days" semantics: the INCLUSIVE filter window (reservations list) ----
+// D181 moved Group Update OFF this mode. The reservations list filter is the one
+// consumer left, and there both ends are inclusive (data.ts: `>= from AND <= to`),
+// so a single day is still a legal selection.
 assert.deepEqual(
   pickRange({ start: "2026-07-13", end: null }, "2026-07-13", { allowSameDay: true }),
   { start: "2026-07-13", end: "2026-07-13" },
-  "a rates window may be a single day (that day IS the night)",
+  "a filter window may be a single day",
 );
 assert.deepEqual(
   pickRange({ start: "2026-07-13", end: null }, "2026-07-12", { allowSameDay: true }),
   { start: "2026-07-12", end: null },
   "an earlier click still re-anchors the start in days mode",
 );
-// 13/07 → 11/08 inclusive = 30 nights, which is what Group Update writes
 assert.equal(
   nightsBetween("2026-07-13", "2026-08-11") + 1,
   30,
-  "days mode counts the end date as a night",
+  "days mode counts the end date itself — 13/07–11/08 inclusive is 30 days",
 );
 
 // ---- month grid ----
@@ -123,14 +165,27 @@ assert.ok(
   "the month grid must pick through the write-through handler, not setRange",
 );
 
-// ---- Group Update (rates) uses the SAME picker, in days mode ----
+// ---- Group Update (rates) uses the SAME picker, in NIGHTS mode (D181) ----
 const gu = readFileSync("src/app/(dashboard)/rates/GroupUpdatePanel.tsx", "utf8");
 assert.ok(/<DateRangeField/.test(gu), "Group Update must render the canonical picker");
 assert.ok(
   !/type="date"/.test(gu),
   'the raw <input type="date"> dates are gone from Group Update too',
 );
-assert.match(gu, /mode="days"/, "a rates window is INCLUSIVE — days mode, not a stay's nights");
+// (a) a hotel sells NIGHTS: the window is stay-shaped, its end is the check-out.
+// Asserted on the ELEMENT, not the file — a comment saying "nights" must not be
+// able to satisfy this while the attribute says otherwise.
+const guPicker = gu.match(/<DateRangeField[\s\S]*?\/>/);
+assert.ok(guPicker, "Group Update must render a self-closing <DateRangeField …/>");
+assert.match(
+  guPicker[0],
+  /mode="nights"/,
+  'a Group Update window is NIGHTS — "עד תאריך" is the check-out, exclusive (D181)',
+);
+assert.ok(
+  !/mode="days"/.test(guPicker[0]),
+  "Group Update may not fall back to the inclusive days mode (D181)",
+);
 assert.match(gu, /min=\{minDate\}/, "the picker must be clamped to the writable horizon");
 assert.match(gu, /max=\{maxDate\}/, "the picker must be clamped to the writable horizon");
 // the picked window must feed the SAME state the bulk action sends
@@ -147,6 +202,63 @@ assert.match(
   gu,
   /מחוץ לחלון המוצג בטבלה/,
   "the preview must SAY that out-of-window cells will be updated without a preview",
+);
+
+// ---- (b) D181: the SERVER expands the window as nights, half-open [from, to) ----
+const rateActions = readFileSync("src/app/(dashboard)/rates/actions.ts", "utf8");
+assert.match(
+  rateActions,
+  /const allDays = eachDay\(input\.dateFrom, input\.dateTo\);/,
+  "bulkUpdateRatesAction expands [dateFrom, dateTo) — dateTo is a check-out, not a night",
+);
+assert.ok(
+  !/addDays\(\s*input\.dateTo/.test(rateActions),
+  "the +1 that turned the end date into a night is gone — dateTo is never shifted (D181)",
+);
+
+// ---- (c) D181: the schema itself rejects a zero-night window (BEHAVIOURAL) ----
+// Evaluated, not regexed: the rule has to hold in the compiled schema, whatever
+// shape the source takes.
+const bulkBase = {
+  sellableUnitIds: ["8f1f0b6a-0000-4000-8000-000000000001"],
+  stopSell: true,
+};
+const zeroNights = bulkUpdateRatesSchema.safeParse({
+  ...bulkBase, dateFrom: "2026-09-20", dateTo: "2026-09-20",
+});
+assert.equal(
+  zeroNights.success,
+  false,
+  "dateTo === dateFrom is ZERO nights and the schema must reject it (D181)",
+);
+assert.ok(
+  !zeroNights.success &&
+    zeroNights.error.issues.some((i) =>
+      /תאריך הסיום חייב להיות אחרי תאריך ההתחלה/.test(i.message),
+    ),
+  "the rejection must SAY the end date has to come after the start",
+);
+const oneNight = bulkUpdateRatesSchema.safeParse({
+  ...bulkBase, dateFrom: "2026-09-20", dateTo: "2026-09-21",
+});
+assert.equal(oneNight.success, true, "20/09 → 21/09 is ONE night and must parse");
+const inverted = bulkUpdateRatesSchema.safeParse({
+  ...bulkBase, dateFrom: "2026-09-21", dateTo: "2026-09-20",
+});
+assert.equal(inverted.success, false, "an inverted window must still be rejected");
+
+// ---- (d) D181 regression lock: the reservations LIST FILTER stays days-mode ----
+// It is a date filter, not a stay: both ends inclusive, a single day legal.
+const resScreen = readFileSync(
+  "src/app/(dashboard)/reservations/ReservationsScreen.tsx",
+  "utf8",
+);
+const resPicker = resScreen.match(/<DateRangeField[\s\S]*?\/>/);
+assert.ok(resPicker, "the reservations list must render a self-closing <DateRangeField …/>");
+assert.match(
+  resPicker[0],
+  /mode="days"/,
+  'the reservations filter is an inclusive window and must keep mode="days" (D181)',
 );
 
 // the dead CSS of the inputs it replaced must be gone (iron rule #11)
