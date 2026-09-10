@@ -46,7 +46,7 @@ export const bulkUpdateRatesSchema = z
   .object({
     sellableUnitIds: z.array(z.uuid()).min(1, "נדרשת יחידה אחת לפחות").max(1000),
     dateFrom: dateOnlySchema,
-    dateTo: dateOnlySchema, // the check-OUT — exclusive, one day after the last night (D181)
+    dateTo: dateOnlySchema, // the check-OUT — exclusive, one day after the last night (D182)
     weekdays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
     price: z
       .object({ mode: priceModeSchema, amount: z.number().min(0).max(1_000_000) })
@@ -58,7 +58,7 @@ export const bulkUpdateRatesSchema = z
     closedToArrival: z.boolean().optional(),
     closedToDeparture: z.boolean().optional(),
   })
-  // D181: the range is NIGHTS — dateTo is the check-out, so it must be strictly
+  // D182: the range is NIGHTS — dateTo is the check-out, so it must be strictly
   // after dateFrom. dateTo === dateFrom is zero nights and is rejected here.
   .refine((b) => b.dateTo > b.dateFrom, {
     message:

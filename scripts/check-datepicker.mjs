@@ -4,7 +4,7 @@
 // carry a raw <input type="date"> for the stay dates.
 // Usage: node scripts/check-datepicker.mjs
 //
-// D181 — the Group Update window is NIGHTS, exactly like a stay: mode="nights",
+// D182 — the Group Update window is NIGHTS, exactly like a stay: mode="nights",
 // "עד תאריך" is the check-OUT (EXCLUSIVE), and a zero-night range (to === from)
 // is rejected by the schema itself. The reservations LIST FILTER is the one
 // remaining mode="days" consumer, and it stays inclusive — locked below.
@@ -57,7 +57,9 @@ Module._resolveFilename = function (request, ...rest) {
 const { pickRange, monthCells, shiftMonth, monthOf, firstOfMonth } = require(
   join(out, "lib/date-range.js"),
 );
-const { nightsBetween } = require(join(out, "lib/dates.js"));
+const { nightsBetween, addDays, eachDay, ratesWritableWindow } = require(
+  join(out, "lib/dates.js"),
+);
 const { bulkUpdateRatesSchema } = require(join(out, "lib/validation/rates.js"));
 
 // ---- click semantics ----
@@ -88,7 +90,7 @@ assert.deepEqual(
 assert.equal(nightsBetween("2026-07-10", "2026-07-16"), 6, "10→16 July = 6 nights");
 
 // ---- "days" semantics: the INCLUSIVE filter window (reservations list) ----
-// D181 moved Group Update OFF this mode. The reservations list filter is the one
+// D182 moved Group Update OFF this mode. The reservations list filter is the one
 // consumer left, and there both ends are inclusive (data.ts: `>= from AND <= to`),
 // so a single day is still a legal selection.
 assert.deepEqual(
@@ -165,7 +167,7 @@ assert.ok(
   "the month grid must pick through the write-through handler, not setRange",
 );
 
-// ---- Group Update (rates) uses the SAME picker, in NIGHTS mode (D181) ----
+// ---- Group Update (rates) uses the SAME picker, in NIGHTS mode (D182) ----
 const gu = readFileSync("src/app/(dashboard)/rates/GroupUpdatePanel.tsx", "utf8");
 assert.ok(/<DateRangeField/.test(gu), "Group Update must render the canonical picker");
 assert.ok(
@@ -180,14 +182,16 @@ assert.ok(guPicker, "Group Update must render a self-closing <DateRangeField …
 assert.match(
   guPicker[0],
   /mode="nights"/,
-  'a Group Update window is NIGHTS — "עד תאריך" is the check-out, exclusive (D181)',
+  'a Group Update window is NIGHTS — "עד תאריך" is the check-out, exclusive (D182)',
 );
 assert.ok(
   !/mode="days"/.test(guPicker[0]),
-  "Group Update may not fall back to the inclusive days mode (D181)",
+  "Group Update may not fall back to the inclusive days mode (D182)",
 );
 assert.match(gu, /min=\{minDate\}/, "the picker must be clamped to the writable horizon");
-assert.match(gu, /max=\{maxDate\}/, "the picker must be clamped to the writable horizon");
+// D182: the ceiling is the check-OUT ceiling, one day past the horizon — see the
+// reachability assertion at the end of this file.
+assert.match(gu, /max=\{maxCheckOut\}/, "the picker must be clamped to the writable horizon");
 // the picked window must feed the SAME state the bulk action sends
 const guApply = gu.match(/onApply=\{\(f, t\) => \{([\s\S]*?)\n\s*\}\}/);
 assert.ok(guApply, "Group Update must wire onApply");
@@ -204,7 +208,7 @@ assert.match(
   "the preview must SAY that out-of-window cells will be updated without a preview",
 );
 
-// ---- (b) D181: the SERVER expands the window as nights, half-open [from, to) ----
+// ---- (b) D182: the SERVER expands the window as nights, half-open [from, to) ----
 const rateActions = readFileSync("src/app/(dashboard)/rates/actions.ts", "utf8");
 assert.match(
   rateActions,
@@ -213,10 +217,10 @@ assert.match(
 );
 assert.ok(
   !/addDays\(\s*input\.dateTo/.test(rateActions),
-  "the +1 that turned the end date into a night is gone — dateTo is never shifted (D181)",
+  "the +1 that turned the end date into a night is gone — dateTo is never shifted (D182)",
 );
 
-// ---- (c) D181: the schema itself rejects a zero-night window (BEHAVIOURAL) ----
+// ---- (c) D182: the schema itself rejects a zero-night window (BEHAVIOURAL) ----
 // Evaluated, not regexed: the rule has to hold in the compiled schema, whatever
 // shape the source takes.
 const bulkBase = {
@@ -229,7 +233,7 @@ const zeroNights = bulkUpdateRatesSchema.safeParse({
 assert.equal(
   zeroNights.success,
   false,
-  "dateTo === dateFrom is ZERO nights and the schema must reject it (D181)",
+  "dateTo === dateFrom is ZERO nights and the schema must reject it (D182)",
 );
 assert.ok(
   !zeroNights.success &&
@@ -247,7 +251,7 @@ const inverted = bulkUpdateRatesSchema.safeParse({
 });
 assert.equal(inverted.success, false, "an inverted window must still be rejected");
 
-// ---- (d) D181 regression lock: the reservations LIST FILTER stays days-mode ----
+// ---- (d) D182 regression lock: the reservations LIST FILTER stays days-mode ----
 // It is a date filter, not a stay: both ends inclusive, a single day legal.
 const resScreen = readFileSync(
   "src/app/(dashboard)/reservations/ReservationsScreen.tsx",
@@ -258,7 +262,24 @@ assert.ok(resPicker, "the reservations list must render a self-closing <DateRang
 assert.match(
   resPicker[0],
   /mode="days"/,
-  'the reservations filter is an inclusive window and must keep mode="days" (D181)',
+  'the reservations filter is an inclusive window and must keep mode="days" (D182)',
+);
+
+// ---- D182: the LAST writable night stays reachable — the check-out may be horizon+1 ----
+// Capping dateTo at `latest` (correct while it WAS a night) would silently drop the
+// night of `latest`, because reaching it now needs a check-out of latest + 1.
+// The horizon window itself is evaluated; the two ceilings that must honour it are
+// read from source — the server cap needs a tenant clock and a DB, and the panel is
+// a React component, so neither is runnable here.
+const { latest } = ratesWritableWindow("2026-09-10");
+const lastNight = eachDay(latest, addDays(latest, 1));
+assert.ok(
+  lastNight.length === 1 &&
+    lastNight[0] === latest &&
+    /input\.dateTo > addDays\(latest, 1\)/.test(rateActions) &&
+    /const maxCheckOut = addDays\(maxDate, 1\)/.test(gu) &&
+    /max=\{maxCheckOut\}/.test(gu),
+  "the last writable night stays reachable: server cap AND picker ceiling allow a check-out of horizon + 1 (D182)",
 );
 
 // the dead CSS of the inputs it replaced must be gone (iron rule #11)
