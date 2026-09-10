@@ -286,16 +286,20 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
 
   const custom = m.applyMode(filled, "custom", tpl, true);
   assert.equal(custom.body, "", 'switching to "כתיבת הודעה חדשה" empties the textarea');
-  assert.ok(!custom.body.includes("{{"), "…so no {{placeholder}} can linger on screen");
+  // owner ruling 10/09/2026: empty means empty — the subject goes with the body
+  assert.equal(custom.subject, "", "…and empties the subject field too");
+  assert.ok(!custom.body.includes("{{"), "…so no {{placeholder}} can linger in the body");
+  assert.ok(!custom.subject.includes("{{"), "…and none in the subject either");
   assert.equal(custom.mode, "custom", "…and the mode really changed");
   assert.equal(custom.templateId, "t1",
     "…while the chosen template is REMEMBERED — switching back has to have something to refill from");
 
   const back = m.applyMode(custom, "template", tpl, true);
   assert.equal(back.body, tpl.body, "switching back to a template repopulates the body");
-  assert.equal(back.subject, tpl.subject, "…and the subject, on email");
-  assert.equal(m.applyMode(custom, "template", tpl, false).subject, custom.subject,
-    "…but never the subject on WhatsApp, which has no subject field");
+  assert.equal(back.subject, tpl.subject, "…and the subject, on email — BOTH come back, not just one");
+  assert.notEqual(back.subject, "", "…so the round trip restores the subject it cleared");
+  assert.equal(m.applyMode(custom, "template", tpl, false).subject, "",
+    "…but WhatsApp never refills a subject, because WhatsApp has no subject field");
 
   // the select keeps its value, so re-picking the same option fires no change
   // event: without this branch the body could never come back at all
@@ -309,6 +313,12 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   const typed = { mode: "custom", templateId: "", subject: "s", body: "מה שהמפעיל הקליד" };
   assert.equal(m.applyMode(typed, "template", null, true).body, typed.body,
     "with no template chosen, entering template mode keeps what the operator typed");
+  assert.equal(m.applyMode(typed, "template", null, true).subject, typed.subject,
+    "…including the subject — the clear belongs to the switch INTO custom, not to every switch");
+
+  // the preview is derived, so an empty pair leaves nothing for it to render
+  assert.equal(custom.body.trim() + custom.subject.trim(), "",
+    "with both fields empty there is nothing left for the preview to render");
 
   // wiring: both buttons must go through applyMode, or the runtime proof above is decoration
   assert.doesNotMatch(CODE, /patch\(\{\s*mode:/,
@@ -317,7 +327,7 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   assert.match(CODE, /onClick=\{\(\) => switchMode\("custom"\)\}/, 'the "כתיבת הודעה חדשה" button routes through it too');
   assert.match(CODE, /const switchMode = \(next: ComposerDraft\["mode"\]\) =>\s*onDraftChange\(applyMode\(/,
     "…and that switch is the pure applyMode, so this section's assertions are about live code");
-  ok('switching to "כתיבת הודעה חדשה" clears the body, and switching back refills it from the template');
+  ok('switching to "כתיבת הודעה חדשה" clears body AND subject, and switching back refills both from the template');
 }
 
 console.log(`\nAll ${n} send-message-drawer claim groups hold.`);
