@@ -50,6 +50,7 @@
     "check:booking-com-reports": "node scripts/check-booking-com-reports.mjs",
     "check:beds24-credit-backoff": "node scripts/check-beds24-credit-backoff.mjs",
     "check:beds24-maxstay-no-limit": "node scripts/check-beds24-maxstay-no-limit.mjs",
+    "check:beds24-minstay-source": "node scripts/check-beds24-minstay-source.mjs",
     "check:beds24-ari-drain": "node scripts/check-beds24-ari-drain.mjs",
     "check:beds24-failure-evidence": "node scripts/check-beds24-failure-evidence.mjs",
     "check:beds24-quarantine-selfheal": "node scripts/check-beds24-quarantine-selfheal.mjs",

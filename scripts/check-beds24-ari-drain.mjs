@@ -293,6 +293,10 @@ let tenantId;
 
 const PRICE = 512.5; // major units, 2 decimals — a /100 regression yields 5.125
 const MIN_STAY = 2;
+// D183 — seeded ALONGSIDE the through-minimum, with a DIFFERENT value, so the
+// wire assertion below can only pass by reading the right column. Beds24's one
+// daily minStay is a stay-through restriction; the arrival minimum is internal.
+const MIN_STAY_ARRIVAL_DECOY = 5;
 
 try {
   // ============================================================
@@ -340,8 +344,10 @@ try {
     for (const u of [R1, R2]) {
       await sql`
         INSERT INTO guesthub.pricing_plan_unit_rates
-          (tenant_id, pricing_plan_id, sellable_unit_id, date, price, min_stay_arrival)
-        VALUES (${tenantId}, ${plan.id}, ${u.suId}, ${day(d)}, ${PRICE}, ${MIN_STAY})`;
+          (tenant_id, pricing_plan_id, sellable_unit_id, date, price,
+           min_stay_through, min_stay_arrival)
+        VALUES (${tenantId}, ${plan.id}, ${u.suId}, ${day(d)}, ${PRICE},
+                ${MIN_STAY}, ${MIN_STAY_ARRIVAL_DECOY})`;
     }
   }
 
@@ -422,6 +428,8 @@ try {
   assert.equal(range.numAvail, 1, "a free, priced, mapped room is available");
   assert.equal(range.price1, PRICE, "price1 is MAJOR currency units (a /100 regression yields 5.125)");
   assert.equal(range.minStay, MIN_STAY, "the projected restriction rides the same range");
+  assert.notEqual(range.minStay, MIN_STAY_ARRIVAL_DECOY,
+    "…and it is the THROUGH minimum, not the arrival one (D183: the arrival column never reaches Beds24)");
   assert.equal((await rangeRow(r1)).status, "synced", "the claimed range completes as synced");
   const [connAfter] = await sql`
     SELECT last_error, consecutive_failures FROM guesthub.channel_connections WHERE id = ${connId}`;
