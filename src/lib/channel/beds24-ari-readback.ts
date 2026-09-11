@@ -119,9 +119,13 @@ export type Beds24DayCell = {
   numAvail: number | null;
   /** major currency units; null = no price statement */
   price1: number | null;
+  /** D183 — stay-through minimum; null = no statement on this side */
+  minStay: number | null;
+  /** D183 — stay maximum; null = no statement on this side */
+  maxStay: number | null;
 };
 
-export type Beds24DriftKind = "availability" | "price" | "missing";
+export type Beds24DriftKind = "availability" | "price" | "minStay" | "maxStay" | "missing";
 
 export type Beds24Drift = {
   beds24RoomId: number;
@@ -139,7 +143,14 @@ export type Beds24Drift = {
 
 /** A calendar range as it appears on EITHER side of the comparison. `to` is
  *  INCLUSIVE (the verified Beds24 shape, both on GET and POST). */
-type RawRange = { from: string; to: string; numAvail: number | null; price1: number | null };
+type RawRange = {
+  from: string;
+  to: string;
+  numAvail: number | null;
+  price1: number | null;
+  minStay: number | null;
+  maxStay: number | null;
+};
 type RawRoomEntry = { beds24RoomId: number; calendar: RawRange[] };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -174,6 +185,8 @@ export function expandBeds24Calendar(
           date,
           numAvail: r.numAvail,
           price1: r.price1,
+          minStay: r.minStay,
+          maxStay: r.maxStay,
         });
         date = addDays(date, 1);
       }
@@ -196,6 +209,8 @@ export function expectedEntriesOf(
           to: r.to,
           numAvail: r.numAvail,
           price1: r.price1 ?? null,
+          minStay: r.minStay ?? null,
+          maxStay: r.maxStay ?? null,
         })),
       });
     }
@@ -224,7 +239,13 @@ export function parseBeds24CalendarBody(body: unknown): {
       const from = typeof range.from === "string" ? range.from : null;
       const to = typeof range.to === "string" ? range.to : from;
       if (from === null || to === null) continue;
-      calendar.push({ from, to, numAvail: asNum(range.numAvail), price1: asNum(range.price1) });
+      calendar.push({
+        from, to,
+        numAvail: asNum(range.numAvail),
+        price1: asNum(range.price1),
+        minStay: asNum(range.minStay),
+        maxStay: asNum(range.maxStay),
+      });
     }
     entries.push({ beds24RoomId: roomId, calendar });
   }
@@ -243,10 +264,15 @@ export function parseBeds24CalendarBody(body: unknown): {
 //     price is therefore expected behaviour, NOT drift. Alerting on it would
 //     make every blocked date a false positive and train the operator to
 //     ignore the alert.
-//   · restrictions (minStay/maxStay) are deliberately NOT compared: the API
-//     documents that a calendar without a minStay/maxStay returns the ROOM's
-//     value instead, so a mismatch there does not distinguish drift from a
-//     room-level default. Comparing them would be noise, not evidence.
+//   · restrictions (minStay/maxStay) ARE compared, as of D183. The old skip
+//     reasoned that a calendar without a minStay/maxStay returns the ROOM's
+//     value instead, so a mismatch could not be told from a room-level default.
+//     That is true of cells we never stated — and only of those. The comparison
+//     below therefore asserts ONLY where our own payload carries a value, the
+//     same rule price has always used. This is not a cosmetic gap: it is why
+//     344 consecutive cycles reported driftCells=0 while Beds24 held minStay 1
+//     on dates GuestHub held 2, and a 1-night Booking.com reservation (1164)
+//     landed on one of them.
 //
 // WHY THE CAUSE MATTERS. `numAvail: 0` is one wire value with two very
 // different meanings on our side, and beds24-ari-payloads.ts is where they get
@@ -300,6 +326,29 @@ export function diffBeds24Calendar(
       drift.push({
         beds24RoomId: want.beds24RoomId, date: want.date, kind: "price",
         expected: want.price1, remote: got.price1,
+        oversell: false, commercialBlock: false,
+      });
+    }
+    // D183 — restrictions, compared on exactly the same terms as price: only
+    // where WE made a statement. That is what disarms the room-level fallback
+    // the old skip was written around (apiV2.yaml §/inventory/rooms/calendar:
+    // "if these are not set in the calendar then the minimum/maximum
+    // restrictions from the room will be returned"). A cell we did not state is
+    // a cell whose remote value we cannot attribute, so it is not compared —
+    // never a false positive. A cell we DID state is ours, and a divergence
+    // there is drift by definition. Neither is an overbooking signature: a
+    // wrong min-stay sells nights we meant to withhold, not a bed twice over.
+    if (want.minStay !== null && got.minStay !== want.minStay) {
+      drift.push({
+        beds24RoomId: want.beds24RoomId, date: want.date, kind: "minStay",
+        expected: want.minStay, remote: got.minStay,
+        oversell: false, commercialBlock: false,
+      });
+    }
+    if (want.maxStay !== null && got.maxStay !== want.maxStay) {
+      drift.push({
+        beds24RoomId: want.beds24RoomId, date: want.date, kind: "maxStay",
+        expected: want.maxStay, remote: got.maxStay,
         oversell: false, commercialBlock: false,
       });
     }
@@ -443,6 +492,9 @@ async function fetchCalendarPage(
     ...args.beds24RoomIds.map((id) => `roomId=${encodeURIComponent(String(id))}`),
     "includeNumAvail=true",
     "includePrices=true",
+    // D183 — the restriction fields the drift comparison now covers
+    "includeMinStay=true",
+    "includeMaxStay=true",
     ...(args.page > 1 ? [`page=${args.page}`] : []),
   ].join("&");
 
