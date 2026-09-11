@@ -29,6 +29,7 @@
     "check:pricing-engine": "node scripts/check-pricing-engine.mjs",
     "check:pricing-equality": "node scripts/check-pricing-equality.mjs",
     "check:ota-restriction-report": "node scripts/check-ota-restriction-report.mjs",
+    "check:stuck-panel-violations": "node scripts/check-stuck-panel-violations.mjs",
     "check:totals-parity": "node scripts/check-totals-parity.mjs",
     "check:public-quote": "node scripts/check-public-quote.mjs",
     "check:room-picker-window": "node scripts/check-room-picker-window.mjs",
