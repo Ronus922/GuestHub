@@ -93,3 +93,4 @@
 085_closure_category_long_term.sql
 086_sync_errors_lifecycle.sql
 087_messaging_channel_alerts.sql
+088_sync_errors_resolved_by.sql

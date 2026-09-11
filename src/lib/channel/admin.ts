@@ -80,3 +80,36 @@ export async function getChannelStatusAction(): Promise<Result<unknown>> {
   }
 }
 
+
+// ============================================================
+// resolveSyncErrorAction — the operator closes ONE channel_sync_errors row
+// (D184). The first HUMAN writer of resolved_at: until now the column had only
+// automatic closers (the read-back's clean cycle, the import's own quarantine
+// closer), which leave resolved_by NULL. This one records who decided.
+//
+// · Never a delete — the row is history (purge 043 removes it 30 days later).
+// · Tenant-scoped by the actor, id-scoped by the caller; an id from another
+//   tenant matches nothing and reports "already handled", never a leak.
+// · Idempotent by predicate: `resolved_at IS NULL` in the WHERE means a double
+//   click, or two operators, cannot overwrite the first closure's author.
+// · super_admin only, like every other action on this surface: the fix for a
+//   channel finding lives on /channels, which canManageChannels gates.
+// ============================================================
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function resolveSyncErrorAction(errorId: string): Promise<Result> {
+  try {
+    const actor = await requireChannelAdmin();
+    if (typeof errorId !== "string" || !UUID_RE.test(errorId))
+      return { success: false, error: "מזהה שגיאה לא תקין" };
+    const closed = await sql<{ id: string }[]>`
+      UPDATE guesthub.channel_sync_errors
+         SET resolved_at = now(), resolved_by = ${actor.userId}
+       WHERE id = ${errorId} AND tenant_id = ${actor.tenantId} AND resolved_at IS NULL
+       RETURNING id`;
+    if (closed.length === 0) return { success: false, error: "השורה כבר סומנה כטופלה" };
+    return { success: true };
+  } catch (e) {
+    return failFrom(e);
+  }
+}

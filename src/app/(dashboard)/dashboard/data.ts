@@ -3,6 +3,12 @@ import { sql } from "@/lib/db";
 import { sourceColor } from "@/lib/colors";
 import { addDays, formatDayMonth, type DateOnly } from "@/lib/dates";
 import { connectionHealth } from "@/lib/channel/connection-health";
+import {
+  loadStuckCounter,
+  loadStuckViolations,
+  type StuckCounter,
+  type StuckViolationRow,
+} from "@/lib/channel/stuck-panel";
 import { loadChannelHealth } from "@/lib/messaging/channel-health-db";
 import type { ChannelHealthVerdict } from "@/lib/messaging/channel-health";
 import { INVENTORY_BLOCKING_STATUSES } from "@/lib/inventory-rules";
@@ -90,13 +96,13 @@ export type AlertRow = {
   cancelled?: boolean;
 };
 
-/** stk — channel bookings whose auto-ingest failed (import_status quarantined/failed) */
-export type StuckSummary = {
-  /** distinct provider bookings, not revisions — one booking with two failed
-      revisions is ONE booking to fix */
-  count: number;
-  /** whole hours since the OLDEST unresolved revision arrived; null when count=0 */
-  oldestHours: number | null;
+/** stk — the counter of channel bookings whose auto-ingest failed
+    (import_status quarantined/failed) PLUS, since D184, the imported bookings
+    that violate a stay restriction (open OTA_STAY_RESTRICTION_VIOLATION rows),
+    newest first. Both queries live in lib/channel/stuck-panel.ts so the guard
+    runs the real predicates. */
+export type StuckSummary = StuckCounter & {
+  violations: StuckViolationRow[];
 };
 
 /** pay — a reservation whose check-in has arrived and whose deal was not yet
@@ -279,7 +285,8 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     departureRows,
     inHouseRows,
     hkRows,
-    stuckRows,
+    stuckCounter,
+    stuckViolations,
     issueRows,
     payRowsRaw,
     approvedLookup,
@@ -367,18 +374,13 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
 
     // ---- stk: channel bookings whose auto-ingest failed --------------------
     // The design's `channel_bookings WHERE status='stuck'` does not exist —
-    // the real failure axis is channel_booking_revisions.import_status:
-    // 'quarantined' (no room/rate-plan mapping) or 'failed' (transient error).
-    // Neither is terminal — the 5-minute pull re-imports both every cycle — so
-    // this counter DRAINS ITSELF the moment the mapping is fixed. DISTINCT
-    // provider_booking_id: a booking whose 'new' and 'modified' revisions both
-    // failed is one booking to fix, not two.
-    sql<{ c: number; oldest_hours: number | null }[]>`
-      SELECT count(DISTINCT provider_booking_id)::int AS c,
-             floor(EXTRACT(EPOCH FROM (now() - min(created_at))) / 3600)::int AS oldest_hours
-        FROM guesthub.channel_booking_revisions
-       WHERE tenant_id = ${tenantId}
-         AND import_status IN ('quarantined', 'failed')`,
+    // the real failure axis is channel_booking_revisions.import_status
+    // ('quarantined' / 'failed'), and since D184 the panel has a second
+    // source: imported bookings that violate a stay restriction. Both
+    // predicates live in lib/channel/stuck-panel.ts (module header there), so
+    // check:stuck-panel-violations runs the queries production runs.
+    loadStuckCounter(sql, tenantId),
+    loadStuckViolations(sql, tenantId),
 
     // ---- iss: open maintenance tasks ---------------------------------------
     // The design's `maintenance_issues` table was never built — maintenance
@@ -650,10 +652,7 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
   const departures = departureRows.map(toStay);
 
   return {
-    stuck: {
-      count: stuckRows[0]?.c ?? 0,
-      oldestHours: (stuckRows[0]?.c ?? 0) > 0 ? (stuckRows[0]?.oldest_hours ?? 0) : null,
-    },
+    stuck: { ...stuckCounter, violations: stuckViolations },
     issues: issueRows.map((r) => ({
       taskId: r.task_id as string,
       title: (r.title as string) || "תקלה",
