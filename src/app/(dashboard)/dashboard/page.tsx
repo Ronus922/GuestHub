@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getActor } from "@/lib/auth/actor";
+import { canManageChannels } from "@/lib/auth/guards";
 import { sql } from "@/lib/db";
 import { todayInTz, formatFullDate, HEBREW_DAY_LETTERS, dayOfWeek } from "@/lib/dates";
 import { getDashboardPreferences } from "./preferences";
@@ -40,6 +41,11 @@ export default async function DashboardPage() {
       // the header's unit count is the SAME denominator the occupancy KPI
       // divides by, so the two can never tell the operator different numbers
       unitLabel={`${data.kpi.sellable} יחידות`}
+      // D184 — the stk window offers "סמן כטופל" only to who the server action
+      // accepts (super_admin, canManageChannels); the action re-checks anyway
+      canResolveViolations={
+        canManageChannels({ userId: actor.userId, roleKey: actor.roleKey }).ok
+      }
     />
   );
 }
