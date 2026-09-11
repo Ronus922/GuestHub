@@ -61,6 +61,96 @@
   flex: none;
 }
 
+/* ---- stk — the violation rows (D184) ----
+   An OTA booking imported in breach of a stay restriction, listed under the
+   counter until an operator marks it handled. Same anatomy as .pay-row (icon ·
+   link body · status button); the body carries a THIRD line, the marker, so
+   the sentence never competes with the guest name for the title's ellipsis.
+   Tones derived from the tokens exactly like .stk-red / .pay-tag-cxl — no new
+   surface tokens (§1). */
+.stk-vio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stk-hero + .stk-vio-list {
+  margin-top: 8px;
+}
+.stk-vio-row {
+  display: flex;
+  /* the button wraps under the body before anything clips: at 390px the
+     body's basis no longer fits beside icon + button, so the row breaks */
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 11px;
+  padding: 9px 12px;
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+.stk-vio-row.done {
+  opacity: 0.6;
+}
+.stk-vio-row .btn-status,
+.stk-vio-row .btn-status-done {
+  margin-inline-start: auto;
+}
+.stk-vio-body {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--r-md);
+}
+.stk-vio-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.stk-vio-guest {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stk-vio-tag-stuck {
+  flex: none;
+  background: color-mix(in srgb, var(--warn) 12%, #fff);
+  color: color-mix(in srgb, var(--warn) 78%, var(--ink));
+}
+/* THE marker — danger surface, and it WRAPS: the engine's sentence is the
+   point of the row, so it is never cut to an ellipsis */
+.stk-vio-mark {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 5px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--danger) 10%, #fff);
+  color: color-mix(in srgb, var(--danger) 82%, var(--ink));
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.stk-vio-mark svg {
+  flex: none;
+  margin-top: 2px;
+}
+.stk-vio-sub {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 /* ---- alr — the approvable row's link half + the fixed-issue tint ---- */
 /* an approvable row is a <div> whose navigation wraps only the text half —
    the inner link repeats the row's flex so icon and body sit as before */

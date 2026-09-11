@@ -47,7 +47,7 @@ import { RevenueWindow } from "./windows/RevenueWindow";
 import { SourcesWindow } from "./windows/SourcesWindow";
 import { ReviewsWindow } from "./windows/ReviewsWindow";
 import { MessagesWindow } from "./windows/MessagesWindow";
-import type { DashboardData } from "./data";
+import type { DashboardData, StuckSummary } from "./data";
 import {
   COLUMNS,
   isWindowId,
@@ -215,11 +215,15 @@ export function DashboardScreen({
   todayLabel,
   unitLabel,
   data,
+  canResolveViolations,
 }: {
   initial: DashboardPreferences;
   todayLabel: string;
   unitLabel: string;
   data: DashboardData;
+  /** canManageChannels for the signed-in actor — the stk window's "סמן כטופל"
+      is offered only to who the server action will accept (D184) */
+  canResolveViolations: boolean;
 }) {
   const [layout, setLayout] = useState<DashboardLayout>(initial.layout);
   const [hidden, setHidden] = useState<DashboardWindowId[]>(initial.hidden);
@@ -492,6 +496,7 @@ export function DashboardScreen({
                     id={id}
                     onHide={() => hideWindow(id)}
                     data={data}
+                    canResolveViolations={canResolveViolations}
                   />
                 ))}
               </SortableContext>
@@ -538,10 +543,12 @@ function SortableWindow({
   id,
   onHide,
   data,
+  canResolveViolations,
 }: {
   id: DashboardWindowId;
   onHide: () => void;
   data: DashboardData;
+  canResolveViolations: boolean;
 }) {
   const def = windowById(id);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver } =
@@ -551,7 +558,7 @@ function SortableWindow({
 
   // tsk alone keeps the Phase 1 sentence that says what will go there — a
   // window with no source renders the promise, never a fabricated row.
-  const live = liveContent(id, data);
+  const live = liveContent(id, data, canResolveViolations);
 
   return (
     <DashboardWindow
@@ -577,15 +584,35 @@ function SortableWindow({
   );
 }
 
+// stk's header count includes the violations (D184). ONE short phrase: a
+// two-part label ("2 תקועות · 1 הפרה") measured 138px and pushed the header's
+// ✕/grip onto a second row in the 404px desktop column — the header wraps by
+// design (responsive.css) and no other window's count does. So:
+//   · parked only     → "N תקועות"  (unchanged)
+//   · violations only → "N הפרות"
+//   · both            → "N לטיפול", the UNION: a booking that is both parked
+//     and violating is one item — the list marks it, the counter counts it,
+//     and the header must not count it twice.
+// Absent when both are 0 (the empty state speaks).
+function stuckSubtitle(stuck: StuckSummary): string | undefined {
+  const violations = stuck.violations.length;
+  if (stuck.count === 0 && violations === 0) return undefined;
+  if (violations === 0) return `${stuck.count} תקועות`;
+  if (stuck.count === 0) return `${violations} ${violations === 1 ? "הפרה" : "הפרות"}`;
+  const union = stuck.count + stuck.violations.filter((v) => !v.stuck).length;
+  return `${union} לטיפול`;
+}
+
 function liveContent(
   id: DashboardWindowId,
   data: DashboardData,
+  canResolveViolations: boolean,
 ): { subtitle?: React.ReactNode; body: React.ReactNode } | null {
   switch (id) {
     case "stk":
       return {
-        subtitle: data.stuck.count > 0 ? `${data.stuck.count} תקועות` : undefined,
-        body: <StuckWindow stuck={data.stuck} />,
+        subtitle: stuckSubtitle(data.stuck),
+        body: <StuckWindow stuck={data.stuck} canResolve={canResolveViolations} />,
       };
     case "pay":
       return {
