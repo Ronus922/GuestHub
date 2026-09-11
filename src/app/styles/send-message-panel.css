@@ -288,6 +288,16 @@
   resize: vertical;
   line-height: 1.7;
 }
+/* D178 — the two free-text fields declare dir="rtl" in the JSX, which opts them
+   out of base.css's `unicode-bidi: plaintext` (that rule is `:not([dir])`-guarded).
+   `text-align: start` then resolves to the RIGHT edge for the value, the caret and
+   the placeholder alike — including while the field is EMPTY, which plaintext could
+   not do: with no strong character the paragraph fell back to LTR. The attribute
+   selector keeps the template <select> out; it never carried a dir and needs none. */
+.sm-field input.field-input[dir="rtl"],
+.sm-field textarea.field-input[dir="rtl"] {
+  text-align: start;
+}
 
 /* ---- variable chips ----------------------------------------------------- */
 .sm-vars {

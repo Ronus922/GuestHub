@@ -398,11 +398,17 @@ export function MessageComposer({
                   </label>
                 )}
 
+                {/* D178 — the composer's two free-text fields are pinned RTL, regardless of
+                    content. base.css gives every input WITHOUT a dir `unicode-bidi: plaintext`,
+                    which picks the base direction from the first strong character; an EMPTY
+                    field has none, fell back to LTR and put the caret on the left. `:not([dir])`
+                    is that same rule's declared opt-out, so the attribute is the sanctioned fix. */}
                 {isEmail && (
                   <label className="field sm-field">
                     <span className="field-label">נושא</span>
                     <input
                       className="field-input"
+                      dir="rtl"
                       value={subject}
                       onChange={(e) => patch({ subject: e.target.value })}
                       placeholder="נושא ההודעה"
@@ -415,6 +421,7 @@ export function MessageComposer({
                   <textarea
                     ref={bodyRef}
                     className="field-input"
+                    dir="rtl"
                     value={body}
                     onChange={(e) => patch({ body: e.target.value })}
                     placeholder="כתבו את ההודעה… לחיצה על משתנה למטה מוסיפה אותו במיקום הסמן"
