@@ -5215,6 +5215,8 @@ Esc זורק; ‏0 שגיאות קונסול בשלושת הרוחבים. **תר
 ‏`subject_empty` מתוך `manualSendGate` האמיתי. החזרה: הגוף והנושא חזרו שניהם מילה במילה
 והכפתור נפתח.
 
+composer body + subject are explicit dir="rtl" (never auto/plaintext) — empty and Latin-leading content stay RTL; accepted cost: Latin-only lines right-align (owner, 11/09). Root cause: base.css input/textarea:not([dir]) → unicode-bidi: plaintext.
+
 ## D181 — כלל פרימיטיב: `.card` בתוך flex-column גולל חייב `flex: none`; נאכף ב-`check:flex-card-shrink` (2026-09-08)
 
 **הכלל.** `.card` הוא `overflow: hidden` (design-system.css §6). לפי CSS Flexbox §4.5,
