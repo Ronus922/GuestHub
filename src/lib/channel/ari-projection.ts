@@ -31,7 +31,13 @@ export type CommercialRow = {
   date: DateOnly;
   /** null ⇔ blocked: no sellable price exists. Never [] and never rate 0. */
   rates: OccupancyRate[] | null;
-  minStayArrival: number | null;
+  /**
+   * D183 — the effective STAY-THROUGH minimum, and the only min-stay on this
+   * row. Beds24's single daily `minStay` is a stay-through restriction
+   * (restrictionStrategy "stayThrough"), so that is what the wire carries.
+   * There is deliberately no minStayArrival here: min_stay_arrival is internal
+   * to the site and to manual bookings, and is never published to a channel.
+   */
   minStayThrough: number | null;
   maxStay: number | null;
   stopSell: boolean;

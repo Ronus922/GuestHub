@@ -29,7 +29,9 @@
 //     closed-for-checkin/checkout fields. GuestHub's closedToArrival /
 //     closedToDeparture therefore CANNOT be expressed on this endpoint and
 //     are intentionally not emitted — do NOT invent field names for them.
-//     (They still shape minStayArrival upstream in the projection.)
+//   · D183: the single daily `minStay` is a STAY-THROUGH restriction upstream
+//     (every mapped room is restrictionStrategy "stayThrough") and is fed from
+//     minStayThrough. min_stay_arrival is internal and never published here.
 //   · Beds24 has no room-type / rate-plan axes here (migration 045): one
 //     GuestHub physical room ⇄ one Beds24 room (propertyId+roomId), priced by
 //     the ONE designated local plan's base-occupancy rate.
@@ -243,7 +245,16 @@ export function buildBeds24CalendarRequests(
         date,
         numAvail: available ? 1 : 0,
         price1: blocked ? null : price1,
-        minStay: c && c.minStayArrival != null ? c.minStayArrival : null,
+        // D183 — the ONE daily `minStay` Beds24 accepts is a STAY-THROUGH
+        // restriction: all 15 mapped rooms carry restrictionStrategy
+        // "stayThrough", so the value binds every night of the stay, not just
+        // the arrival date. It is therefore fed from minStayThrough. Feeding it
+        // the ARRIVAL variant published minStay:1 on every range from 31/07
+        // onward (min_stay_arrival is NULL tenant-wide, so the plan default won)
+        // and — the calendar POST being a partial update with no clear — each
+        // drain RE-ASSERTED that 1 upstream. min_stay_arrival stays internal:
+        // the site and manual bookings enforce it, Beds24 never sees it.
+        minStay: c && c.minStayThrough != null ? c.minStayThrough : null,
         // A local maxStay is sent as-is. A local NULL means "no limit", and
         // because Beds24 offers no way to express that and no way to clear a
         // daily value, it is sent as the room's OWN ceiling — the widest the
