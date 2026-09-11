@@ -254,8 +254,15 @@ export async function projectBeds24Ari(
         (plan.allowedCheckinDays != null && !plan.allowedCheckinDays.includes(dayOfWeek(date)));
 
       const restrictions = {
-        minStayArrival: maxNullable(m.min_stay_arrival, plan.defaultMinStay),
-        minStayThrough: m.min_stay_through,
+        // D183 — the effective through-min: the row's own value, and the plan's
+        // default min-stay when the row carries none. maxNullable, not ??, is
+        // the strictest-wins idiom every other min-stay already uses (see
+        // mergeRestrictionRows in pricing/resolve.ts and rules.ts's "the MAXIMUM
+        // applicable min_stay_through"); where the row is NULL the two agree.
+        // min_stay_arrival is deliberately absent from this row: it is internal
+        // to the site and to manual bookings and is never published to Beds24,
+        // whose single daily minStay is a stay-through restriction.
+        minStayThrough: maxNullable(m.min_stay_through, plan.defaultMinStay),
         maxStay: minNullable(m.max_stay, plan.defaultMaxStay),
         closedToArrival,
         closedToDeparture: m.closed_to_departure,
