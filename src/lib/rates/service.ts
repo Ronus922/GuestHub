@@ -33,7 +33,22 @@ export type RateCell = {
   patch: RateCellPatch;
 };
 
-// One resolved change, for audit / bulk_rate_update_items (old → new price).
+// The six restriction fields of a canonical row, as stored (D187) — the
+// before/after halves of a bulk_rate_update_items row.
+export type RateRestrictions = {
+  min_stay_through: number | null;
+  min_stay_arrival: number | null;
+  max_stay: number | null;
+  closed_to_arrival: boolean;
+  closed_to_departure: boolean;
+  stop_sell: boolean;
+};
+
+// One resolved change, for audit / bulk_rate_update_items: old → new price AND
+// old → new restrictions (D187 — a min-stay run used to audit as rows whose
+// only two columns, the prices, were equal). `changed` is true when the price
+// OR any restriction differs from what was stored; a missing row is compared
+// as the empty row, so creating a restricted row is a change.
 export type RateChange = {
   sellableUnitId: string;
   pricingPlanId: string;
@@ -42,6 +57,10 @@ export type RateChange = {
   date: DateOnly;
   oldPrice: number | null;
   newPrice: number | null;
+  /** null = no row existed for (plan, date) before this write */
+  oldRestrictions: RateRestrictions | null;
+  newRestrictions: RateRestrictions;
+  changed: boolean;
 };
 
 type FullRow = {
@@ -80,6 +99,24 @@ export function chunkForBind<T>(rows: T[], paramsPerRow: number): T[][] {
   for (let i = 0; i < rows.length; i += rowsPerChunk) out.push(rows.slice(i, i + rowsPerChunk));
   return out;
 }
+
+const restrictionsOf = (row: FullRow): RateRestrictions => ({
+  min_stay_through: row.min_stay_through,
+  min_stay_arrival: row.min_stay_arrival,
+  max_stay: row.max_stay,
+  closed_to_arrival: row.closed_to_arrival,
+  closed_to_departure: row.closed_to_departure,
+  stop_sell: row.stop_sell,
+});
+
+const sameRow = (a: FullRow, b: FullRow): boolean =>
+  a.price === b.price &&
+  a.min_stay_through === b.min_stay_through &&
+  a.min_stay_arrival === b.min_stay_arrival &&
+  a.max_stay === b.max_stay &&
+  a.closed_to_arrival === b.closed_to_arrival &&
+  a.closed_to_departure === b.closed_to_departure &&
+  a.stop_sell === b.stop_sell;
 
 // Merge a patch over an existing/blank row — undefined keys are left untouched.
 function merge(base: FullRow, patch: RateCellPatch): FullRow {
@@ -165,6 +202,9 @@ export async function writeRateCells(
       date: c.date,
       oldPrice: old ? old.price : null,
       newPrice: next.price,
+      oldRestrictions: old ? restrictionsOf(old) : null,
+      newRestrictions: restrictionsOf(next),
+      changed: !sameRow(base, next),
     });
   }
 

@@ -118,7 +118,7 @@ export async function upsertRateCellAction(
 // ---------------------------------------------------------------
 export async function bulkUpdateRatesAction(
   raw: BulkUpdateRatesInput,
-): Promise<ActionResult<{ cells: number; units: number; dates: number }>> {
+): Promise<ActionResult<{ cells: number; changed: number; units: number; dates: number }>> {
   try {
     const actor = await getActor();
     requirePermission(actor, "rates.bulk_update");
@@ -204,16 +204,25 @@ export async function bulkUpdateRatesAction(
         date: c.date,
         old_price: c.oldPrice,
         new_price: c.newPrice,
+        // D187 — the six restriction fields before/after, as stored; NULL
+        // before = no row existed (the meaning old_price NULL already has)
+        old_restrictions: c.oldRestrictions === null ? null : tx.json(c.oldRestrictions as never),
+        new_restrictions: tx.json(c.newRestrictions as never),
       }));
-      // 7 columns/row — sliced under the bind-parameter cap, same tx (see
+      // 9 columns/row — sliced under the bind-parameter cap, same tx (see
       // chunkForBind in @/lib/rates/service).
-      for (const part of chunkForBind(items, 7)) {
+      for (const part of chunkForBind(items, 9)) {
         await tx`
           INSERT INTO guesthub.bulk_rate_update_items ${tx(
             part,
             "tenant_id", "log_id", "room_id", "room_type_id", "date", "old_price", "new_price",
+            "old_restrictions", "new_restrictions",
           )}`;
       }
+      // D187 — a cell counts as changed when its price OR any restriction
+      // differs from what was stored (the min-stay run of 06/09 was 32 real
+      // changes that the price-only audit reported as none)
+      const changed = changes.filter((c) => c.changed).length;
 
       await writeAudit(
         actor,
@@ -221,12 +230,12 @@ export async function bulkUpdateRatesAction(
           entityType: "pricing_plan_rates",
           entityId: log.id,
           action: "bulk_update",
-          after: { units: plans.length, dates: dates.length, cells: cells.length },
+          after: { units: plans.length, dates: dates.length, cells: cells.length, changed },
         },
         tx,
       );
 
-      return { cells: cells.length, units: plans.length, dates: dates.length };
+      return { cells: cells.length, changed, units: plans.length, dates: dates.length };
     });
 
     revalidatePath("/rates");
