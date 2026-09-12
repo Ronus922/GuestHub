@@ -94,4 +94,5 @@
 086_sync_errors_lifecycle.sql
 087_messaging_channel_alerts.sql
 088_sync_errors_resolved_by.sql
+089_sync_jobs_payload_nullable.sql
 090_bulk_items_restrictions.sql

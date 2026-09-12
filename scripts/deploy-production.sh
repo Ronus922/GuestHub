@@ -47,6 +47,22 @@ PROD_DEPLOY_OK=1 node scripts/production-deploy-guard.mjs || fail "post-fast-for
 TARGET_COMMIT="$(git rev-parse HEAD)"
 [ "$TARGET_COMMIT" = "$(git rev-parse origin/main)" ] || fail "HEAD != origin/main after fast-forward"
 
+# 8b. dependencies (D185) — install ONLY when there is a reason: package.json /
+#     pnpm-lock.yaml changed between the previously deployed HEAD and the target,
+#     or the installed tree no longer matches the lockfile (a deploy that died
+#     between fast-forward and install leaves exactly that; git alone would say
+#     "unchanged"). On 2026-09-10 (#250) the lockfile moved nodemailer
+#     9.0.3 → 9.1.1 and this script built against the old node_modules, then
+#     printed the success line for a bundle that still shipped 9.0.3. A failed
+#     install aborts HERE — before the build, before any restart.
+DEPS_TRIGGER="$(node scripts/deploy-deps.mjs trigger "$BEFORE_COMMIT" "$TARGET_COMMIT")" || fail "dependency change detection failed"
+if [ -n "$DEPS_TRIGGER" ]; then
+  echo "→ installing dependencies ($DEPS_TRIGGER) ..."
+  pnpm install --frozen-lockfile || fail "pnpm install --frozen-lockfile failed — deploy ABORTED before build (old build and processes untouched)"
+else
+  echo "→ dependencies unchanged (${BEFORE_COMMIT:0:8}..${TARGET_COMMIT:0:8}) — no install"
+fi
+
 # 9. build (marker present → prebuild-guard requires this same opt-in)
 #    `npm run build` also runs postbuild → tsc -p tsconfig.worker.json → dist/worker
 echo "→ building $TARGET_COMMIT ..."
@@ -54,6 +70,10 @@ PROD_DEPLOY_OK=1 npm run build || fail "build failed"
 NEW_BUILD_ID="$(cat .next/BUILD_ID)"
 [ -n "$NEW_BUILD_ID" ] || fail "no BUILD_ID produced"
 [ -f "dist/worker/lib/channel/worker.js" ] || fail "channel worker was not built (dist/worker missing)"
+
+# 9a. the installed tree must match the lockfile BEFORE migrations and restart
+#     (D185) — a bundle built against stale node_modules never goes live.
+node scripts/deploy-deps.mjs verify || fail "installed dependencies do not match pnpm-lock.yaml — deploy ABORTED before restart"
 
 # 9b. migrations — BEFORE any restart. A release is code + schema, atomically:
 # on the ca11f15 deploy this script restarted new code against a schema missing
