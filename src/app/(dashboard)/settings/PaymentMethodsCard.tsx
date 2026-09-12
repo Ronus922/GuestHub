@@ -176,8 +176,8 @@ export function PaymentMethodsCard({ initial }: { initial: PaymentMethodDef[] })
                 </span>
                 <span className="c pm-cnt ltr-num" data-mcard="hide">{i + 1}</span>
                 <span className="pm-name" data-label="אמצעי תשלום">{row.label}</span>
-                <span data-label="מפתח">
-                  <span className="chip chip-neutral ltr-num">{row.key}</span>
+                <span className="pm-key" data-label="מפתח">
+                  <span className="chip chip-neutral ltr-num" title={row.key}>{row.key}</span>
                 </span>
                 <span className="pm-cnt" data-label="שימוש">
                   <b className="ltr-num">{row.paymentsCount}</b> תשלומים

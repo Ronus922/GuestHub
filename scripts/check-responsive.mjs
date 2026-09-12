@@ -579,4 +579,39 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("every coarse-pointer position hint sits in @layer base — any explicit position wins over it (D148)");
 }
 
+// ------------------- 15. the payment-methods table fits the card at tablet width (D189)
+{
+  // With the sidebar open the settings card is ~590px on a tablet (and ~690px
+  // even at 1280, two-pane). `.pm-tbl { min-width: 780px }` forced a 780px
+  // grid inside it, so the toggle column sat past the card edge behind a
+  // scrollbar. The grid is fluid now: no px floor on the table, the key column
+  // is minmax() rather than a fixed 130px, the chip truncates with its title
+  // carrying the full key, the toggle cell never shrinks below its 44px switch.
+  const pm = stripCss(read(join(SRC, "app/styles/payment-methods.css")));
+  const tbl = pm.match(/\.pm-tbl\s*\{([^}]*)\}/);
+  assert.ok(tbl && !/min-width:\s*[1-9]\d*px/.test(tbl[1]),
+    ".pm-tbl must carry no pixel min-width floor — a floor wider than the card pushes the toggle column behind a scrollbar (D189)");
+  const templates = [...pm.matchAll(/grid-template-columns:\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.ok(templates.length >= 2, "the methods grid declares its tracks (base + the 768–1119 range)");
+  for (const t of templates) {
+    const tracks = t.split(/\s+(?![^(]*\))/);
+    assert.equal(tracks.length, 7, `the methods grid keeps its seven columns (${t})`);
+    assert.match(tracks[3], /^minmax\(\d+px,\s*130px\)$/,
+      `the key-chip column is minmax(…, 130px), never a fixed width the chip cannot shrink under (${tracks[3]})`);
+    assert.match(tracks[4], /^minmax\(\d+px,\s*1fr\)$/, `the usage column shrinks (${tracks[4]})`);
+    assert.match(tracks[5], /^\d+px$/, `the toggle column is a fixed track (${tracks[5]})`);
+    assert.ok(parseInt(tracks[5], 10) >= 44, `the toggle track holds the 44px switch (${tracks[5]})`);
+  }
+  const chip = pm.match(/\.pm-key \.chip\s*\{([^}]*)\}/);
+  assert.ok(chip && /overflow:\s*hidden/.test(chip[1]) && /text-overflow:\s*ellipsis/.test(chip[1]) && /max-width:\s*100%/.test(chip[1]),
+    ".pm-key .chip truncates with an ellipsis inside its column");
+  const toggleCell = pm.match(/\.pm-trow > \[data-label="פעיל"\]\s*\{([^}]*)\}/);
+  assert.ok(toggleCell && /flex:\s*none/.test(toggleCell[1]) && /min-width:\s*44px/.test(toggleCell[1]),
+    "the toggle cell is flex: none with a 44px min-width — it never clips");
+  const card = read(join(SRC, "app/(dashboard)/settings/PaymentMethodsCard.tsx"));
+  assert.match(card, /className="pm-key" data-label="מפתח"/, "the key cell carries .pm-key");
+  assert.match(card, /className="chip chip-neutral ltr-num" title=\{row\.key\}/, "the truncating chip keeps the full key in its title");
+  ok("the payment-methods grid is fluid: no px floor, minmax key column with a truncating titled chip, a 44px toggle cell (D189)");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);
