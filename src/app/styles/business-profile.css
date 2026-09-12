@@ -38,6 +38,11 @@
     display: flex;
     flex-direction: column;
   }
+  .sg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
   .sg-lbl {
     padding: 0 12px 6px;
     letter-spacing: 0.05em;
@@ -107,6 +112,44 @@
     }
     .sg-nav {
       position: static;
+    }
+  }
+  /* D175 item 8 (owner, 2026-09-13): between md and the 1120 collapse the nav
+     is a compact HORIZONTAL tab strip under the header — not the ~15-row nav
+     card above the content. Same DOM: the groups and lists flatten into one
+     wrapping row of the existing 40px items (touch target kept), group labels
+     drop (a tab strip has none), the active row keeps its token surface and
+     its 3px bar moves to the tab's bottom edge. The card chrome goes too: two
+     rows of tabs must leave the content within 120px of the header, which a
+     padded card cannot. Below 768 the select stays; from 1120 the side nav. */
+  @media (min-width: 768px) and (max-width: 1119.98px) {
+    .sg-nav {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 2px 4px;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      overflow-x: auto;
+    }
+    .sg-grp,
+    .sg-list {
+      display: contents;
+    }
+    .sg-lbl {
+      display: none;
+    }
+    .sg-item {
+      flex: 0 0 auto;
+      width: auto;
+    }
+    .sg-item.on::before {
+      inset-block: auto 0;
+      inset-inline: 10px;
+      width: auto;
+      height: 3px;
     }
   }
   @media (max-width: 767.98px) {

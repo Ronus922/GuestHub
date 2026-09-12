@@ -281,7 +281,7 @@ export function BusinessProfileSection({
       <SettingsCard
         icon="location"
         title="מיקום"
-        subtitle="כתובת, קואורדינטות ואזור זמן של הנכס — מקור אחד לכל הערוצים"
+        subtitle="כתובת, קואורדינטות ואזור זמן של הנכס. מקור אחד לכל הערוצים"
       >
         <LocationPicker
           profile={ctx.profile}

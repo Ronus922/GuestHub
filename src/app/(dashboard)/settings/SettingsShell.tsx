@@ -25,10 +25,11 @@ import type {
 } from "./types";
 
 // Two-pane settings shell (approved design "הגדרות - פרופיל העסק.dc.html", D175):
-// a 256px right-hand grouped nav card, sticky, next to the content pane; one
-// column with the nav above the content under 1120px; the compact select on a
-// phone. The active section lives in ?section= so it is linkable and survives a
-// refresh. Data is loaded server-side (page.tsx) and passed down.
+// a 256px right-hand grouped nav card, sticky, next to the content pane; the
+// same nav flattened into a horizontal tab strip under the header between 768
+// and 1120px (D175 item 8, CSS only); the compact select on a phone. The active
+// section lives in ?section= so it is linkable and survives a refresh. Data is
+// loaded server-side (page.tsx) and passed down.
 export function SettingsShell({
   propertyIdentity,
   businessProfile,
@@ -117,7 +118,7 @@ export function SettingsShell({
             <div key={group.title} className="sg-grp">
               {/* 12px/700 group label, tracked .05em per the approved reference */}
               <p className="t-label sg-lbl">{group.title}</p>
-              <ul className="flex flex-col gap-0.5">
+              <ul className="sg-list">
                 {group.items.map((item) => (
                   <li key={item.key}>
                     <SettingsNavRow
