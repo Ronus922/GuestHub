@@ -201,3 +201,25 @@ export async function logChannelError(
        ${e.requestPayload === undefined ? null : db.json(e.requestPayload as never)},
        ${e.responseReceivedAt ?? null})`;
 }
+
+// D186 — retention for the request bodies the ARI drain records on its job
+// row (payload.sent, see beds24-ari-sync.ts). After
+// SYNC_JOB_PAYLOAD_RETENTION_DAYS the COLUMN is NULLed and the ROW is kept:
+// status, timing and error columns are history; only the bodies expire. It is
+// scoped to sync_ari_range — the only job type that carries bodies — so the
+// credit meter parked on pull/reconcile rows (recordJobCredits) is untouched.
+// Idempotent; the worker runs it once a night.
+export const SYNC_JOB_PAYLOAD_RETENTION_DAYS = 90;
+
+export async function expireSyncJobPayloads(
+  db: Sql | TransactionSql,
+  days = SYNC_JOB_PAYLOAD_RETENTION_DAYS,
+): Promise<number> {
+  const result = await db`
+    UPDATE guesthub.channel_sync_jobs
+       SET payload = NULL
+     WHERE job_type = 'sync_ari_range'
+       AND payload IS NOT NULL
+       AND created_at < now() - make_interval(days => ${days})`;
+  return result.count;
+}

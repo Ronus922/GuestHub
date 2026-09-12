@@ -316,3 +316,54 @@ export function validateBeds24CalendarRequest(request: Beds24CalendarRequest): s
   }
   return null;
 }
+
+// ============================================================
+// D186 — what the drain SENT, recorded on its job row.
+//
+// sync_ari_range.payload was `{}` on every one of 43,140 rows; a failed
+// request's body reached channel_sync_errors.request_payload only on failure,
+// so an investigation ("what did we actually POST for room X on date Y?") had
+// nothing to read. The record below is written on every completed send —
+// success AND failure — in send order, and it is the exact bodies: no
+// re-serialisation, no summary. It is capped so a job row never carries more
+// than SENT_REQUESTS_CAP_BYTES of bodies: whole bodies are kept while they fit,
+// the rest are COUNTED (`omitted`), never cut mid-body — a kept body is always
+// exactly what left the process, and the record stays valid JSON.
+// ============================================================
+export const SENT_REQUESTS_CAP_BYTES = 64 * 1024;
+
+export type SentRequestsRecord = {
+  /** the bodies kept — all of them unless `truncated` */
+  requests: Beds24CalendarRequest[];
+  /** how many bodies were actually sent */
+  count: number;
+  /** serialized size of EVERY sent body, before the cap */
+  bytes: number;
+  /** the marker: some bodies were dropped to respect the cap */
+  truncated: boolean;
+  /** how many bodies the cap dropped (0 unless `truncated`) */
+  omitted: number;
+  recordedAt: string;
+};
+
+export function capSentRequests(
+  sent: Beds24CalendarRequest[],
+  cap = SENT_REQUESTS_CAP_BYTES,
+): SentRequestsRecord {
+  const kept: Beds24CalendarRequest[] = [];
+  let used = 2; // "[]"
+  for (const body of sent) {
+    const size = beds24PayloadByteSize(body) + (kept.length > 0 ? 1 : 0); // "," between bodies
+    if (used + size > cap) break;
+    kept.push(body);
+    used += size;
+  }
+  return {
+    requests: kept,
+    count: sent.length,
+    bytes: Buffer.byteLength(JSON.stringify(sent), "utf8"),
+    truncated: kept.length < sent.length,
+    omitted: sent.length - kept.length,
+    recordedAt: new Date().toISOString(),
+  };
+}
