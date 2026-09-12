@@ -243,12 +243,20 @@
   overflow-x: auto;
 }
 
-/* The reference's custom column grid, verbatim. */
+/* The reference's custom column grid — its maxima verbatim, its floors fluid.
+   D190 (same defect and recipe as D189): the 900px floor inside the overflow-x
+   wrapper pushed the actions column (and the copy button of the code cell) past
+   the card edge behind a scrollbar whenever the sidebar was open — the card is
+   590px at 900, 714px at 1024. No px floor now; each minmax() minimum is what
+   its cell needs: the room name truncates (its title keeps the full name), the
+   code buttons wrap under the code, the checkbox and actions cells never shrink
+   below their controls. The last, empty track carries no padding, so it cannot
+   overflow the row by its own 24px on a wide screen (it did). */
 .lk-gt {
-  --cols: 44px minmax(88px, 180px) minmax(96px, 150px) minmax(168px, 480px)
-    minmax(178px, 300px) minmax(80px, 140px) minmax(112px, 220px)
-    minmax(94px, 150px) minmax(0, 1fr);
-  min-width: 900px;
+  --cols: 44px minmax(84px, 180px) minmax(96px, 150px) minmax(140px, 480px)
+    minmax(160px, 300px) minmax(86px, 140px) minmax(100px, 220px)
+    minmax(95px, 150px) minmax(0, 1fr);
+  min-width: 0;
 }
 .lk-head {
   position: sticky;
@@ -306,6 +314,18 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 5px;
+}
+.lk-row > [data-label="בחירה"] {
+  flex: none;
+  min-width: 44px;
+}
+.lk-row > [data-mcard="actions"] {
+  flex: none;
+  min-width: 84px;
+}
+.lk-row > [data-mcard="hide"],
+.lk-head > .lk-th:last-child {
+  padding: 0;
 }
 
 /* ---------- tri-state checkbox ---------- */
@@ -380,7 +400,7 @@
 }
 .lk-unassigned { font-size: 14px; font-weight: 700; color: var(--faint); }
 
-.lk-codebox { display: flex; align-items: center; gap: 3px; }
+.lk-codebox { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; max-width: 100%; }
 .lk-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -457,6 +477,35 @@
   height: 32px;
   padding: 0;
   flex: none;
+}
+/* D190 — the tablet range: the sidebar may still be open (card 590 at 900), so
+   compact floors and cell padding; the header, the status badge and the battery
+   may wrap. Placed AFTER the base cell rules it overrides (.lk-th, .lk-td,
+   .lk-badge, .lk-acts): same specificity, so the later declaration wins. */
+@media (min-width: 768px) and (max-width: 1119.98px) {
+  .lk-gt {
+    --cols: 44px minmax(76px, 180px) minmax(60px, 150px) minmax(72px, 480px)
+      minmax(80px, 300px) minmax(80px, 140px) minmax(84px, 220px)
+      minmax(84px, 150px) minmax(0, 1fr);
+  }
+  .lk-th {
+    padding: 12px 8px;
+    white-space: normal;
+  }
+  .lk-td {
+    padding: 11px 8px;
+  }
+  .lk-batt {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .lk-badge {
+    white-space: normal;
+    max-width: 100%;
+  }
+  .lk-acts {
+    gap: 4px;
+  }
 }
 .lk-empty {
   padding: 56px;

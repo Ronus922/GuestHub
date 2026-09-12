@@ -24,7 +24,7 @@ import {
 // radius 8, 13.5px/700. The text shade is derived (WCAG), never stored.
 function StatusChip({ label, color }: { label: string; color: string }) {
   return (
-    <span className="chip" style={{ background: color, color: readableTextColor(color) }}>
+    <span className="chip" title={label} style={{ background: color, color: readableTextColor(color) }}>
       {label}
     </span>
   );
@@ -190,7 +190,7 @@ export function WorkflowStatusSection({ initial }: { initial: WorkflowStatusDef[
                 </span>
               </span>
               <span className="c ws-cnt ltr-num" data-mcard="hide">{i + 1}</span>
-              <span data-label="סטטוס">
+              <span className="ws-status" data-label="סטטוס">
                 <StatusChip label={row.label} color={row.color} />
               </span>
               <span className="ws-cnt" data-label="הזמנות">
