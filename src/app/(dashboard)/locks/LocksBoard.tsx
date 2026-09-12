@@ -910,7 +910,9 @@ function LockRow({
           </div>
         ) : lock.room ? (
           <div style={{ minWidth: 0 }}>
-            <div className="lk-room">{roomLabel(lock.room)}</div>
+            <div className="lk-room" title={roomLabel(lock.room)}>
+              {roomLabel(lock.room)}
+            </div>
             <div className="lk-room-sub">
               חדר <bdi className="ltr-num">{lock.room.roomNumber}</bdi>
             </div>
