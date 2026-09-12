@@ -15,6 +15,7 @@
     "suite": "node scripts/run-checks.mjs",
     "check:migration-manifest": "node scripts/check-migration-manifest.mjs",
     "check:deploy-migrations": "node scripts/check-deploy-migrations.mjs",
+    "check:deploy-script": "node scripts/check-deploy-script.mjs",
     "check:e2e-safety": "node scripts/check-e2e-safety.mjs",
     "check:seed-safety": "node scripts/check-seed-safety.mjs",
     "check:guard-roots": "node scripts/check-guard-roots.mjs",

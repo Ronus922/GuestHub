@@ -5498,6 +5498,106 @@ dirty range מסוג `restrictions` והסתיים `synced`; יצאה קריאת
 אין סגירה אוטומטית להפרה: ייבוא-מחדש מוכיח שההזמנה נקלטה, לא שמישהו בדק את ההקרנה. אין הזמנה 1:1 של
 "N שורות" — שורה מבוטלת נשארת, שורה יתומה (הזמנה נמחקה) אינה מוצגת ויוצאת ב-purge של 180 יום.
 
+## D185 — הפריסה מתקינה תלויות כשהמניפסטים השתנו, ומאמתת שהמותקן תואם לנעילה לפני restart (2026-09-12)
+
+**הסיבה.** 10/09/2026, ‏PR ‏#250: קובץ הנעילה העלה nodemailer מ-9.0.3 ל-9.1.1 (תיקון
+אבטחה). ל-`scripts/deploy-production.sh` לא היה שלב התקנה מעולם — הפריסה בנתה מול
+`node_modules` הישן והדפיסה את שורת ההצלחה עבור bundle שעדיין הכיל 9.0.3. זה נתפס
+ידנית (זיכרון של סשן), לא ע"י מכונה.
+
+**ההוראה (בעלים).** אחרי ה-pull ולפני ה-build: אם `pnpm-lock.yaml` או `package.json`
+שונים בין ה-HEAD שנפרס קודם ל-HEAD החדש → `pnpm install --frozen-lockfile`; כישלון =
+עצירה לפני build, בלי restart; לוג של הקבצים שהפעילו את ההתקנה. אחרי ה-build: אסרשן
+שמצב `node_modules` תואם לנעילה — אי-התאמה = עצירה לפני restart.
+
+**המימוש.**
+- `scripts/deploy-deps.mjs` (חדש). `trigger <old> <new>` מדפיס את הסיבה להתקנה (פלט ריק
+  = אין סיבה): המניפסטים שהשתנו בין שני הקומיטים (`git diff --name-only`), ו/או "העץ
+  המותקן ≠ הנעילה". `verify` יוצא 0 רק כשכל תלות ישירה מותקנת בגרסה שהנעילה דורשת —
+  `pnpm ls --depth 0 --json` (המותקן בפועל) מול `importers['.']` ב-`pnpm-lock.yaml`
+  (הרצוי). כל כשל קריאה של אחד הצדדים = אי-התאמה, לעולם לא "עובר" (fail-closed).
+- `scripts/deploy-production.sh` שלב 8b (אחרי ה-fast-forward, לפני ה-build):
+  `DEPS_TRIGGER="$(… trigger "$BEFORE_COMMIT" "$TARGET_COMMIT")"`; לא ריק → הדפסת הסיבה
+  ו-`pnpm install --frozen-lockfile || fail`. שלב 9a (אחרי ה-build, לפני המיגרציות
+  וה-restart): `… verify || fail`.
+- "ה-HEAD שנפרס קודם" הוא `BEFORE_COMMIT` — הסקריפט לוכד אותו (שורה 30) לפני ה-fetch,
+  בזיכרון בלבד; הוא לא נשמר לדיסק, וזה לא שונה.
+- **תוספת הנדסית שלי (לא הכרעה מוצרית):** ה-trigger מפעיל התקנה גם כשה-git diff ריק
+  אך העץ המותקן אינו תואם לנעילה. זה בדיוק המצב שפריסה שמתה בין ה-fast-forward להתקנה
+  משאירה אחריה — הפריסה הבאה רואה "אין שינוי" — והוא גם המצב ששלב 9a היה חוסם בלי דרך
+  קדימה אוטומטית.
+
+**הוכחה יבשה על ההיסטוריה האמיתית.** `bc93f41..4f2230f` → `changedDependencyFiles = []`
+ו-trigger ריק (אין התקנה). טווח המיזוג של ‏#250, `6c45843^1..6c45843` →
+`["package.json","pnpm-lock.yaml"]` ו-trigger "manifest changed …: package.json,
+pnpm-lock.yaml" (התקנה). `verify` על העץ החי: תואם (nodemailer 9.1.1 מותקן = הנעילה).
+
+**שומר.** `check:deploy-script` — מבנה (`BEFORE_COMMIT` לפני ה-fetch → trigger אחרי
+שה-target ידוע → התקנה **מותנית** עם `|| fail` לפני ה-build, ופקודת התקנה אחת בלבד →
+verify עם `|| fail` אחרי ה-build ולפני מיגרציות/restart) והתנהגות (ריפו סקראץ' עם
+ארבעה קומיטים: שינוי מקור בלבד / נעילה בלבד / package.json בלבד / שניהם; פרסר הנעילה
+על הפורמט האמיתי של pnpm 9 כולל שם עם גרשיים וסיומת peer; ההשוואה על התקרית עצמה —
+9.0.3 מותקן מול 9.1.1 רצוי; העץ האמיתי). B2: התקנה לא-מותנית / התקנה אחרי ה-build /
+הסרת `|| fail` / השוואה שמתעלמת מהגרסה — כל אחד → יציאה 1; שחזור → ירוק.
+
+**מחוץ להיקף.** שמירת ה-HEAD שנפרס לדיסק; `pnpm install` בפרודקשן צריך רשת ל-registry
+(או store מקומי מלא) — כשל רשת עוצר את הפריסה לפני ה-build, בכוונה.
+
+## D186 — לכידת גוף ה-POST של ARI ל-Beds24 על שורת העבודה, ושמירה ל-90 יום (2026-09-12)
+
+**הסיבה.** `channel_sync_jobs.payload` היה `{}` בכל 43,150 שורות ה-`sync_ari_range`
+(נמדד 12/09, SELECT בלבד); `channel_sync_errors.request_payload` נכתב רק בכישלון
+(‏0 מתוך 302 שורות בפרוד נושאות אותו). חקירת 1164 (D183) לא יכלה להראות מה נשלח
+בפועל — לא היה מה לקרוא.
+
+**ברירות המחדל של הבעלים (יושמו כלשונן).** גוף ה-JSON המדויק שנשלח, בהצלחה **ובכישלון**,
+בעמודה הקיימת `payload` (בלי טבלה חדשה); שמירה 90 יום דרך ניקוי לילי ב-worker
+(‏NULL לעמודה, השורה נשארת); תקרה 64KB לשורה עם סמן מעבר לה.
+
+**ממצאי האודיט.**
+- הגוף נבנה ב-`buildBeds24CalendarRequests` (‏`beds24-ari-payloads.ts`) ונשלח ב-
+  `sendCalendarRequests` → `pushBeds24Calendar` (‏`beds24-ari.ts`) → `beds24Request`
+  (‏`beds24-http.ts`, ‏`JSON.stringify(body)`). ה-drain (`drainBeds24AriDirtyRanges`)
+  **לא קיבל את מזהה העבודה** ולא כתב דבר לשורת ה-job — רק ה-full sync כתב ל-`payload`
+  (אזהרות/קרדיטים). `request_payload` ב-`logChannelError` נכתב רק מ-`outcome.evidence`,
+  כלומר רק כשיש כישלון/אזהרה.
+- **ל-worker אין "עבודת תחזוקה" קיימת.** יש ארבעה מתזמני `ensure*Jobs` בלבד; הניקוי
+  של 043 (`purge_channel_sync_errors`/`purge_expired_cards`) רץ מ-`scripts/ops/guesthub-purge.mjs`
+  שמיועד ל-timer של systemd — ואין כזה (‏`systemctl list-timers` מראה רק backup
+  ו-restore-drill; ב-crontab אין רשומת guesthub). לכן הניקוי הלילי מומש כמעבר יומי
+  בתוך ה-tick של ה-worker — התהליך הקבוע היחיד, כפי שההוראה ביקשה ("ב-worker").
+- `payload` מוגדר `NOT NULL DEFAULT '{}'` מאז 005 — "NULL לעמודה" דורש מיגרציה.
+
+**המימוש.**
+- `beds24-ari-payloads.ts`: `capSentRequests` → `{requests, count, bytes, truncated, omitted,
+  recordedAt}`; גופים שלמים נשמרים כל עוד נכנסים ב-64KB, השאר **נספרים** (`omitted`) ולא
+  נחתכים באמצע — גוף שנשמר הוא בדיוק מה שיצא, והרשומה תמיד JSON תקין.
+- `beds24-ari-sync.ts`: `Beds24SendOutcome.sentRequests` — כל גוף שיצא, בסדר השליחה, כולל
+  זה שנכשל; `drainBeds24AriDirtyRanges(db, conn, deps?, jobId?)` כותב
+  `payload = COALESCE(payload,'{}') || {sent: …}` מיד אחרי שלב השליחה ולפני שיפוט התוצאה,
+  כך שאף early-return לא מאבד ראיה של ריצה כושלת. ריצה ששלחה 0 בקשות רושמת `count: 0`
+  — "לא נשלח" לעולם לא נראה כמו "לא נרשם". סמנטיקת השגיאות של מסלול השליחה לא שונתה.
+- `queue.ts`: `expireSyncJobPayloads(db, days=90)` — `UPDATE … SET payload = NULL WHERE
+  job_type='sync_ari_range' AND payload IS NOT NULL AND created_at < now()-90d`; לעולם לא
+  DELETE; מוגבל ל-`sync_ari_range` בלבד, כך שמונה הקרדיטים שיושב על שורות pull/reconcile
+  (`recordJobCredits`) לא נוגע.
+- `worker.ts`: מעביר `job.id` ל-drain; `runPayloadRetentionOnce` — פעם ביום קלנדרי (UTC;
+  חצות UTC = השעות הקטנות בישראל) בתוך ה-tick, אידמפוטנטי, כשל נרשם ללוג ולא עוצר עבודה.
+- מיגרציה **089** `ALTER COLUMN payload DROP NOT NULL` (ברירת המחדל `'{}'` נשארת; כל
+  הקוראים כבר סובלים NULL — `COALESCE` בכל מיזוג, `payload ?`/`payload->` מחזירים NULL→false).
+
+**מחוץ להיקף (מדווח, לא הוכרע).** ה-full sync (`runBeds24FullSync`) עדיין לא רושם את
+הגופים שלו — ההוראה נגעה ב-`sync_ari_range`; הרחבה = שורה אחת באותו מיזוג `payload`.
+`scripts/ops/guesthub-purge.mjs` עדיין לא מתוזמן — ממצא, לא חלק מהפרק.
+
+**שומר.** `check:beds24-ari-drain` הורחב: כל drain רץ תחת שורת `sync_ari_range`; אחרי
+drain נקי `payload.sent.requests` שווה מבנית לגוף שה-mock קיבל על החוט (סדר, count, bytes,
+לא-חתוך); גם אחרי דחייה (200 עם success:false) הגוף רשום; תרחיש 10: תקרת 64KB (30 גופים →
+נשמרים שלמים עד התקרה, `omitted` מדויק, אין חיתוך), ו-retention על שלוש שורות — 91 יום →
+NULL, 89 יום → נשאר, `pull_booking_revisions` בן 120 יום → לא נגוע, ושלוש השורות קיימות.
+חיווט ה-worker (מזהה העבודה ל-drain, קריאת ה-retention) נבדק סטטית כי `runTick` דורש
+חיבורים חיים. B2: דילוג על הכתיבה / DELETE במקום NULL → כל אחד יציאה 1.
+
 ## D187 — עדכון קבוצתי: שורות האודיט רושמות הגבלות לפני/אחרי, לא רק מחיר (2026-09-12)
 
 **הסיבה.** `bulk_rate_update_items` נשא `old_price`/`new_price` בלבד. ריצת ה-min-stay מ-06/09
