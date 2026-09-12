@@ -35,6 +35,7 @@
     "check:public-quote": "node scripts/check-public-quote.mjs",
     "check:room-picker-window": "node scripts/check-room-picker-window.mjs",
     "check:rates-ui": "node scripts/check-rates-ui.mjs",
+    "check:bulk-update-audit": "node scripts/check-bulk-update-audit.mjs",
     "check:rate-grid": "node --env-file=.env.local scripts/check-rate-grid.mjs",
     "liveness:beds24-connection": "node --env-file=.env.local scripts/check-beds24-connection.mjs",
     "liveness:beds24-jobs": "node --env-file=.env.local scripts/check-beds24-jobs.mjs",
