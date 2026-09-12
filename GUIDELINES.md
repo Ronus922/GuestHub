@@ -57,7 +57,7 @@
 
 ## 2. טיפוגרפיה — סקאלה סגורה
 
-פונט יחיד: **Assistant** (Google Fonts, 400–800). מונו לקוד/HEX בלבד: **JetBrains Mono**.
+פונט יחיד: **Assistant** (Google Fonts, 400–800). מונו לקוד/HEX בלבד: מחסנית המערכת `ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace` — אף פונט מונו אינו נטען (JetBrains Mono נבחר רק אם מותקן אצל המשתמש; D175 פריט 9).
 חובה `font-family:inherit` על `button`, `input`, `select`, `textarea`.
 
 | תפקיד | גודל/משקל | שימוש |
