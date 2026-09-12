@@ -19,6 +19,9 @@
 //   · the SAME run again → 3 items, changed = 0 (a true no-op is still audited);
 //   · a price-only run → changed = 3 and the restrictions are equal before/after;
 //   · a night with NO stored row → old_restrictions NULL, old_price NULL, changed.
+//   · D188: the action RESULT carries both numbers the Group Update toast shows
+//     ("עודכנו N תאים · M שונו") — cells and changed — with changed = 0 for the
+//     no-op run and = nights × units for the min-stay run.
 //
 // B2 (each turns this red; restore → green):
 //   · drop the restriction write in actions.ts (both columns stay NULL);
@@ -177,6 +180,12 @@ try {
     assert.equal(res.data?.cells, 3, "3 cells were targeted (3 nights × 1 unit)");
     assert.equal(res.data?.changed, 3,
       "changed = 3: every night's min-stay moved 1 → 2 — a restriction change IS a change (06/09 audited as 0)");
+    // D188 — the toast reads N and M straight off this result: both must be
+    // numbers on it, and M for a min-stay change is nights × units (3 × 1), not
+    // the price-only count (0 here)
+    assert.equal(typeof res.data?.cells, "number", "D188: the result carries `cells` — N on the toast");
+    assert.equal(typeof res.data?.changed, "number", "D188: the result carries `changed` — M on the toast");
+    assert.equal(res.data?.changed, 3 * 1, "D188: M = nights × units (3 × 1) for a min-stay change");
     const log = await latestLog();
     const items = await itemsOf(log.id);
     assert.equal(items.length, 3, "one item per affected night");
@@ -211,6 +220,7 @@ try {
     assert.equal(res.success, true);
     assert.equal(res.data?.cells, 3, "the no-op run still targets 3 cells");
     assert.equal(res.data?.changed, 0, "changed = 0: nothing differs from what was stored");
+    assert.equal(res.data?.cells, 3, "D188: the no-op run still reports N = 3 cells next to M = 0 — the sticky danger toast's numbers");
     const items = await itemsOf((await latestLog()).id);
     assert.equal(items.length, 3, "a no-op run is still audited, one item per night");
     for (const it of items) {

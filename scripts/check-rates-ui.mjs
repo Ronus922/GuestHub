@@ -207,4 +207,30 @@ ok(!/rg-glabel|rg-gstrip|rg-gs-in|rg-tbase|--rg-band-h|--rg-band-bg/.test(css.re
 ok(/rg-utype/.test(grid),
   "the room type still labels every room row — the grouping is gone, the information is not");
 
+// ---- 15. D188 — the Group Update result reaches the operator on the ONE toast ----
+// N = cells targeted, M = cells whose price OR any restriction changed (D187).
+// M === 0 is the danger variant and must not auto-dismiss: the operator asked
+// for a change and nothing moved. The runtime half (the action result carries
+// both numbers) lives in check:bulk-update-audit; this is the call site.
+const guToast = read(`${RATES}/group-update-toast.ts`);
+// comments stripped: a comment that NAMES Shell's <Toaster> is not a second one
+const codeOnly = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+ok(/import \{ toast \} from "sonner"/.test(guToast) && !/<Toaster\b/.test(codeOnly(guToast) + codeOnly(groupUpdate)),
+  "the result toast is sonner's `toast` — the ONE system toast (Shell's <Toaster>), no second mechanism");
+const applyBody = groupUpdate.slice(groupUpdate.indexOf("async function apply()"));
+const successBranch = applyBody.match(/if \(res\.success\) \{([\s\S]*?)\n\s*\} else/);
+ok(!!successBranch && /showGroupUpdateResultToast\(res\.data\.cells,\s*res\.data\.changed\)/.test(successBranch[1]),
+  "on success GroupUpdatePanel calls the result toast with BOTH numbers (cells, changed) from the action result");
+ok(!!successBranch && successBranch[1].indexOf("showGroupUpdateResultToast(") < successBranch[1].indexOf("onClose()"),
+  "…before the panel closes");
+ok(/if \(changed === 0\) \{[\s\S]*?toast\.error\(/.test(guToast),
+  "changed === 0 is the danger variant (toast.error — the red icon on the ink toast)");
+const dangerCall = guToast.match(/toast\.error\(([\s\S]*?)\);/);
+ok(!!dangerCall && /duration:\s*Infinity/.test(dangerCall[1]) && /closeButton:\s*true/.test(dangerCall[1]),
+  "the danger toast never auto-dismisses (duration: Infinity) and carries the X (closeButton: true)");
+ok(!!dangerCall && /0 שונו — בדוק את הערכים/.test(dangerCall[1]),
+  "the danger text is ״עודכנו N תאים · 0 שונו — בדוק את הערכים״");
+ok(/toast\.success\(`עודכנו \$\{cells\} תאים · \$\{changed\} שונו`\)/.test(guToast),
+  "otherwise the neutral system toast ״עודכנו N תאים · M שונו״ (2.8s, Shell's default)");
+
 console.log(`check:rates-ui — the /rates board matches the approved architecture ✔ (${n} checks)`);

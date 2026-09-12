@@ -7,6 +7,7 @@ import { DateRangeField } from "@/components/shared/DateRangeField";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { addDays, dayOfWeek, eachDay, HEBREW_DAY_LETTERS, type DateOnly } from "@/lib/dates";
 import { bulkUpdateRatesAction } from "./actions";
+import { showGroupUpdateResultToast } from "./group-update-toast";
 import { applyPriceMode } from "@/lib/rates/rules";
 import { compareRoomNumber } from "@/lib/rooms/sort";
 import type { BulkUpdateRatesInput } from "@/lib/validation/rates";
@@ -245,6 +246,9 @@ export function GroupUpdatePanel({
       if (res.success) {
         onSaved();
         router.refresh();
+        // D188 — the result reaches the operator on the system toast before the
+        // panel closes; 0 changed is the sticky danger variant
+        if (res.data) showGroupUpdateResultToast(res.data.cells, res.data.changed);
         onClose();
       } else {
         setError(res.error ?? "אירעה שגיאה");
