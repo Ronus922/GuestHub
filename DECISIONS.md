@@ -5539,3 +5539,54 @@ dirty range מסוג `restrictions` והסתיים `synced`; יצאה קריאת
 
 **פתוח לבעלים (לא הוכרע כאן).** האם להציג את `changed` למפעיל אחרי עדכון קבוצתי (טוסט
 "עודכנו N תאים, M שונו" ב-`GroupUpdatePanel`), או שהמספר נשאר באודיט בלבד.
+→ הוכרע ב-D188.
+
+## D188 — עדכון קבוצתי: תוצאת הריצה מוצגת למפעיל בטוסט המערכתי; 0 שונו = danger דביק (2026-09-13)
+
+**ההוראה (בעלים, 13/09).** אחרי שעדכון קבוצתי מסתיים והפאנל נסגר, לוח התעריפים מציג את
+הטוסט המערכתי (Shell.tsx, 2.8 שנ׳): "עודכנו N תאים · M שונו". אם M == 0 → וריאנט danger
+שאינו נעלם מעצמו (נשאר עד לחיצה על X): "עודכנו N תאים · 0 שונו — בדוק את הערכים". N/M
+מגיעים מתוצאת הפעולה (`cells` / `changed`) ש-D187 כבר מחזירה. זה סוגר את הפריט הפתוח
+של D187.
+
+**המימוש.** `src/app/(dashboard)/rates/group-update-toast.ts` — פונקציה אחת,
+`showGroupUpdateResultToast(cells, changed)`, על `toast` של sonner (מנגנון הטוסט היחיד —
+ה-`<Toaster>` של Shell.tsx: `position="bottom-center" dir="rtl" offset={26} duration={2800}
+toastOptions={{ className: "gh-toast" }}`): `changed === 0` → `toast.error(…, { duration:
+Infinity, closeButton: true })`; אחרת `toast.success(…)` בברירות המחדל של המערכת.
+`GroupUpdatePanel.apply()` קורא לה בענף ההצלחה, אחרי `onSaved()`/`router.refresh()` ולפני
+`onClose()`, עם `res.data.cells` ו-`res.data.changed`. אין UI חדש, אין CSS חדש, אין מיגרציה.
+
+**מסלול ה-`changed`.** ‏#257 (D187) לא היה ממוזג ל-main בזמן המימוש. ההנחיה החלופית
+"לענף מ-main ולספור מהפריטים המוחזרים" לא ניתנת למימוש: ב-main הפעולה מחזירה מספרים
+בלבד (`cells/units/dates`) ולא פריטים, וספירה לפי מחיר בלבד הייתה מפעילה את ה-danger על
+כל ריצת הגבלות — בדיוק הבאג ש-D187 סוגר. לכן הענף `feat/d188-group-update-toast` נבנה
+על `feat/d187-bulk-items-restrictions` (PR עם base = הענף ההוא; GitHub מסיט אותו ל-main
+אוטומטית עם מיזוג ‏#257) וקורא `changed` בלבד — המצב ש"אם ‏#257 נוחת קודם" מגדיר.
+
+**שני דברים שההוראה הניחה ואינם כך במערכת — לא שונו, מדווחים (כלל ברזל 12):**
+1. לטוסט המערכתי אין X היום: ה-`<Toaster>` של Shell לא מגדיר `closeButton`, ו-sonner מציג
+   X רק כשמבקשים. ה-X נוסף כאן רק לוריאנט ה-danger (שם הוא חובה — אין דרך אחרת לסגור).
+   הטוסט הניטרלי נשאר כמו כל טוסט אחר במערכת (2.8 שנ׳, בלי X). ה-X הוא ברירת המחדל של
+   sonner: ‏20px בפינה העליונה — מתחת ל-44px של כלל ברזל 6; עיצוב `.gh-toast
+   [data-close-button]` הוא הכרעה נפרדת.
+2. ממצא צדדי: הטוסטים מרונדרים ב-`ui-sans-serif` (הפונט ש-sonner קובע על
+   `[data-sonner-toaster]`; `.gh-toast` יורש ממנו), לא ב-Assistant — קיים לכל טוסט במערכת,
+   לא נגעתי.
+
+**שומרים.** `check:bulk-update-audit` (מריץ את `bulkUpdateRatesAction` האמיתית על DB
+סקראץ') — טענת runtime חדשה: התוצאה נושאת `cells` ו-`changed` כמספרים, `changed = 3×1`
+לריצת מין-סטיי (לילות × יחידות), ו-`changed = 0` לצד `cells = 3` לריצת no-op.
+`check:rates-ui` ‏§15 — טענה סטטית: הפאנל קורא ל-`showGroupUpdateResultToast(res.data.cells,
+res.data.changed)` בענף ההצלחה לפני `onClose()`; `changed === 0` → `toast.error` עם
+`duration: Infinity` + `closeButton: true` והטקסט "0 שונו — בדוק את הערכים"; אחרת
+`toast.success("עודכנו N תאים · M שונו")`; אין `<Toaster>` שני (הערות מסוננות). B2: הסרת
+הקריאה לטוסט מהפאנל → יציאה 1; תמיד ניטרלי (הסרת ענף ה-0) → יציאה 1; שחזור → 0.
+
+**אימות.** `tsc --noEmit` 0, eslint 0, `check:bulk-update-audit` 5/5, `check:rates-ui` ✔.
+fixture ב-CDP (ה-helper האמיתי מקומפל ב-TypeScript של הפרויקט, ה-CSS האמיתי, `<Toaster>`
+של sonner 2.0.7 עם ה-props שנקראו מ-Shell.tsx; הגריד = stand-in): 1280×800 — ניטרלי
+(32/30): `data-type=success`, רקע ink, radius 12, אייקון ‎#7CE3A8, ‏26px מהתחתית, ללא X,
+נעלם ב-4 שנ׳; danger (32/0): `data-type=error`, אייקון `--danger`, X גלוי, עדיין מוצג אחרי
+5 שנ׳, לחיצה על ה-X מסירה. 390×844 זהה (16px מהתחתית — כלל ה-safe-area של responsive.css).
+צילומים: `/tmp/d188-neutral.png`, `/tmp/d188-danger.png` (‏+ `-390`).
