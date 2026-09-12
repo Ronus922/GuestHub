@@ -8,7 +8,7 @@ import { getBeds24AccessToken } from "./beds24-token";
 import { projectBeds24Ari } from "./beds24-ari-projection";
 import type { AriProjection } from "./ari-projection";
 import {
-  buildBeds24CalendarRequests, beds24PayloadByteSize,
+  buildBeds24CalendarRequests, beds24PayloadByteSize, capSentRequests,
   type Beds24CalendarMapping, type Beds24CalendarRequest,
 } from "./beds24-ari-payloads";
 import {
@@ -149,6 +149,9 @@ export type Beds24SendOutcome = {
    *  partial run, the last warnings-carrying response), with the request
    *  payload that produced it. null = clean run or nothing sent. */
   evidence: { raw: RawResponseEvidence; requestPayload: unknown } | null;
+  /** D186 — every body that left the process this run, in send order,
+   *  INCLUDING the one that failed (it was sent). Deferred bodies are not here. */
+  sentRequests: Beds24CalendarRequest[];
 };
 
 export type Beds24FullSyncResult = {
@@ -282,7 +285,7 @@ async function sendCalendarRequests(
   const outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
     deferredBatches: 0, credits: null, creditPause: null, runRequestCost: null,
-    evidence: null,
+    evidence: null, sentRequests: [],
   };
   const gate = createBeds24CreditGate();
   const sendable = requests.slice(0, MAX_REQUESTS_PER_RUN);
@@ -301,6 +304,7 @@ async function sendCalendarRequests(
       { token: creds.token, baseUrl: creds.baseUrl, entries: sendable[i] },
     );
     outcome.requests += 1;
+    outcome.sentRequests.push(sendable[i]);
     const rateLimited = !res.ok && res.category === "rate_limited";
     gate.observe(res.credits, {
       ...(rateLimited ? { httpStatus: 429 } : {}),
@@ -355,7 +359,7 @@ export async function runBeds24FullSync(
   const emptyOutcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
     deferredBatches: 0, credits: null, creditPause: null, runRequestCost: null,
-    evidence: null,
+    evidence: null, sentRequests: [],
   };
 
   // A failed run leaves full_sync_required=true so the operator re-runs after
@@ -577,6 +581,9 @@ export async function drainBeds24AriDirtyRanges(
   db: Sql,
   conn: Beds24AriConnection,
   deps?: Beds24AriSyncDeps,
+  /** the sync_ari_range job row this drain runs under — receives the sent
+   *  bodies (D186). Absent = nothing is recorded (a direct call). */
+  jobId?: string,
 ): Promise<DrainSummary> {
   const summary: DrainSummary = { claimed: 0, synced: 0, retried: 0, failed: 0, requests: 0, sentValues: 0 };
   const now = deps?.now ?? (() => Date.now());
@@ -659,7 +666,7 @@ export async function drainBeds24AriDirtyRanges(
   let outcome: Beds24SendOutcome = {
     requests: 0, sentRanges: 0, warnings: [], failure: null,
     deferredBatches: 0, credits: null, creditPause: null, runRequestCost: null,
-    evidence: null,
+    evidence: null, sentRequests: [],
   };
   if (builderMappings.length > 0) {
     const projection = await projectBeds24Ari(db, {
@@ -679,6 +686,19 @@ export async function drainBeds24AriDirtyRanges(
       summary.requests = outcome.requests;
       summary.sentValues = outcome.sentRanges;
     }
+  }
+  // D186 — the exact bodies this drain sent, on its job row: success AND
+  // failure, in send order, whole bodies up to the cap (capSentRequests). A
+  // run that sent nothing records count 0, so "nothing was sent" is never
+  // mistaken for "nothing was recorded". Written BEFORE the outcome is judged
+  // so no early return below can lose a failed run's evidence. The nightly
+  // retention pass (expireSyncJobPayloads) NULLs it after 90 days.
+  if (jobId) {
+    await db`
+      UPDATE guesthub.channel_sync_jobs
+      SET payload = COALESCE(payload, '{}'::jsonb)
+        || ${db.json({ sent: capSentRequests(outcome.sentRequests) } as never)}
+      WHERE id = ${jobId}`;
   }
   // NOTE: rows for rooms with no pushable mapping produce nothing to send and
   // are marked synced below — same policy as ari-sync.ts (projectAri simply

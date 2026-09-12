@@ -21,6 +21,10 @@
 //     INCLUSIVE. Either mistake silently corrupts the live listing.
 //   · a 429 must open the connection breaker for the Retry-After the provider
 //     asked for, and the next drain must send NOTHING.
+//   · D186: the exact body that went over the wire is recorded on the
+//     sync_ari_range job row (payload.sent) — on success AND on failure — and
+//     the nightly retention NULLs rows older than 90 days while KEEPING them.
+//     B2: skip the write / delete instead of NULL → red.
 //
 // The check runs the REAL compiled worker modules against an isolated test DB
 // (:5433) and a substituted fetch; the DB scaffold is a real tenant with real
@@ -65,6 +69,16 @@ assert.match(httpSrc, /headers: \{ token: opts\.token \}/,
 // absence of the name that never existed. Duplicating it here bought nothing
 // and broke this guard the moment the meter was corrected (P0-4/D97).
 ok("CONTRACT: one endpoint (/inventory/rooms/calendar) and `token` auth");
+const workerSrc = readFileSync(join(ROOT, "src/lib/channel/worker.ts"), "utf8");
+// D186 wiring in the worker — asserted on source because runTick needs live
+// connections; the drain and the retention pass themselves run for real below.
+assert.match(workerSrc, /drainBeds24AriDirtyRanges\(sql, conn, undefined, jobId\)/,
+  "the worker hands the drain its job id — without it no body is ever recorded");
+assert.match(workerSrc, /await runPayloadRetentionOnce\(log\)/,
+  "the worker tick runs the nightly payload retention");
+assert.match(workerSrc, /await expireSyncJobPayloads\(sql\)/,
+  "…which calls the queue's expireSyncJobPayloads");
+ok("D186 wiring: the worker passes the job id to the drain and runs the retention pass");
 
 // ---- compile the real worker graph and require it the worker's own way ----
 execSync("pnpm exec tsc -p tsconfig.worker.json", { stdio: "inherit" });
@@ -78,6 +92,8 @@ Module._resolveFilename = function (request, ...rest) {
 };
 const require2 = createRequire(import.meta.url);
 const ari = require2(join(OUT, "lib/channel/beds24-ari-sync.js"));
+const queue = require2(join(OUT, "lib/channel/queue.js"));
+const payloads = require2(join(OUT, "lib/channel/beds24-ari-payloads.js"));
 const { encryptSecret } = require2(join(OUT, "lib/channel/crypto.js"));
 
 // ============================================================
@@ -401,9 +417,17 @@ try {
     UPDATE guesthub.channel_connections
     SET circuit_open_until = NULL, consecutive_failures = 0, last_error = NULL
     WHERE id = ${connId}`;
+  /** D186 — every drain runs under a sync_ari_range job row, like the worker's */
+  let lastJobId = null;
+  const newJob = async () => (await sql`
+    INSERT INTO guesthub.channel_sync_jobs (tenant_id, connection_id, job_type, status, priority, payload)
+    VALUES (${tenantId}, ${connId}, 'sync_ari_range', 'processing', 50, '{}'::jsonb) RETURNING id`)[0].id;
+  const jobPayload = async (id) => (await sql`
+    SELECT payload FROM guesthub.channel_sync_jobs WHERE id = ${id}`)[0].payload;
   const drain = async () => {
     calls = [];
-    const s = await ari.drainBeds24AriDirtyRanges(sql, await loadConn(), { fetchImpl: fakeFetch });
+    lastJobId = await newJob();
+    const s = await ari.drainBeds24AriDirtyRanges(sql, await loadConn(), { fetchImpl: fakeFetch }, lastJobId);
     noViolations(); // the mock's breaches would otherwise be swallowed as network_error
     return s;
   };
@@ -441,6 +465,19 @@ try {
   assert.equal(ev.context.creditsRemaining, 97.6,
     "the measured credit meter is carried into the evidence context (fractional, not rounded)");
   ok("clean drain: POST /inventory/rooms/calendar, `token` auth, compressed range, inclusive `to`, price1 in major units, synced + evidence");
+  // D186 — the body that went over the wire is on the job row, exactly
+  {
+    const p = await jobPayload(lastJobId);
+    assert.ok(p && p.sent, "the drain's job row carries the `sent` record (D186)");
+    assert.deepEqual(p?.sent?.requests, calls.map((c) => c.body),
+      "payload.sent.requests IS the body the mock received — structurally equal, in send order");
+    assert.equal(p?.sent?.count, calls.length, "sent.count = the number of POSTs issued");
+    assert.equal(p?.sent?.truncated, false, "a small run is not truncated");
+    assert.equal(p?.sent?.omitted, 0, "…and omits nothing");
+    assert.equal(p?.sent?.bytes, Buffer.byteLength(JSON.stringify(calls.map((c) => c.body)), "utf8"),
+      "sent.bytes = the serialized size of every sent body");
+    ok("D186: a clean drain records the exact request body it sent on its sync_ari_range job row");
+  }
 
   // ============================================================
   // 2. THE 200-WITH-ERRORS TRAP — a per-item success:false is a REJECTED write
@@ -469,6 +506,11 @@ try {
     "a 200-with-success:false must never print a status code that was not on the response");
   assert.match(ev.error_message ?? "", /HTTP 200/,
     "the message must report the status that actually came back");
+  // D186 — a REJECTED write still records the body that was sent: failure is
+  // exactly when the evidence matters (the 1164 investigation had none)
+  assert.deepEqual((await jobPayload(lastJobId))?.sent?.requests, calls.map((c) => c.body),
+    "the rejected body is recorded on the job row too — success AND failure");
+  ok("D186: the sent body is recorded on failure as well");
 
   // the same trap with a BARE success:false — no errors[] to fall back on.
   // Only the success:false rule itself stands between this body and a range
@@ -659,6 +701,53 @@ try {
     `constant in the Beds24 panel; re-reading it on every drain spends a credit ` +
     `for nothing and is exactly the per-drain cost this contract exists to forbid.`);
   ok(`the ceiling read is cached: ${ceilingReads} read(s) across every drain in this run`);
+
+  // ============================================================
+  // 10. D186 — the 64KB cap keeps whole bodies only; retention NULLs old rows
+  //     and KEEPS them; other job types are never touched
+  // ============================================================
+  {
+    const big = Array.from({ length: 30 }, (_, i) => Array.from({ length: 10 }, (_, j) => ({
+      roomId: 700000 + i * 10 + j,
+      calendar: Array.from({ length: 10 }, (_, k) => ({
+        from: day(k), to: day(k), numAvail: 1, price1: 512.5 + k, minStay: 2, maxStay: 365,
+      })),
+    })));
+    const rec = payloads.capSentRequests(big);
+    assert.equal(rec.count, 30, "count = every body sent, capped or not");
+    assert.ok(rec.bytes > payloads.SENT_REQUESTS_CAP_BYTES, `the fixture exceeds the cap (${rec.bytes} bytes)`);
+    assert.equal(rec.truncated, true, "the marker is set when bodies were dropped");
+    assert.ok(rec.requests.length > 0 && rec.requests.length < 30, "some, not all, bodies are kept");
+    assert.equal(rec.omitted, 30 - rec.requests.length, "omitted = the bodies the cap dropped");
+    assert.ok(Buffer.byteLength(JSON.stringify(rec.requests), "utf8") <= payloads.SENT_REQUESTS_CAP_BYTES,
+      "the kept bodies fit the cap");
+    assert.deepEqual(rec.requests, big.slice(0, rec.requests.length),
+      "kept bodies are WHOLE and in order — never a body cut in the middle");
+    const small = payloads.capSentRequests(big.slice(0, 1));
+    assert.equal(small.truncated, false, "one small body is not truncated");
+    assert.deepEqual(small.requests, big.slice(0, 1), "…and is kept as is");
+    ok("D186 cap: beyond 64KB bodies are dropped whole, counted in `omitted`, never cut mid-body");
+
+    const mkJob = (type, ageDays, payload) => sql`
+      INSERT INTO guesthub.channel_sync_jobs
+        (tenant_id, connection_id, job_type, status, priority, payload, created_at)
+      VALUES (${tenantId}, ${connId}, ${type}, 'succeeded', 50, ${sql.json(payload)},
+              now() - make_interval(days => ${ageDays}))
+      RETURNING id`;
+    const [old] = await mkJob("sync_ari_range", 91, { sent: small });
+    const [fresh] = await mkJob("sync_ari_range", 89, { sent: small });
+    const [pull] = await mkJob("pull_booking_revisions", 120, { credits: { remaining: 90 } });
+    const nulled = await queue.expireSyncJobPayloads(sql);
+    assert.ok(nulled >= 1, `the pass reports how many rows it NULLed (got ${nulled})`);
+    const after = await sql`
+      SELECT id, payload FROM guesthub.channel_sync_jobs WHERE id IN (${old.id}, ${fresh.id}, ${pull.id})`;
+    assert.equal(after.length, 3, "retention NULLs the column and KEEPS the rows — it never deletes");
+    const by = Object.fromEntries(after.map((r) => [r.id, r.payload]));
+    assert.equal(by[old.id], null, "a drain row older than 90 days loses its payload");
+    assert.deepEqual(by[fresh.id], JSON.parse(JSON.stringify({ sent: small })), "a drain row younger than 90 days keeps it");
+    assert.deepEqual(by[pull.id], { credits: { remaining: 90 } }, "other job types are never touched — the pass is scoped to sync_ari_range");
+    ok("D186 retention: >90 days → payload NULL, row kept; <90 days untouched; other job types untouched");
+  }
 
   console.log(`\ncheck-beds24-ari-drain: all ${n} assertions passed`);
 } finally {

@@ -5590,3 +5590,151 @@ verify עם `|| fail` אחרי ה-build ולפני מיגרציות/restart) ו�
 
 **מחוץ להיקף.** שמירת ה-HEAD שנפרס לדיסק; `pnpm install` בפרודקשן צריך רשת ל-registry
 (או store מקומי מלא) — כשל רשת עוצר את הפריסה לפני ה-build, בכוונה.
+
+## D186 — לכידת גוף ה-POST של ARI ל-Beds24 על שורת העבודה, ושמירה ל-90 יום (2026-09-12)
+
+**הסיבה.** `channel_sync_jobs.payload` היה `{}` בכל 43,150 שורות ה-`sync_ari_range`
+(נמדד 12/09, SELECT בלבד); `channel_sync_errors.request_payload` נכתב רק בכישלון
+(‏0 מתוך 302 שורות בפרוד נושאות אותו). חקירת 1164 (D183) לא יכלה להראות מה נשלח
+בפועל — לא היה מה לקרוא.
+
+**ברירות המחדל של הבעלים (יושמו כלשונן).** גוף ה-JSON המדויק שנשלח, בהצלחה **ובכישלון**,
+בעמודה הקיימת `payload` (בלי טבלה חדשה); שמירה 90 יום דרך ניקוי לילי ב-worker
+(‏NULL לעמודה, השורה נשארת); תקרה 64KB לשורה עם סמן מעבר לה.
+
+**ממצאי האודיט.**
+- הגוף נבנה ב-`buildBeds24CalendarRequests` (‏`beds24-ari-payloads.ts`) ונשלח ב-
+  `sendCalendarRequests` → `pushBeds24Calendar` (‏`beds24-ari.ts`) → `beds24Request`
+  (‏`beds24-http.ts`, ‏`JSON.stringify(body)`). ה-drain (`drainBeds24AriDirtyRanges`)
+  **לא קיבל את מזהה העבודה** ולא כתב דבר לשורת ה-job — רק ה-full sync כתב ל-`payload`
+  (אזהרות/קרדיטים). `request_payload` ב-`logChannelError` נכתב רק מ-`outcome.evidence`,
+  כלומר רק כשיש כישלון/אזהרה.
+- **ל-worker אין "עבודת תחזוקה" קיימת.** יש ארבעה מתזמני `ensure*Jobs` בלבד; הניקוי
+  של 043 (`purge_channel_sync_errors`/`purge_expired_cards`) רץ מ-`scripts/ops/guesthub-purge.mjs`
+  שמיועד ל-timer של systemd — ואין כזה (‏`systemctl list-timers` מראה רק backup
+  ו-restore-drill; ב-crontab אין רשומת guesthub). לכן הניקוי הלילי מומש כמעבר יומי
+  בתוך ה-tick של ה-worker — התהליך הקבוע היחיד, כפי שההוראה ביקשה ("ב-worker").
+- `payload` מוגדר `NOT NULL DEFAULT '{}'` מאז 005 — "NULL לעמודה" דורש מיגרציה.
+
+**המימוש.**
+- `beds24-ari-payloads.ts`: `capSentRequests` → `{requests, count, bytes, truncated, omitted,
+  recordedAt}`; גופים שלמים נשמרים כל עוד נכנסים ב-64KB, השאר **נספרים** (`omitted`) ולא
+  נחתכים באמצע — גוף שנשמר הוא בדיוק מה שיצא, והרשומה תמיד JSON תקין.
+- `beds24-ari-sync.ts`: `Beds24SendOutcome.sentRequests` — כל גוף שיצא, בסדר השליחה, כולל
+  זה שנכשל; `drainBeds24AriDirtyRanges(db, conn, deps?, jobId?)` כותב
+  `payload = COALESCE(payload,'{}') || {sent: …}` מיד אחרי שלב השליחה ולפני שיפוט התוצאה,
+  כך שאף early-return לא מאבד ראיה של ריצה כושלת. ריצה ששלחה 0 בקשות רושמת `count: 0`
+  — "לא נשלח" לעולם לא נראה כמו "לא נרשם". סמנטיקת השגיאות של מסלול השליחה לא שונתה.
+- `queue.ts`: `expireSyncJobPayloads(db, days=90)` — `UPDATE … SET payload = NULL WHERE
+  job_type='sync_ari_range' AND payload IS NOT NULL AND created_at < now()-90d`; לעולם לא
+  DELETE; מוגבל ל-`sync_ari_range` בלבד, כך שמונה הקרדיטים שיושב על שורות pull/reconcile
+  (`recordJobCredits`) לא נוגע.
+- `worker.ts`: מעביר `job.id` ל-drain; `runPayloadRetentionOnce` — פעם ביום קלנדרי (UTC;
+  חצות UTC = השעות הקטנות בישראל) בתוך ה-tick, אידמפוטנטי, כשל נרשם ללוג ולא עוצר עבודה.
+- מיגרציה **089** `ALTER COLUMN payload DROP NOT NULL` (ברירת המחדל `'{}'` נשארת; כל
+  הקוראים כבר סובלים NULL — `COALESCE` בכל מיזוג, `payload ?`/`payload->` מחזירים NULL→false).
+
+**מחוץ להיקף (מדווח, לא הוכרע).** ה-full sync (`runBeds24FullSync`) עדיין לא רושם את
+הגופים שלו — ההוראה נגעה ב-`sync_ari_range`; הרחבה = שורה אחת באותו מיזוג `payload`.
+`scripts/ops/guesthub-purge.mjs` עדיין לא מתוזמן — ממצא, לא חלק מהפרק.
+
+**שומר.** `check:beds24-ari-drain` הורחב: כל drain רץ תחת שורת `sync_ari_range`; אחרי
+drain נקי `payload.sent.requests` שווה מבנית לגוף שה-mock קיבל על החוט (סדר, count, bytes,
+לא-חתוך); גם אחרי דחייה (200 עם success:false) הגוף רשום; תרחיש 10: תקרת 64KB (30 גופים →
+נשמרים שלמים עד התקרה, `omitted` מדויק, אין חיתוך), ו-retention על שלוש שורות — 91 יום →
+NULL, 89 יום → נשאר, `pull_booking_revisions` בן 120 יום → לא נגוע, ושלוש השורות קיימות.
+חיווט ה-worker (מזהה העבודה ל-drain, קריאת ה-retention) נבדק סטטית כי `runTick` דורש
+חיבורים חיים. B2: דילוג על הכתיבה / DELETE במקום NULL → כל אחד יציאה 1.
+
+## D187 — עדכון קבוצתי: שורות האודיט רושמות הגבלות לפני/אחרי, לא רק מחיר (2026-09-12)
+
+**הסיבה.** `bulk_rate_update_items` נשא `old_price`/`new_price` בלבד. ריצת ה-min-stay מ-06/09
+הותירה 32 שורות ששני עמודות המחיר שלהן שוות — נקרא כ"לא קרה כלום" — בעוד
+`min_stay_through` של כל לילה השתנה. נמדד 12/09 (SELECT): חמש ריצות `minStayThrough`
+מ-11/09 = 4/2/2/3,664/90 שורות, **כולן** no-op לפי המחיר.
+
+**ברירת המחדל של הבעלים (יושמה כלשונה).** `old_restrictions jsonb` / `new_restrictions jsonb`
+(ששת שדות ההגבלה כפי שהם מאוחסנים) לכל שורה; עמודות המחיר נשארות; שניהם נכתבים מתוך
+השינויים ש-`writeRateCells` מחזיר (‏`RateChange` הורחב ב-old/new מלאים — ל-service.ts כבר היו
+`old` ו-`next`); "תאים ששונו" = מחיר **או** הגבלה כלשהי.
+
+**ממצאי האודיט.**
+- ה-INSERT: `src/app/(dashboard)/rates/actions.ts` (הפעולה `bulkUpdateRatesAction`), 7 עמודות,
+  `chunkForBind(items, 7)`. `RateChange` ב-`src/lib/rates/service.ts` — מזהים + `oldPrice`/`newPrice`
+  בלבד; ה-loop ב-`writeRateCells` כבר מחזיק `old` (השורה הקיימת) ו-`next` (אחרי המיזוג).
+- **אין UI שמציג "N שונו".** `GroupUpdatePanel` מציג לפני השליחה "N תאים לעדכון" ו-"עדכן N תאים"
+  (מספר התאים המכוונים), ובהצלחה סוגר את הפאנל בלי טוסט או סיכום. אף מסך לא קורא
+  `bulk_rate_update_items` (רק ספירה במחיקת חדר, `rooms/actions.ts`). "הסיכום" הקיים הוא
+  `after_data` ב-`audit_logs` (`{units, dates, cells}`) ותוצאת הפעולה `{cells, units, dates}`.
+
+**המימוש.**
+- מיגרציה **090**: שתי העמודות, NULL לשורות היסטוריות (אין backfill — לא נרשם מה היו ההגבלות).
+- `service.ts`: `RateRestrictions` (ששת השדות), `RateChange` += `oldRestrictions | null`
+  (‏NULL = לא הייתה שורה, אותה משמעות של `old_price` NULL), `newRestrictions`, `changed` =
+  השורה אחרי המיזוג שונה מהשורה המאוחסנת (שורה חסרה מושווית לשורה הריקה, ולכן יצירת שורה
+  מוגבלת היא שינוי).
+- `actions.ts`: כותב את שתי העמודות (9 עמודות, `chunkForBind(items, 9)`); `changed` בתוצאת
+  הפעולה וב-`after_data` של האודיט. ה-UI לא שונה — אין לו מקום שמציג את המספר; הצגתו
+  היא הכרעת מוצר (ראה למטה).
+
+**שומר.** `check:bulk-update-audit` (חדש; "שומר התעריפים" הקיים, `check:rates-ui`, סטטי
+בלבד ואין שומר DB שמריץ את הפעולה): DB סקראץ' משלו ב-:5433 עם שרשרת המיגרציות בסדר
+המניפסט (`scripts/db/migrate.mjs`), הפעולה **האמיתית** מקומפלת מ-src ומורצת עם stub ל-actor
+בלבד (בדיקות ההרשאה אמיתיות). ריצת minStayThrough על 3 לילות → 3 שורות עם 1→2, מחירים
+זהים, `changed=3` בתוצאה ובאודיט; אותה ריצה שוב → 3 שורות שוות, `changed=0`; ריצת מחיר בלבד
+→ `changed=3` והגבלות שוות; לילה בלי שורה → `old_*` NULL, `changed=1`. B2: הסרת כתיבת
+ההגבלות / ספירה לפי מחיר בלבד → כל אחד יציאה 1.
+
+**פתוח לבעלים (לא הוכרע כאן).** האם להציג את `changed` למפעיל אחרי עדכון קבוצתי (טוסט
+"עודכנו N תאים, M שונו" ב-`GroupUpdatePanel`), או שהמספר נשאר באודיט בלבד.
+→ הוכרע ב-D188.
+
+## D188 — עדכון קבוצתי: תוצאת הריצה מוצגת למפעיל בטוסט המערכתי; 0 שונו = danger דביק (2026-09-13)
+
+**ההוראה (בעלים, 13/09).** אחרי שעדכון קבוצתי מסתיים והפאנל נסגר, לוח התעריפים מציג את
+הטוסט המערכתי (Shell.tsx, 2.8 שנ׳): "עודכנו N תאים · M שונו". אם M == 0 → וריאנט danger
+שאינו נעלם מעצמו (נשאר עד לחיצה על X): "עודכנו N תאים · 0 שונו — בדוק את הערכים". N/M
+מגיעים מתוצאת הפעולה (`cells` / `changed`) ש-D187 כבר מחזירה. זה סוגר את הפריט הפתוח
+של D187.
+
+**המימוש.** `src/app/(dashboard)/rates/group-update-toast.ts` — פונקציה אחת,
+`showGroupUpdateResultToast(cells, changed)`, על `toast` של sonner (מנגנון הטוסט היחיד —
+ה-`<Toaster>` של Shell.tsx: `position="bottom-center" dir="rtl" offset={26} duration={2800}
+toastOptions={{ className: "gh-toast" }}`): `changed === 0` → `toast.error(…, { duration:
+Infinity, closeButton: true })`; אחרת `toast.success(…)` בברירות המחדל של המערכת.
+`GroupUpdatePanel.apply()` קורא לה בענף ההצלחה, אחרי `onSaved()`/`router.refresh()` ולפני
+`onClose()`, עם `res.data.cells` ו-`res.data.changed`. אין UI חדש, אין CSS חדש, אין מיגרציה.
+
+**מסלול ה-`changed`.** ‏#257 (D187) לא היה ממוזג ל-main בזמן המימוש. ההנחיה החלופית
+"לענף מ-main ולספור מהפריטים המוחזרים" לא ניתנת למימוש: ב-main הפעולה מחזירה מספרים
+בלבד (`cells/units/dates`) ולא פריטים, וספירה לפי מחיר בלבד הייתה מפעילה את ה-danger על
+כל ריצת הגבלות — בדיוק הבאג ש-D187 סוגר. לכן הענף `feat/d188-group-update-toast` נבנה
+על `feat/d187-bulk-items-restrictions` (PR עם base = הענף ההוא; GitHub מסיט אותו ל-main
+אוטומטית עם מיזוג ‏#257) וקורא `changed` בלבד — המצב ש"אם ‏#257 נוחת קודם" מגדיר.
+
+**שני דברים שההוראה הניחה ואינם כך במערכת — לא שונו, מדווחים (כלל ברזל 12):**
+1. לטוסט המערכתי אין X היום: ה-`<Toaster>` של Shell לא מגדיר `closeButton`, ו-sonner מציג
+   X רק כשמבקשים. ה-X נוסף כאן רק לוריאנט ה-danger (שם הוא חובה — אין דרך אחרת לסגור).
+   הטוסט הניטרלי נשאר כמו כל טוסט אחר במערכת (2.8 שנ׳, בלי X). ה-X הוא ברירת המחדל של
+   sonner: ‏20px בפינה העליונה — מתחת ל-44px של כלל ברזל 6; עיצוב `.gh-toast
+   [data-close-button]` הוא הכרעה נפרדת.
+2. ממצא צדדי: הטוסטים מרונדרים ב-`ui-sans-serif` (הפונט ש-sonner קובע על
+   `[data-sonner-toaster]`; `.gh-toast` יורש ממנו), לא ב-Assistant — קיים לכל טוסט במערכת,
+   לא נגעתי.
+
+**שומרים.** `check:bulk-update-audit` (מריץ את `bulkUpdateRatesAction` האמיתית על DB
+סקראץ') — טענת runtime חדשה: התוצאה נושאת `cells` ו-`changed` כמספרים, `changed = 3×1`
+לריצת מין-סטיי (לילות × יחידות), ו-`changed = 0` לצד `cells = 3` לריצת no-op.
+`check:rates-ui` ‏§15 — טענה סטטית: הפאנל קורא ל-`showGroupUpdateResultToast(res.data.cells,
+res.data.changed)` בענף ההצלחה לפני `onClose()`; `changed === 0` → `toast.error` עם
+`duration: Infinity` + `closeButton: true` והטקסט "0 שונו — בדוק את הערכים"; אחרת
+`toast.success("עודכנו N תאים · M שונו")`; אין `<Toaster>` שני (הערות מסוננות). B2: הסרת
+הקריאה לטוסט מהפאנל → יציאה 1; תמיד ניטרלי (הסרת ענף ה-0) → יציאה 1; שחזור → 0.
+
+**אימות.** `tsc --noEmit` 0, eslint 0, `check:bulk-update-audit` 5/5, `check:rates-ui` ✔.
+fixture ב-CDP (ה-helper האמיתי מקומפל ב-TypeScript של הפרויקט, ה-CSS האמיתי, `<Toaster>`
+של sonner 2.0.7 עם ה-props שנקראו מ-Shell.tsx; הגריד = stand-in): 1280×800 — ניטרלי
+(32/30): `data-type=success`, רקע ink, radius 12, אייקון ‎#7CE3A8, ‏26px מהתחתית, ללא X,
+נעלם ב-4 שנ׳; danger (32/0): `data-type=error`, אייקון `--danger`, X גלוי, עדיין מוצג אחרי
+5 שנ׳, לחיצה על ה-X מסירה. 390×844 זהה (16px מהתחתית — כלל ה-safe-area של responsive.css).
+צילומים: `/tmp/d188-neutral.png`, `/tmp/d188-danger.png` (‏+ `-390`).

@@ -2,6 +2,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import {
   claimChannelJobs, completeChannelJob, enqueueChannelJob, failChannelJob,
+  expireSyncJobPayloads, SYNC_JOB_PAYLOAD_RETENTION_DAYS,
   type ChannelJobType,
 } from "./queue";
 import {
@@ -186,7 +187,8 @@ async function runJob(
     }
     if (jobType === "sync_ari_range") {
       if (!(await isBeds24Drainable(connectionId))) return { sentValues: 0 };
-      const summary = await drainBeds24AriDirtyRanges(sql, conn);
+      // D186 — the job id rides along so the drain records the bodies it sent
+      const summary = await drainBeds24AriDirtyRanges(sql, conn, undefined, jobId);
       return { sentValues: summary.sentValues };
     }
     if (jobType === "reconcile_inventory") {
@@ -377,6 +379,25 @@ async function ensureIngestPullJobs(): Promise<void> {
   }
 }
 
+// D186 — nightly retention of the request bodies recorded on drain job rows:
+// once per UTC calendar day (midnight UTC is the small hours in Israel), inside
+// this same durable process — no cron, no second scheduler, the same reasoning
+// as the pull fallback above. A restart re-runs it at most once more that day;
+// the UPDATE is idempotent. A failure is logged and retried the next day —
+// retention must never stop channel work.
+let payloadRetentionDay = "";
+async function runPayloadRetentionOnce(log: (m: string) => void): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today === payloadRetentionDay) return;
+  payloadRetentionDay = today;
+  try {
+    const n = await expireSyncJobPayloads(sql);
+    if (n > 0) log(`payload retention: ${n} drain job row(s) older than ${SYNC_JOB_PAYLOAD_RETENTION_DAYS} days NULLed`);
+  } catch (e) {
+    log(`payload retention failed: ${e instanceof Error ? e.name : "error"}`);
+  }
+}
+
 export async function runTick(workerId: string, log: (m: string) => void): Promise<TickSummary> {
   const summary: TickSummary = { claimed: 0, succeeded: 0, failed: 0, sentValues: 0 };
   // Guest communication shares this existing durable worker process. It runs
@@ -400,6 +421,7 @@ export async function runTick(workerId: string, log: (m: string) => void): Promi
   await ensureInboundPullJobs();
   await ensureReconcileJobs();
   await ensureIngestPullJobs();
+  await runPayloadRetentionOnce(log);
   const jobs = await claimChannelJobs(workerId, JOBS_PER_TICK);
   summary.claimed = jobs.length;
   if (jobs.length === 0) return summary;
