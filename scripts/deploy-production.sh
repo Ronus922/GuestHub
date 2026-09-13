@@ -27,8 +27,19 @@ fail() { echo "✗ DEPLOY FAILED: $*" >&2; exit 1; }
 cd "$PROD_DIR"
 
 BEFORE_BUILD_ID="$(cat .next/BUILD_ID 2>/dev/null || echo none)"
-BEFORE_COMMIT="$(git rev-parse HEAD)"
-echo "→ before: commit=${BEFORE_COMMIT:0:8} build=$BEFORE_BUILD_ID"
+HEAD_COMMIT="$(git rev-parse HEAD)"
+# The diff base of the dependency check (8b, D185) is the LAST DEPLOYED commit,
+# read from .deploy-state — the record this script writes at the very end of a
+# successful run (step 14) — never the working-tree HEAD (D191). On 2026-09-12
+# (deploy #1) a manual `git pull` before the deploy had already moved HEAD to
+# the target: the range collapsed to HEAD..HEAD and the install was silently
+# skipped for a release that changed package.json. No record yet (the first run
+# after D191, a fresh checkout) → HEAD, said out loud on stderr; HEAD != the
+# record (someone pulled) → a WARNING, and the record still wins. A record that
+# exists but cannot be read aborts here — never a guessed base.
+DEPLOY_STATE_FILE="${DEPLOY_STATE_FILE:-.deploy-state}"
+BEFORE_COMMIT="$(node scripts/deploy-state.mjs read "$DEPLOY_STATE_FILE" "$HEAD_COMMIT")" || fail "cannot resolve the deploy base from $DEPLOY_STATE_FILE"
+echo "→ before: deployed=${BEFORE_COMMIT:0:8} head=${HEAD_COMMIT:0:8} build=$BEFORE_BUILD_ID"
 
 # 7. fetch origin
 git fetch origin --prune --quiet
@@ -135,3 +146,10 @@ done
 # 12. report deployed commit / build id
 echo "✓ DEPLOYED  commit=${TARGET_COMMIT:0:8}  build=$NEW_BUILD_ID  cwd=$PROD_DIR  port=$PORT"
 echo "  pm2: $PM2_APP=online  $PM2_WORKER=$WORKER_STATUS"
+
+# 14. record the release (D191) — ONLY here, after every check above passed. The
+#     next deploy reads its diff base from this file ("before", top of the
+#     script); a deploy that failed anywhere above never reaches this line, so
+#     the record keeps pointing at the release that is actually live.
+node scripts/deploy-state.mjs write "$DEPLOY_STATE_FILE" "$TARGET_COMMIT" "$NEW_BUILD_ID" \
+  || { echo "⚠ deployed, but $DEPLOY_STATE_FILE was not written — the next deploy derives its base from HEAD (it will say so)" >&2; exit 1; }

@@ -22,6 +22,10 @@
 # production-runtime marker: created ONLY in /var/www/guesthub-production to
 # make `npm run build` fail-closed there. Must never travel into a feature checkout.
 .production-runtime
+# deploy record (D191): written by scripts/deploy-production.sh at the end of a
+# successful deploy, read at the start of the next one as the dependency-diff
+# base. Runtime state of the marked checkout, never source.
+.deploy-state
 
 # misc
 .DS_Store
