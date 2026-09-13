@@ -70,13 +70,6 @@ export const WINDOWS = [
     empty: "כאן יופיעו החדרים שהתפנו היום וממתינים לניקיון.",
   },
   {
-    id: "alr",
-    defaultCol: "r",
-    icon: "bell",
-    title: "דורש טיפול",
-    empty: "כאן יופיעו ההזמנות והתשלומים שדורשים התייחסות.",
-  },
-  {
     id: "pay",
     defaultCol: "r",
     icon: "credit-card",
@@ -157,7 +150,7 @@ export type DashboardPreferences = {
 // id, or a right-column window listed under `l`.
 const DEFAULT_ORDER = {
   l: ["arr", "rev", "hk"],
-  r: ["alr", "pay", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
+  r: ["pay", "stk", "iss", "tsk", "rvw", "msg", "src", "inh"],
 } as const satisfies { l: readonly WindowOf<"l">[]; r: readonly WindowOf<"r">[] };
 
 // COMPILE-TIME §8.1: every registered window must appear in DEFAULT_ORDER.
