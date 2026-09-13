@@ -39,7 +39,6 @@ import { saveDashboardLayoutAction } from "./actions";
 import { ArrivalsWindow } from "./windows/ArrivalsWindow";
 import { InHouseWindow } from "./windows/InHouseWindow";
 import { HousekeepingWindow } from "./windows/HousekeepingWindow";
-import { AlertsWindow } from "./windows/AlertsWindow";
 import { StuckWindow } from "./windows/StuckWindow";
 import { PayWindow } from "./windows/PayWindow";
 import { IssuesWindow } from "./windows/IssuesWindow";
@@ -651,11 +650,6 @@ function liveContent(
         body: <HousekeepingWindow rows={data.housekeeping} />,
       };
     }
-    case "alr":
-      return {
-        subtitle: data.alerts.length > 0 ? `${data.alerts.length} פריטים` : undefined,
-        body: <AlertsWindow rows={data.alerts} />,
-      };
     case "rev":
       return { body: <RevenueWindow series={data.monthly} /> };
     case "rvw":
