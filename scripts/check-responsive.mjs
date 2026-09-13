@@ -614,4 +614,87 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
   ok("the payment-methods grid is fluid: no px floor, minmax key column with a truncating titled chip, a 44px toggle cell (D189)");
 }
 
+// ------------------- 16. the statuses table fits the card at tablet width (D190, the D189 recipe)
+{
+  // Same defect as §15, one file over: `.ws-tbl { min-width: 830px }` inside the
+  // overflow-x wrapper pushed the default-star and the actions columns past the
+  // card edge behind a scrollbar whenever the sidebar was open. Fluid now: no
+  // px floor, the chip column is minmax() with a truncating titled chip, the
+  // count may wrap, the toggle cell never shrinks below its 44px switch.
+  const ws = stripCss(read(join(SRC, "app/styles/status-settings.css")));
+  const tbl = ws.match(/\.ws-tbl\s*\{([^}]*)\}/);
+  assert.ok(tbl && !/min-width:\s*[1-9]\d*px/.test(tbl[1]),
+    ".ws-tbl must carry no pixel min-width floor — a floor wider than the card pushes the star and actions columns behind a scrollbar (D190)");
+  const templates = [...ws.matchAll(/grid-template-columns:\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.ok(templates.length >= 2, "the statuses grid declares its tracks (base + the 768–1119 range)");
+  for (const t of templates) {
+    const tracks = t.split(/\s+(?![^(]*\))/);
+    assert.equal(tracks.length, 7, `the statuses grid keeps its seven columns (${t})`);
+    assert.match(tracks[2], /^minmax\(\d+px,\s*[\d.]+fr\)$/,
+      `the status-chip column is minmax(…, fr), never a fixed floor the chip cannot shrink under (${tracks[2]})`);
+    assert.match(tracks[3], /^minmax\(\d+px,\s*[\d.]+fr\)$/, `the count column shrinks (${tracks[3]})`);
+    assert.match(tracks[4], /^\d+px$/, `the toggle column is a fixed track (${tracks[4]})`);
+    assert.ok(parseInt(tracks[4], 10) >= 44, `the toggle track holds the 44px switch (${tracks[4]})`);
+    assert.match(tracks[6], /^minmax\(\d+px,\s*[\d.]+fr\)$/, `the actions column shrinks (${tracks[6]})`);
+  }
+  const chip = ws.match(/\.ws-status \.chip\s*\{([^}]*)\}/);
+  assert.ok(chip && /overflow:\s*hidden/.test(chip[1]) && /text-overflow:\s*ellipsis/.test(chip[1]) && /max-width:\s*100%/.test(chip[1]),
+    ".ws-status .chip truncates with an ellipsis inside its column");
+  const toggleCell = ws.match(/\.ws-trow > \[data-label="פעיל"\]\s*\{([^}]*)\}/);
+  assert.ok(toggleCell && /flex:\s*none/.test(toggleCell[1]) && /min-width:\s*44px/.test(toggleCell[1]),
+    "the toggle cell is flex: none with a 44px min-width — it never clips");
+  const acts = ws.match(/\.ws-acts\s*\{([^}]*)\}/);
+  assert.ok(acts && /flex-wrap:\s*wrap/.test(acts[1]), ".ws-acts may wrap — the confirm-delete pair is wider than the column");
+  const section = read(join(SRC, "app/(dashboard)/settings/WorkflowStatusSection.tsx"));
+  assert.match(section, /className="ws-status" data-label="סטטוס"/, "the status cell carries .ws-status");
+  assert.match(section, /<span className="chip" title=\{label\}/, "the truncating chip keeps the full label in its title");
+  ok("the statuses grid is fluid: no px floor, minmax chip column with a truncating titled chip, a 44px toggle cell (D190)");
+}
+
+// ------------------- 17. the locks grid fits the card at tablet width (D190, the D189 recipe)
+{
+  // `.lk-gt { min-width: 900px }` did the same to /locks: with the sidebar open
+  // the card is 590px at 900 and 714px at 1024, so the actions column — and the
+  // copy button of the code cell — sat past the card edge behind a scrollbar.
+  // The empty ninth cell also overflowed every wide screen by its own 24px of
+  // padding. Fluid now: no px floor, minmax floors, a 44px checkbox cell and a
+  // ≥84px actions cell, the code buttons wrap under the code, the room name
+  // truncates with its title carrying the full name, the spacer has no padding.
+  const lk = stripCss(read(join(SRC, "app/styles/locks.css")));
+  const gt = lk.match(/\.lk-gt\s*\{([^}]*)\}/);
+  assert.ok(gt && !/min-width:\s*[1-9]\d*px/.test(gt[1]),
+    ".lk-gt must carry no pixel min-width floor — a floor wider than the card pushes the actions column behind a scrollbar (D190)");
+  const cols = [...lk.matchAll(/--cols:\s*([^;]+);/g)].map((m) => m[1].trim());
+  assert.ok(cols.length >= 2, "the locks grid declares its tracks (base + the 768–1119 range)");
+  for (const c of cols) {
+    const tracks = c.split(/\s+(?![^(]*\))/);
+    assert.equal(tracks.length, 9, `the locks grid keeps its nine columns (${c})`);
+    assert.match(tracks[0], /^\d+px$/, `the checkbox column is a fixed track (${tracks[0]})`);
+    assert.ok(parseInt(tracks[0], 10) >= 44, `the checkbox track holds a 44px hit area (${tracks[0]})`);
+    for (let i = 1; i <= 7; i++) {
+      assert.match(tracks[i], /^minmax\(\d+px,\s*\d+px\)$/, `column ${i + 1} is minmax(floor, max) — a floor, never a fixed width (${tracks[i]})`);
+    }
+    assert.ok(parseInt(tracks[7].match(/^minmax\((\d+)px/)[1], 10) >= 84,
+      `the actions track holds two 32px buttons and their gap (${tracks[7]})`);
+    assert.equal(tracks[8], "minmax(0, 1fr)", `the spacer track stays minmax(0, 1fr) (${tracks[8]})`);
+  }
+  const cb = lk.match(/\.lk-row > \[data-label="בחירה"\]\s*\{([^}]*)\}/);
+  assert.ok(cb && /flex:\s*none/.test(cb[1]) && /min-width:\s*44px/.test(cb[1]),
+    "the checkbox cell is flex: none with a 44px min-width — it never clips");
+  const acts = lk.match(/\.lk-row > \[data-mcard="actions"\]\s*\{([^}]*)\}/);
+  assert.ok(acts && /flex:\s*none/.test(acts[1]) && /min-width:\s*(8[4-9]|9\d|\d{3,})px/.test(acts[1]),
+    "the actions cell is flex: none with a ≥84px min-width — it never clips");
+  const spacer = lk.match(/\.lk-row > \[data-mcard="hide"\],\s*\.lk-head > \.lk-th:last-child\s*\{([^}]*)\}/);
+  assert.ok(spacer && /padding:\s*0/.test(spacer[1]),
+    "the empty spacer cells carry no padding — otherwise the ninth track overflows every wide screen by 24px");
+  const codebox = lk.match(/\.lk-codebox\s*\{([^}]*)\}/);
+  assert.ok(codebox && /flex-wrap:\s*wrap/.test(codebox[1]) && /max-width:\s*100%/.test(codebox[1]),
+    ".lk-codebox wraps its buttons under the code inside the column instead of clipping the copy button");
+  const room = lk.match(/\.lk-room\s*\{([^}]*)\}/);
+  assert.ok(room && /text-overflow:\s*ellipsis/.test(room[1]) && /max-width:\s*100%/.test(room[1]), ".lk-room truncates with an ellipsis");
+  const board = read(join(SRC, "app/(dashboard)/locks/LocksBoard.tsx"));
+  assert.match(board, /className="lk-room" title=\{roomLabel\(lock\.room\)\}/, "the truncating room name keeps the full name in its title");
+  ok("the locks grid is fluid: no px floor, minmax floors, a 44px checkbox cell and a ≥84px actions cell, wrapping code buttons (D190)");
+}
+
 console.log(`\n✓ responsive invariants: ${n}/${n} passed`);
