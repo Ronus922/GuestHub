@@ -73,15 +73,48 @@
 .ws-scroll {
   overflow-x: auto;
 }
+/* D190 — the same defect and the same recipe as D189 (payment-methods.css):
+   an 830px floor inside the overflow-x wrapper pushed the star and the actions
+   columns past the card edge behind a scrollbar whenever the sidebar was open
+   (the card is 586px at 900, 692px even at 1280 two-pane). The grid is fluid:
+   no px floor, each minmax() minimum is what its cell needs to stay usable —
+   the status chip truncates (its title keeps the full label), the count may
+   wrap, the toggle cell never shrinks below its 44px switch. */
 .ws-tbl {
-  min-width: 830px;
+  min-width: 0;
 }
 .ws-thead,
 .ws-trow {
   display: grid;
-  grid-template-columns: 52px 96px minmax(180px, 1.3fr) 110px 96px 110px minmax(150px, 1fr);
+  grid-template-columns: 52px 40px minmax(88px, 1.3fr) minmax(64px, 1fr) 80px 64px minmax(80px, 0.9fr);
   align-items: center;
   padding: 0 16px;
+}
+.ws-thead > span,
+.ws-trow > span {
+  min-width: 0;
+}
+.ws-status .chip {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 28px;
+}
+.ws-trow > [data-label="פעיל"] {
+  flex: none;
+  min-width: 44px;
+}
+/* the one-column settings range: the sidebar may still be open, so the card
+   can be as narrow as ~454px — compact fixed tracks and row padding */
+@media (min-width: 768px) and (max-width: 1119.98px) {
+  .ws-thead,
+  .ws-trow {
+    grid-template-columns: 44px 32px minmax(88px, 1.3fr) minmax(64px, 1fr) 64px 56px minmax(80px, 0.9fr);
+    padding: 0 12px;
+  }
 }
 .ws-thead {
   background: var(--field-bg);
@@ -179,6 +212,7 @@
 
 .ws-acts {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   justify-content: flex-end;
