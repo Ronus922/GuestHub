@@ -27,7 +27,7 @@
 - אחרי הקומיט: אמת בנייה נקייה ב-worktree מבודד (`git worktree add … <sha>` + install/typecheck/build) — הבנייה המקומית ירוקה גם כשהיא נשענת על קבצים לא-מקומטים ולכן לא מוכיחה כלום.
 - בספק לגבי בעלות על שינוי — דווח, אל תקמט.
 
-> הבית הקנוני של הסעיף הזה הוא CLAUDE.md (בריפו). העותק ב-AGENTS.md נמחק ע"י רגנרציית `gen-catalog.sh` (התבנית ב-hub `ai2u-vs1` לא כוללת אותו — ראה DECISIONS D90); `check:agents-concurrency` מתריע אם זה קורה שוב.
+> הבית הקנוני של הסעיף הזה הוא CLAUDE.md (בריפו). העותק ב-AGENTS.md נמחק ברגנרציית `gen-catalog.sh` ב-22/07/2026 מפני שהסעיף היה קיים אז **רק** ב-AGENTS.md, והרגנרציה בונה את AGENTS.md מגוף ה-CLAUDE.md (D90; המנגנון הוכרע ב-D193). `check:agents-concurrency` מתריע אם זה קורה שוב.
 
 ## Git — זרימת PR (מחייב)
 
@@ -117,7 +117,7 @@ branch ייעודי ישירות בעץ הזה (worktree — רק בבקשה מ�
 - `/prompts:planner`, `/prompts:architect`, `/prompts:executor`, `/prompts:verifier` הם משטחי העבודה הדיפולטיים של OMX
 - `omd` מפעיל `omx doctor --team`
 - `omx team status <team>`, `omx team resume <team>`, `omx team shutdown <team>` הם כלי הבקרה
-- לא מריצים `omx agents-init .` בפרויקט KIT רגיל; התבניות של ה־KIT הן ה־source of truth ל־`CLAUDE.md` ו־`AGENTS.md`
+- לא מריצים `omx agents-init .` בפרויקט KIT רגיל. **`AGENTS.md` הוא תוצר מרוגנר** — `gen-catalog.sh` בונה אותו מגוף ה-`CLAUDE.md` של הפרויקט + קטלוג ה-skills/agents מהקיט, ולכן התבניות של ה־KIT הן ה־source of truth **לקטלוג בלבד**. **`CLAUDE.md` מתוחזק ידנית ואינו נדרס ע"י המחולל** (D90 §1, D193). מסקנה תפעולית: כלל שנכתב רק ב-`AGENTS.md` אבוד ברגנרציה הבאה — הבית הקנוני של כל כלל הוא `CLAUDE.md`.
 
 ---
 

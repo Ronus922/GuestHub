@@ -3,13 +3,17 @@
 // happens on a dedicated branch INSIDE the production tree, and a worktree is an
 // exception Ronen asks for explicitly.
 //
-// Why this guard exists: both files are regenerated from the DevOPS kit template
-// on the `ai2u-vs1` hub, and that template still carries the pre-D147 wording
-// ("אסור לפתח בו — כל עבודה נעשית ב-git worktree נפרד"). A regen therefore
-// silently restores an instruction the owner revoked — and AGENTS.md is loaded
-// into every session, so an agent reads it as a live order. This already
-// happened once to the Concurrency section (DECISIONS D90 → check:agents-
-// concurrency); D147 is the same exposure.
+// Why this guard exists: AGENTS.md is a GENERATED artifact — `gen-catalog.sh` on
+// the `ai2u-vs1` hub rebuilds it from this project's CLAUDE.md body plus the kit's
+// skills/agents catalog. CLAUDE.md itself is hand-maintained and is never written
+// by the generator (DECISIONS D193). So a regen drops anything that lives ONLY in
+// AGENTS.md — exactly how the Concurrency section was lost (DECISIONS D90 →
+// check:agents-concurrency), and the same exposure D147 carries.
+//
+// Both files are checked, and that is deliberate: AGENTS.md because it is loaded
+// into every session and an agent reads it as a live order, and CLAUDE.md because
+// it is the INPUT the next regen rebuilds AGENTS.md from — pre-D147 wording
+// surviving there would be copied straight back out.
 //
 // The word "worktree" alone cannot be the signal: the corrected AGENTS.md still
 // says `git worktree add` legitimately (Concurrency — verifying a build in an
