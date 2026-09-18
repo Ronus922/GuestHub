@@ -72,7 +72,7 @@ docs/                   architecture/ · audit/ · database/ · payments/ · pro
 ## 4. מסלול דפלוי
 
 ```text
-worktree  →  PR ל-main  →  בעץ המסומן:  PROD_DEPLOY_OK=1 npm run deploy:prod
+branch ייעודי  →  PR ל-main  →  בעץ המסומן:  PROD_DEPLOY_OK=1 npm run deploy:prod
 ```
 
 `scripts/deploy-production.sh` הוא הדרך היחידה: fail-closed — מסרב לענף שאינו
@@ -84,7 +84,7 @@ main, לעץ מלוכלך ולקומיט שאינו reachable מ-`origin/main`; 
 
 | מסמך | תפקיד |
 | --- | --- |
-| **`DECISIONS.md`** (שורש הריפו) | יומן ההחלטות המחייב — D1 עד **D102** נכון להיום. כל סטייה/הכרעה נרשמת שם |
+| **`DECISIONS.md`** (שורש הריפו) | יומן ההחלטות המחייב — כל ההחלטות מ-D1 ואילך; המספר האחרון נקרא מהקובץ עצמו. כל סטייה/הכרעה נרשמת שם |
 | `CLAUDE.md` | כללי ברזל, עובדות פרויקט, כללי concurrency ו-production-runtime |
 | `STATE.md` | מה קפוא (housekeeping/tasks ועוד) |
 | `DESIGN_SYSTEM.md` + `GUIDELINES.md` | עיצוב מחייב |

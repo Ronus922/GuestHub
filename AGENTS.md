@@ -30,10 +30,11 @@
 ## Production Runtime — העץ הרץ הוא פרודקשן בלבד (מ-2026-07-24)
 
 `/var/www/guesthub` מסומן `.production-runtime`: חי על `main` בלבד, מתעדכן אך ורק
-דרך `PROD_DEPLOY_OK=1 npm run deploy:prod`. **אסור לפתח בו** — כל עבודה (אדם או
-סוכן) נעשית ב-git worktree נפרד (`git worktree add ~/worktrees/<name> <base>`),
-נבנית ונבדקת שם, ומגיעה לפרודקשן רק דרך PR ל-main + הדפלוי הקנוני. `pnpm build`
-ידני בעץ המסומן נחסם ע"י prebuild-guard (fail-closed, בכוונה).
+דרך `PROD_DEPLOY_OK=1 npm run deploy:prod`. מ-D147 (2026-08-14) עבודה נעשית על
+branch ייעודי ישירות בעץ הזה (worktree — רק בבקשה מפורשת של רונן), התיקייה
+חוזרת ל-`main` בסוף הריצה, והשינוי מגיע לפרודקשן רק דרך PR ל-main + הדפלוי
+הקנוני. `pnpm build` ידני בעץ המסומן נחסם ע"י prebuild-guard (fail-closed,
+בכוונה).
 
 ## Minimum Padding (חובה!)
 | Element | Minimum |
