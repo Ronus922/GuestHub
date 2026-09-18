@@ -836,6 +836,8 @@ The D52/D87 guardians (`check-cards.mjs`, `check-channel-card-ingest.mjs`) were 
 
 **⚠️ Action item פתוח (hub בלבד):** להוסיף את הסעיף לתבנית ה-AGENTS.md בקיט `~/DevOPS/` על `ai2u-vs1` (`git commit && git push && kit-push`) כדי שכל רגנרציה בכל הצי תכלול אותו. עד אז — כל `/master` מקומי ימחק את העותק ב-AGENTS.md והשומר יתריע.
 
+**בוטל ב-18/09/2026 (D193)** — ה-Action item מיותר. הרגנרציה בונה את `AGENTS.md` מגוף `CLAUDE.md` ואינה נוגעת בתבנית נפרדת לסעיפים. השחזור הנכון: לוודא שהסעיף קיים ב-`CLAUDE.md`.
+
 ---
 
 ## D91 — ערוץ הפצה יחיד: Beds24. הסרת Channex ו-Stripe במלואם
