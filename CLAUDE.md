@@ -29,6 +29,19 @@
 
 > הבית הקנוני של הסעיף הזה הוא CLAUDE.md (בריפו). העותק ב-AGENTS.md נמחק ע"י רגנרציית `gen-catalog.sh` (התבנית ב-hub `ai2u-vs1` לא כוללת אותו — ראה DECISIONS D90); `check:agents-concurrency` מתריע אם זה קורה שוב.
 
+## Git — זרימת PR (מחייב)
+
+- **`main` מוגן דרך ruleset `main-protection` (פעיל מ-04/09/2026). אסור `git push origin main`** — בשום מצב, גם לשינוי תיעוד בלבד.
+- כל שינוי עובר בענף → push לענף → PR.
+- **שלושה status checks חובה:** `typecheck`, `lint`, `suite`. אין merge לפני שכולם ירוקים.
+- **`strict` פעיל:** הענף חייב להיות מעודכן מול `main` לפני merge. אם `main` התקדם — `git pull --rebase origin main` בענף ו-push מחדש.
+- אסור force-push ואסור למחוק את `main` — ה-ruleset חוסם.
+- שרשורי דיון פתוחים ב-PR חוסמים merge — לפתור אותם לפני.
+- **אין auto-merge.** merge ידני בלבד, ורק באישור מפורש של רונן.
+- **הריפו ציבורי** (`Ronus922/GuestHub`). לפני כל commit — לוודא שאין בשינוי מפתחות, סיסמאות, DSN או ערכי env. שמות משתנים מותרים, ערכים אסורים.
+- **מצב `skip` אינו pass.** בדיקות שמדווחות skip או cannot-run (למשל `check:hydration-browser` בלי ה-secrets) הן מצב שלישי — לדווח עליהן, לא להציג אותן כהצלחה.
+- נימוקי התכנון המלאים של ה-CI: בהערות שבראש `.github/workflows/ci.yml`.
+
 ## Production Runtime — העץ הרץ הוא פרודקשן בלבד (מ-2026-07-24)
 
 `/var/www/guesthub` מסומן `.production-runtime`: מוגש מ-`main`, מתעדכן אך ורק
