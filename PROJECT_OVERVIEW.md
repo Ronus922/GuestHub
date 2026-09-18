@@ -19,7 +19,7 @@
 | דומיין | `guesthub.bios.co.il` → nginx → `localhost:3007` (`docs/PRODUCTION_RUNTIME.md`; מופיע כסמן-פרודקשן בשומרי ה-DB, למשל `scripts/check-pricing-engine.mjs:34`) |
 | פורט | **3007** (`scripts/deploy-production.sh:14`, `APP_PORT` ב-env) |
 | תהליכים | PM2: `guesthub` (‎`next start`) + `guesthub-channel-worker` — שניהם מ-`/var/www/guesthub` |
-| עץ רץ | `/var/www/guesthub` הוא **ה-runtime החי**, מסומן `.production-runtime` (מאז `6862f36`; ‎`/var/www/guesthub-production` הוסר). אסור לפתח בו — עבודה ב-worktrees בלבד |
+| עץ רץ | `/var/www/guesthub` הוא **ה-runtime החי**, מסומן `.production-runtime` (מאז `6862f36`; ‎`/var/www/guesthub-production` הוסר). עבודה נעשית על branch ייעודי ישירות בעץ הזה (worktree — רק בבקשה מפורשת של רונן, D147) |
 | מנהל ערוצים | **Beds24 בלבד** (D91) — inbound ב-poll, ARI outbound דרך ה-worker. אפס Channex, אפס Stripe |
 | סטאק | Next.js 15.5 (App Router, RSC + Server Actions) · React 19 · TypeScript strict · Tailwind v4 · PostgreSQL (סכימת `guesthub`) דרך porsager `postgres` · Supabase Auth self-hosted = אימות בלבד |
 
