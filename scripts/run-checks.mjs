@@ -94,7 +94,7 @@ const TIMEOUT_MS = Number(process.env.GUARD_TIMEOUT_MS || 300_000);
 // only on a virgin schema, so these get an EMPTY database, not a clone.
 const REPLAYERS = new Set([
   "check:commercial-db", "check:room-db", "check:room-capacity-inherit", "check:check-in-check-out-db",
-  "check:rate-plans", "check:pricing-engine", "check:pricing-equality",
+  "check:rate-plans", "check:pricing-engine", "check:pricing-equality", "check:bios-bot-read-api",
   "check:totals-parity", "check:public-quote", "check:room-picker-window",
   "check:su-lifecycle", "check:room-identity", "check:beds24-failure-evidence",
 ]);
