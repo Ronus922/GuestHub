@@ -61,6 +61,15 @@ export type BiosBotIdempotencyContext = {
   request: unknown;
 };
 
+// A raw Postgres deadlock (40P01) — e.g. two BIOS Bot writes racing inside
+// lockRooms() for the same room — aborts the WHOLE db.begin() transaction,
+// idempotency claim included (confirmed: the deadlock is detected and the
+// transaction rolled back before any COMMIT is possible). A retry is
+// therefore a genuinely fresh attempt, not a resumption of dead state.
+function isDeadlockError(e: unknown): boolean {
+  return typeof e === "object" && e !== null && "code" in e && (e as { code?: unknown }).code === "40P01";
+}
+
 // run() receives the SAVEPOINT it must use for its own writes — a savepoint,
 // not the outer transaction, so a thrown BiosBotError rolls back ONLY the
 // partial business writes and leaves the outer transaction (and the
@@ -72,7 +81,7 @@ export async function withBiosBotIdempotency<T>(
 ): Promise<T> {
   const requestHash = hashBiosBotRequest(ctx.request);
 
-  const outcome = await db.begin(async (tx): Promise<IdempotencyOutcome<T>> => {
+  const attempt = (): Promise<IdempotencyOutcome<T>> => db.begin(async (tx): Promise<IdempotencyOutcome<T>> => {
     const claimed = await tx<{ id: string }[]>`
       INSERT INTO guesthub.bios_bot_idempotency_keys (tenant_id, operation, idempotency_key, request_hash)
       VALUES (${ctx.tenantId}, ${ctx.operation}, ${ctx.idempotencyKey}, ${requestHash})
@@ -114,6 +123,26 @@ export async function withBiosBotIdempotency<T>(
       return { kind: "failed", code: e.code, message: e.message };
     }
   });
+
+  // Bounded, single retry on a raw deadlock only — a fresh db.begin() call,
+  // never a resumption of the aborted transaction above. Normal production
+  // logic (lockRooms + the availability recheck inside run()) then decides
+  // the real outcome on the clean retry: ROOM_NOT_AVAILABLE if the
+  // competitor's write is now visible, or a normal success if the resource
+  // is actually still free. A second 40P01 is NOT retried again — surfaced
+  // as a controlled BiosBotError, never the raw driver error.
+  let outcome: IdempotencyOutcome<T>;
+  try {
+    outcome = await attempt();
+  } catch (e) {
+    if (!isDeadlockError(e)) throw e;
+    try {
+      outcome = await attempt();
+    } catch (e2) {
+      if (!isDeadlockError(e2)) throw e2;
+      throw new BiosBotError("INTERNAL_ERROR", "a database conflict prevented this operation from completing — please retry");
+    }
+  }
 
   if (outcome.kind === "conflict") {
     throw new BiosBotError("IDEMPOTENCY_CONFLICT", "this Idempotency-Key was already used with a different request");
