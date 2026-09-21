@@ -460,6 +460,48 @@ try {
       });
       ok("engine: occupancy caps per category + zero-infant rooms + minimum occupancy");
     }
+    // 21b. capacity fallback (Phase 5 owner decision, migration 091): room
+    // value if present, else the room type; zero is a REAL value that never
+    // inherits — only NULL does. getRoomCapacities() (src/lib/inventory.ts)
+    // is the one implementation the engine and the dashboard room picker
+    // both consult; this proves the live pricing path applies it.
+    await scenario(tx, async (sp) => {
+      // give the room TYPE distinct, non-default values so "inherited" can
+      // never be confused with the type's own ordinary default
+      await sp`UPDATE guesthub.room_types SET max_occupancy = 6, max_adults = 5,
+               max_children = 3, max_infants = 2 WHERE id = ${f.rt}`;
+
+      // R2: NULL on every capacity column → must inherit the room TYPE's
+      // (now distinct) values, each category independently
+      await sp`UPDATE guesthub.rooms SET max_occupancy = NULL, max_adults = NULL,
+               max_children = NULL, max_infants = NULL WHERE id = ${f.R2.roomId}`;
+      const inherited = await quoteFor(sp, f, [
+        { roomId: f.R2.roomId, ratePlanId: f.FLEX, adults: 4, children: 2, infants: 2 },
+      ]);
+      assert.equal(inherited.valid, true, "NULL room capacity inherits the room type's (now distinct) values");
+      const overType = await quoteFor(sp, f, [
+        { roomId: f.R2.roomId, ratePlanId: f.FLEX, adults: 6, children: 0, infants: 0 },
+      ]);
+      assert.ok(codes(overType.rooms[0]).includes("ADULT_LIMIT_EXCEEDED"),
+        "the inherited room-type cap is enforced, not unlimited");
+
+      // R1: an explicit room value (max_adults=3) overrides the room type's
+      // (now larger, 5) value — the room row still wins
+      const roomWins = await quoteFor(sp, f, [
+        { roomId: f.R1.roomId, ratePlanId: f.FLEX, adults: 4, children: 0, infants: 0 },
+      ]);
+      assert.ok(codes(roomWins.rooms[0]).includes("ADULT_LIMIT_EXCEEDED"),
+        "room's own explicit max_adults=3 is still enforced even though the room type now allows 5");
+
+      // R3: explicit max_infants=0 must NOT inherit the room type's new
+      // max_infants=2 — zero is a real value, not "unset"
+      const zeroStays = await quoteFor(sp, f, [
+        { roomId: f.R3.roomId, ratePlanId: f.FLEX, adults: 2, children: 0, infants: 1 },
+      ]);
+      assert.ok(codes(zeroStays.rooms[0]).includes("INFANT_LIMIT_EXCEEDED"),
+        "room's explicit max_infants=0 rejects infants even though the room type now allows 2");
+      ok("engine: capacity fallback — room value wins when present, NULL inherits room type, zero never inherits");
+    });
     // 22. extra guests — canonical mechanism, included_occupancy is the threshold
     {
       const q = await quoteFor(tx, f, [{ roomId: f.R1.roomId, ratePlanId: f.FLEX, adults: 3, children: 0, infants: 0 }]);

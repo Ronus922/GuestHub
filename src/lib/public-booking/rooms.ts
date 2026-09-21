@@ -103,7 +103,13 @@ function resolveTitle(
 export async function publicWebsiteRooms(
   db: Sql | TransactionSql,
   lang: PublicRoomLang = "he",
+  opts?: { tenantId?: string; roomId?: string },
 ): Promise<PublicRoom[]> {
+  // tenantId defaults to the public site's own tenant — every EXISTING
+  // caller is unaffected. roomId narrows to one room (Phase 5 get_room);
+  // omitted, it returns the whole show_on_website catalog as before.
+  const tenantId = opts?.tenantId ?? PUBLIC_TENANT_ID;
+  const roomId = opts?.roomId ?? null;
   const rooms = await db<RoomRow[]>`
     SELECT r.id, r.room_number, r.name AS room_name, r.floor,
            r.size_sqm::float8 AS size_sqm, r.max_occupancy,
@@ -116,8 +122,9 @@ export async function publicWebsiteRooms(
     LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
     LEFT JOIN guesthub.room_translations t
            ON t.room_id = r.id AND t.lang = ${lang}
-    WHERE r.tenant_id = ${PUBLIC_TENANT_ID}
+    WHERE r.tenant_id = ${tenantId}
       AND r.show_on_website AND r.is_active AND r.status <> 'inactive'
+      AND (${roomId}::uuid IS NULL OR r.id = ${roomId}::uuid)
       AND EXISTS (SELECT 1 FROM guesthub.room_images ri
                    WHERE ri.tenant_id = r.tenant_id AND ri.room_id = r.id)
     ORDER BY r.sort_order, r.room_number`;
@@ -130,14 +137,14 @@ export async function publicWebsiteRooms(
   const images = await db<{ room_id: string; url: string; alt_text: string | null }[]>`
     SELECT room_id, url, alt_text
     FROM guesthub.room_images
-    WHERE tenant_id = ${PUBLIC_TENANT_ID} AND room_id = ANY(${ids})
+    WHERE tenant_id = ${tenantId} AND room_id = ANY(${ids})
     ORDER BY is_main DESC, sort_order`;
 
   const amenities = await db<{ room_id: string; label: string }[]>`
     SELECT ra.room_id, li.label
     FROM guesthub.room_amenities ra
     JOIN guesthub.lookup_items li ON li.id = ra.amenity_id AND li.is_active
-    WHERE ra.tenant_id = ${PUBLIC_TENANT_ID} AND ra.room_id = ANY(${ids})
+    WHERE ra.tenant_id = ${tenantId} AND ra.room_id = ANY(${ids})
     ORDER BY li.sort_order, li.label`;
 
   const imagesBy = new Map<string, PublicRoomImage[]>();

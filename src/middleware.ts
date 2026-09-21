@@ -46,6 +46,10 @@ export async function middleware(request: NextRequest) {
   // session. Authenticated inside the route via the x-booking-secret header
   // (timingSafeEqual against PUBLIC_BOOKING_API_SECRET; env unset = API off).
   const isPublicBookingApi = path.startsWith("/api/public/");
+  // BIOS Bot Service API (Phase 5): server-to-server only, no user session.
+  // Authenticated inside each route via the x-bios-bot-secret header
+  // (requireBiosBotSecret, src/lib/bios-bot/config.ts; env unset = API off).
+  const isBiosBotApi = path.startsWith("/api/bios-bot/");
   // Health probe (D170): monitors and the deploy script call it with NO session.
   // The route reads no cookies and no tenant context — it answers ok/db/build
   // only — so it must bypass the login redirect. Exact match: no sub-paths.
@@ -68,6 +72,7 @@ export async function middleware(request: NextRequest) {
     !isOauthCallback &&
     !isMessagingWebhook &&
     !isPublicBookingApi &&
+    !isBiosBotApi &&
     !isHealth
   )
     return redirectTo("/login");

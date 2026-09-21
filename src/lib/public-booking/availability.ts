@@ -71,7 +71,18 @@ export async function publicAvailability(
   db: Sql | TransactionSql,
   checkIn: DateOnly,
   checkOut: DateOnly,
+  opts?: { tenantId?: string },
 ): Promise<RoomTypeAvailability[]> {
+  // tenantId defaults to the public site's own tenant — every EXISTING
+  // caller is unaffected. Phase 5 (BIOS Bot) is the first caller to pass a
+  // different one. Occupancy stays the historical "base occupancy" browse
+  // (2 adults) here on purpose (see the calculateReservationPrice call
+  // below) — a caller that needs a REAL party's availability (BIOS Bot)
+  // filters the full per-type `units` list by effective capacity itself
+  // (src/lib/bios-bot/service/availability.ts), rather than this function
+  // re-pricing for one specific party. The exact, final, party-aware price
+  // and capacity check always happens at quote/booking time regardless.
+  const tenantId = opts?.tenantId ?? PUBLIC_TENANT_ID;
   const nights = nightsBetween(checkIn, checkOut);
   const stayNights = eachDay(checkIn, checkOut);
   // +1 day: effective_sell_state's p_to is exclusive, and the departure-day row
@@ -101,14 +112,14 @@ export async function publicAvailability(
       LIMIT 1
     ) m ON true
     LEFT JOIN guesthub.room_types rt ON rt.id = COALESCE(m.room_type_id, su.room_type_id)
-    WHERE su.tenant_id = ${PUBLIC_TENANT_ID} AND su.is_active`;
+    WHERE su.tenant_id = ${tenantId} AND su.is_active`;
 
   const ess = await db<EssRow[]>`
     SELECT sellable_unit_id, day::text AS day, availability,
            price::float8 AS price, sellable,
            min_stay_arrival, min_stay_through, max_stay,
            closed_to_arrival, closed_to_departure, stop_sell
-    FROM guesthub.effective_sell_state(${PUBLIC_TENANT_ID}, ${checkIn}, ${toPlusOne})`;
+    FROM guesthub.effective_sell_state(${tenantId}, ${checkIn}, ${toPlusOne})`;
   const essByKey = new Map(ess.map((r) => [`${r.sellable_unit_id}|${r.day}`, r]));
 
   // Length-of-stay tiers (D104). The public site sells the base layer, so it
@@ -196,7 +207,7 @@ export async function publicAvailability(
     .filter((c): c is { type: RoomTypeAvailability; unit: BookableUnit } => c.unit != null);
   if (candidates.length > 0) {
     const quote = await calculateReservationPrice(db, {
-      tenantId: PUBLIC_TENANT_ID,
+      tenantId,
       checkIn,
       checkOut,
       rooms: candidates.map((c) => ({
@@ -209,7 +220,10 @@ export async function publicAvailability(
     });
     for (const rq of quote.rooms) {
       const hit = candidates.find((c) => c.unit.roomId === rq.roomId);
-      if (!hit || rq.roomSubtotal <= 0) continue;
+      // !rq.valid matters once this can be called with a real party size
+      // (Phase 5): a capacity violation must drop the unit, not just get
+      // silently priced anyway.
+      if (!hit || !rq.valid || rq.roomSubtotal <= 0) continue;
       const engineNightly = rq.nights
         .filter((n) => n.nightTotal != null)
         .map((n) => ({ date: n.date, price: round2(n.nightTotal!) }));

@@ -96,3 +96,4 @@
 088_sync_errors_resolved_by.sql
 089_sync_jobs_payload_nullable.sql
 090_bulk_items_restrictions.sql
+091_room_capacity_inherit_room_type.sql

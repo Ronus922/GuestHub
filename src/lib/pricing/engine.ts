@@ -5,7 +5,8 @@ import { eachDay, isDateOnly, todayInTz } from "@/lib/dates";
 import { DEFAULT_VAT_RATE, includedVatAmount, parseVatRate } from "@/lib/vat";
 import { indexByDate, stayRestrictionViolationStructured, stayViolationMessage, type PlanRateRow } from "@/lib/rates/rules";
 import { getRoomPlanRates } from "@/lib/rates/effective-state";
-import { checkRoomAvailability } from "@/lib/inventory";
+import { checkRoomAvailability, getRoomCapacities } from "@/lib/inventory";
+import type { RoomCapacity } from "@/lib/inventory-rules";
 import { normalizeExtraGuestDefaults, roundMoney, type ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import { calculateChargeableGuests, resolveEffectivePricing } from "@/lib/commercial/room-pricing";
 import {
@@ -38,6 +39,10 @@ const ROUNDING_POLICY =
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const cents = (n: number) => Math.round(n * 100);
 
+// Defensive only — getRoomCapacities queries the exact same roomIds already
+// confirmed to exist via roomsById, so this should never actually be hit.
+const DEFAULT_ROOM_CAPACITY: RoomCapacity = { max_occupancy: 2, max_adults: 2, max_children: 0, max_infants: 0 };
+
 const err = (code: PricingErrorCode, extra?: Partial<PricingError>): PricingError => ({
   code, message: extra?.message ?? PRICING_ERROR_MESSAGES[code], ...extra,
 });
@@ -57,9 +62,13 @@ type TenantRow = {
   vat_rate: string | null; extra_guest: unknown; pricing: unknown;
 };
 
+// D-capacity-fallback: room-level max_* columns are now nullable (091) — the
+// effective value is COALESCE(room, room_type, hardcoded default), resolved
+// ONLY by getRoomCapacities (src/lib/inventory.ts). Fetched as a separate
+// batched map (capacitiesById below), never selected inline here, so this
+// engine and every other caller of getRoomCapacities can never disagree.
 type EngineRoomRow = {
   id: string; room_number: string; name: string | null; status: string; is_active: boolean;
-  max_occupancy: number; max_adults: number; max_children: number; max_infants: number;
   min_occupancy: number | null; included_occupancy: number | null;
   extra_guest_pricing_mode: "inherit" | "override";
   extra_adult_override: number | null; extra_child_override: number | null; extra_infant_override: number | null;
@@ -191,7 +200,6 @@ export async function calculateQuote(
   // ---- batched loads (§28) ----
   const roomRows = await db<EngineRoomRow[]>`
     SELECT r.id, r.room_number, r.name, r.status, r.is_active,
-           r.max_occupancy, r.max_adults, r.max_children, r.max_infants,
            r.min_occupancy, r.included_occupancy, r.extra_guest_pricing_mode,
            r.extra_adult_override::float8  AS extra_adult_override,
            r.extra_child_override::float8  AS extra_child_override,
@@ -203,6 +211,11 @@ export async function calculateQuote(
     LEFT JOIN guesthub.sellable_units su ON su.id = sur.sellable_unit_id
     WHERE r.tenant_id = ${req.tenantId} AND r.id = ANY(${roomIds}::uuid[])`;
   const roomsById = new Map(roomRows.map((r) => [r.id, r]));
+  // THE effective capacity rule (owner decision, Phase 5 audit): room value if
+  // present, else room type, else a hardcoded last resort — one function, so
+  // this engine and the dashboard room picker (available-rooms.ts) can never
+  // disagree. Zero is a real value here; only NULL inherits.
+  const capacitiesById = await getRoomCapacities(db, req.tenantId, roomIds);
 
   // Tenant-level Rate Plans — the whole (small) set, so parent chains resolve
   // without per-plan roundtrips.
@@ -299,6 +312,7 @@ export async function calculateQuote(
       roomQuotes.push(emptyRoomQuote(entry, [err("ROOM_NOT_FOUND", ctx), ...roomErrors]));
       continue;
     }
+    const cap: RoomCapacity = capacitiesById.get(entry.roomId) ?? DEFAULT_ROOM_CAPACITY;
 
     // physical eligibility (§3.1: a Rate Plan never adds availability)
     restrictionsEvaluated.push("room_status", "availability");
@@ -373,10 +387,10 @@ export async function calculateQuote(
     if (entry.adults < 1) roomErrors.push(err("OCCUPANCY_BELOW_MINIMUM", { ...ctx, message: "נדרש לפחות מבוגר אחד" }));
     if (room.min_occupancy != null && occupancy < room.min_occupancy)
       roomErrors.push(err("OCCUPANCY_BELOW_MINIMUM", ctx));
-    if (occupancy > room.max_occupancy) roomErrors.push(err("OCCUPANCY_EXCEEDED", ctx));
-    if (entry.adults > room.max_adults) roomErrors.push(err("ADULT_LIMIT_EXCEEDED", ctx));
-    if (entry.children > room.max_children) roomErrors.push(err("CHILD_LIMIT_EXCEEDED", ctx));
-    if (entry.infants > room.max_infants) roomErrors.push(err("INFANT_LIMIT_EXCEEDED", ctx));
+    if (occupancy > cap.max_occupancy) roomErrors.push(err("OCCUPANCY_EXCEEDED", ctx));
+    if (entry.adults > cap.max_adults) roomErrors.push(err("ADULT_LIMIT_EXCEEDED", ctx));
+    if (entry.children > cap.max_children) roomErrors.push(err("CHILD_LIMIT_EXCEEDED", ctx));
+    if (entry.infants > cap.max_infants) roomErrors.push(err("INFANT_LIMIT_EXCEEDED", ctx));
 
     // extra guests — the EXISTING canonical mechanism (§11): pure resolver over
     // room override ↓ property default, then the shared chargeable calculation.
@@ -405,8 +419,8 @@ export async function calculateQuote(
       const chargeable = calculateChargeableGuests({
         adults: entry.adults, children: entry.children, infants: entry.infants,
         includedOccupancy: room.included_occupancy,
-        maxAdults: room.max_adults, maxChildren: room.max_children, maxInfants: room.max_infants,
-        maxOccupancy: room.max_occupancy,
+        maxAdults: cap.max_adults, maxChildren: cap.max_children, maxInfants: cap.max_infants,
+        maxOccupancy: cap.max_occupancy,
         infantsCountOccupancy: egDefaults.infants_count_occupancy,
         infantsUseIncluded: egDefaults.infants_use_included,
         pricing: {

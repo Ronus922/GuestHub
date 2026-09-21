@@ -75,9 +75,14 @@ export async function checkRoomAvailability(
       ${args.checkIn}, ${args.checkOut}, ${exclude}::uuid[])`;
 }
 
-// Resolved capacity of a physical room: COALESCE(room override, room-type
-// default) per column (§L). Both layers are NOT NULL today, so the room row
-// wins; COALESCE keeps the documented rule if overrides become nullable.
+// THE authoritative effective capacity of a physical room, per column (§L):
+// room value if present, else room-type value, else a hardcoded last resort.
+// Room-level max_* columns are nullable (migration 091) — NULL is the only
+// value that inherits; zero is a real, enforced value (e.g. max_infants=0
+// really means "no infants," it does NOT fall back to the room type).
+// The single implementation of this rule — called by the pricing engine
+// (src/lib/pricing/engine.ts) and the dashboard room picker
+// (src/lib/reservations/available-rooms.ts) so they can never disagree.
 export async function getRoomCapacities(
   db: Sql | TransactionSql,
   tenantId: string,
