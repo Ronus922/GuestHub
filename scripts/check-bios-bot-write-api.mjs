@@ -156,16 +156,16 @@ let created;
   };
   created = await withBiosBotIdempotency(sql, { tenantId: T, operation: "create_reservation", idempotencyKey: nextKey("create"), request: reqBody },
     (tx) => createBiosBotReservation(tx, T, "k", reqBody));
-  assert.equal(created.status, "draft", "initial status is draft (owner decision)");
+  assert.equal(created.status, "confirmed", "initial status is confirmed (owner decision, audited 2026-09-21)");
   assert.ok(created.reservationId);
   assert.equal(created.totalPrice, quote.totalGross, "created total matches the quote total exactly");
 
   const [row] = await sql`SELECT status, total_price::float8 AS total_price FROM guesthub.reservations WHERE id = ${created.reservationId}`;
-  assert.equal(row.status, "draft");
+  assert.equal(row.status, "confirmed");
   const rr = await sql`SELECT room_id, adults, price_total::float8 AS price_total FROM guesthub.reservation_rooms WHERE reservation_id = ${created.reservationId}`;
   assert.equal(rr.length, 1, "exactly one reservation_rooms row for a single-room create");
   assert.equal(rr[0].room_id, roomA);
-  ok("create_reservation: draft status, correct total, one reservation_rooms row matching the quote");
+  ok("create_reservation: confirmed status, correct total, one reservation_rooms row matching the quote");
 }
 
 // ---- PRICE_CHANGED ----

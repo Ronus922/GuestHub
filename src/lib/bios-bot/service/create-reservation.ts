@@ -24,21 +24,32 @@ import { BiosBotError, mapPricingErrorCode } from "../errors";
 // check compares apples to apples), buildStaySnapshot, computeReservationTotals,
 // recomputePaymentAggregates, markAriDirty, publishDomainEvent.
 //
-// INITIAL STATUS (owner decision, documented per Phase 5 §13/§20): 'draft'.
-// Investigated before deciding: since D126 (migration 073),
-// INVENTORY_BLOCKING_STATUSES includes every status except 'cancelled' — a
-// 'draft' reservation blocks inventory IDENTICALLY to 'confirmed' (same
-// lockRooms/exclusion-constraint/markAriDirty coverage). The only behavioral
-// difference between the two is that createReservationAction fires
-// enqueueReservationConfirmed ONLY for status='confirmed'. Since this write
-// is gated behind BIOS Bot's own customer_confirmation Pending Action, the
-// guest has already been told the outcome IN THE CONVERSATION by the time
-// this runs — auto-sending GuestHub's own confirmation email/WhatsApp on
-// top of that risks exactly the duplicate-communication Phase 5 warns
-// against. 'draft' avoids it for free, without inventing a new status, and
-// still fully reserves the room. A human who later reviews the booking in
-// the dashboard can promote it to 'confirmed' through the EXISTING flow,
-// which sends the normal confirmation through the normal channel.
+// INITIAL STATUS: 'confirmed' — owner decision after an explicit audit
+// (2026-09-21) comparing 'draft' vs 'confirmed' against actual production
+// behavior. An earlier version of this file used 'draft', on the reasoning
+// that only status='confirmed' triggers GuestHub's own confirmation
+// email/WhatsApp. That reasoning did not hold up: enqueueReservationConfirmed
+// is an explicit call inside createReservationAction, not a trigger keyed off
+// the status column, and this file never calls it — independent of which
+// status is written here. So the status literal was never what suppressed
+// the duplicate send; the absence of that call is.
+//
+// draft and confirmed are otherwise IDENTICAL for inventory: since D126
+// (migration 073), INVENTORY_BLOCKING_STATUSES includes every status except
+// 'cancelled', so lockRooms/the exclusion constraint/markAriDirty/ARI/reports/
+// workflow_status_id behave the same either way. The real difference is
+// semantic: 'draft' means "awaiting staff approval" (dashboard label "טיוטה",
+// its own approvals queue) — not true of a reservation the guest already
+// confirmed inside the BIOS Bot conversation. Keeping it 'draft' would also
+// leave a latent risk: if a human later promotes a lingering draft to
+// 'confirmed' through the dashboard's own transition, THAT call really does
+// fire enqueueReservationConfirmed — a genuine duplicate send this file's
+// silence does not prevent once that transition happens.
+//
+// No card is involved either way: this INSERT never touches
+// guesthub.reservation_cards (verified — no FK/trigger ties reservation
+// creation to a stored card), exactly like createReservationAction's own
+// confirmed-by-default path, which also creates zero reservation_cards rows.
 //
 // AUDIT: writeSystemAudit (no human actor — this is a service write), with
 // session='bios-bot' as the source marker Phase 5 §29 asks for, and the
@@ -77,7 +88,7 @@ export type BiosBotCreateReservationRequest = {
 export type BiosBotCreatedReservation = {
   reservationId: string;
   reservationNumber: string;
-  status: "draft";
+  status: "confirmed";
   totalPrice: number;
   currency: string;
 };
@@ -160,7 +171,7 @@ export async function createBiosBotReservation(
        check_in, check_out, adults, children, infants,
        discount_amount, total_price, paid_amount, balance, currency,
        notes, cancellation_policy_snapshot, booking_origin, workflow_status_id)
-    VALUES (${tenantId}, ${reservationNumber}, ${guest.id}, 'draft',
+    VALUES (${tenantId}, ${reservationNumber}, ${guest.id}, 'confirmed',
             ${req.checkIn}, ${req.checkOut},
             ${req.rooms.reduce((n, r) => n + r.adults, 0)},
             ${req.rooms.reduce((n, r) => n + r.children, 0)},
@@ -196,11 +207,11 @@ export async function createBiosBotReservation(
     entityType: "reservation",
     entityId: res.id,
     action: "create",
-    after: { number: reservationNumber, status: "draft", rooms: quote.rooms.length, total: totals.grandTotal },
+    after: { number: reservationNumber, status: "confirmed", rooms: quote.rooms.length, total: totals.grandTotal },
     session: `bios-bot idempotency-key=${idempotencyKey}`,
   }, tx);
 
-  // 'draft' is a blocking status (D126) — the room is genuinely reserved
+  // 'confirmed' is a blocking status (D126) — the room is genuinely reserved
   await markAriDirty(tx, {
     tenantId,
     roomIds: req.rooms.map((r) => r.roomId),
@@ -213,7 +224,7 @@ export async function createBiosBotReservation(
     roomIds: req.rooms.map((r) => r.roomId),
     dateFrom: req.checkIn,
     dateTo: req.checkOut,
-    lifecycle: "draft",
+    lifecycle: "confirmed",
   });
   await publishDomainEvent(tx, tenantId, {
     type: "inventory.changed",
@@ -224,6 +235,6 @@ export async function createBiosBotReservation(
 
   return {
     resourceId: res.id,
-    response: { reservationId: res.id, reservationNumber, status: "draft", totalPrice: totals.grandTotal, currency },
+    response: { reservationId: res.id, reservationNumber, status: "confirmed", totalPrice: totals.grandTotal, currency },
   };
 }
