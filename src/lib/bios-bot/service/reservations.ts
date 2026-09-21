@@ -24,6 +24,8 @@ import { BiosBotError } from "../errors";
 // ============================================================
 
 export type BiosBotReservationRoom = {
+  /** guesthub.reservation_rooms.id — target this for guesthub.change_stay */
+  stayId: string;
   roomId: string | null;
   roomNumber: string | null;
   roomName: string | null;
@@ -73,6 +75,7 @@ type ReservationRow = {
 };
 
 type ReservationRoomRow = {
+  stay_id: string;
   room_id: string | null;
   room_number: string | null;
   room_name: string | null;
@@ -97,6 +100,7 @@ function toBiosBotReservation(row: ReservationRow, rooms: ReservationRoomRow[]):
       ? { firstName: row.guest_first_name, lastName: row.guest_last_name, phone: row.guest_phone, email: row.guest_email }
       : null,
     rooms: rooms.map((rr) => ({
+      stayId: rr.stay_id,
       roomId: rr.room_id,
       roomNumber: rr.room_number,
       roomName: rr.room_name,
@@ -119,7 +123,7 @@ function toBiosBotReservation(row: ReservationRow, rooms: ReservationRoomRow[]):
 
 async function loadRooms(db: Sql | TransactionSql, tenantId: string, reservationId: string): Promise<ReservationRoomRow[]> {
   return db<ReservationRoomRow[]>`
-    SELECT rr.room_id, ro.room_number, ro.name AS room_name,
+    SELECT rr.id AS stay_id, rr.room_id, ro.room_number, ro.name AS room_name,
            rr.check_in::text AS check_in, rr.check_out::text AS check_out,
            rr.adults, rr.children, rr.infants, rr.price_total::float8 AS price_total
     FROM guesthub.reservation_rooms rr
