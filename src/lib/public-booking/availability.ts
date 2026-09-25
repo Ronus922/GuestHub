@@ -3,7 +3,9 @@ import type { Sql, TransactionSql } from "postgres";
 import { addDays, eachDay, nightsBetween, type DateOnly } from "@/lib/dates";
 import { stayLimit } from "@/lib/rates/rules";
 import { calculateReservationPrice } from "@/lib/pricing/engine";
+import type { RoomQuote } from "@/lib/pricing/types";
 import { EXCLUDED_SU_CODES, PUBLIC_TENANT_ID } from "./config";
+import type { Party } from "./guests";
 
 // ============================================================
 // Public availability read model — the aggregation behind both
@@ -46,10 +48,15 @@ export type BookableUnit = {
   suId: string;
   roomId: string;
   code: string;
-  /** what the guest pays for the stay */
+  /** what the guest pays for the stay — for parties[0] when a party list was
+   *  given, otherwise the historical base-occupancy browse price */
   totalPrice: number;
   accommodationSubtotal: number;
   nightly: Array<{ date: DateOnly; price: number }>;
+  /** only with opts.parties: the engine's price for THIS unit under each
+   *  requested party, aligned with the request (index 0 === totalPrice).
+   *  null = the unit cannot host that party (capacity / occupancy rules) */
+  partyPrices?: Array<number | null>;
 };
 
 export type RoomTypeAvailability = {
@@ -71,17 +78,21 @@ export async function publicAvailability(
   db: Sql | TransactionSql,
   checkIn: DateOnly,
   checkOut: DateOnly,
-  opts?: { tenantId?: string },
+  opts?: { tenantId?: string; parties?: Party[] },
 ): Promise<RoomTypeAvailability[]> {
   // tenantId defaults to the public site's own tenant — every EXISTING
   // caller is unaffected. Phase 5 (BIOS Bot) is the first caller to pass a
-  // different one. Occupancy stays the historical "base occupancy" browse
-  // (2 adults) here on purpose (see the calculateReservationPrice call
-  // below) — a caller that needs a REAL party's availability (BIOS Bot)
-  // filters the full per-type `units` list by effective capacity itself
-  // (src/lib/bios-bot/service/availability.ts), rather than this function
-  // re-pricing for one specific party. The exact, final, party-aware price
-  // and capacity check always happens at quote/booking time regardless.
+  // different one.
+  //
+  // Occupancy: WITHOUT opts.parties this stays the historical "base
+  // occupancy" browse (2 adults, cheapest unit per type through the engine,
+  // the rest at their ESS sum) — BIOS Bot filters that list by capacity
+  // itself (src/lib/bios-bot/service/availability.ts). WITH opts.parties
+  // (the public site's real search party, D195) EVERY unit is priced by THE
+  // engine for the actual composition, a unit that cannot host the first
+  // party is not offered, and the booking transaction re-runs this same call
+  // with the same parties — so the number the guest saw is the number the
+  // booking commits, extra-guest money included.
   const tenantId = opts?.tenantId ?? PUBLIC_TENANT_ID;
   const nights = nightsBetween(checkIn, checkOut);
   const stayNights = eachDay(checkIn, checkOut);
@@ -198,10 +209,17 @@ export async function publicAvailability(
   // ---- the quoted price comes from THE engine (D106 — audit §ז' #2) ----
   // ESS above decides which units are AVAILABLE; the number read to the guest
   // must be the same calculation the booking commits (priceReservationStays →
-  // calculateReservationPrice). ONE engine call covers the ESS-cheapest unit
-  // of every room type (≤ types, never N units); an engine miss (unlikely —
-  // ESS already said sellable) keeps the ESS figure, and the booking-time
-  // expectedTotal comparison stays the honest backstop.
+  // calculateReservationPrice).
+  if (opts?.parties && opts.parties.length > 0) {
+    // D195: a real party — every unit, priced for that composition.
+    await priceUnitsForParties(db, tenantId, checkIn, checkOut, nights, byType, opts.parties);
+    return [...byType.values()].sort((a, b) => a.basePrice - b.basePrice);
+  }
+
+  // No party given: the historical browse. ONE engine call covers the
+  // ESS-cheapest unit of every room type (≤ types, never N units); an engine
+  // miss (unlikely — ESS already said sellable) keeps the ESS figure, and the
+  // booking-time expectedTotal comparison stays the honest backstop.
   const candidates = [...byType.values()]
     .map((t) => ({ type: t, unit: t.units[0] }))
     .filter((c): c is { type: RoomTypeAvailability; unit: BookableUnit } => c.unit != null);
@@ -237,4 +255,82 @@ export async function publicAvailability(
   }
 
   return [...byType.values()].sort((a, b) => a.basePrice - b.basePrice);
+}
+
+// ---- D195: party-aware pricing — every unit, through THE engine ----
+// One engine call per DISTINCT party over ALL bookable units (the engine
+// rejects the same roomId twice in one request — ROOM_DUPLICATED — so a
+// multi-room search with two different parties is two calls, never one call
+// with duplicated rooms). The engine applies the whole commercial model —
+// room override ↓ property default, included occupancy, per-night/per-stay
+// frequency, property rounding, infant policy — so nothing about extra
+// guests is computed here.
+//
+// A unit is offered only when it can host parties[0] (the party of the card /
+// preferred unit). partyPrices[i] is null where the unit cannot host party i;
+// the site (and the booking's positional room assignment) treat null as
+// "not this unit for that room".
+async function priceUnitsForParties(
+  db: Sql | TransactionSql,
+  tenantId: string,
+  checkIn: DateOnly,
+  checkOut: DateOnly,
+  nights: number,
+  byType: Map<string, RoomTypeAvailability>,
+  parties: Party[],
+): Promise<void> {
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const allUnits = [...byType.values()].flatMap((t) => t.units);
+  if (allUnits.length === 0) return;
+
+  const partyKey = (p: Party) => `${p.adults}|${p.children}|${p.infants}`;
+  const distinct = new Map<string, Party>();
+  for (const p of parties) distinct.set(partyKey(p), p);
+
+  // partyKey → roomId → the engine's quote for that unit under that party
+  const quotes = new Map<string, Map<string, RoomQuote>>();
+  for (const [key, party] of distinct) {
+    const quote = await calculateReservationPrice(db, {
+      tenantId,
+      checkIn,
+      checkOut,
+      rooms: allUnits.map((u) => ({
+        roomId: u.roomId,
+        ratePlanId: null, // the public site sells the base layer (+ auto plan selection)
+        adults: party.adults,
+        children: party.children,
+        infants: party.infants,
+        manualRatePerNight: null,
+      })),
+      source: "website",
+    });
+    quotes.set(key, new Map(quote.rooms.map((rq) => [rq.roomId, rq])));
+  }
+  const priceFor = (party: Party, roomId: string): RoomQuote | null => {
+    const rq = quotes.get(partyKey(party))?.get(roomId);
+    return rq && rq.valid && rq.roomSubtotal > 0 ? rq : null;
+  };
+
+  for (const type of byType.values()) {
+    const offered: BookableUnit[] = [];
+    for (const unit of type.units) {
+      const primary = priceFor(parties[0], unit.roomId);
+      if (!primary) continue; // cannot host the first party → not offered
+      unit.totalPrice = primary.roomSubtotal;
+      unit.accommodationSubtotal = primary.accommodationSubtotal;
+      unit.nightly = primary.nights
+        .filter((n) => n.nightTotal != null)
+        .map((n) => ({ date: n.date, price: round2(n.nightTotal!) }));
+      unit.partyPrices = parties.map((p) => priceFor(p, unit.roomId)?.roomSubtotal ?? null);
+      offered.push(unit);
+    }
+    // same deterministic order as the browse: price ASC, then code
+    offered.sort((a, b) => a.totalPrice - b.totalPrice || a.code.localeCompare(b.code, "he"));
+    type.units = offered;
+    type.availableUnits = offered.length;
+    const cheapest = offered[0];
+    type.totalPrice = cheapest ? cheapest.totalPrice : null;
+    type.pricePerNight = cheapest ? round2(cheapest.totalPrice / nights) : null;
+    type.nightly = cheapest ? cheapest.nightly : [];
+  }
 }

@@ -12,7 +12,11 @@
 //      (extra-guest surcharge), which pins that the engine number WON;
 //   2. the quote equals what priceReservationStays (the booking seam) would
 //      commit — quote ≡ charge;
-//   3. a tenant-default LOS tier shows up identically in both.
+//   3. a tenant-default LOS tier shows up identically in both;
+//   4. (D195) with the site's REAL party the quote follows that party — the
+//      same engine, the same booking seam, and the property's configured
+//      extra-adult amount read back from the tenant row, not a pinned number.
+//      Sections 1–3 keep guarding the no-party browse exactly as before.
 //
 // Nothing committed: one transaction, always rolled back.
 // ============================================================
@@ -211,6 +215,34 @@ try {
     assert.equal(pricedSel[0].priceTotal, typesSel[0].totalPrice,
       "the booking seam commits exactly the selected-plan price");
     ok("plan selection: one selection, one number — public quote, engine and booking seam agree");
+
+    // ---- 4. D195: the quote follows the site's REAL party, not base occupancy ----
+    // Same fixture (included_occupancy 1, plans assigned), one more adult than
+    // the section-3 quote. The party quote must equal the engine and the
+    // booking seam for THAT party, and exceed the 2-adult quote by exactly the
+    // property's extra-adult amount per night — read back from the tenant row.
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const party3 = { adults: 3, children: 0, infants: 0 };
+    const [{ eg }] = await tx`SELECT settings->'extra_guest' AS eg FROM guesthub.tenants WHERE id = ${FIXED_TENANT}`;
+    const typesParty = await publicAvailability(tx, IN, OUT, { parties: [party3] });
+    const cheapParty = typesParty[0].units.find((u) => u.suId === cheap.suId);
+    assert.ok(cheapParty, "the cheap unit is offered to 3 adults");
+    const engineParty = await calculateReservationPrice(tx, {
+      tenantId: FIXED_TENANT, checkIn: IN, checkOut: OUT,
+      rooms: [{ roomId: cheap.roomId, ratePlanId: null, ...party3, manualRatePerNight: null }],
+      source: "website",
+    });
+    assert.equal(cheapParty.totalPrice, engineParty.rooms[0].roomSubtotal,
+      "party quote = calculateReservationPrice for the same party (plan selection included)");
+    const pricedParty = await seam.priceReservationStays(tx, FIXED_TENANT, [{
+      roomId: cheap.roomId, ratePlanId: null, checkIn: IN, checkOut: OUT, ...party3,
+    }], { source: "website", enforceAvailability: true, enforceRestrictions: true });
+    assert.equal(pricedParty[0].priceTotal, cheapParty.totalPrice,
+      "the booking seam commits exactly the party quote");
+    assert.equal(r2(cheapParty.totalPrice - typesSel[0].totalPrice), r2(Number(eg.extra_adult) * 2),
+      "3 adults vs the 2-adult quote: exactly one more extra-adult amount per night, as the tenant row configures it");
+    assert.deepEqual(cheapParty.partyPrices, [cheapParty.totalPrice], "partyPrices aligned with the one requested room");
+    ok("D195: the quote follows the real party — engine, booking seam and the tenant's configured extra-adult amount agree");
 
     throw new Rollback();
   });

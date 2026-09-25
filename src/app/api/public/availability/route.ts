@@ -8,10 +8,18 @@ import {
   PUBLIC_TIMEZONE,
   requireBookingSecret,
 } from "@/lib/public-booking/config";
+import { formatGuestsParam, parseGuestsParam } from "@/lib/public-booking/guests";
 
-// GET /api/public/availability?check_in=YYYY-MM-DD&check_out=YYYY-MM-DD
+// GET /api/public/availability?check_in=YYYY-MM-DD&check_out=YYYY-MM-DD[&guests=2-0,3-1]
 // Server-to-server (sea-tower). Read-only; returns all room types, sold-out
 // included (availableUnits: 0) — presentation decisions live in the site.
+//
+// guests (D195) — the search party in the site's own format, one room per
+// comma, adults-children per room. With it, every unit's totalPrice is THE
+// engine's price for the first party (extra-guest money included), units
+// that cannot host that party are left out, and each unit also carries
+// partyPrices (aligned with the guests list; null = cannot host that room's
+// party). Without it the response is exactly what it was before D195.
 export async function GET(req: Request): Promise<NextResponse> {
   if (!requireBookingSecret(req)) {
     return NextResponse.json({ ok: false, code: "unauthorized" }, { status: 401 });
@@ -34,14 +42,29 @@ export async function GET(req: Request): Promise<NextResponse> {
     );
   }
 
+  const guestsRaw = url.searchParams.get("guests");
+  const parties = guestsRaw == null ? null : parseGuestsParam(guestsRaw);
+  if (guestsRaw != null && !parties) {
+    return NextResponse.json(
+      { ok: false, code: "validation", message: "הרכב אורחים לא תקין" },
+      { status: 400 },
+    );
+  }
+
   try {
-    const roomTypes = await publicAvailability(sql, checkIn, checkOut);
+    const roomTypes = await publicAvailability(
+      sql,
+      checkIn,
+      checkOut,
+      parties ? { parties } : undefined,
+    );
     return NextResponse.json({
       ok: true,
       checkIn,
       checkOut,
       nights: nightsBetween(checkIn, checkOut),
       currency: "ILS",
+      guests: parties ? formatGuestsParam(parties) : null,
       /* units — הדירות הבודדות הפנויות (לתצוגת דירה-פר-כרטיס באתר).
          roomId הוא מזהה החדר הפיזי ב-guesthub.rooms, והוא המפתח היחיד שבו
          מותר לחבר זמינות לתוכן מ-/api/public/rooms. מספר חדר, שם או מיקום
@@ -53,6 +76,7 @@ export async function GET(req: Request): Promise<NextResponse> {
           roomId: u.roomId,
           code: u.code,
           totalPrice: u.totalPrice,
+          ...(u.partyPrices ? { partyPrices: u.partyPrices } : {}),
         })),
       })),
     });

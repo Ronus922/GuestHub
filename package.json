@@ -36,6 +36,7 @@
     "check:stuck-panel-violations": "node scripts/check-stuck-panel-violations.mjs",
     "check:totals-parity": "node scripts/check-totals-parity.mjs",
     "check:public-quote": "node scripts/check-public-quote.mjs",
+    "check:public-availability-guests": "node scripts/check-public-availability-guests.mjs",
     "check:room-picker-window": "node scripts/check-room-picker-window.mjs",
     "check:rates-ui": "node scripts/check-rates-ui.mjs",
     "check:bulk-update-audit": "node scripts/check-bulk-update-audit.mjs",

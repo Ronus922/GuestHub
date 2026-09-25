@@ -77,7 +77,13 @@ export async function createPublicBooking(input: PublicBookingInput): Promise<{
     }
     await lockRooms(tx, tenantId, typeRooms.map((r) => r.id));
 
-    const types = await publicAvailability(tx, input.checkIn, input.checkOut);
+    // The SAME party-aware read the site searched with (D195): the unit list,
+    // its order and each unit's price are what the guest saw — so the
+    // positional room assignment below (rooms[i] → picked[i]) and the
+    // expectedTotal comparison compare like with like.
+    const types = await publicAvailability(tx, input.checkIn, input.checkOut, {
+      parties: input.rooms.map((r) => ({ adults: r.adults, children: r.children, infants: 0 })),
+    });
     const type = types.find((t) => t.roomTypeId === input.roomTypeId);
     let ordered = type?.units ?? [];
     if (input.preferredUnitId) {
