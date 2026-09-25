@@ -15,11 +15,13 @@ import { formatGuestsParam, parseGuestsParam } from "@/lib/public-booking/guests
 // included (availableUnits: 0) — presentation decisions live in the site.
 //
 // guests (D195) — the search party in the site's own format, one room per
-// comma, adults-children per room. With it, every unit's totalPrice is THE
-// engine's price for the first party (extra-guest money included), units
-// that cannot host that party are left out, and each unit also carries
-// partyPrices (aligned with the guests list; null = cannot host that room's
-// party). Without it the response is exactly what it was before D195.
+// comma, adults-children per room. With it, every unit carries partyPrices
+// (aligned with the guests list: THE engine's price for that room's party,
+// extra-guest money included; null = the unit cannot host it), a unit that
+// can host none of the parties is left out, and totalPrice is the price for
+// the first room the unit can host. Which unit serves which room is decided
+// by assign-units.ts at booking time (the site mirrors it). Without guests
+// the response is exactly what it was before D195.
 export async function GET(req: Request): Promise<NextResponse> {
   if (!requireBookingSecret(req)) {
     return NextResponse.json({ ok: false, code: "unauthorized" }, { status: 401 });

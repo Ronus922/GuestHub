@@ -16,6 +16,7 @@ import { markAriDirty } from "@/lib/channel/outbox";
 import { publishDomainEvent } from "@/lib/realtime/publish";
 import { CARD_KEY_VERSION, encryptCvv, encryptPan } from "@/lib/card-vault";
 import { detectBrand } from "@/lib/card-rules";
+import { assignUnitsToRooms } from "./assign-units";
 import { publicAvailability } from "./availability";
 import { PRICE_TOLERANCE_ILS, PUBLIC_TENANT_ID } from "./config";
 
@@ -51,7 +52,9 @@ export type PublicBookingInput = {
 };
 
 export class PublicBookingError extends Error {
-  code: "no_availability" | "price_changed";
+  // unit_party_mismatch (D195): the chosen unit cannot host the party of the
+  // room it was assigned to — an explicit refusal, never a silent re-shuffle
+  code: "no_availability" | "price_changed" | "unit_party_mismatch";
   newTotal?: number;
   constructor(code: PublicBookingError["code"], message: string, newTotal?: number) {
     super(message);
@@ -78,32 +81,45 @@ export async function createPublicBooking(input: PublicBookingInput): Promise<{
     await lockRooms(tx, tenantId, typeRooms.map((r) => r.id));
 
     // The SAME party-aware read the site searched with (D195): the unit list,
-    // its order and each unit's price are what the guest saw — so the
-    // positional room assignment below (rooms[i] → picked[i]) and the
-    // expectedTotal comparison compare like with like.
+    // its order and each unit's per-party price are what the guest saw — so
+    // the room assignment below and the expectedTotal comparison compare like
+    // with like.
     const types = await publicAvailability(tx, input.checkIn, input.checkOut, {
       parties: input.rooms.map((r) => ({ adults: r.adults, children: r.children, infants: 0 })),
     });
     const type = types.find((t) => t.roomTypeId === input.roomTypeId);
-    let ordered = type?.units ?? [];
-    if (input.preferredUnitId) {
-      const pref = ordered.find((u) => u.suId === input.preferredUnitId);
-      if (!pref) {
+    if (!type) {
+      throw new PublicBookingError("no_availability", "הדירה כבר אינה זמינה בתאריכים שנבחרו");
+    }
+    /* איזו דירה משרתת איזה חדר — הכלל הדטרמיניסטי שהאתר משקף (assign-units.ts):
+       הדירה שנבחרה → חדר 1, ואז השילוב התקין הזול ביותר לשאר החדרים */
+    const assignment = assignUnitsToRooms(type.units, input.rooms.length, input.preferredUnitId);
+    if (!assignment.ok) {
+      if (assignment.reason === "preferred_mismatch") {
         throw new PublicBookingError(
-          "no_availability",
-          "הדירה שנבחרה כבר אינה זמינה בתאריכים שנבחרו",
+          "unit_party_mismatch",
+          "הדירה שנבחרה אינה מתאימה להרכב האורחים של החדר הראשון",
         );
       }
-      /* הדירה שנבחרה קודם; חדרים נוספים (הזמנה רב-חדרית) מהזול לַיקר */
-      ordered = [pref, ...ordered.filter((u) => u.suId !== pref.suId)];
-    }
-    const picked = ordered.slice(0, input.rooms.length);
-    if (!type || picked.length < input.rooms.length) {
       throw new PublicBookingError(
         "no_availability",
-        "הדירה כבר אינה זמינה בתאריכים שנבחרו",
+        assignment.reason === "preferred_unavailable"
+          ? "הדירה שנבחרה כבר אינה זמינה בתאריכים שנבחרו"
+          : "אין שילוב דירות פנוי שמתאים להרכב האורחים שנבחר",
       );
     }
+    const picked = assignment.units;
+    // Owner rule (D195): every unit assigned to room i MUST host party i. The
+    // assignment guarantees it; this is the explicit contract check — a
+    // mismatch is refused by name, never re-shuffled or priced anyway.
+    picked.forEach((unit, i) => {
+      if (unit.partyPrices?.[i] == null) {
+        throw new PublicBookingError(
+          "unit_party_mismatch",
+          `הדירה ${unit.code} אינה מתאימה להרכב האורחים של חדר ${i + 1}`,
+        );
+      }
+    });
 
     // Engine pricing is authoritative (availability + restrictions + occupancy
     // enforced — the same seam every staff reservation goes through).

@@ -11,6 +11,12 @@
 //   PART  — partial override: infant from the room, adult/child from the property
 //   SMALL — a 2-person unit, so capacity filtering has something to drop
 //
+// Multi-room (owner, 2026-09-25): a unit is offered when it can host AT LEAST
+// ONE requested party, partyPrices[i] is null for every party it cannot host,
+// a unit hosting none is not offered, and the booking assigns rooms through
+// assign-units.ts (cheapest valid combination; room i ↔ partyPrices[i]) —
+// never positionally.
+//
 // Owner decision (2026-09-25): the inheritance chain room ↓ property IS the
 // source of truth, and no price or occupancy is pinned in code or tests.
 // Every expected number below is COMPUTED from the rows the guard reads back
@@ -20,7 +26,7 @@
 // Nothing committed: one transaction, always rolled back.
 // ============================================================
 import { execSync } from "node:child_process";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +78,7 @@ writeFileSync(join(tmp, "tsconfig.json"), JSON.stringify({
   include: [
     join(ROOT, "src/lib/public-booking/availability.ts"),
     join(ROOT, "src/lib/public-booking/guests.ts"),
+    join(ROOT, "src/lib/public-booking/assign-units.ts"),
     join(ROOT, "src/lib/pricing/engine.ts"),
     join(ROOT, "src/lib/pricing/reservation-pricing.ts"),
     join(ROOT, "src/lib/commercial/extra-guest.ts"),
@@ -96,6 +103,7 @@ process.env.PUBLIC_BOOKING_TENANT_ID = FIXED_TENANT; // read by config.ts at req
 
 const { publicAvailability } = req(join(out, "lib/public-booking/availability.js"));
 const { parseGuestsParam, formatGuestsParam } = req(join(out, "lib/public-booking/guests.js"));
+const { assignUnitsToRooms } = req(join(out, "lib/public-booking/assign-units.js"));
 const { calculateReservationPrice } = req(join(out, "lib/pricing/engine.js"));
 const seam = req(join(out, "lib/pricing/reservation-pricing.js"));
 const { normalizeExtraGuestDefaults, roundMoney } = req(join(out, "lib/commercial/extra-guest.js"));
@@ -347,13 +355,87 @@ try {
           `${u.code} room ${i + 1} (${formatGuestsParam([parties[i]])}): ${exp.valid ? "computed price" : "null — cannot host"}`);
       }
     }
-    assert.ok(unitOf(multi, SMALL.suId), "SMALL is offered (it hosts the FIRST party)");
+    assert.ok(unitOf(multi, SMALL.suId), "SMALL is offered (it hosts the first party)");
     assert.equal(unitOf(multi, SMALL.suId).partyPrices[1], null, "…but is null for the second room's party of 3");
     const prices = multi[0].units.map((u) => u.totalPrice);
-    assert.deepEqual(prices, [...prices].sort((a, b) => a - b), "units sorted by the first party's price, ascending");
+    assert.deepEqual(prices, [...prices].sort((a, b) => a - b), "units sorted by totalPrice, ascending");
     assert.equal(multi[0].totalPrice, prices[0], "the type's from-price is the cheapest offered unit");
     assert.equal(multi[0].pricePerNight, round2(prices[0] / NIGHTS), "…and pricePerNight follows it");
     ok("multi-room: partyPrices per unit aligned with the guests list; null marks a room the unit cannot host");
+
+    // ---- 5b. multi-room, the owner's case: room 1 = 2+2, room 2 = 2+0 — the
+    //      small unit fits ONLY the second room and must still be offered ----
+    const mixed = [P(2, 2), P(2)];
+    const asMixed = await publicAvailability(tx, IN, OUT, { parties: mixed });
+    assert.equal(asMixed[0].availableUnits, 4, "all four units are offered: each hosts at least one of the two parties");
+    const smallMixed = unitOf(asMixed, SMALL.suId);
+    assert.ok(smallMixed, "SMALL is offered although it cannot host the FIRST party");
+    assert.equal(smallMixed.partyPrices[0], null, "SMALL: null at index 0 (2+2 exceeds max_children 1)");
+    const expSmall2 = await expectedFor(tx, SMALL, P(2));
+    assert.ok(expSmall2.valid, "…while the shared capacity rule accepts SMALL for 2 adults");
+    assert.equal(smallMixed.partyPrices[1], expSmall2.total, "SMALL: index 1 is the computed 2-adult price (1 included + 1 extra adult × nights, rounded)");
+    assert.equal(smallMixed.totalPrice, smallMixed.partyPrices[1], "SMALL: totalPrice is the price for the first room it CAN host");
+    assert.equal(smallMixed.totalPrice, (await engineAndSeam(tx, SMALL, P(2))).seam, "…and it is what the booking would commit for that room");
+    for (const u of [INH, OVR, PART]) {
+      const q = unitOf(asMixed, u.suId);
+      for (let i = 0; i < mixed.length; i++) {
+        const exp = await expectedFor(tx, u, mixed[i]);
+        assert.ok(exp.valid, `${u.code} can host room ${i + 1}`);
+        assert.equal(q.partyPrices[i], exp.total, `${u.code} room ${i + 1} (${formatGuestsParam([mixed[i]])}): computed price`);
+      }
+      assert.equal(q.totalPrice, q.partyPrices[0], `${u.code}: totalPrice is the first room's price when it hosts it`);
+    }
+    // a unit that fits NEITHER party is not offered
+    const asNeither = await publicAvailability(tx, IN, OUT, { parties: [P(3), P(2, 2)] });
+    assert.equal(unitOf(asNeither, SMALL.suId), null, "SMALL is not offered when it can host neither 3+0 nor 2+2");
+    assert.equal(asNeither[0].availableUnits, 3, "…and availableUnits counts the other three");
+    ok("multi-room, different parties: a unit that fits only the second room is offered with null at index 0 and its engine price at index 1; a unit fitting no room is not offered");
+
+    // ---- 5c. room assignment (assign-units.ts): room i ↔ partyPrices[i], cheapest valid combination ----
+    // independent brute force over the availability result — every ordered pair of distinct units
+    const bruteBest = (units, rooms, fixedFirst = null) => {
+      let best = null;
+      const rec = (i, chosen, total) => {
+        if (i === rooms) { if (!best || total < best.total) best = { units: [...chosen], total }; return; }
+        for (const u of units) {
+          if (chosen.includes(u) || u.partyPrices[i] == null) continue;
+          if (i === 0 && fixedFirst && u.suId !== fixedFirst) continue;
+          rec(i + 1, [...chosen, u], total + u.partyPrices[i]);
+        }
+      };
+      rec(0, [], 0);
+      return best;
+    };
+    const sumOf = (units) => round2(units.reduce((s, u, i) => s + u.partyPrices[i], 0));
+    const a1 = assignUnitsToRooms(asMixed[0].units, 2, null);
+    assert.ok(a1.ok, "2+2 / 2+0 without a preferred unit: a combination exists");
+    assert.equal(a1.units.length, 2, "one unit per room");
+    assert.notEqual(a1.units[0].suId, a1.units[1].suId, "two different units");
+    assert.ok(a1.units[0].partyPrices[0] != null && a1.units[1].partyPrices[1] != null, "each unit hosts the party of ITS room");
+    assert.equal(sumOf(a1.units), round2(bruteBest(asMixed[0].units, 2).total), "…and the total is the cheapest valid combination (brute force agrees)");
+    const a2 = assignUnitsToRooms(asMixed[0].units, 2, SMALL.suId);
+    assert.deepEqual(a2, { ok: false, reason: "preferred_mismatch" }, "SMALL chosen for room 1 (2+2): explicit mismatch, never a silent swap");
+    const asFlipped = await publicAvailability(tx, IN, OUT, { parties: [P(2), P(2, 2)] });
+    const a3 = assignUnitsToRooms(asFlipped[0].units, 2, SMALL.suId);
+    assert.ok(a3.ok && a3.units[0].suId === SMALL.suId, "SMALL chosen for room 1 (2+0): honoured");
+    assert.equal(sumOf(a3.units), round2(bruteBest(asFlipped[0].units, 2, SMALL.suId).total), "…room 2 gets the cheapest unit that hosts 2+2");
+    // the trap a greedy pick falls into: INH is cheaper than SMALL for 2+0, but
+    // it is the only one of the two that can host 2+2 — the combination must
+    // put SMALL on room 1 and INH on room 2 (real units, real engine prices)
+    const pair = asFlipped[0].units.filter((u) => u.suId === INH.suId || u.suId === SMALL.suId);
+    assert.ok(unitOf([{ units: pair }], INH.suId).partyPrices[0] < unitOf([{ units: pair }], SMALL.suId).partyPrices[0], "precondition: INH is the cheaper unit for 2+0");
+    const a4 = assignUnitsToRooms(pair, 2, null);
+    assert.ok(a4.ok, "a valid combination is found although the cheapest unit for room 1 must be left for room 2");
+    assert.deepEqual(a4.units.map((u) => u.suId), [SMALL.suId, INH.suId], "SMALL → room 1 (2+0), INH → room 2 (2+2)");
+    assert.deepEqual(assignUnitsToRooms(pair, 2, INH.suId), { ok: false, reason: "no_combination" }, "INH forced on room 1: no unit is left for 2+2 — explicit, not a mismatched booking");
+    assert.deepEqual(assignUnitsToRooms(asMixed[0].units, 2, "00000000-0000-4000-8000-000000000000"), { ok: false, reason: "preferred_unavailable" }, "a unit that is not offered: explicit");
+    assert.deepEqual(assignUnitsToRooms(browse[0].units, 1, null), { ok: false, reason: "no_combination" }, "units priced without parties (no partyPrices) host nothing — the booking must ask for the real parties");
+    // the booking really goes through this rule and refuses a mismatch by name (textual pins, D106 style)
+    const bookingSrc = readFileSync(join(ROOT, "src/lib/public-booking/create-booking.ts"), "utf8");
+    assert.ok(/assignUnitsToRooms\(type\.units, input\.rooms\.length, input\.preferredUnitId\)/.test(bookingSrc), "createPublicBooking assigns rooms through assignUnitsToRooms");
+    assert.ok(/partyPrices\?\.\[i\] == null[\s\S]{0,200}"unit_party_mismatch"/.test(bookingSrc), "createPublicBooking checks room i ↔ partyPrices[i] explicitly and throws unit_party_mismatch");
+    assert.ok(!/ordered\.slice\(0, input\.rooms\.length\)/.test(bookingSrc), "the positional slice is gone");
+    ok("room assignment: preferred unit → room 1 or an explicit mismatch; the rest is the cheapest valid combination (brute force agrees); no positional pick anywhere");
 
     // ---- 6. live: a change in the property settings or in /rooms moves the quote at once ----
     const before = unitOf(await publicAvailability(tx, IN, OUT, { parties: [P(4)] }), INH.suId).totalPrice;

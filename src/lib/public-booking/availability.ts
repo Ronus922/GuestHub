@@ -48,14 +48,16 @@ export type BookableUnit = {
   suId: string;
   roomId: string;
   code: string;
-  /** what the guest pays for the stay — for parties[0] when a party list was
-   *  given, otherwise the historical base-occupancy browse price */
+  /** what the guest pays for the stay — with opts.parties: the engine's price
+   *  for the FIRST requested room this unit can host (=== the first non-null
+   *  partyPrices entry); otherwise the historical base-occupancy browse price */
   totalPrice: number;
   accommodationSubtotal: number;
   nightly: Array<{ date: DateOnly; price: number }>;
   /** only with opts.parties: the engine's price for THIS unit under each
-   *  requested party, aligned with the request (index 0 === totalPrice).
-   *  null = the unit cannot host that party (capacity / occupancy rules) */
+   *  requested party, aligned with the request (partyPrices[i] ↔ guests[i]).
+   *  null = the unit cannot host that room's party (capacity / occupancy
+   *  rules). A unit is offered only if at least one entry is a number. */
   partyPrices?: Array<number | null>;
 };
 
@@ -69,8 +71,10 @@ export type RoomTypeAvailability = {
   totalPrice: number | null;
   pricePerNight: number | null;
   nightly: Array<{ date: DateOnly; price: number }>;
-  // booking-time detail, sorted (totalPrice ASC, code ASC) — the deterministic
-  // room-selection order, so the quoted "from" price is exactly what gets booked
+  // booking-time detail, sorted (totalPrice ASC, code ASC). With parties the
+  // booking assigns rooms through assign-units.ts (room i ↔ partyPrices[i]);
+  // this order is its deterministic tie-break, so what the site quotes is
+  // exactly what gets booked
   units: BookableUnit[];
 };
 
@@ -89,8 +93,8 @@ export async function publicAvailability(
   // the rest at their ESS sum) — BIOS Bot filters that list by capacity
   // itself (src/lib/bios-bot/service/availability.ts). WITH opts.parties
   // (the public site's real search party, D195) EVERY unit is priced by THE
-  // engine for the actual composition, a unit that cannot host the first
-  // party is not offered, and the booking transaction re-runs this same call
+  // engine for EVERY requested party (partyPrices), a unit that can host none
+  // of them is not offered, and the booking transaction re-runs this same call
   // with the same parties — so the number the guest saw is the number the
   // booking commits, extra-guest money included.
   const tenantId = opts?.tenantId ?? PUBLIC_TENANT_ID;
@@ -266,10 +270,14 @@ export async function publicAvailability(
 // frequency, property rounding, infant policy — so nothing about extra
 // guests is computed here.
 //
-// A unit is offered only when it can host parties[0] (the party of the card /
-// preferred unit). partyPrices[i] is null where the unit cannot host party i;
-// the site (and the booking's positional room assignment) treat null as
-// "not this unit for that room".
+// Owner rule (2026-09-25): a unit is offered when it can host AT LEAST ONE of
+// the requested parties — a small unit that fits only the second room must
+// still be there, or a two-room search never sees a valid combination.
+// partyPrices[i] is the engine's price for party i, null where the unit
+// cannot host it; a unit with no hostable party is not offered. totalPrice is
+// the price for the first room the unit can host. Which unit serves which
+// room is decided by assign-units.ts (booking) and mirrored by the site —
+// never positionally.
 async function priceUnitsForParties(
   db: Sql | TransactionSql,
   tenantId: string,
@@ -314,14 +322,16 @@ async function priceUnitsForParties(
   for (const type of byType.values()) {
     const offered: BookableUnit[] = [];
     for (const unit of type.units) {
-      const primary = priceFor(parties[0], unit.roomId);
-      if (!primary) continue; // cannot host the first party → not offered
+      const perParty = parties.map((p) => priceFor(p, unit.roomId));
+      // headline = the first requested room this unit can host; none → not offered
+      const primary = perParty.find((q): q is RoomQuote => q !== null);
+      if (!primary) continue;
       unit.totalPrice = primary.roomSubtotal;
       unit.accommodationSubtotal = primary.accommodationSubtotal;
       unit.nightly = primary.nights
         .filter((n) => n.nightTotal != null)
         .map((n) => ({ date: n.date, price: round2(n.nightTotal!) }));
-      unit.partyPrices = parties.map((p) => priceFor(p, unit.roomId)?.roomSubtotal ?? null);
+      unit.partyPrices = perParty.map((q) => q?.roomSubtotal ?? null);
       offered.push(unit);
     }
     // same deterministic order as the browse: price ASC, then code
