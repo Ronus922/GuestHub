@@ -23,6 +23,14 @@ import { getRoomCapacities } from "@/lib/inventory";
 // total always comes from guesthub.get_quote (calculateReservationPrice) —
 // this endpoint's prices are a "from" hint for browsing, same as the public
 // website's.
+//
+// availableRooms (D196): the booking inventory itself — every unit of the
+// type that the engine offers for these dates AND that fits the party, with
+// its effective capacity. These are the room ids a quote/booking may use.
+// It is deliberately NOT the website catalog (publicWebsiteRooms, which also
+// requires show_on_website + an image): a room without a photo is still
+// sellable. Status/active rules are the engine's own (sellable_unit_inventory:
+// status = 'available' AND is_active), not re-implemented here.
 // ============================================================
 
 export type BiosBotAvailabilityQuery = {
@@ -33,6 +41,15 @@ export type BiosBotAvailabilityQuery = {
   infants: number;
 };
 
+export type BiosBotAvailableRoom = {
+  roomId: string;
+  roomNumber: string;
+  maxOccupancy: number;
+  maxAdults: number;
+  maxChildren: number;
+  maxInfants: number;
+};
+
 export type BiosBotRoomTypeAvailability = {
   roomTypeId: string;
   name: string;
@@ -40,6 +57,8 @@ export type BiosBotRoomTypeAvailability = {
   fromTotalPrice: number;
   fromPricePerNight: number;
   currency: string;
+  // additive (D196) — cheapest first, same order as the "from" price
+  availableRooms: BiosBotAvailableRoom[];
 };
 
 export async function searchBiosBotAvailability(
@@ -77,6 +96,19 @@ export async function searchBiosBotAvailability(
       fromTotalPrice: cheapest.totalPrice,
       fromPricePerNight: nights > 0 ? Math.round((cheapest.totalPrice / nights) * 100) / 100 : cheapest.totalPrice,
       currency: "ILS",
+      availableRooms: [...eligible]
+        .sort((a, b) => a.totalPrice - b.totalPrice || a.code.localeCompare(b.code, "he"))
+        .map((u) => {
+          const cap = capacities.get(u.roomId)!; // eligible ⇒ fitsParty found it
+          return {
+            roomId: u.roomId,
+            roomNumber: u.code,
+            maxOccupancy: cap.max_occupancy,
+            maxAdults: cap.max_adults,
+            maxChildren: cap.max_children,
+            maxInfants: cap.max_infants,
+          };
+        }),
     });
   }
   return results.sort((a, b) => a.fromTotalPrice - b.fromTotalPrice);
