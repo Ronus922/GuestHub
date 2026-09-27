@@ -11,6 +11,8 @@ import { searchBiosBotAvailability } from "@/lib/bios-bot/service/availability";
 // authoritative capacity rule (getRoomCapacities) — see
 // src/lib/bios-bot/service/availability.ts for why this is not a parallel
 // availability algorithm.
+// Each roomType also carries availableRooms (D196, additive): the unit ids
+// the engine offers for this stay and party — the ids a quote may use.
 export const dynamic = "force-dynamic";
 
 const querySchema = z.object({
