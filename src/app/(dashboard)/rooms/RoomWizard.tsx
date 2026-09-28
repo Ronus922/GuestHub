@@ -1,11 +1,16 @@
 "use client";
 
-import { useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { Segmented, Switch } from "@/app/(dashboard)/settings/controls";
+import {
+  ROOM_MISSING_LABEL,
+  ROOM_MISSING_TARGET,
+  type RoomMissingKey,
+} from "@/lib/rooms/completeness-keys";
 import {
   resolveEffectivePricing,
   validateRoomOccupancy,
@@ -140,6 +145,28 @@ export function RoomWizard({
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [lang, setLang] = useState<Lang>("he");
   const [roomId, setRoomId] = useState<string | null>(room?.id ?? null);
+  // D197 §D-D — a missing-item link switches step (and editing language) and
+  // then, once that step's fields exist in the DOM, scrolls to and focuses the
+  // field. The focus runs after the commit that rendered the target.
+  const [pendingFocus, setPendingFocus] = useState<RoomMissingKey | null>(null);
+  const goToMissing = (key: RoomMissingKey) => {
+    const target = ROOM_MISSING_TARGET[key];
+    setStep(target.step);
+    if (target.lang) setLang(target.lang);
+    setPendingFocus(key);
+  };
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const target = ROOM_MISSING_TARGET[pendingFocus];
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(target.field);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.focus({ preventScroll: true });
+      setPendingFocus(null);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [pendingFocus, step, lang]);
   const dirtyLangs = useRef<Set<Lang>>(new Set(room ? [] : ["he"]));
 
   const [base, setBase] = useState<BaseDraft>({
@@ -411,6 +438,29 @@ export function RoomWizard({
       }
     >
       <div className="flex flex-col gap-3.5">
+        {/* D197 §D-D — what the server (roomCompleteness) says is still missing;
+            each item is a link to its field. Edit mode only: a new room has no
+            row to evaluate yet. */}
+        {room && room.missing.length > 0 && (
+          <section className="rm-mpanel" aria-label="פרטים חסרים">
+            <div className="rm-mpanel-hd">
+              <Icon name="warning" size={20} />
+              <span>
+                חסרים <bdi className="ltr-num">{room.missing.length}</bdi> פרטים להשלמת החדר
+              </span>
+            </div>
+            <ul className="rm-mpanel-list">
+              {room.missing.map((k) => (
+                <li key={k}>
+                  <button type="button" className="rm-mlink" onClick={() => goToMissing(k)}>
+                    {ROOM_MISSING_LABEL[k]}
+                    <Icon name="chevron-left" size={17} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {/* language chips + room-level actions (reference row) */}
         <div className="flex flex-wrap items-center gap-2">
           {ALL_LANGS.map((l) => (
@@ -443,6 +493,7 @@ export function RoomWizard({
               <div className="rm-frow">
                 <F label="שם החדר" required>
                   <input
+                    id="rm-f-name"
                     className="field-input"
                     dir="auto"
                     placeholder="לדוגמה: סוויטת פרימיום פנטהאוס עם נוף לים"
@@ -490,6 +541,7 @@ export function RoomWizard({
                 </F>
               </div>
               <RichTextArea
+                id="rm-f-description"
                 label="תיאור החדר"
                 placeholder="תיאור מפורט של החדר או האירוח…"
                 value={tr.description}
@@ -515,7 +567,7 @@ export function RoomWizard({
               <div className="rm-frow3">
                 <QtyStep label="תפוסה מינימלית" value={base.min_occupancy} min={1} nullable onChange={(v) => setB("min_occupancy", v)} />
                 <QtyStep label="תפוסת ברירת מחדל" value={base.default_occupancy} min={1} nullable onChange={(v) => setB("default_occupancy", v)} />
-                <QtyStep label="תפוסה מקסימלית" value={base.max_occupancy} min={1} onChange={(v) => setB("max_occupancy", v ?? 1)} />
+                <QtyStep id="rm-f-max_occupancy" label="תפוסה מקסימלית" value={base.max_occupancy} min={1} onChange={(v) => setB("max_occupancy", v ?? 1)} />
               </div>
               <div className="rm-frow3">
                 <QtyStep label="מקסימום מבוגרים" value={base.max_adults} onChange={(v) => setB("max_adults", v ?? 0)} />
@@ -635,6 +687,7 @@ export function RoomWizard({
                 <QtyStep label="עריסות (לתינוק)" value={base.cribs} onChange={(v) => setB("cribs", v ?? 0)} />
                 <F label="גודל החדר (מ״ר)">
                   <input
+                    id="rm-f-size_sqm"
                     className="field-input ltr-num"
                     dir="ltr"
                     inputMode="decimal"
@@ -678,6 +731,19 @@ export function RoomWizard({
         {step === 3 && (
           <>
             <Sec icon="globe" title="הגדרות SEO" note={`עריכה בשפה: ${LANG_META[lang].label}`}>
+              {/* D197 §D-D item 6 — the slug was persisted (payload) but had no
+                  field; the completeness link needs one to land on */}
+              <F label="כתובת URL (slug)">
+                <input
+                  id="rm-f-slug"
+                  className="field-input ltr-num"
+                  dir="ltr"
+                  placeholder="לדוגמה: sea-view-suite"
+                  value={tr.slug}
+                  onChange={(e) => setT("slug", e.target.value)}
+                />
+                <span className="field-hint">ייחודי לכל שפה · אותיות, ספרות ומקפים בלבד</span>
+              </F>
               <F label="כותרת SEO (Title Tag)">
                 <input
                   className="field-input"
@@ -955,6 +1021,7 @@ function ImagesSection({
         onDragLeave={() => setDragOver(false)}
       >
         <button
+          id="rm-f-images"
           type="button"
           disabled={!roomId || uploading}
           onClick={() => fileRef.current?.click()}
@@ -1167,6 +1234,7 @@ function SwRow({ label, hint, checked, onChange }: { label: string; hint: string
 
 // reference numeric stepper: [add][value][remove] — RTL puts + on the right
 export function QtyStep({
+  id,
   label,
   value,
   onChange,
@@ -1174,6 +1242,7 @@ export function QtyStep({
   nullable,
   hint,
 }: {
+  id?: string;
   label: string;
   value: number | null;
   onChange: (v: number | null) => void;
@@ -1190,6 +1259,7 @@ export function QtyStep({
           <Icon name="plus" size={20} />
         </button>
         <input
+          id={id}
           className="rm-v"
           dir="ltr"
           inputMode="numeric"
@@ -1214,11 +1284,13 @@ export function QtyStep({
 
 // rich-text toolbar (reference rtb) — wraps the selection with markdown markers
 function RichTextArea({
+  id,
   label,
   placeholder,
   value,
   onChange,
 }: {
+  id?: string;
   label: string;
   placeholder: string;
   value: string;
@@ -1283,6 +1355,7 @@ function RichTextArea({
         ))}
       </div>
       <textarea
+        id={id}
         ref={ref}
         className="field-input rm-rtxt"
         rows={10}

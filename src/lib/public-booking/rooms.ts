@@ -1,30 +1,25 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
+import { inLang, trimmed, type RoomLang } from "@/lib/rooms/lang-text";
 import { PUBLIC_TENANT_ID } from "./config";
+import { websiteVisibleRoomSql } from "./visibility";
 
 // ============================================================
 // Public rooms read model — the catalog behind GET /api/public/rooms.
 // Content-only: names, copy, size, beds, amenities and gallery for the rooms
-// the owner marked show_on_website. Availability and price never come from
-// here (they are per-date, and live in publicAvailability) — a card built on
-// this model may say WHAT a room is, never whether it is free tonight.
+// the website may show. Availability and price never come from here (they
+// are per-date, and live in publicAvailability) — a card built on this model
+// may say WHAT a room is, never whether it is free tonight.
 //
-// Only rooms that have at least one image are returned: a room card without a
-// photo is a hole in a public gallery, and every consumer would otherwise have
-// to filter for itself.
+// WHICH rooms: exactly the D197 rule in ./visibility.ts — show_on_website
+// AND active (is_active AND status <> 'inactive'). A photo is NOT required
+// (D197 reversed the earlier "at least one image" filter: a room without a
+// photo is listed with an empty gallery and the site renders its own
+// placeholder), and out_of_order rooms are listed — whether they can be
+// booked on a date is the engine's answer, not this catalog's.
 // ============================================================
 
-export type PublicRoomLang = "he" | "en" | "ar";
-
-// A row in room_translations is not proof of a translation: the app seeds it
-// from the room's internal name, so the "he" row of most rooms still holds the
-// English PMS label. Text that carries none of the language's own script is
-// treated as untranslated, so the fallback chain can reach real Hebrew copy.
-const SCRIPT: Record<PublicRoomLang, RegExp | null> = {
-  he: /[\u0590-\u05FF]/,
-  ar: /[\u0600-\u06FF]/,
-  en: null,
-};
+export type PublicRoomLang = RoomLang;
 
 type RoomRow = {
   id: string;
@@ -70,18 +65,6 @@ export type PublicRoom = {
   images: PublicRoomImage[];
 };
 
-const trimmed = (s: string | null): string | null => {
-  const v = s?.trim();
-  return v ? v : null;
-};
-
-// Text that is usable AS the requested language (see SCRIPT above).
-const inLang = (s: string | null, lang: PublicRoomLang): string | null => {
-  const v = trimmed(s);
-  const script = SCRIPT[lang];
-  return v && (!script || script.test(v)) ? v : null;
-};
-
 // The heading a card shows, and where it came from. The owner's translation
 // wins; then the room's own name if it happens to be written in the requested
 // language; then the room type, which the owner maintains in Hebrew and is the
@@ -107,7 +90,7 @@ export async function publicWebsiteRooms(
 ): Promise<PublicRoom[]> {
   // tenantId defaults to the public site's own tenant — every EXISTING
   // caller is unaffected. roomId narrows to one room (Phase 5 get_room);
-  // omitted, it returns the whole show_on_website catalog as before.
+  // omitted, it returns the whole website catalog.
   const tenantId = opts?.tenantId ?? PUBLIC_TENANT_ID;
   const roomId = opts?.roomId ?? null;
   const rooms = await db<RoomRow[]>`
@@ -123,10 +106,8 @@ export async function publicWebsiteRooms(
     LEFT JOIN guesthub.room_translations t
            ON t.room_id = r.id AND t.lang = ${lang}
     WHERE r.tenant_id = ${tenantId}
-      AND r.show_on_website AND r.is_active AND r.status <> 'inactive'
+      AND ${websiteVisibleRoomSql(db)}
       AND (${roomId}::uuid IS NULL OR r.id = ${roomId}::uuid)
-      AND EXISTS (SELECT 1 FROM guesthub.room_images ri
-                   WHERE ri.tenant_id = r.tenant_id AND ri.room_id = r.id)
     ORDER BY r.sort_order, r.room_number`;
 
   if (rooms.length === 0) return [];

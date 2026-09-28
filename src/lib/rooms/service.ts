@@ -1,5 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { roomCompleteness } from "@/lib/rooms/completeness";
+import type { RoomMissingKey } from "@/lib/rooms/completeness-keys";
 
 // ============================================================
 // Rooms-module READ layer. The one server-side path the /rooms board and the
@@ -90,7 +92,10 @@ export type BoardRoom = {
   next_guest: string | null;
   // completeness
   incomplete: boolean;
-  missing: string[];
+  // D197 §D-D — the closed key set from lib/rooms/completeness-keys, evaluated
+  // ONCE server-side by roomCompleteness; the card chip and the wizard panel
+  // both read this list.
+  missing: RoomMissingKey[];
   langs_complete: Record<Lang, boolean>;
   amenity_ids: string[];
   translations: RoomTranslation[];
@@ -138,19 +143,8 @@ type TrRow = RoomTranslation & { room_id: string };
 type ImgRow = RoomImage & { room_id: string };
 type AmRow = { room_id: string; amenity_id: string };
 
-// A room is "complete" when its operational + commercial + website essentials are
-// all present. Missing items are reported so the card can say what's left.
-function missingOf(r: Omit<BoardRoom, "derived_status" | "current_guest" | "current_until" | "next_arrival" | "next_guest" | "incomplete" | "missing" | "langs_complete" | "amenity_ids" | "main_image_url" | "image_count">, heName: string | null): string[] {
-  const missing: string[] = [];
-  if (!heName && !r.name) missing.push("שם");
-  if (r.included_occupancy === null) missing.push("אורחים כלולים במחיר");
-  if (r.default_occupancy === null) missing.push("תפוסת ברירת מחדל");
-  if (!r.room_type_id) missing.push("סוג חדר");
-  return missing;
-}
-
 export async function listBoardRooms(tenantId: string, today: string): Promise<BoardRoom[]> {
-  const [rooms, stays, hk, closures, stopSell, translations, images, amenities] = await Promise.all([
+  const [rooms, stays, hk, closures, stopSell, translations, images, amenities, completeness] = await Promise.all([
     sql<Omit<BoardRoom, "derived_status" | "current_guest" | "current_until" | "next_arrival" | "next_guest" | "incomplete" | "missing" | "langs_complete" | "amenity_ids" | "main_image_url" | "image_count">[]>`
       SELECT r.id, r.room_number, r.name, r.floor, r.status, r.is_active,
              r.show_on_website, r.show_on_calendar, r.sort_order, r.size_sqm::float8 AS size_sqm,
@@ -226,6 +220,9 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
       ORDER BY is_main DESC, sort_order`,
     sql<AmRow[]>`
       SELECT room_id, amenity_id FROM guesthub.room_amenities WHERE tenant_id = ${tenantId}`,
+    // D197 §D-D — the ONE completeness evaluation (photo, size, he/en/ar copy,
+    // slug, resolved occupancy); the wizard panel reads the same list.
+    roomCompleteness(sql, tenantId),
   ]);
 
   // physical block (room_closures) vs commercial closure (stop_sell) — two
@@ -277,8 +274,7 @@ export async function listBoardRooms(tenantId: string, today: string): Promise<B
       const t = trs.find((x) => x.lang === lang);
       return Boolean(t && t.name && t.seo_title && t.meta_description);
     };
-    const heName = trs.find((t) => t.lang === "he")?.name ?? null;
-    const missing = missingOf(r, heName);
+    const missing = completeness.get(r.id)?.missing ?? [];
     const imgs = imgByRoom.get(r.id) ?? [];
 
     return {
