@@ -13,16 +13,28 @@ import { getRoomCapacities } from "@/lib/inventory";
 //      SAME date/status/closure/overlap facts (effective_sell_state,
 //      checkRoomAvailability's own DB function underneath) the public
 //      website and the booking transaction both read. It lists EVERY
-//      individual bookable unit per room type, not just the cheapest.
+//      individual bookable unit per room type, not just the cheapest. It is
+//      called WITH the caller's party (D195 `parties`), so every unit is
+//      priced by THE engine for exactly the guests that were asked about.
 //   2. getRoomCapacities() (src/lib/inventory.ts) — the SAME room→room-type
 //      capacity fallback the pricing engine enforces (migration 091).
 //
 // This function only FILTERS that authoritative unit list down to units
 // whose effective capacity fits the requested party — it invents no
-// availability or capacity fact of its own. The exact, final, party-priced
-// total always comes from guesthub.get_quote (calculateReservationPrice) —
-// this endpoint's prices are a "from" hint for browsing, same as the public
-// website's.
+// availability or capacity fact of its own.
+//
+// PRICES (2026-09-28): fromTotalPrice / fromPricePerNight are the cheapest
+// eligible unit's price FOR THE REQUESTED PARTY, straight out of the engine
+// (extra-guest money included) — not the old 2-adult browse figure. Before
+// this, a 2+1 search was answered with the 2-adult price (610/night on a unit
+// whose real 2+1 price is 810), because the party was dropped on the way in.
+// Capacity and surcharges are still GuestHub's alone: this file passes the
+// party down and re-computes nothing. `fitsParty` below stays as the second
+// lock — publicAvailability already drops a unit the engine cannot price for
+// this party, and the two may never disagree about who fits.
+// It remains a "from" hint in one sense only: it is the CHEAPEST eligible
+// unit of the type. guesthub.get_quote for one chosen room is still the
+// binding number.
 //
 // availableRooms (D196): the booking inventory itself — every unit of the
 // type that the engine offers for these dates AND that fits the party, with
@@ -67,7 +79,12 @@ export async function searchBiosBotAvailability(
   q: BiosBotAvailabilityQuery,
 ): Promise<BiosBotRoomTypeAvailability[]> {
   const nights = nightsBetween(q.checkIn, q.checkOut);
-  const types = await publicAvailability(db, q.checkIn, q.checkOut, { tenantId });
+  const types = await publicAvailability(db, q.checkIn, q.checkOut, {
+    tenantId,
+    // D195 — the guests that were actually asked about. One party: every unit
+    // is priced for it, and units it cannot host are not returned at all.
+    parties: [{ adults: q.adults, children: q.children, infants: q.infants }],
+  });
 
   const allRoomIds = types.flatMap((t) => t.units.map((u) => u.roomId));
   const capacities = await getRoomCapacities(db, tenantId, allRoomIds);

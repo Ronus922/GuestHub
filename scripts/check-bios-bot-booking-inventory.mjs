@@ -90,8 +90,21 @@ class Rollback extends Error {}
 const IN = "2027-06-14", OUT = "2027-06-16"; // 2 nights, far-future
 
 async function buildFixture(tx) {
+  // extra_guest mirrors the real property (configured, per-night amounts): the
+  // engine refuses to quote a chargeable extra guest whose category has no
+  // amount (EXTRA_GUEST_PRICING_INCOMPLETE), and since availability is now
+  // priced for the requested party, an unpriceable unit is not offered at all.
+  // A fixture without this block would therefore be testing the dead-end the
+  // module forbids ("the filter must never be MORE permissive than
+  // priceReservationStays") — see the unconfigured case asserted below.
   const [t] = await tx`INSERT INTO guesthub.tenants (name, slug, currency, settings)
-    VALUES ('BIOS Bot Inventory', ${`bbi-${Date.now()}-${Math.floor(Math.random() * 1e6)}`}, 'ILS', ${tx.json({ vat_rate: 18 })}) RETURNING id`;
+    VALUES ('BIOS Bot Inventory', ${`bbi-${Date.now()}-${Math.floor(Math.random() * 1e6)}`}, 'ILS',
+            ${tx.json({ vat_rate: 18, extra_guest: {
+              configured: true, extra_adult: 200, extra_child: 200, extra_infant: 200,
+              charge_frequency: "per_night", infant_max_age: 2, child_max_age: 12,
+              infants_count_occupancy: false, infants_use_included: false,
+              tax_mode: "inclusive", rounding_mode: "unit", rounding_increment: 1,
+            } })}) RETURNING id`;
   const T = t.id;
   const [studio] = await tx`INSERT INTO guesthub.room_types (tenant_id, name, base_price, max_occupancy, max_adults, max_children, max_infants)
     VALUES (${T}, 'Studio', 450, 2, 2, 1, 1) RETURNING id`;
@@ -200,6 +213,39 @@ try {
       }
       assert.ok(offered.size > 0);
       ok("capacity: effective room capacity decides — the max-2 studio is never offered to 2 adults + 1 child");
+    }
+
+    // ---- Party pricing (2026-09-28) -------------------------------------------
+    // The from-price is the engine's price for the REQUESTED party, so a child
+    // beyond included_occupancy shows up as money. The old party-blind browse
+    // answered 2+1 with the 2-adult figure.
+    {
+      const two = await searchBiosBotAvailability(tx, f.T, { checkIn: IN, checkOut: OUT, adults: 2, children: 0, infants: 0 });
+      const fam = await searchBiosBotAvailability(tx, f.T, { checkIn: IN, checkOut: OUT, adults: 2, children: 1, infants: 0 });
+      const bed2 = two.find((t) => t.roomTypeId === f.bedroom);
+      const bedFam = fam.find((t) => t.roomTypeId === f.bedroom);
+      assert.ok(bed2 && bedFam, "the 4-guest type is offered to both parties");
+      assert.equal(bed2.fromPricePerNight, 600, "2 adults: the base rate, no extra guest");
+      assert.equal(bedFam.fromPricePerNight, 800, "2 adults + 1 child: base + the child's 200 — NOT the 2-adult 600");
+      assert.ok(bedFam.fromPricePerNight > bed2.fromPricePerNight,
+        "a party that costs more may never be quoted the cheaper party's price");
+      // the "from" price is the cheapest ELIGIBLE unit, and it is a real quote
+      assert.equal(bedFam.fromTotalPrice, bedFam.fromPricePerNight * 2, "2 nights");
+      ok("party pricing: from-prices are the engine's price for the requested party (2+1 → 800, not 600)");
+    }
+
+    // ---- Unpriceable party: not offered, never a dead end ---------------------
+    // A property with NO extra-guest amounts cannot price a chargeable extra
+    // guest. Offering the unit anyway is the dead-end checkout the module
+    // forbids, so the type is omitted for that party — while the same rooms
+    // stay on offer for a party that needs no extra guest.
+    {
+      await tx`UPDATE guesthub.tenants SET settings = ${tx.json({ vat_rate: 18 })} WHERE id = ${f.T}`;
+      const fam = await searchBiosBotAvailability(tx, f.T, { checkIn: IN, checkOut: OUT, adults: 2, children: 1, infants: 0 });
+      assert.equal(fam.length, 0, "no extra-guest pricing → the family is offered nothing, not an unquotable price");
+      const two = await searchBiosBotAvailability(tx, f.T, { checkIn: IN, checkOut: OUT, adults: 2, children: 0, infants: 0 });
+      assert.ok(two.some((t) => t.roomTypeId === f.bedroom), "a party needing no extra guest is unaffected");
+      ok("unpriceable party: availability is never more permissive than the quote (no dead-end checkouts)");
     }
 
     // ---- Mapping --------------------------------------------------------------
