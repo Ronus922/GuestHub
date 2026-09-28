@@ -878,3 +878,85 @@ textarea.rm-fld {
 }
 
 } /* @layer components */
+
+/* ---------- D197: inactive rooms + completeness ----------
+   §D-C — the "הצג לא פעילים" switch sits at the end of the quick-filter row
+   and its label IS the switch's label, so the whole phrase toggles; an
+   inactive card is dimmed and wears one gray chip. §D-D — the amber
+   "חסרים N פרטים" chip on the card, and the wizard's panel whose items are
+   links to the fields. */
+.rm-inact-tg {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px;
+  margin-inline-start: auto;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.rm-bcard.is-inactive {
+  opacity: 0.55;
+}
+.rm-bcard.is-inactive:hover,
+.rm-bcard.is-inactive:focus-visible {
+  opacity: 1;
+}
+.rm-crm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.rm-mpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1.5px solid color-mix(in srgb, var(--warn) 45%, var(--surface));
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+}
+.rm-mpanel-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  color: color-mix(in srgb, var(--warn) 62%, var(--ink));
+}
+.rm-mpanel-hd .ms-icon {
+  flex: none;
+}
+.rm-mpanel-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rm-mlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.rm-mlink:hover,
+.rm-mlink:focus-visible {
+  border-color: var(--brand);
+  color: var(--brand);
+}

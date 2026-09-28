@@ -12,8 +12,10 @@
 //     own rule (sellable_unit_inventory: status='available' AND is_active)
 //     decides, and this guard proves availableRooms follows it exactly;
 //   - a max-2 studio (1130) — never offered to 2 adults + 1 child.
-// The website catalog (publicWebsiteRooms, via listBiosBotRooms) is asserted
-// UNCHANGED: still show_on_website + image only.
+// The website catalog (publicWebsiteRooms, via listBiosBotRooms) follows the
+// D197 rule: show_on_website AND active (is_active AND status <> 'inactive').
+// A photo is NOT a catalog condition any more, and out_of_order is listed —
+// the catalog and the booking inventory stay two different questions.
 //
 // Usage: node scripts/check-bios-bot-booking-inventory.mjs
 // ============================================================
@@ -124,13 +126,13 @@ async function buildFixture(tx) {
     studioNoImage: await room("st-1238", studio.id, { max_occupancy: 2, max_adults: 2, max_children: 0, max_infants: 0 }),
     // 1142: website + image, normal
     bedImage: await room("bd-1142", bedroom.id, {}, { image: true }),
-    // 1242/1245: website flag on, but no image
+    // 1242/1245: website flag on, but no image (D197: still in the catalog)
     bedNoImage: await room("bd-1245", bedroom.id),
     // 1042: hidden from the website, no image, still sellable
     bedHidden: await room("bd-1042", bedroom.id, { show_on_website: false }),
     // 1102/1243/2000: room inactive, sellable unit still active
     bedInactive: await room("bd-1102", bedroom.id, { is_active: false }, { image: true }),
-    // 926: out_of_order, still shown on the website with images
+    // 926: out_of_order, shown on the website
     bedOutOfOrder: await room("bd-926", bedroom.id, { status: "out_of_order" }, { image: true }),
   };
 }
@@ -154,15 +156,19 @@ try {
       ok("availableRooms: rooms without an image / hidden from the website are offered (images are not a booking condition)");
     }
 
-    // ---- Website catalog unchanged ------------------------------------------
+    // ---- Website catalog: the D197 rule (show_on_website AND active) ---------
+    // Guard classifier updated with D197 (2026-09-28): before it, this block
+    // asserted the pre-D197 rule (an image was required). The catalog is still
+    // NOT the booking inventory — that separation (D196) is what this guard
+    // exists for; only the catalog's own rule moved.
     {
       const catalog = new Set((await listBiosBotRooms(tx, f.T)).map((r) => r.id));
-      assert.ok(catalog.has(f.bedImage.id) && catalog.has(f.studioMax2.id), "rooms with website flag + image stay in the catalog");
-      assert.ok(!catalog.has(f.studioNoImage.id) && !catalog.has(f.bedNoImage.id), "rooms without an image are still NOT in the website catalog");
-      assert.ok(!catalog.has(f.bedHidden.id), "a room hidden from the website is still NOT in the catalog");
-      assert.ok(!catalog.has(f.bedInactive.id), "an inactive room is still NOT in the catalog");
-      assert.ok(catalog.has(f.bedOutOfOrder.id), "catalog rule unchanged: out_of_order + image + website flag still listed (status <> 'inactive')");
-      ok("website catalog (publicWebsiteRooms) behaves exactly as before — show_on_website + image, unchanged status rule");
+      assert.ok(catalog.has(f.bedImage.id) && catalog.has(f.studioMax2.id), "rooms with website flag + image are in the catalog");
+      assert.ok(catalog.has(f.studioNoImage.id) && catalog.has(f.bedNoImage.id), "D197: rooms without an image ARE in the website catalog (photos are not required)");
+      assert.ok(!catalog.has(f.bedHidden.id), "a room hidden from the website is NOT in the catalog");
+      assert.ok(!catalog.has(f.bedInactive.id), "an inactive room is NOT in the catalog, whatever show_on_website says");
+      assert.ok(catalog.has(f.bedOutOfOrder.id), "out_of_order + website flag is listed (active: status <> 'inactive')");
+      ok("website catalog (publicWebsiteRooms) = show_on_website AND active — D197; images and bookability are not catalog conditions");
     }
 
     // ---- Inactive / out_of_order: the engine's own rule ----------------------

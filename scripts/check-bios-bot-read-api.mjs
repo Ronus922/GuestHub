@@ -136,7 +136,7 @@ async function buildFixture(tx) {
     return su.id;
   };
 
-  // A: shown on website, has an image (required by publicWebsiteRooms), normal capacity
+  // A: shown on website, has an image (not a catalog condition since D197; kept so the gallery is exercised), normal capacity
   const roomA = await mkRoom(T, "bb-101");
   await tx`INSERT INTO guesthub.room_images (tenant_id, room_id, url, is_main) VALUES (${T}, ${roomA}, 'https://x/a.jpg', true)`;
   await tx`INSERT INTO guesthub.room_translations (tenant_id, room_id, lang, name, description)

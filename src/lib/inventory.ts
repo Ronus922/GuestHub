@@ -83,17 +83,28 @@ export async function checkRoomAvailability(
 // The single implementation of this rule — called by the pricing engine
 // (src/lib/pricing/engine.ts) and the dashboard room picker
 // (src/lib/reservations/available-rooms.ts) so they can never disagree.
+//
+// max_occupancy_source says WHICH step of that chain produced max_occupancy
+// ("room" | "type" | "default"). It is additive — every existing caller keeps
+// reading the four resolved numbers — and lets the room completeness check
+// (src/lib/rooms/completeness.ts) ask "did anything actually resolve this
+// occupancy" through this same function instead of re-implementing the chain.
+export type RoomOccupancySource = "room" | "type" | "default";
+
 export async function getRoomCapacities(
   db: Sql | TransactionSql,
   tenantId: string,
   roomIds: string[],
-): Promise<Map<string, RoomCapacity>> {
-  const rows = await db<(RoomCapacity & { id: string })[]>`
+): Promise<Map<string, RoomCapacity & { max_occupancy_source: RoomOccupancySource }>> {
+  const rows = await db<(RoomCapacity & { id: string; max_occupancy_source: RoomOccupancySource })[]>`
     SELECT r.id,
            COALESCE(r.max_occupancy, rt.max_occupancy, 2)::int AS max_occupancy,
            COALESCE(r.max_adults,    rt.max_adults,    2)::int AS max_adults,
            COALESCE(r.max_children,  rt.max_children,  0)::int AS max_children,
-           COALESCE(r.max_infants,   rt.max_infants,   0)::int AS max_infants
+           COALESCE(r.max_infants,   rt.max_infants,   0)::int AS max_infants,
+           CASE WHEN r.max_occupancy IS NOT NULL THEN 'room'
+                WHEN rt.max_occupancy IS NOT NULL THEN 'type'
+                ELSE 'default' END AS max_occupancy_source
     FROM guesthub.rooms r
     LEFT JOIN guesthub.room_types rt ON rt.id = r.room_type_id
     WHERE r.tenant_id = ${tenantId} AND r.id = ANY(${roomIds}::uuid[])`;

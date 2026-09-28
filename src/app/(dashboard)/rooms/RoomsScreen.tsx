@@ -15,6 +15,7 @@ import type {
 } from "@/lib/rooms/service";
 import type { ExtraGuestDefaults } from "@/lib/commercial/extra-guest";
 import { RoomWizard } from "./RoomWizard";
+import { Switch } from "@/app/(dashboard)/settings/controls";
 import { AreaPanel } from "./AreaPanel";
 import { updateAreaStatusAction, updateRoomBoardStatusAction } from "./actions";
 import { clampPopoverLeft } from "@/lib/popover";
@@ -116,6 +117,9 @@ export function RoomsScreen({
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<"all" | "rooms" | "areas">("all");
   const [status, setStatus] = useState<"all" | RoomDerivedStatus>("all");
+  // D197 §D-C — inactive rooms (is_active = false, the wizard's "חדר פעיל"
+  // switch) are hidden until the owner asks for them; OFF on every visit.
+  const [showInactive, setShowInactive] = useState(false);
   const [wizard, setWizard] = useState<{ room: BoardRoom | null } | null>(null);
   const [areaPanel, setAreaPanel] = useState<{ area: OperationalArea | null } | null>(null);
   const [pop, setPop] = useState<Popover | null>(null);
@@ -126,6 +130,7 @@ export function RoomsScreen({
       kind === "areas"
         ? []
         : rooms.filter((r) => {
+            if (!showInactive && !r.is_active) return false;
             if (needle) {
               const hay = [r.room_number, r.name, ...r.translations.map((t) => t.name ?? "")].join(" ").toLowerCase();
               if (!hay.includes(needle)) return false;
@@ -133,8 +138,12 @@ export function RoomsScreen({
             if (status !== "all" && r.derived_status !== status) return false;
             return true;
           }),
-    [rooms, kind, needle, status],
+    [rooms, kind, needle, status, showInactive],
   );
+  const inactiveCount = useMemo(() => rooms.filter((r) => !r.is_active).length, [rooms]);
+  // After a save the board refreshes (router.refresh) — hand the OPEN wizard the
+  // fresh row so its "what is missing" panel follows the server, not a snapshot.
+  const wizardRoom = wizard?.room ? (rooms.find((r) => r.id === wizard.room?.id) ?? wizard.room) : null;
 
   const filteredAreas = useMemo(
     () =>
@@ -242,6 +251,19 @@ export function RoomsScreen({
             {STATUS_META[s].label}
           </button>
         ))}
+        {/* D197 §D-C — the label is the switch's own label (a <label> activates
+            its button), so the whole phrase is the touch target */}
+        <label className="rm-inact-tg">
+          <Switch checked={showInactive} onChange={setShowInactive} label="הצג לא פעילים" />
+          <span>
+            הצג לא פעילים
+            {inactiveCount > 0 && (
+              <>
+                {" "}(<bdi className="ltr-num">{inactiveCount}</bdi>)
+              </>
+            )}
+          </span>
+        </label>
       </div>
 
       <div className="rm-body">
@@ -304,7 +326,7 @@ export function RoomsScreen({
 
       {wizard && (
         <RoomWizard
-          room={wizard.room}
+          room={wizardRoom}
           buildings={buildings}
           roomTypes={roomTypes}
           amenities={amenities}
@@ -335,6 +357,11 @@ function RoomCard({
   onOpen: (e: React.MouseEvent) => void;
 }) {
   const meta = STATUS_META[room.derived_status];
+  // D197 §D-C — an inactive room (is_active = false) is dimmed and wears ONE
+  // gray "לא פעיל" chip in place of the derived status: it is withdrawn from
+  // the website and from sale, whatever its housekeeping state says.
+  const inactive = !room.is_active;
+  const stateLabel = inactive ? "לא פעיל" : meta.label;
   const line: { icon: IconName; text: string } | null =
     room.derived_status === "occupied" && room.current_guest
       ? { icon: "user", text: `${room.current_guest} · עד ${fmtDM(room.current_until!, today)}` }
@@ -345,22 +372,41 @@ function RoomCard({
   return (
     <button
       type="button"
-      className="card rm-bcard"
-      title={`חדר ${room.room_number} · ${meta.label}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
+      className={`card rm-bcard${inactive ? " is-inactive" : ""}`}
+      title={`חדר ${room.room_number} · ${stateLabel}${canEdit ? " · לחיצה לעדכון סטטוס" : ""}`}
       onClick={onOpen}
     >
-      <span className="rm-strip" style={{ background: meta.triplet.dot }} />
+      <span className="rm-strip" style={{ background: inactive ? "var(--faint)" : meta.triplet.dot }} />
       <div className="rm-cr1">
         <span className="rm-num ltr-num">{room.room_number}</span>
         {/* KIND tag — a type label, not a status: .chip-neutral, so it can never
             collide with the status chip beside it (occupied wears chip-brand) */}
         <span className="chip chip-neutral">חדר</span>
         <span className="rm-csp" />
-        <span className={`chip ${meta.triplet.chip}`}>
-          <Icon name={meta.icon} size={13.5} />
-          {meta.label}
-        </span>
+        {inactive ? (
+          <span className="chip chip-neutral">
+            <Icon name="circle-slash" size={13.5} />
+            לא פעיל
+          </span>
+        ) : (
+          <span className={`chip ${meta.triplet.chip}`}>
+            <Icon name={meta.icon} size={13.5} />
+            {meta.label}
+          </span>
+        )}
       </div>
+      {/* D197 §D-D — amber completeness chip; the count is the server's
+          (roomCompleteness), the wizard panel lists the same items */}
+      {room.missing.length > 0 && (
+        <div className="rm-crm">
+          <span className="chip chip-approval">
+            <Icon name="warning" size={13.5} />
+            <span>
+              חסרים <bdi className="ltr-num">{room.missing.length}</bdi> פרטים
+            </span>
+          </span>
+        </div>
+      )}
       <div className="rm-cr2">
         {room.room_type_name ?? room.name ?? "—"}
         <span className="rm-dotsep" />
