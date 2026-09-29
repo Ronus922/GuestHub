@@ -13,6 +13,11 @@ import { searchBiosBotAvailability } from "@/lib/bios-bot/service/availability";
 // availability algorithm.
 // Each roomType also carries availableRooms (D196, additive): the unit ids
 // the engine offers for this stay and party — the ids a quote may use.
+// pricedForParty (additive, 2026-09-28): the roomTypes' from-prices are the
+// engine's price for the adults/children/infants in THIS request, extra-guest
+// money included — never the old 2-adult browse figure. A client that used to
+// hide the "from" hint for a non-default party may now show it; a client
+// reading an older GuestHub simply will not see the field.
 export const dynamic = "force-dynamic";
 
 const querySchema = z.object({
@@ -36,7 +41,10 @@ export async function GET(req: Request): Promise<NextResponse> {
     const roomTypes = await searchBiosBotAvailability(sql, auth.ctx.tenantId, {
       checkIn, checkOut, adults, children, infants,
     });
-    return NextResponse.json({ ok: true, checkIn, checkOut, adults, children, infants, roomTypes });
+    return NextResponse.json({
+      ok: true, checkIn, checkOut, adults, children, infants,
+      pricedForParty: true, roomTypes,
+    });
   } catch (e) {
     return toBiosBotErrorResponse(e, "bios-bot availability search");
   }
