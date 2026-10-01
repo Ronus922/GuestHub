@@ -48,6 +48,17 @@ export function addYears(d: DateOnly, years: number): DateOnly {
   return toDateOnly(t);
 }
 
+// Same day N calendar months away, clamped to that month's last day (Jan 31 + 1
+// → Feb 28) — the date-range picker's PageUp/PageDown.
+export function addMonths(d: DateOnly, months: number): DateOnly {
+  const t = Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1 + months;
+  const y = Math.floor(t / 12);
+  const m = ((t % 12) + 12) % 12; // 0-based
+  const lastDayOfMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const day = Math.min(Number(d.slice(8, 10)), lastDayOfMonth);
+  return toDateOnly(new Date(Date.UTC(y, m, day, 12)));
+}
+
 // ---- Rates writable-date policy (Step 6) — the SINGLE horizon rule shared by
 // the grid loader, navigation, direct edits, Group Update, and the server
 // actions. Commercial rates are future-facing: earliest writable = tenant-local

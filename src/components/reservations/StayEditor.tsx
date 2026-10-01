@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DateRangeField } from "@/components/shared/DateRangeField";
+import { DateRangePicker } from "@/components/shared/DateRangePicker";
 import { Icon } from "@/components/shared/Icon";
-import { addDays, nightsBetween } from "@/lib/dates";
+import { nightsBetween } from "@/lib/dates";
 import {
   roomsFromResult,
   quoteFromResult,
@@ -236,39 +236,24 @@ export function StayEditor({
         )}
       </div>
 
-      <div className="bw-grid3">
-        <DateRangeField
+      <div className="field">
+        <span className="field-label">
+          תאריכי שהות <span className="bw-req">*</span>
+        </span>
+        {/* The picker's own stepper is the nights control: typing 5 (or
+            stepping to it) moves the CHECK-OUT date to check-in + 5 and leaves
+            check-in alone. maxNights is a typo guard, not a pricing rule.
+            Moving the dates KEEPS the room: unassigning it silently left the
+            stay invalid, which locked "שמור שינויים" while the panel still read
+            "יש שינויים שלא נשמרו". Availability is re-checked below (and again
+            on the server, under lock) — a real conflict is SAID, never guessed. */}
+        <DateRangePicker
           from={value.checkIn}
           to={value.checkOut}
+          maxNights={NIGHTS_TYPO_GUARD}
           disabled={disabled}
           invalid={datesInvalid}
-          // Moving the dates KEEPS the room: unassigning it silently left the
-          // stay invalid, which locked "שמור שינויים" while the panel still read
-          // "יש שינויים שלא נשמרו". Availability is re-checked below (and again
-          // on the server, under lock) — a real conflict is SAID, never guessed.
-          onApply={(checkIn, checkOut) => onChange({ ...value, checkIn, checkOut })}
-        />
-        {/* Nights is an INPUT, not a readout: typing 5 (or stepping to it) moves
-            the CHECK-OUT date to check-in + 5 and leaves check-in alone. The
-            hint says so, because a control that silently rewrites a date the
-            operator picked would be worse than no control at all.
-            No client-side pricing-window cap lives here — that bound is the
-            tenant's `max_quote_nights` and belongs to the server (D100); the
-            room/quote fetches already answer with the real number. The max
-            below is a typo guard, not a pricing rule. */}
-        <Counter
-          // dp-after keeps this cell on the trigger's row when the date panel
-          // opens (.dp-panel is order:2 and takes the full row) — the nights
-          // control has to stay put while dates are being picked.
-          className="dp-after"
-          label="לילות"
-          hint={value.checkIn ? "שינוי מזיז את תאריך היציאה" : "בחרו תאריך כניסה תחילה"}
-          value={nights}
-          min={1}
-          max={NIGHTS_TYPO_GUARD}
-          editable
-          disabled={disabled || !value.checkIn}
-          onChange={(n) => onChange({ ...value, checkOut: addDays(value.checkIn, n) })}
+          onChange={(checkIn, checkOut) => onChange({ ...value, checkIn, checkOut })}
         />
       </div>
 
@@ -424,9 +409,7 @@ export function StayEditor({
   );
 }
 
-// +/- stepper (reference .qty: plus right, minus left in RTL). `editable` swaps
-// the readout for a typed field — used by nights, where the operator knows the
-// length of stay and should not have to click to it.
+// +/- stepper (reference .qty: plus right, minus left in RTL).
 function Counter({
   label,
   value,
@@ -434,9 +417,6 @@ function Counter({
   max = 20,
   onChange,
   disabled = false,
-  editable = false,
-  hint,
-  className,
 }: {
   label: string;
   value: number;
@@ -444,30 +424,11 @@ function Counter({
   max?: number;
   onChange: (n: number) => void;
   disabled?: boolean;
-  /** render the value as a typed field, not a readout */
-  editable?: boolean;
-  hint?: string;
-  /** extra classes on the field wrapper (e.g. the date-picker's `dp-after` order) */
-  className?: string;
 }) {
-  // While the field has focus the operator owns the text: committing on every
-  // keystroke would clamp "1" out of "12" before the 2 arrives, and would fire a
-  // rooms+quote round-trip per character. The draft commits on blur or Enter.
-  const [draft, setDraft] = useState<string | null>(null);
-  const clamp = (n: number) => Math.min(Math.max(n, min), max);
-  const step = (delta: number) => {
-    setDraft(null);
-    onChange(clamp(value + delta));
-  };
-  const commit = () => {
-    if (draft === null) return;
-    const n = Number.parseInt(draft, 10);
-    setDraft(null);
-    if (Number.isFinite(n) && clamp(n) !== value) onChange(clamp(n));
-  };
+  const step = (delta: number) => onChange(Math.min(Math.max(value + delta, min), max));
 
   return (
-    <div className={`field${className ? ` ${className}` : ""}`}>
+    <div className="field">
       <span className="field-label">{label}</span>
       <div className="bw-qty">
         <button
@@ -479,27 +440,7 @@ function Counter({
         >
           <Icon name="minus" size={20} />
         </button>
-        {editable ? (
-          <input
-            className="bw-qty-v bw-qty-i ltr-num"
-            inputMode="numeric"
-            aria-label={label}
-            disabled={disabled}
-            value={draft ?? (value || "")}
-            onChange={(e) => setDraft(e.target.value.replace(/[^\d]/g, ""))}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.currentTarget.blur();
-              } else if (e.key === "Escape") {
-                setDraft(null);
-              }
-            }}
-          />
-        ) : (
-          <span className="bw-qty-v">{value}</span>
-        )}
+        <span className="bw-qty-v">{value}</span>
         <button
           type="button"
           aria-label={`הוספת ${label}`}
@@ -510,7 +451,6 @@ function Counter({
           <Icon name="plus" size={20} />
         </button>
       </div>
-      {hint && <span className="field-hint">{hint}</span>}
     </div>
   );
 }
