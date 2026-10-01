@@ -65,6 +65,7 @@ branch ייעודי ישירות בעץ הזה (worktree — רק בבקשה מ�
 1. בעץ הפרודקשן, לפני `deploy:prod`: `git fetch origin && git log --oneline HEAD..origin/main`.
 2. אם הרשימה כוללת משהו מעבר למשימה — לדווח מראש ולחכות להחלטה. אין פריסה "בדרך".
 3. ביטול אפשרי רק ב-revert commit ופריסה נוספת (אין reset על `main`).
+- **נכון ל-2026-10-01:** הפריסה הבאה של GuestHub תסחב את nodemailer 10 (PR #276, `349c978`) — לאחריה לשלוח מייל בדיקה אחד ולוודא שהגיע.
 
 ## Minimum Padding (חובה!)
 | Element | Minimum |
