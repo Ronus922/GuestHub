@@ -178,19 +178,25 @@ for (const def of triggers.TRIGGER_LIST) {
 ok("trigger registry keeps confirmed semantics byte-compatible and cancellation conditions sane");
 
 // ---- quiet hours clamp is pure and handles the over-midnight window ----
+// D201 — the window is ISRAEL wall-clock time, whatever the process TZ. These
+// fixtures used to be built and read with the process-local clock, which
+// encoded the bug (server and worker run Etc/UTC). 27/07/2026 is IDT (+03:00).
 {
-  const at = (h, m) => { const d = new Date(2026, 6, 27); d.setHours(h, m, 0, 0); return d; };
+  const at = (h, m) => new Date(Date.UTC(2026, 6, 27, h - 3, m));
+  const il = (d) => Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jerusalem", hourCycle: "h23", day: "numeric", hour: "numeric", minute: "numeric",
+  }).formatToParts(d).filter((p) => p.type !== "literal").map((p) => [p.type, Number(p.value)]));
   const window = { enabled: true, start: "22:00", end: "07:00" };
   assert.equal(triggers.applyQuietHours(at(12, 0), window).getTime(), at(12, 0).getTime());
   const evening = triggers.applyQuietHours(at(23, 30), window);
-  assert.equal(evening.getHours(), 7);
-  assert.equal(evening.getDate(), at(0, 0).getDate() + 1, "an evening quiet-hours hit must clamp to TOMORROW morning");
+  assert.equal(il(evening).hour, 7);
+  assert.equal(il(evening).day, 28, "an evening quiet-hours hit must clamp to TOMORROW morning");
   const night = triggers.applyQuietHours(at(3, 0), window);
-  assert.equal(night.getHours(), 7);
-  assert.equal(night.getDate(), at(0, 0).getDate());
-  assert.equal(triggers.applyQuietHours(at(23, 30), { enabled: false, start: "22:00", end: "07:00" }).getHours(), 23);
+  assert.equal(il(night).hour, 7);
+  assert.equal(il(night).day, 27);
+  assert.equal(il(triggers.applyQuietHours(at(23, 30), { enabled: false, start: "22:00", end: "07:00" })).hour, 23);
   const sameDay = triggers.applyQuietHours(at(14, 0), { enabled: true, start: "13:00", end: "15:00" });
-  assert.equal(sameDay.getHours(), 15);
+  assert.equal(il(sameDay).hour, 15);
 }
 ok("applyQuietHours clamps into the window's end and survives midnight-crossing windows");
 

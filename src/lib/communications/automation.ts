@@ -433,6 +433,8 @@ async function recordSkippedDelivery(args: {
     invalid_reply_to: "כתובת המענה של התבנית אינה תקינה",
     template_channel_mismatch: "התבנית אינה תואמת לערוץ האוטומציה",
     no_owner_recipients: "לא הוגדרו כתובות של בעל העסק לערוץ הזה",
+    outside_stay: "היום המחושב נופל מחוץ לתאריכי השהייה",
+    catch_up_window_expired: "חלון ההשלמה (3 שעות אחרי שעת השליחה) עבר — לא נשלח באיחור",
   };
   const channel = args.automation.channel;
   const provider = args.provider ?? (channel === "whatsapp" ? "whatsapp" : "gmail");
@@ -566,6 +568,19 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       AND (${scheduledAutomationId}::uuid IS NULL OR id = ${scheduledAutomationId}::uuid)
     ORDER BY created_at, id`;
   if (!automations.length) return summary;
+  // D201 — the scheduler decided at emission time that this occurrence must
+  // not send (outside the stay by date, or past the same-day catch-up window).
+  // Recorded as ONE truthful skipped row, never re-evaluated here: the decision
+  // depends on WHEN the event was emitted, which only the scheduler knows.
+  const scheduledSkipReason = trigger.kind === "scheduled"
+    ? (event.payload as { skipReason?: string } | null)?.skipReason ?? null
+    : null;
+  if (scheduledSkipReason === "outside_stay" || scheduledSkipReason === "catch_up_window_expired") {
+    for (const automation of automations) {
+      await skipAutomation(summary, event, automation, reservation, scheduledSkipReason, await resolvedVersion(automation, reservation.guest_language));
+    }
+    return summary;
+  }
   // The persisted reservation is authoritative; an event cannot override its
   // provenance. Record one truthful terminal row per matching automation.
   // Trigger-parameterized eligibility: a cancellation message REQUIRES
