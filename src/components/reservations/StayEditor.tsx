@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DateRangePicker } from "@/components/shared/DateRangePicker";
+import type { MonthsWindow } from "@/components/shared/date-range-picker/hooks";
 import { Icon } from "@/components/shared/Icon";
-import { nightsBetween } from "@/lib/dates";
+import { addMonths, nightsBetween, type DateOnly } from "@/lib/dates";
+import {
+  monthsIn,
+  rangeHasTakenNight,
+  withSiblingNights,
+  type SiblingStay,
+} from "@/lib/reservations/stay-occupancy";
 import {
   roomsFromResult,
   quoteFromResult,
@@ -12,6 +19,7 @@ import {
 } from "@/lib/reservations/room-picker-result";
 import {
   getAvailableRoomsAction,
+  getRoomTakenNightsAction,
   getStayQuoteAction,
 } from "@/app/(dashboard)/reservations/actions";
 
@@ -110,6 +118,7 @@ export function StayEditor({
   onChange,
   onRemove,
   excludeReservationId,
+  siblings = [],
   disabled = false,
   showErrors = false,
 }: {
@@ -118,6 +127,8 @@ export function StayEditor({
   onChange: (next: StayDraft) => void;
   onRemove?: () => void;
   excludeReservationId?: string;
+  /** the form's other cards — one on the same room paints its nights here */
+  siblings?: readonly SiblingStay[];
   disabled?: boolean;
   /** red the empty room / date-range controls (booking-form validation) */
   showErrors?: boolean;
@@ -212,6 +223,62 @@ export function StayEditor({
     };
   }, [value.roomId, value.checkIn, value.checkOut, value.adults, value.children, value.infants, value.ratePlanId, validRange]);
 
+  // ---- taken nights of the chosen room, painted in the picker (owner
+  // decisions 1–7). Loaded when the picker opens and whenever its months
+  // change, cached per room + month for that open session. VISUAL ONLY: a
+  // loading or failed fetch paints nothing and never blocks the form.
+  const [taken, setTaken] = useState<ReadonlyMap<string, readonly DateOnly[]>>(() => new Map());
+  const inflight = useRef(new Set<string>());
+  const shownRef = useRef<MonthsWindow | null>(null);
+  const loadTaken = (w: MonthsWindow, opened: boolean) => {
+    shownRef.current = w;
+    const roomId = value.roomId;
+    // no room → nothing to paint (StayEditor has no room-TYPE field: decision 5)
+    if (!roomId) return;
+    const cache = opened ? new Map<string, readonly DateOnly[]>() : taken;
+    if (opened) {
+      inflight.current.clear();
+      setTaken(cache);
+    }
+    const missing = monthsIn(w).filter(
+      (m) => !cache.has(`${roomId}|${m}`) && !inflight.current.has(`${roomId}|${m}`),
+    );
+    if (missing.length === 0) return;
+    const from = missing[0];
+    const to = addMonths(missing[missing.length - 1], 1);
+    const months = monthsIn({ from, to });
+    for (const m of months) inflight.current.add(`${roomId}|${m}`);
+    const settle = (nights: readonly DateOnly[] | null, why?: unknown) => {
+      for (const m of months) inflight.current.delete(`${roomId}|${m}`);
+      if (nights === null) {
+        console.warn("stay picker: taken nights not loaded", why);
+        return;
+      }
+      setTaken((prev) => {
+        const next = new Map(prev);
+        for (const m of months) next.set(`${roomId}|${m}`, nights.filter((d) => d.startsWith(m.slice(0, 7))));
+        return next;
+      });
+    };
+    getRoomTakenNightsAction({ roomId, from, to, excludeReservationId }).then(
+      (res) => (res.success ? settle(res.data ?? []) : settle(null, res.error)),
+      (e: unknown) => settle(null, e),
+    );
+  };
+  // a room picked (or swapped) after the months were shown: load for it
+  const loadRef = useRef(loadTaken);
+  loadRef.current = loadTaken;
+  useEffect(() => {
+    if (shownRef.current) loadRef.current(shownRef.current, false);
+  }, [value.roomId]);
+
+  const takenNights = useMemo(() => {
+    const fetched: DateOnly[] = [];
+    for (const [k, nights] of taken) if (k.startsWith(`${value.roomId}|`)) fetched.push(...nights);
+    return withSiblingNights(fetched, value.roomId, siblings);
+  }, [taken, value.roomId, siblings]);
+  const crossesTaken = rangeHasTakenNight(takenNights, value.checkIn, value.checkOut);
+
   const selected = rooms.find((r) => r.id === value.roomId);
   // the assigned room is occupied in the CHOSEN window (the list is fetched with
   // excludeReservationId, so a stay never conflicts with itself)
@@ -253,8 +320,17 @@ export function StayEditor({
           maxNights={NIGHTS_TYPO_GUARD}
           disabled={disabled}
           invalid={datesInvalid}
+          occupiedNights={takenNights}
+          onMonthsShown={loadTaken}
           onChange={(checkIn, checkOut) => onChange({ ...value, checkIn, checkOut })}
         />
+        {/* owner decision 1: a warning, not a gate — the save path's
+            availability check under lock stays the authority */}
+        {crossesTaken && (
+          <span className="field-hint bw-taken-warn" role="status">
+            בטווח שנבחר יש לילות תפוסים
+          </span>
+        )}
       </div>
 
       <div className="bw-grid3 mt-4">

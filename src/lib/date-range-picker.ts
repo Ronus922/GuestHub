@@ -106,6 +106,8 @@ export type DayCell = {
   band: CellBand;
   state: CellState;
   disabled: boolean;
+  /** a night the room already owes — painted only, still selectable */
+  occupied: boolean;
   /** "4 באוקטובר 2026" — aria-label */
   label: string;
 };
@@ -117,12 +119,15 @@ export type BuildContext = {
   effEnd: DateOnly | null;
   today: DateOnly;
   rules: RangeRules;
+  /** taken nights to paint (visual only — never disables a day) */
+  occupied?: ReadonlySet<DateOnly>;
 };
 
-const BLANK: DayCell = { date: null, day: 0, band: "", state: "", disabled: true, label: "" };
+const BLANK: DayCell = { date: null, day: 0, band: "", state: "", disabled: true, occupied: false, label: "" };
 
 export function buildCell(d: DateOnly, ctx: BuildContext): DayCell {
-  const { range, effEnd, today, rules } = ctx;
+  const { range, effEnd, today, rules, occupied } = ctx;
+  const occ = occupied?.has(d) ?? false;
   const isS = d === range.start;
   const isE = d === effEnd;
   let band: CellBand = "";
@@ -138,7 +143,8 @@ export function buildCell(d: DateOnly, ctx: BuildContext): DayCell {
     band,
     state,
     disabled: isDateBlocked(d, rules),
-    label: `${formatDayHebMonth(d)} ${d.slice(0, 4)}`,
+    occupied: occ,
+    label: `${formatDayHebMonth(d)} ${d.slice(0, 4)}${occ ? " · לילה תפוס" : ""}`,
   };
 }
 

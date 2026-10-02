@@ -24,6 +24,7 @@ import {
 } from "@/lib/date-range-picker";
 import type { PickerSelection } from "../DateRangePicker";
 import { MonthGrid, dayButton, pickTabDate } from "./MonthGrid";
+import { useMonthsShown } from "./hooks";
 
 // Desktop (≥768px window): a popover in a portal on <body>, position:fixed from
 // the trigger's rect — it floats over the drawer and never pushes the form.
@@ -69,7 +70,10 @@ export function DesktopPopover({
   const { range } = sel;
 
   const effEnd = effectiveEnd(range, hover);
-  const months = buildMonths([view, shiftMonth(view, 1)], true, { range, effEnd, today, rules: sel.rules });
+  const months = buildMonths([view, shiftMonth(view, 1)], true, {
+    range, effEnd, today, rules: sel.rules, occupied: sel.occupied,
+  });
+  useMonthsShown(view, 2, sel.onMonthsShown);
   const tabDate = pickTabDate(months, [focusDate, range.start, today]);
 
   // ---- placement ----
