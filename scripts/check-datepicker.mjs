@@ -33,6 +33,7 @@ writeFileSync(
     include: [
       join(ROOT, "src/lib/dates.ts"),
       join(ROOT, "src/lib/date-range.ts"),
+      join(ROOT, "src/lib/date-range-picker.ts"),
       join(ROOT, "src/lib/validation/rates.ts"),
     ],
   }),
@@ -125,8 +126,13 @@ assert.deepEqual(monthOf("2026-07-16"), { year: 2026, month: 6 });
 assert.equal(firstOfMonth({ year: 2026, month: 6 }), "2026-07-01");
 
 // ---- the editors actually use the picker ----
+// The booking windows (create + edit) render StayEditor, and StayEditor renders
+// the skill's <DateRangePicker> — not <DateRangeField>, which stays for the
+// reservations filter and Group Update only.
 const stay = readFileSync("src/components/reservations/StayEditor.tsx", "utf8");
-assert.ok(/<DateRangeField/.test(stay), "StayEditor renders the picker");
+const stayPicker = stay.match(/<DateRangePicker[\s\S]*?\n\s*\/>/);
+assert.ok(stayPicker, "StayEditor renders the <DateRangePicker …/>");
+assert.ok(!/<DateRangeField/.test(stay), "StayEditor no longer renders <DateRangeField>");
 assert.ok(
   !/type="date"/.test(stay),
   "the raw <input type=\"date\"> stay dates are gone — the picker is the ONE date UI",
@@ -134,15 +140,144 @@ assert.ok(
 // Moving the dates must NOT unassign the room: an empty roomId fails staysValid,
 // which locked "שמור שינויים" while the panel read "יש שינויים שלא נשמרו" — the
 // operator could neither save nor understand why.
-const onApply = stay.match(/onApply=\{([\s\S]*?)\n\s*\/>/);
-assert.ok(onApply, "StayEditor must wire the picker's onApply");
-assert.ok(
-  !/roomId/.test(onApply[1]),
-  "a date change must keep the assigned room — onApply may not touch roomId",
+const onPicked = stayPicker?.[0].match(/onChange=\{([\s\S]*?)\}\n/);
+assert.ok(onPicked, "StayEditor must wire the picker's onChange");
+assert.match(
+  onPicked?.[1] ?? "",
+  /\(checkIn, checkOut\) => onChange\(\{ \.\.\.value, checkIn, checkOut \}\)/,
+  "the picked range must be written into the stay draft as-is",
 );
+assert.ok(
+  !/roomId/.test(onPicked?.[1] ?? "roomId"),
+  "a date change must keep the assigned room — onChange may not touch roomId",
+);
+// owner decision 3: the typo guard rides on the picker's stepper, explicitly
+assert.match(stayPicker?.[0] ?? "", /maxNights=\{NIGHTS_TYPO_GUARD\}/,
+  "StayEditor passes the nights typo guard to the picker");
+// owner decision 4: the picker's stepper is the ONE nights control — the
+// separate "לילות" counter next to the trigger is gone
+assert.ok(!/label="לילות"/.test(stay), "the separate nights counter is gone from StayEditor");
 // …and an occupied room in the new window is SAID, not silently dropped
 assert.match(stay, /roomTaken/, "an unavailable assigned room must raise a visible conflict");
 assert.match(stay, /תפוס בתאריכים שנבחרו/, "the conflict must name the room and the dates");
+
+// ============================================================
+// <DateRangePicker> (the datePicker skill, ported) — BEHAVIOURAL, on the
+// compiled pure module the component runs. These are the skill's own test
+// cases, moved into this guard (D194: no vitest).
+// ============================================================
+const P = require(join(out, "lib/date-range-picker.js"));
+const none = {};
+
+// ---- range picking: the app's stay rule (check-out EXCLUSIVE, D32) ----
+let r = P.pickDay(empty, "2026-10-04", none);
+r = P.pickDay(r, "2026-10-06", none);
+assert.deepEqual(r, { start: "2026-10-04", end: "2026-10-06" }, "4 → 6 Oct picks check-out = 06");
+assert.equal(P.nightsOf(r), 2, "4 → 6 Oct = 2 nights (the 6th is the departure, not a night)");
+assert.deepEqual(P.pickDay({ start: "2026-10-04", end: null }, "2026-10-04", none),
+  { start: "2026-10-04", end: null }, "same-day click re-anchors — a zero-night stay is impossible");
+assert.deepEqual(P.pickDay(r, "2026-10-20", none), { start: "2026-10-20", end: null },
+  "a click on a complete range starts over");
+assert.deepEqual(P.pickDay({ start: "2026-10-04", end: null }, "2026-10-08", { max: "2026-10-07" }),
+  { start: "2026-10-04", end: null }, "a day past max cannot be picked");
+
+// ---- nights stepper: check-in fixed, check-out moves ----
+const two = { start: "2026-10-04", end: "2026-10-06" };
+assert.deepEqual(P.setNightsRange(two, 3, none), { start: "2026-10-04", end: "2026-10-07" },
+  "stepper 2 → 3 moves check-out to 07 and keeps check-in");
+assert.deepEqual(P.setNightsRange(two, 0, none), { start: "2026-10-04", end: "2026-10-05" },
+  "minimum is one night");
+assert.deepEqual(P.setNightsRange(two, 30, none).end, "2026-11-03", "typed 30 → check-out 03/11");
+assert.equal(P.setNightsRange(two, 99999, { maxNights: 3650 }).end, "2036-10-01",
+  "maxNights clamps a typo (3650 nights from 04/10/2026)");
+assert.equal(P.canIncNights(two, none), true, "no maxNights → [+] never locks");
+assert.equal(P.canIncNights({ start: "2026-10-04", end: "2026-10-07" }, { maxNights: 3 }), false,
+  "[+] locks at maxNights");
+assert.equal(P.canDecNights({ start: "2026-10-04", end: "2026-10-05" }), false, "[−] locks at one night");
+assert.deepEqual(P.setNightsRange({ start: null, end: null }, 3, none), { start: null, end: null },
+  "no check-in → the stepper does nothing");
+assert.equal(P.parseNights("30"), 30);
+assert.equal(P.parseNights("0"), null, "0 keeps the previous value");
+assert.equal(P.parseNights(""), null, "empty keeps the previous value");
+
+// ---- dismiss semantics (owner decision 1) ----
+const complete = { start: "2026-10-04", end: "2026-10-06" };
+const half = { start: "2026-10-04", end: null };
+assert.equal(P.dismissRestores("outside", complete), false,
+  "outside click with a COMPLETE range does NOT restore the open value — the picked dates stay in the form");
+assert.equal(P.dismissRestores("outside", half), true,
+  "outside click with only a check-in drops back to the open value");
+assert.equal(P.dismissRestores("cancel", complete), true, "Esc / ביטול / X restore the open value");
+assert.equal(P.dismissRestores("close", complete), false, '"סגור" keeps the picked range');
+
+// ---- the month model: the band ----
+const ctx = { range: { start: "2026-10-04", end: "2026-10-10" }, effEnd: "2026-10-10", today: "2026-10-01", rules: none };
+const [oct, nov] = P.buildMonths([{ year: 2026, month: 9 }, { year: 2026, month: 10 }], true, ctx);
+const cell = (d) => oct.cells.find((c) => c.date === d);
+assert.equal(cell("2026-10-04").band, "bs", "check-in cell starts the band");
+assert.equal(cell("2026-10-07").band, "in");
+assert.equal(cell("2026-10-10").band, "be", "check-out cell ends the band");
+assert.equal(cell("2026-10-04").state, "sel");
+assert.equal(cell("2026-10-10").state, "sel");
+assert.equal(cell("2026-10-11").band, "");
+assert.equal(cell("2026-10-01").state, "today");
+assert.equal(cell("2026-10-04").label, "4 באוקטובר 2026", "aria-label is the full Hebrew date");
+assert.equal(oct.cells.length, nov.cells.length, "desktop: both months get the same row count");
+assert.equal(P.formatRangeText(ctx.range, "x"), "4 באוקטובר – 10 באוקטובר 2026");
+assert.equal(P.nightsTitle(ctx.range), "6 לילות");
+
+// ---- keyboard: RTL arrows and the month clamp ----
+assert.equal(P.keyboardStep("ArrowLeft", "2026-10-31"), "2026-11-01", "← is the next day in RTL");
+assert.equal(P.keyboardStep("PageDown", "2026-01-31"), "2026-02-28", "PageDown clamps 31/01 → 28/02");
+assert.equal(P.keyboardStep("PageUp", "2026-03-31"), "2026-02-28");
+
+// ---- placement: floats below, flips above, pins inside a short window ----
+const a = { top: 100, bottom: 152, right: 1200, width: 600 };
+assert.deepEqual(P.computePopoverPosition(a, 500, 1440, 900), { top: 168, left: 500, width: 700 });
+assert.equal(P.computePopoverPosition({ ...a, top: 700, bottom: 752 }, 500, 1440, 900).top, 184,
+  "no room below → opens above the field");
+assert.equal(P.computePopoverPosition({ ...a, top: 300, bottom: 352 }, 800, 1440, 600).top, 16,
+  "no room either way → pinned 16px inside the window");
+
+// ---- the component RUNS this module — the wiring the rules above depend on ----
+const picker = readFileSync("src/components/shared/DateRangePicker.tsx", "utf8");
+const popover = readFileSync("src/components/shared/date-range-picker/DesktopPopover.tsx", "utf8");
+// every close goes through dismissRestores; only a restoring dismissal writes the base
+const dismissFn = picker.match(/const dismiss = \(kind: DismissKind, restoreFocus: boolean\) => \{([\s\S]*?)\n  \};/);
+assert.ok(dismissFn, "DateRangePicker must own one dismiss(kind) handler");
+assert.match(dismissFn?.[1] ?? "", /if \(dismissRestores\(kind, draft\)\) \{[\s\S]*?write\(base\)/,
+  "the open value is written back ONLY when dismissRestores says so");
+assert.match(picker, /onOutside=\{\(\) => dismiss\("outside", false\)\}/,
+  'an outside press is dismissed as "outside" — never as a cancel');
+assert.match(picker, /onCommit=\{\(\) => dismiss\("close", true\)\}/, '"סגור" is dismissed as "close"');
+const pointer = popover.match(/const onPointerDown = \(e: PointerEvent\) => \{([\s\S]*?)\n    \};/);
+assert.ok(pointer, "the popover must own a pointerdown handler");
+assert.match(pointer?.[1] ?? "", /outsideRef\.current\(\)/, "pointerdown outside calls onOutside");
+assert.ok(!/onCancel/.test(pointer?.[1] ?? "onCancel"), "pointerdown outside never calls onCancel (the restore)");
+// write-through: a complete range reaches the form; a half range never does
+const writeFn = picker.match(/const write = \(next: DraftRange\) => \{([\s\S]*?)\n  \};/);
+assert.match(writeFn?.[1] ?? "", /if \(next\.start && next\.end\) onChange\(next\.start, next\.end\)/,
+  "write-through: only a COMPLETE range is passed to onChange");
+assert.match(picker, /pick: \(d: DateOnly\) => write\(pickDay\(/, "a day click goes through write()");
+assert.match(picker, /write\(setNightsRange\(draft, n, rules\)\)/, "the stepper goes through write()");
+
+// ---- one date semantics: no Date-object math in the picker (D32) ----
+for (const f of [
+  "src/lib/date-range-picker.ts",
+  "src/components/shared/DateRangePicker.tsx",
+  "src/components/shared/date-range-picker/DesktopPopover.tsx",
+  "src/components/shared/date-range-picker/MobileSheet.tsx",
+  "src/components/shared/date-range-picker/MonthGrid.tsx",
+  "src/components/shared/date-range-picker/NightsStepper.tsx",
+]) {
+  const code = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  assert.ok(!/\bnew Date\b|\bDate\.(UTC|now|parse)\b|toISOString|getFullYear|getMonth\(|getDate\(/.test(code),
+    `${f}: no Date-object math — dates go through src/lib/dates.ts / date-range.ts`);
+}
+// D71: today / the month in view are computed on open, never during render
+assert.match(picker, /const openPicker = \(\) => \{[\s\S]*?todayInTz\([\s\S]*?setToday\(now\)[\s\S]*?setView\(/,
+  "today and the first month are computed when the picker opens (D71)");
+assert.match(picker, /useState<DateOnly \| null>\(null\)/, "today starts null — nothing clock-derived renders on the server");
 
 // ---- WRITE-THROUGH: a picked range reaches the form without a second commit ----
 // The picker used to hold the range as a local draft until "החל" was clicked, so
@@ -290,5 +425,5 @@ assert.ok(
 );
 
 console.log(
-  "✓ datepicker: click semantics (nights + days), month grid, StayEditor and Group Update wiring",
+  "✓ datepicker: click semantics (nights + days), month grid, DateRangePicker (stepper, dismiss, band, placement, wiring), StayEditor and Group Update wiring",
 );
