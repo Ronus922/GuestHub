@@ -908,6 +908,7 @@ export function BookingPanel({
                     key={s.key}
                     index={i}
                     value={s}
+                    siblings={stays.filter((x) => x.key !== s.key)}
                     onChange={(next) => setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}
                     onRemove={
                       stays.length > 1

@@ -14,7 +14,7 @@ import { type MonthView, buildMonths, keyboardStep, monthKey, nightsTitle } from
 import type { PickerSelection } from "../DateRangePicker";
 import { MonthGrid, WeekdayRow, dayButton, pickTabDate } from "./MonthGrid";
 import { NightsStepper } from "./NightsStepper";
-import { useBodyScrollLock } from "./hooks";
+import { useBodyScrollLock, useMonthsShown } from "./hooks";
 
 // Mobile (<768px window): a bottom sheet 48px off the top — handle → title + X
 // → summary row with the nights stepper → pinned weekday row → months scrolling
@@ -60,7 +60,10 @@ export function MobileSheet({
   }, [layerRef]);
 
   const views = Array.from({ length: count }, (_, i) => shiftMonth(anchor, i));
-  const months = buildMonths(views, false, { range, effEnd: range.end, today, rules: sel.rules });
+  const months = buildMonths(views, false, {
+    range, effEnd: range.end, today, rules: sel.rules, occupied: sel.occupied,
+  });
+  useMonthsShown(anchor, count, sel.onMonthsShown);
   const tabDate = pickTabDate(months, [focusDate, range.start, today]);
 
   useEffect(() => {

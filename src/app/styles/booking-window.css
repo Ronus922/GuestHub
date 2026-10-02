@@ -264,6 +264,11 @@
 /* `.bw-readonly` / `.bw-rn` and the typed nights input `.bw-qty-i` lived here.
    Nights are now set inside <DateRangePicker>, so all three rules were deleted
    rather than left orphaned. */
+/* the stay picker's "taken nights in the range" line — a warning, not an error:
+   the dates stay valid and saveable (owner decision 1) */
+.bw-taken-warn {
+  color: var(--warn);
+}
 
 /* ============================================================
    room block inside a card

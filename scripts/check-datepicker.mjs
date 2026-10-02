@@ -34,6 +34,7 @@ writeFileSync(
       join(ROOT, "src/lib/dates.ts"),
       join(ROOT, "src/lib/date-range.ts"),
       join(ROOT, "src/lib/date-range-picker.ts"),
+      join(ROOT, "src/lib/reservations/stay-occupancy.ts"),
       join(ROOT, "src/lib/validation/rates.ts"),
     ],
   }),
@@ -438,6 +439,107 @@ assert.ok(
   "the replaced date inputs' CSS must be deleted, not left orphaned",
 );
 
+// ============================================================
+// TAKEN NIGHTS in the booking windows' picker (owner decisions 1–7) —
+// BEHAVIOURAL, on the compiled modules StayEditor and the server action run.
+// ============================================================
+const O = require(join(out, "lib/reservations/stay-occupancy.js"));
+const ROOM = "room-a";
+const win = { from: "2026-10-01", to: "2026-12-01" };
+const stayRow = (id, ci, co, status = "confirmed", room = ROOM) =>
+  ({ room_id: room, reservation_id: id, check_in: ci, check_out: co, status });
+const takenOf = (stays, closures = [], excludeReservationId) =>
+  O.roomTakenNights({ roomId: ROOM, stays, closures, window: win, excludeReservationId });
+
+// decision 2: a NIGHT is painted; the booking's check-out day is free (D32)
+assert.deepEqual(takenOf([stayRow("r1", "2026-10-10", "2026-10-13")]),
+  ["2026-10-10", "2026-10-11", "2026-10-12"],
+  "a booking 10→13 paints the nights 10, 11, 12 — and NOT its check-out day 13");
+// decision 3: every status but cancelled (D126); OOO closures, never OOS (040 §8)
+assert.deepEqual(takenOf([stayRow("r2", "2026-10-20", "2026-10-22", "cancelled")]), [],
+  "a cancelled reservation paints nothing");
+for (const st of ["draft", "confirmed", "checked_in", "checked_out", "no_show", "blocked"]) {
+  assert.equal(takenOf([stayRow("r3", "2026-10-20", "2026-10-21", st)]).length, 1,
+    `a '${st}' reservation holds its night (every status but cancelled, D126)`);
+}
+const clo = (kind) => ({ id: `c-${kind}`, room_id: ROOM, start_date: "2026-11-02", end_date: "2026-11-04", kind });
+assert.deepEqual(takenOf([], [clo("ooo")]), ["2026-11-02", "2026-11-03"],
+  "an OOO closure paints its nights, end date exclusive");
+assert.deepEqual(takenOf([], [clo("oos")]), [], "an OOS closure is sellable and paints nothing");
+assert.deepEqual(takenOf([stayRow("r4", "2026-10-10", "2026-10-11", "confirmed", "room-b")]), [],
+  "another room's booking paints nothing");
+// decision 4: the edited reservation never paints itself — its neighbour still does
+assert.deepEqual(
+  takenOf([stayRow("edited", "2026-10-05", "2026-10-08"), stayRow("other", "2026-10-08", "2026-10-09")], [], "edited"),
+  ["2026-10-08"],
+  "the reservation being edited is excluded; the next guest's night (its old check-out day) stays painted",
+);
+assert.deepEqual(takenOf([stayRow("r5", "2026-09-28", "2026-10-02")]), ["2026-10-01"],
+  "nights outside the requested window are clipped off");
+// decision 6: another card of the SAME unsaved form on the same room paints too
+const sib = O.withSiblingNights(["2026-10-01"], ROOM, [
+  { roomId: ROOM, checkIn: "2026-10-15", checkOut: "2026-10-17" },
+  { roomId: "room-b", checkIn: "2026-10-20", checkOut: "2026-10-22" },
+  { roomId: ROOM, checkIn: "2026-10-25", checkOut: "" },
+]);
+assert.deepEqual([...sib].sort(), ["2026-10-01", "2026-10-15", "2026-10-16"],
+  "a sibling card on the same room paints its nights; another room's card or a half range does not");
+assert.equal(O.withSiblingNights([], "", [{ roomId: "", checkIn: "2026-10-15", checkOut: "2026-10-17" }]).size, 0,
+  "no room chosen → nothing painted (decision 5: StayEditor has no room-type field)");
+// decision 1: the warning reads the same set — and a stay ENDING on a taken
+// night does not sleep through it
+const busy = new Set(["2026-10-10", "2026-10-11"]);
+assert.equal(O.rangeHasTakenNight(busy, "2026-10-08", "2026-10-12"), true,
+  "a range across a taken night raises the warning");
+assert.equal(O.rangeHasTakenNight(busy, "2026-10-06", "2026-10-10"), false,
+  "checking OUT on a taken night is no collision — no warning");
+assert.equal(O.rangeHasTakenNight(busy, "2026-10-12", "2026-10-14"), false, "a free range: no warning");
+// decision 1: VISUAL ONLY — a taken day is painted, not disabled, and a click
+// on it still picks
+const occCtx = { range: empty, effEnd: null, today: "2026-10-01", rules: none, occupied: busy };
+const occCell = P.buildCell("2026-10-10", occCtx);
+assert.ok(occCell.occupied && !occCell.disabled, "a taken night is painted but stays selectable");
+assert.equal(P.buildCell("2026-10-12", occCtx).occupied, false, "a free night is not painted");
+assert.deepEqual(P.pickDay(P.pickDay(empty, "2026-10-09", none), "2026-10-12", none),
+  { start: "2026-10-09", end: "2026-10-12" }, "a range ACROSS taken nights can be picked");
+// …and the warning never gates the save: it is rendered, and read nowhere else
+assert.equal((stay.match(/\bcrossesTaken\b/g) ?? []).length, 2,
+  "crossesTaken is computed once and only rendered — never part of validity or save");
+for (const f of ["src/components/reservations/BookingPanel.tsx", "src/components/reservations/EditReservationPanel.tsx"]) {
+  const src = readFileSync(f, "utf8");
+  assert.ok(!/takenNights|crossesTaken|rangeHasTakenNight|getRoomTakenNights/.test(src),
+    `${f}: taken nights never reach the save gate`);
+  assert.match(src, /siblings=\{stays\.filter\(\(x\) => x\.key !== s\.key\)\}/,
+    `${f}: the other cards are passed in (decision 6)`);
+}
+// wiring: StayEditor paints from the fetched set, loads on the shown months, and
+// the edit window's id travels to the action
+assert.match(stayPicker?.[0] ?? "", /occupiedNights=\{takenNights\}/, "the picker paints the taken set");
+assert.match(stayPicker?.[0] ?? "", /onMonthsShown=\{loadTaken\}/, "the picker loads on the months it shows");
+assert.match(stay, /getRoomTakenNightsAction\(\{ roomId, from, to, excludeReservationId \}\)/,
+  "the edit window's reservation id reaches the server action");
+// tenant isolation: the action reads the tenant from the session, never from args
+const ra = readFileSync("src/app/(dashboard)/reservations/actions.ts", "utf8");
+const takenAction = ra.match(/export async function getRoomTakenNightsAction[\s\S]*?\n}\n/)?.[0] ?? "";
+assert.ok(/const actor = await getActor\(\)/.test(takenAction) &&
+  (takenAction.match(/tenant_id = \$\{actor\.tenantId\}/g) ?? []).length === 2 &&
+  !/args\.tenantId|tenantId:/.test(takenAction),
+  "getRoomTakenNightsAction scopes BOTH queries by the session tenant only");
+// decision 7: the closure calendar's look, its own dot, no new colour
+const drpCss = readFileSync("src/app/styles/date-range-picker.css", "utf8");
+assert.match(drpCss, /\.drp-cell\.drp-occ \{\s*background: var\(--busy-night-bg\);/,
+  "taken-night background = the closure calendar's shared --busy-night-bg");
+assert.match(drpCss, /\.drp-d\.drp-occ \{[^}]*color: var\(--busy-night-ink\);/,
+  "taken-night number = the closure calendar's shared --busy-night-ink");
+assert.ok(!/--drp-occ-|color-mix\(in srgb, var\(--danger\)/.test(drpCss),
+  "the picker keeps no private copy of the busy-night colours");
+const mg = readFileSync("src/components/shared/date-range-picker/MonthGrid.tsx", "utf8");
+assert.match(mg, /c\.occupied && <span className="cp-dot" \/>/, "the dot is the closure calendar's .cp-dot");
+const cssNoComments = drpCss.replace(/\/\*[\s\S]*?\*\//g, "");
+assert.ok(cssNoComments.indexOf(".drp-cell.drp-occ") < cssNoComments.indexOf(".drp-cell.drp-in") &&
+  cssNoComments.indexOf(".drp-d.drp-occ") < cssNoComments.indexOf(".drp-d.drp-sel"),
+  "selection wins over a taken night (declared after it)");
+
 console.log(
-  "✓ datepicker: click semantics (nights + days), month grid, DateRangePicker (stepper, dismiss, band, placement, wiring), StayEditor and Group Update wiring",
+  "✓ datepicker: click semantics (nights + days), month grid, DateRangePicker (stepper, dismiss, band, placement, wiring), StayEditor and Group Update wiring, taken nights (paint, exclude, siblings, warning)",
 );

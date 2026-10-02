@@ -17,7 +17,7 @@ export function WeekdayRow({ className }: { className: string }) {
 }
 
 const cellClass = (c: DayCell) =>
-  `drp-cell${c.band ? ` ${c.band.split(" ").map((b) => `drp-${b}`).join(" ")}` : ""}`;
+  `drp-cell${c.band ? ` ${c.band.split(" ").map((b) => `drp-${b}`).join(" ")}` : ""}${c.occupied ? " drp-occ" : ""}`;
 
 export function MonthGrid({
   month,
@@ -62,7 +62,7 @@ export function MonthGrid({
                 {c.date && (
                   <button
                     type="button"
-                    className={`drp-d${c.state ? ` drp-${c.state}` : ""}`}
+                    className={`drp-d${c.state ? ` drp-${c.state}` : ""}${c.occupied ? " drp-occ" : ""}`}
                     data-date={c.date}
                     tabIndex={c.date === tabDate ? 0 : -1}
                     aria-label={c.label}
@@ -73,6 +73,9 @@ export function MonthGrid({
                     onFocus={onFocusDay ? () => onFocusDay(c.date as DateOnly) : undefined}
                   >
                     <span className="ltr-num">{c.day}</span>
+                    {/* the closure calendar's own dot (.cp-dot) — the taken
+                        night stays readable under a picked edge */}
+                    {c.occupied && <span className="cp-dot" />}
                   </button>
                 )}
               </div>

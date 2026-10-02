@@ -251,11 +251,11 @@
   /* a night the room already owes — painted, and the button is disabled */
   .cp-day.busy,
   .cp-day.busy:hover {
-    background: color-mix(in srgb, var(--danger) 10%, #fff);
+    background: var(--busy-night-bg);
     position: relative;
   }
   .cp-day.busy > .ltr-num {
-    color: color-mix(in srgb, var(--danger) 78%, var(--ink));
+    color: var(--busy-night-ink);
     font-weight: 800;
   }
   /* …and a taken night INSIDE the drawn range: the collision, unmissable */

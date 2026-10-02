@@ -883,6 +883,7 @@ export function EditReservationPanel({
                     key={s.key}
                     index={i}
                     value={s}
+                    siblings={stays.filter((x) => x.key !== s.key)}
                     excludeReservationId={detail.id}
                     disabled={!canEditNow}
                     onChange={(next) => canEditNow && setStays((all) => all.map((x) => (x.key === s.key ? next : x)))}

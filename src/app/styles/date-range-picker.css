@@ -344,6 +344,11 @@
     align-items: center;
     justify-content: center;
   }
+  /* a taken night (visual only — still a target). Declared BEFORE the band:
+     a drawn range wins the cell, the red number + dot keep the night legible */
+  .drp-cell.drp-occ {
+    background: var(--busy-night-bg);
+  }
   /* the band is painted on the cell, not on the button (RTL: the stay runs left) */
   .drp-cell.drp-in {
     background: var(--brand-soft);
@@ -369,6 +374,16 @@
     color: var(--ink);
     cursor: pointer;
     padding: 0;
+  }
+  /* before today / prev / sel, so a picked edge still reads as picked; the
+     dot is the closure calendar's own .cp-dot, centred by the flex box */
+  .drp-d.drp-occ {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--busy-night-ink);
+    font-weight: 800;
   }
   .drp-d:not([aria-disabled="true"]):hover {
     background: var(--drp-day-hover);

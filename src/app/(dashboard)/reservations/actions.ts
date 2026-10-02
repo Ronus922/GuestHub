@@ -5,13 +5,14 @@ import type { TransactionSql } from "postgres";
 import { sql } from "@/lib/db";
 import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
 import { writeAudit } from "@/lib/audit";
-import { rangesOverlap, type DateOnly } from "@/lib/dates";
+import { addDays, isDateOnly, rangesOverlap, type DateOnly } from "@/lib/dates";
 import type { CardSource } from "@/lib/card-rules";
 import {
   lockRooms,
   INVENTORY_BLOCKING_STATUSES,
 } from "@/lib/inventory";
 import { listAvailableRooms, type AvailableRoom } from "@/lib/reservations/available-rooms";
+import { roomTakenNights, type ClosureRow, type StayRow } from "@/lib/reservations/stay-occupancy";
 import { moveAttachedDocumentFiles } from "@/lib/reservations/documents";
 import {
   OVERRIDABLE_RESTRICTION_CODES,
@@ -1421,6 +1422,55 @@ export async function getAvailableRoomsAction(args: {
     requirePermission(actor, "reservations.create");
     const res = await listAvailableRooms(sql, actor.tenantId, args);
     return res.ok ? { success: true, data: res.rooms } : fail(res.error);
+  } catch (e) {
+    return fail(errorMessage(e));
+  }
+}
+
+// The taken nights of ONE room for a window — what the booking windows' stay
+// picker paints (owner decisions 1–4, stay-occupancy.ts). Display only: the
+// save path's check_room_availability under lock stays the gate. The tenant
+// comes from the session, never from the client: a room id of another tenant
+// matches no row and paints nothing.
+const OCCUPANCY_WINDOW_MAX_DAYS = 400;
+
+export async function getRoomTakenNightsAction(args: {
+  roomId: string;
+  from: DateOnly;
+  to: DateOnly;
+  excludeReservationId?: string;
+}): Promise<ActionResult<DateOnly[]>> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "reservations.create");
+    if (!isDateOnly(args.from) || !isDateOnly(args.to) || !(args.from < args.to)) {
+      return fail("טווח תאריכים לא תקין");
+    }
+    if (addDays(args.from, OCCUPANCY_WINDOW_MAX_DAYS) < args.to) return fail("טווח תאריכים ארוך מדי");
+
+    const stays = await sql<StayRow[]>`
+      SELECT rr.room_id, rr.reservation_id, rr.check_in::text AS check_in,
+             rr.check_out::text AS check_out, res.status
+      FROM guesthub.reservation_rooms rr
+      JOIN guesthub.reservations res ON res.id = rr.reservation_id
+      WHERE rr.tenant_id = ${actor.tenantId} AND rr.room_id = ${args.roomId}
+        AND rr.check_in < ${args.to} AND rr.check_out > ${args.from}`;
+    const closures = await sql<ClosureRow[]>`
+      SELECT c.id, c.room_id, c.start_date::text AS start_date,
+             c.end_date::text AS end_date, c.kind
+      FROM guesthub.room_closures c
+      WHERE c.tenant_id = ${actor.tenantId} AND c.room_id = ${args.roomId}
+        AND c.start_date < ${args.to} AND c.end_date > ${args.from}`;
+    return {
+      success: true,
+      data: roomTakenNights({
+        roomId: args.roomId,
+        stays,
+        closures,
+        window: { from: args.from, to: args.to },
+        excludeReservationId: args.excludeReservationId,
+      }),
+    };
   } catch (e) {
     return fail(errorMessage(e));
   }

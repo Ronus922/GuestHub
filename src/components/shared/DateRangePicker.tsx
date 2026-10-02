@@ -19,7 +19,7 @@ import {
 import { DesktopPopover } from "./date-range-picker/DesktopPopover";
 import { MobileSheet } from "./date-range-picker/MobileSheet";
 import { NightsStepper } from "./date-range-picker/NightsStepper";
-import { focusablesIn, useMediaQuery } from "./date-range-picker/hooks";
+import { type MonthsShown, focusablesIn, useMediaQuery } from "./date-range-picker/hooks";
 
 // The stay date-range picker of the booking windows (the datePicker skill,
 // ported onto the repo's date model and tokens). A trigger row (field + nights
@@ -47,6 +47,8 @@ export function DateRangePicker({
   maxNights,
   disabled = false,
   invalid = false,
+  occupiedNights,
+  onMonthsShown,
   onChange,
 }: {
   from: string;
@@ -58,6 +60,11 @@ export function DateRangePicker({
   disabled?: boolean;
   /** red trigger when a required range is missing (form validation) */
   invalid?: boolean;
+  /** nights to paint as taken (light red + dot) — VISUAL ONLY: they stay
+   *  selectable, and nothing here blocks a save */
+  occupiedNights?: ReadonlySet<DateOnly>;
+  /** the months on screen, on open and on every change — load what to paint */
+  onMonthsShown?: MonthsShown;
   /** called ONLY with a complete range */
   onChange: (from: DateOnly, to: DateOnly) => void;
 }) {
@@ -160,6 +167,8 @@ export function DateRangePicker({
     canInc: !disabled && canIncNights(draft, rules),
     pick: (d: DateOnly) => write(pickDay(draft, d, rules)),
     setNights,
+    occupied: occupiedNights,
+    onMonthsShown,
   };
 
   return (
@@ -234,4 +243,6 @@ export type PickerSelection = {
   canInc: boolean;
   pick: (d: DateOnly) => void;
   setNights: (n: number) => void;
+  occupied?: ReadonlySet<DateOnly>;
+  onMonthsShown?: MonthsShown;
 };
