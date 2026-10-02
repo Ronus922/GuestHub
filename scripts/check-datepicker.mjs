@@ -527,10 +527,12 @@ assert.ok(/const actor = await getActor\(\)/.test(takenAction) &&
   "getRoomTakenNightsAction scopes BOTH queries by the session tenant only");
 // decision 7: the closure calendar's look, its own dot, no new colour
 const drpCss = readFileSync("src/app/styles/date-range-picker.css", "utf8");
-assert.match(drpCss, /--drp-occ-bg: color-mix\(in srgb, var\(--danger\) 10%, var\(--surface\)\)/,
-  "taken-night background = the closure calendar's mix");
-assert.match(drpCss, /--drp-occ-ink: color-mix\(in srgb, var\(--danger\) 78%, var\(--ink\)\)/,
-  "taken-night number = the closure calendar's mix");
+assert.match(drpCss, /\.drp-cell\.drp-occ \{\s*background: var\(--busy-night-bg\);/,
+  "taken-night background = the closure calendar's shared --busy-night-bg");
+assert.match(drpCss, /\.drp-d\.drp-occ \{[^}]*color: var\(--busy-night-ink\);/,
+  "taken-night number = the closure calendar's shared --busy-night-ink");
+assert.ok(!/--drp-occ-|color-mix\(in srgb, var\(--danger\)/.test(drpCss),
+  "the picker keeps no private copy of the busy-night colours");
 const mg = readFileSync("src/components/shared/date-range-picker/MonthGrid.tsx", "utf8");
 assert.match(mg, /c\.occupied && <span className="cp-dot" \/>/, "the dot is the closure calendar's .cp-dot");
 const cssNoComments = drpCss.replace(/\/\*[\s\S]*?\*\//g, "");

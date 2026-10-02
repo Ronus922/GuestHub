@@ -157,8 +157,15 @@ const STAY = {
     "…which the button actually carries, so the click cannot land at all");
   assert.match(cal, /state === "blocked" \? "busy" : ""/,
     "…and it is painted, not silently inert");
-  assert.match(rule(css, "  .cp-day.busy,"), /color-mix\(in srgb, var\(--danger\)/,
-    "…in a tint DERIVED from --danger, because the system has no soft-danger token to invent one against");
+  assert.match(rule(css, "  .cp-day.busy,"), /background: var\(--busy-night-bg\);/,
+    "…in the shared busy-night tint (the booking date picker paints the same token)");
+  assert.match(rule(css, "  .cp-day.busy > .ltr-num {"), /color: var\(--busy-night-ink\);/,
+    "…with the shared busy-night number colour");
+  const ds = read("src/app/styles/design-system.css");
+  assert.match(ds, /--busy-night-bg: color-mix\(in srgb, var\(--danger\) 10%, #fff\);/,
+    "…a token DERIVED from --danger in the global layer, not a new colour");
+  assert.match(ds, /--busy-night-ink: color-mix\(in srgb, var\(--danger\) 78%, var\(--ink\)\);/,
+    "…and its number colour likewise derived from --danger / --ink");
 
   ok("a night held by a blocking reservation or another closure is painted and refuses the click — departure days, other rooms and cancelled bookings excluded, proven by running the model");
 }

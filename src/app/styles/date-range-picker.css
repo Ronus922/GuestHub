@@ -31,10 +31,6 @@
     --drp-btn-text: #2c3446;
     /* ds-allow: skill pixel spec — secondary button hover */
     --drp-sec-hover: #f6f8fb;
-    /* a TAKEN night — the closure calendar's "לילות סגורים" look
-       (closure-panel.css .cp-day.busy), same mix of the same tokens */
-    --drp-occ-bg: color-mix(in srgb, var(--danger) 10%, var(--surface));
-    --drp-occ-ink: color-mix(in srgb, var(--danger) 78%, var(--ink));
   }
 
   /* ---- trigger row: field + stepper (one row, no reserved height) ---- */
@@ -351,7 +347,7 @@
   /* a taken night (visual only — still a target). Declared BEFORE the band:
      a drawn range wins the cell, the red number + dot keep the night legible */
   .drp-cell.drp-occ {
-    background: var(--drp-occ-bg);
+    background: var(--busy-night-bg);
   }
   /* the band is painted on the cell, not on the button (RTL: the stay runs left) */
   .drp-cell.drp-in {
@@ -386,7 +382,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--drp-occ-ink);
+    color: var(--busy-night-ink);
     font-weight: 800;
   }
   .drp-d:not([aria-disabled="true"]):hover {

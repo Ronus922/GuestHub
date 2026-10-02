@@ -30,6 +30,10 @@
   --warn: #ea9314;
   --info: #8b5cf6;
   --vip: #f5b04c;
+  /* a busy night — one the room already owes. DERIVED from --danger, shared
+     by the closures calendar (.cp-day.busy) and the booking date picker */
+  --busy-night-bg: color-mix(in srgb, var(--danger) 10%, #fff);
+  --busy-night-ink: color-mix(in srgb, var(--danger) 78%, var(--ink));
 
   /* --- §1 shadows (only two in the whole system) --- */
   --shadow-card: 0 6px 20px rgba(16, 24, 40, 0.03);
