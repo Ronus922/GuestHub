@@ -67,21 +67,29 @@ export function effectiveEnd(range: DraftRange, hover: DateOnly | null): DateOnl
   return null;
 }
 
-/** how the picker was dismissed — "cancel" is Esc / ביטול / X / the sheet backdrop */
+/**
+ * how the picker was dismissed — "cancel" is Esc / ביטול / X and nothing else.
+ * "outside" is every other way out: a click outside the popover, the mobile
+ * sheet's backdrop, dragging the sheet down, a second press on the trigger.
+ */
 export type DismissKind = "close" | "outside" | "cancel";
 
 /**
- * Does this dismissal restore the dates the picker opened on? (owner decision 1)
- *  - "סגור": no — the picked range is already in the form (write-through).
- *  - outside click: no for a COMPLETE range (it is in the form and stays, so a
- *    press on "שמור שינויים" saves it); yes for a half range (check-in only),
- *    which never reached the form.
+ * Does this dismissal restore the dates the picker opened on? ONE rule on every
+ * width (owner decisions 1 + C, 02/10/2026):
  *  - Esc / ביטול / X: yes.
+ *  - everything else ("סגור", outside click, sheet backdrop / drag): no for a
+ *    COMPLETE range — it is already in the form (write-through) and stays, so a
+ *    press on "שמור שינויים" saves it; yes for a half range (check-in only),
+ *    which never reached the form.
+ * Known edge, ACCEPTED (owner decision B): a picker opened with NO dates (a new
+ * booking) restores to "nothing" — but only a complete range ever reaches the
+ * form, so after a complete pick + Esc the form keeps that range (the same as
+ * DateRangeField before it). Only the picker's own draft goes back to empty.
  */
 export function dismissRestores(kind: DismissKind, range: DraftRange): boolean {
-  if (kind === "close") return false;
-  if (kind === "outside") return range.start == null || range.end == null;
-  return true;
+  if (kind === "cancel") return true;
+  return range.start == null || range.end == null;
 }
 
 // ---------- the month model ----------

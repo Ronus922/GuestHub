@@ -5889,3 +5889,41 @@ fixture ב-CDP (ה-helper האמיתי מקומפל ב-TypeScript של הפרו�
 **שומרים.** ‏`check:bios-bot-booking-inventory` — ה-fixture מגדיר כעת `extra_guest` כמו הנכס האמיתי (בלעדיו ה-fixture בדק את ה-dead-end שהמודול אוסר), ונוספו שתי בדיקות: ‏(1) "party pricing" — ‏2 מבוגרים → 600, ‏2+1 → **800** ולא 600, והמחיר לשהייה = מחיר ללילה × הלילות; ‏(2) "unpriceable party" — בלי תמחור אורח נוסף המשפחה מקבלת אפס סוגי חדר (לא מחיר שאי אפשר להזמין), בעוד ש-2 מבוגרים ממשיכים כרגיל. סה״כ 9 בדיקות, כולן ירוקות. ‏`check:bios-bot-read-api` (18) ו-`check:website-visibility` (4) ירוקות ללא שינוי.
 
 **צד BIOS Bot** (ריפו נפרד, ‏`src/server/tools/connectors/guesthub-contract.ts`): ‏`partyPriced(availability, party)` = ‏`pricedForParty === true || isBaseOccupancy(party)`, והרמז `indicativeFromPricePerNight` מוצג לפיו. תואם לשני הכיוונים. ‏7 בדיקות חדשות ב-`tests/booking-pricing.test.mjs` מכסות 2 מבוגרים, ‏2+ילד, משפחה של 4, תינוק כשמותר, חריגת קיבולת, ‏exactQuote מול הרמז, ו-GuestHub ישן.
+
+## D199 — בורר התאריכים בחלונות יצירה/עריכה של הזמנה: `<DateRangePicker>` (פורט מסקיל datePicker) במקום `<DateRangeField>`; כלל סגירה אחד (2026-10-02)
+
+**ההקשר.** ב-`StayEditor` (כרטיס חדר בחלון יצירת הזמנה ובחלון עריכת הזמנה, מקום רינדור אחד לשניהם) ישבו `<DateRangeField>` (פאנל בתוך הזרימה) ולצידו מונה "לילות" נפרד. הבעלים ביקש להחליף את שניהם ב-`<DateRangePicker />` מ-`~/.claude/skills/datePicker/`. **מחוץ להיקף ולא נגעו:** סינון מסך ההזמנות (‏`mode="days"`), ‏/rates (כולל Group Update), הלוח, וכל צרכן אחר של `DateRangeField` — הרכיב נשאר בריפו. PR ‏#278.
+
+**הכרעות הבעלים — סבב 1 (01/10/2026).**
+1. **כלל סגירה.** "ביטול", X ו-Esc מחזירים לערך שבפתיחה. "סגור" שומר. לחיצה מחוץ לפופאובר: טווח מלא נשאר, טווח חלקי (הגעה בלבד) חוזר לערך שבפתיחה. הנימוק: לחיצה על "שמור שינויים" כשהפופאובר פתוח היא לחיצה בחוץ — בכלל של הסקיל (בחוץ = ביטול) התאריכים היו חוזרים בשקט, ‏`dirty` היה נכבה, והשמירה הייתה נחסמת.
+2. אין `min`/`max` בחלונות ההזמנה (ה-props קיימים ברכיב ולא מועברים).
+3. ‏`maxNights={NIGHTS_TYPO_GUARD}` (‏3650), הקבוע נשאר ב-`StayEditor`.
+4. מונה ה"לילות" הנפרד הוסר בכל הרוחבים. הסטפר של הרכיב משאיר את ההגעה ומזיז את היציאה. במובייל אין סטפר במצב סגור — הוא ב-Sheet.
+5. ‏`check:datepicker` מכוון ל-`DateRangePicker`, בלי allowlist, ובהוכחת B2.
+
+**הכרעות הבעלים — סבב 2 (02/10/2026).**
+- **A.** ה-CSS שהתייתם נמחק: `.bw-qty-i` (‏`booking-window.css`) ו-`.dp-after` (‏`date-picker.css`), אחרי grep על `src/` ו-`scripts/` שהראה אפס שימושים.
+- **B.** בורר שנפתח **בלי** תאריכים (הזמנה חדשה), נבחר טווח מלא ואז Esc: הטווח **נשאר** בטופס. רק טווח מלא מגיע לטופס, ולכן אין "ערך ריק" שאפשר לכתוב בחזרה — כמו `DateRangeField` לפניו. רק הטיוטה של הבורר חוזרת לריק. אין שינוי קוד; מתועד בהערה של `dismissRestores()`.
+- **C.** **כלל אחד בכל הרוחבים.** החזרה לערך שבפתיחה **רק** ב-Esc, "ביטול" ו-X. כל סגירה אחרת ("סגור", לחיצה בחוץ, רקע ה-Sheet במובייל) שומרת טווח מלא ומחזירה טווח חלקי. הכול עובר ב-`dismissRestores()` (‏`src/lib/date-range-picker.ts`) — אין נתיב כלל שני. **נגזר מה"רק" של C (לא הוכרע בנפרד — לאישור):** גם גרירת ה-Sheet למטה ולחיצה שנייה על השדה עצמו כשהבורר פתוח הן סגירה "בחוץ" ושומרות, כי אינן ברשימת ההחזרה.
+- **D.** ב-1440×900 הפופאובר, כשהוא מוצמד לתחתית החלון, מכסה את "שמור שינויים" בכותרת התחתונה של המגירה. **מתקבל בלי שינוי:** הלחיצה הראשונה סוגרת ושומרת (לפי C), שום דבר לא אובד, והלחיצה השנייה שומרת.
+
+**המימוש.**
+- **רכיב** — `src/components/shared/DateRangePicker.tsx` + `src/components/shared/date-range-picker/` (‏`DesktopPopover`, ‏`MobileSheet`, ‏`MonthGrid`, ‏`NightsStepper`, ‏`hooks`). פופאובר ב-portal עם `position: fixed` ו-`z-index: var(--drp-z, 100000)` מעל המגירה (‏z-90), כך שהכרטיס לא גדל כשהבורר נפתח. מובייל (‏`max-width: 767px`) — Sheet.
+- **לוגיקה טהורה** — `src/lib/date-range-picker.ts`, נשען על `dates.ts` / `date-range.ts` בלבד (נוסף `addMonths` ל-`dates.ts`). אין חשבון `Date` ברכיב. ‏today והחודש הראשון מחושבים רק בפתיחה (D71).
+- **Write-through** — טווח מלא נכתב לטופס ברגע הבחירה כ-`onChange({ ...value, checkIn, checkOut })`; טווח חלקי לא מגיע לטופס לעולם.
+- **CSS** — `src/app/styles/date-range-picker.css` תחת `@layer components`, על הטוקנים; צבעים בלי טוקן מקביל ב-`ds-allow`.
+
+**סטיות העותק בריפו מהסקיל** (הסקיל עצמו לא נערך):
+- כלל הסגירה (1 + C) במקום "בחוץ / רקע = ביטול".
+- Esc ו-Tab מטופלים בשלב ה-capture עם `stopPropagation` (כמו `MobileDetailSheet`) — אחרת Esc אחד סוגר גם את המגירה, ו-Shift+Tab בורח לתוכה. Esc בשדה הלילות מטופל על השדה עצמו.
+- הטריגר בנוי על `.field-input` הקיים, ‏`field-error` כשלא תקין; נוספו `disabled` ו-`invalid`.
+- רדיוסים לטוקנים: 13px → 12px, ‏22px → 16px. כפתורי הסטפר ב-Sheet ‏44px במקום 38px (כלל מגע).
+- אייקון `bedtime` → `moon` של רכיב `Icon`.
+- תיקון באג בסקיל: ריחוף על יום נבחר צבע אותו בהיר עם טקסט לבן (כלל ה-hover גבר על `.drp-sel`).
+- `overflow-x: hidden` הוסר (אסור ב-`check:responsive`).
+- לא פורטו `layout="stacked"`, ‏`isDateDisabled`, ‏`minDate`. ‏today = `todayInTz` באזור הזמן של הדפדפן.
+- בדיקות ה-vitest של הסקיל לא נכנסו (D194); המקרים שלהן פורטו ל-`check:datepicker`.
+
+**שומרים.** ‏`check:datepicker`: ‏`StayEditor` מרנדר `DateRangePicker` ולא `DateRangeField`; ‏`onChange` לא נוגע ב-`roomId`; תקרת הלילות מועברת; בחירה, יציאה exclusive, סטפר, כלל הסגירה, הפס, מקלדת, מיקום; חיווט (בחוץ / רקע / גרירה ≠ ביטול; ‏pointerdown לא קורא ל-`onCancel`; רק טווח מלא נכתב); אין `new Date` ברכיב; D71. הוכחת B2: ‏15 מוטציות בקוד המוצר, כל אחת → יציאה 1 (בסבב 2: רקע → `onCancel`, ‏`onOutside` של ה-Sheet → `dismiss("cancel")`, גרירה → `onCancel`, "בחוץ" תמיד מחזיר).
+
+**אימות.** ‏`tsc --noEmit`, ‏lint (אותן 5 אזהרות של main), ‏`check:datepicker` / `check:design` / `check:responsive` ירוקים. צילומי CDP ב-1440×900 וב-390×844: קוד הבורר וה-CSS האמיתיים המקומפלים בתוך מגירה ממוקאפת — לא המסך הרץ (אין build/dev בעץ הפרודקשן, D147). אימות על המסכים האמיתיים — אחרי פריסה.
