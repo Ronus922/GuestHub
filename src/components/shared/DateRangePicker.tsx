@@ -29,9 +29,9 @@ import { focusablesIn, useMediaQuery } from "./date-range-picker/hooks";
 //
 // WRITE-THROUGH: a COMPLETE range reaches the form the moment it is picked
 // (`write`). A half range (check-in only) lives in this component's draft and
-// never reaches the form. "סגור" and an outside click keep what was written;
-// Esc / ביטול / X restore the dates the picker opened on — dismissRestores()
-// (owner decision 1).
+// never reaches the form. Esc / ביטול / X restore the dates the picker opened
+// on; every other close ("סגור", outside click, the sheet's backdrop) keeps what
+// was written — dismissRestores() (owner decisions 1 + C).
 // check_out is EXCLUSIVE (D32) — `to` is the departure day.
 
 export const MOBILE_QUERY = "(max-width: 767px)";
@@ -172,7 +172,7 @@ export function DateRangePicker({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? dialogId : undefined}
-        onClick={() => (open ? dismiss("cancel", true) : openPicker())}
+        onClick={() => (open ? dismiss("outside", true) : openPicker())}
       >
         <Icon name="calendar" size={20} className="text-primary" />
         <span className="drp-field-text">{formatRangeText(draft, PLACEHOLDER)}</span>
@@ -202,6 +202,7 @@ export function DateRangePicker({
           anchor={view}
           onCancel={() => dismiss("cancel", true)}
           onCommit={() => dismiss("close", true)}
+          onOutside={() => dismiss("outside", true)}
         />
       )}
       {open && today && view && !sheet && (

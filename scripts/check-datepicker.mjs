@@ -200,7 +200,7 @@ assert.equal(P.parseNights("30"), 30);
 assert.equal(P.parseNights("0"), null, "0 keeps the previous value");
 assert.equal(P.parseNights(""), null, "empty keeps the previous value");
 
-// ---- dismiss semantics (owner decision 1) ----
+// ---- dismiss semantics (owner decisions 1 + C: revert ONLY on Esc / ביטול / X) ----
 const complete = { start: "2026-10-04", end: "2026-10-06" };
 const half = { start: "2026-10-04", end: null };
 assert.equal(P.dismissRestores("outside", complete), false,
@@ -209,6 +209,7 @@ assert.equal(P.dismissRestores("outside", half), true,
   "outside click with only a check-in drops back to the open value");
 assert.equal(P.dismissRestores("cancel", complete), true, "Esc / ביטול / X restore the open value");
 assert.equal(P.dismissRestores("close", complete), false, '"סגור" keeps the picked range');
+assert.equal(P.dismissRestores("close", half), true, '"סגור" with only a check-in drops back too — one rule (owner decision C)');
 
 // ---- the month model: the band ----
 const ctx = { range: { start: "2026-10-04", end: "2026-10-10" }, effEnd: "2026-10-10", today: "2026-10-01", rules: none };
@@ -254,6 +255,19 @@ const pointer = popover.match(/const onPointerDown = \(e: PointerEvent\) => \{([
 assert.ok(pointer, "the popover must own a pointerdown handler");
 assert.match(pointer?.[1] ?? "", /outsideRef\.current\(\)/, "pointerdown outside calls onOutside");
 assert.ok(!/onCancel/.test(pointer?.[1] ?? "onCancel"), "pointerdown outside never calls onCancel (the restore)");
+// owner decision C: the mobile sheet's backdrop (and drag-down) is an OUTSIDE close —
+// a complete range stays in the form; only Esc / ביטול / X restore.
+const sheet = readFileSync("src/components/shared/date-range-picker/MobileSheet.tsx", "utf8");
+assert.match(sheet, /className="drp-backdrop" onClick=\{onOutside\}/,
+  "the sheet backdrop is an outside close — it must NOT restore a complete range");
+const drag = sheet.match(/const onTouchMove = [\s\S]*?\n  \};/)?.[0] ?? "";
+assert.match(drag, /onOutside\(\)/, "dragging the sheet down is an outside close");
+assert.ok(!/onCancel/.test(drag), "dragging the sheet down never calls onCancel (the restore)");
+const sheetJsx = picker.match(/<MobileSheet[\s\S]*?\/>/)?.[0] ?? "";
+assert.match(sheetJsx, /onOutside=\{\(\) => dismiss\("outside", true\)\}/,
+  'the sheet\'s outside close is dismissed as "outside" — never as a cancel');
+assert.ok(!/dismiss\("cancel"[^)]*\)\s*:\s*openPicker/.test(picker),
+  "a second press on the trigger is not a cancel — only Esc / ביטול / X restore");
 // write-through: a complete range reaches the form; a half range never does
 const writeFn = picker.match(/const write = \(next: DraftRange\) => \{([\s\S]*?)\n  \};/);
 assert.match(writeFn?.[1] ?? "", /if \(next\.start && next\.end\) onChange\(next\.start, next\.end\)/,

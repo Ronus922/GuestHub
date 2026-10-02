@@ -31,6 +31,7 @@ export function MobileSheet({
   anchor,
   onCancel,
   onCommit,
+  onOutside,
 }: {
   /** the sheet element — the parent's focus trap reads it */
   layerRef: RefObject<HTMLDivElement | null>;
@@ -39,8 +40,11 @@ export function MobileSheet({
   today: DateOnly;
   /** the first month listed (the check-in month at open) */
   anchor: MonthView;
+  /** Esc / ביטול / X — restores the dates the picker opened on */
   onCancel: () => void;
   onCommit: () => void;
+  /** backdrop tap / drag down — keeps a complete range (owner decision C) */
+  onOutside: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(3);
@@ -89,7 +93,7 @@ export function MobileSheet({
     if (y0 === null) return;
     if ((e.touches[0]?.clientY ?? y0) - y0 > DRAG_DISMISS_PX) {
       touchStartY.current = null;
-      onCancel();
+      onOutside();
     }
   };
   const onTouchEnd = () => {
@@ -101,7 +105,7 @@ export function MobileSheet({
 
   return createPortal(
     <div dir="rtl">
-      <div className="drp-backdrop" onClick={onCancel} aria-hidden="true" />
+      <div className="drp-backdrop" onClick={onOutside} aria-hidden="true" />
       <div
         ref={layerRef}
         id={id}

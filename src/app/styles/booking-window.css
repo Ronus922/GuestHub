@@ -261,28 +261,9 @@
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
-/* the typed form of .bw-qty-v (nights). It sits INSIDE the .bw-qty shell, so it
-   brings no border, no background and no height of its own — only the text box
-   it needs, centred between the two buttons. */
-.bw-qty-i {
-  min-width: 0;
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  font-family: inherit;
-  text-align: center;
-  outline: none;
-  padding: 0 4px;
-}
-.bw-qty-i:disabled {
-  color: var(--faint);
-  cursor: not-allowed;
-}
-
-/* `.bw-readonly` / `.bw-rn` lived here for the computed-nights readout only.
-   That control is now a real input (.bw-qty + .bw-qty-i), so both rules were
-   deleted rather than left orphaned. */
+/* `.bw-readonly` / `.bw-rn` and the typed nights input `.bw-qty-i` lived here.
+   Nights are now set inside <DateRangePicker>, so all three rules were deleted
+   rather than left orphaned. */
 
 /* ============================================================
    room block inside a card
