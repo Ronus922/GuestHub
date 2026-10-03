@@ -45,7 +45,10 @@ assert.equal((actions.match(/renderManualText\(/g) ?? []).length, 3,
   "three manual renders: email subject, email body, WhatsApp body");
 assert.ok(!/renderTemplate\(/.test(actions),
   "the legacy renderTemplate renders nothing in message-actions any more (its regex ignores dotted keys)");
-assert.ok(/reservationRenderContext|safeRenderContext/.test(actions), "the send builds the reservation's communications render context");
+// D202 renamed the per-reservation loader: it now returns the render context AND
+// the guest language (for the template mode's lineage pick); the free-text sends
+// still build their render context from it.
+assert.ok(/reservationSendContext|safeSendContext/.test(actions), "the send builds the reservation's communications render context");
 assert.ok(/renderedSubject\.canSend/.test(actions), "a blocked subject refuses the send instead of shipping a token");
 assert.equal((actions.match(/renderedBody\.canSend/g) ?? []).length, 2,
   "a blocked body refuses the send in BOTH channels instead of shipping a token");
@@ -69,7 +72,7 @@ const gate = src("src/lib/messaging/composer-draft.ts");
 // at the top of the IIFE left every character of those two lines in place and
 // this guard stayed green (measured 07/09/2026). Part C RUNS the gate instead.
 const automation = src("src/lib/communications/automation.ts");
-assert.ok(/export async function reservationRenderContext\(/.test(automation), "automation.ts exports the per-reservation render context");
+assert.ok(/export async function reservationSendContext\(/.test(automation), "automation.ts exports the per-reservation render context");
 const module_ = src("src/lib/messaging/render-manual.ts");
 assert.ok(/renderTemplateString\(/.test(module_) && /renderTemplate\(/.test(module_), "renderManualText chains the legacy pass and the communications renderer");
 console.log("✓ Part A: wiring is in place");

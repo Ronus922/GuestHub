@@ -17,8 +17,8 @@ import { applyQuietHours, triggerFor } from "./triggers";
 import { normalizePhone } from "@/lib/phone";
 import type { CommunicationEvent } from "./outbox";
 import type {
-  BookingOrigin, CommunicationChannel, CommunicationRenderContext, TemplateContent, TemplateLanguage,
-  WhatsAppTemplateContent,
+  BookingOrigin, CommunicationChannel, CommunicationRenderContext, RenderIssue, TemplateContent,
+  TemplateLanguage, WhatsAppTemplateContent,
 } from "./types";
 
 type AutomationRow = {
@@ -270,7 +270,7 @@ type VersionResolution =
   | { outcome: "ambiguous"; candidateTemplateIds: string[] };
 
 async function resolveVersion(
-  automation: AutomationRow,
+  automation: Pick<AutomationRow, "tenant_id" | "template_id" | "template_version_policy" | "locked_template_version_id">,
   guestLanguage?: string | null,
 ): Promise<VersionResolution> {
   const target = automation.template_version_policy === "locked" ? null : normalizeLanguage(guestLanguage ?? null);
@@ -329,6 +329,44 @@ async function resolvedVersion(
 ): Promise<VersionRow | null> {
   const resolution = await resolveVersion(automation, guestLanguage);
   return resolution.outcome === "resolved" ? resolution.version : null;
+}
+
+// D202 — the ONE render of a resolved version for the wire. The automation
+// pipeline and the booking composer's template mode both call it, so a manual
+// send from a template cannot drift from what an automation sends.
+type RenderedVersion =
+  | { channel: "whatsapp"; text: string; issues: RenderIssue[]; canSend: boolean }
+  | {
+      channel: "email"; subject: string; preheader: string | null; html: string; plainText: string;
+      issues: RenderIssue[]; canSend: boolean;
+    };
+
+function renderVersionForWire(
+  version: VersionRow,
+  content: TemplateContent,
+  context: CommunicationRenderContext,
+): RenderedVersion {
+  if (templateContentKind(content) === "whatsapp_text") {
+    const rendered = renderWhatsAppCommunication(
+      content as WhatsAppTemplateContent, context, { language: version.language });
+    return { channel: "whatsapp", ...rendered };
+  }
+  const rendered = renderTemplateContent(
+    content,
+    context,
+    version.preheader ? { preheader: version.preheader } : undefined,
+  );
+  const subject = renderTemplateString(version.subject, context);
+  const preheader = version.preheader ? renderTemplateString(version.preheader, context) : null;
+  return {
+    channel: "email",
+    subject: subject.value,
+    preheader: preheader?.value ?? null,
+    html: rendered.html,
+    plainText: rendered.plainText,
+    issues: [...rendered.issues, ...subject.issues, ...(preheader?.issues ?? [])],
+    canSend: rendered.canSend && subject.canSend && (!preheader || preheader.canSend),
+  };
 }
 
 async function resolveConnectedEmailChannel(tenantId: string): Promise<EmailChannelSnapshot | null> {
@@ -506,19 +544,6 @@ export async function loadPreviewDatasets(tenantId: string, limit = 3): Promise<
       context: await buildRenderContext(row),
     })),
   );
-}
-
-/**
- * The render context of ONE reservation — the booking composer's manual send
- * renders its subject through this (D172), so a manual message resolves exactly
- * the values an automation would. null = reservation not found for this tenant.
- */
-export async function reservationRenderContext(
-  tenantId: string,
-  reservationId: string,
-): Promise<CommunicationRenderContext | null> {
-  const row = await loadReservationSnapshot(tenantId, reservationId);
-  return row ? buildRenderContext(row) : null;
 }
 
 /** The property-only context — what a preview falls back to when the tenant has no reservations yet. */
@@ -750,8 +775,8 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           await skipAutomation(summary, event, automation, reservation, "provider_not_ready", version);
           continue;
         }
-        const rendered = renderWhatsAppCommunication(
-          content as WhatsAppTemplateContent, context, { language: version.language });
+        const rendered = renderVersionForWire(version, content, context);
+        if (rendered.channel !== "whatsapp") throw new Error("unreachable: whatsapp_text checked above");
         if (!rendered.canSend || !rendered.text.trim()) {
           // D112/D115 — the skip names the variable that blocked it.
           await skipAutomation(summary, event, automation, reservation, "render_failed", version,
@@ -791,14 +816,9 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         await skipAutomation(summary, event, automation, reservation, "provider_not_ready", version);
         continue;
       }
-      const rendered = renderTemplateContent(
-        content,
-        context,
-        version.preheader ? { preheader: version.preheader } : undefined,
-      );
-      const subject = renderTemplateString(version.subject, context);
-      const preheader = version.preheader ? renderTemplateString(version.preheader, context) : null;
-      if (!rendered.canSend || !subject.canSend || (preheader && !preheader.canSend)) {
+      const rendered = renderVersionForWire(version, content, context);
+      if (rendered.channel !== "email") throw new Error("unreachable: non-whatsapp content checked above");
+      if (!rendered.canSend) {
         // A missing variable is a fact about THIS reservation (a guest with no
         // first name, an unassigned room), not about the automation. Disabling
         // the automation here would silently stop every OTHER guest's
@@ -806,9 +826,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         // it (D112/D115) — and carry on.
         await skipAutomation(summary, event, automation, reservation, "render_failed", version,
           undefined, undefined,
-          describeRenderIssues([
-            ...rendered.issues, ...subject.issues, ...(preheader?.issues ?? []),
-          ]) ?? undefined);
+          describeRenderIssues(rendered.issues) ?? undefined);
         continue;
       }
       const senderName = version.sender_display_name ?? emailChannel.sender_name;
@@ -833,9 +851,9 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
                  'email', 'gmail', ${version.template_id}, ${automation.id},
                  ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
-                 ${r.address}, ${subject.value},
+                 ${r.address}, ${rendered.subject},
                  ${rendered.plainText}, 'queued', ${senderName}, ${replyTo},
-                 ${preheader?.value ?? null}, ${rendered.html},
+                 ${rendered.preheader}, ${rendered.html},
                  ${rendered.plainText}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
                  GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
                                        FROM guesthub.communication_settings
@@ -852,4 +870,92 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
     }
   }
   return summary;
+}
+
+/** The composer's per-reservation inputs (D202): its render context and the
+ *  guest's language, which picks the lineage sibling exactly as D117 does. */
+export async function reservationSendContext(
+  tenantId: string,
+  reservationId: string,
+): Promise<{ context: CommunicationRenderContext; guestLanguage: string | null } | null> {
+  const row = await loadReservationSnapshot(tenantId, reservationId);
+  return row ? { context: await buildRenderContext(row), guestLanguage: row.guest_language } : null;
+}
+
+export type ComposedTemplate =
+  | { status: "ready"; channel: "whatsapp"; templateId: string; versionId: string; text: string }
+  | {
+      status: "ready"; channel: "email"; templateId: string; versionId: string;
+      subject: string; preheader: string | null; html: string; plainText: string;
+      senderName: string | null;
+      /** undefined = the channel default, null = no Reply-To (EmailMessage semantics) */
+      replyTo: string | null | undefined;
+    }
+  | {
+      status: "not_found" | "unpublished" | "ambiguous" | "channel_mismatch" | "render_failed" | "invalid_reply_to";
+      detail: string;
+    };
+
+/**
+ * D202 — the booking composer's template mode. The template's PUBLISHED
+ * version is resolved by the automations' own resolveVersion (same lineage and
+ * guest-language rules, D117) and rendered by the same renderVersionForWire, so
+ * a manual send from a template is the message an automation would send. The
+ * draft (`message_templates.body` / `draft_content`) is never read here.
+ */
+export async function composePublishedTemplate(args: {
+  tenantId: string;
+  templateId: string;
+  channel: CommunicationChannel;
+  guestLanguage: string | null;
+  context: CommunicationRenderContext;
+}): Promise<ComposedTemplate> {
+  const [configured] = await sql<{ channel: string }[]>`
+    SELECT channel FROM guesthub.message_templates
+    WHERE id = ${args.templateId} AND tenant_id = ${args.tenantId} AND is_active = true
+      AND archived_at IS NULL AND lifecycle_state <> 'archived'`;
+  if (!configured || configured.channel !== args.channel) return { status: "not_found", detail: "התבנית לא נמצאה" };
+  const resolution = await resolveVersion({
+    tenant_id: args.tenantId,
+    template_id: args.templateId,
+    template_version_policy: "latest_published",
+    locked_template_version_id: null,
+  }, args.guestLanguage);
+  if (resolution.outcome === "ambiguous") {
+    return { status: "ambiguous", detail: "יותר מתבנית מפורסמת אחת תואמת לשפת האורח בשושלת התבנית" };
+  }
+  if (resolution.outcome === "none") return { status: "unpublished", detail: "התבנית טרם פורסמה" };
+  const version = resolution.version;
+  const content = parseTemplateContent(version.content);
+  if ((args.channel === "whatsapp") !== (templateContentKind(content) === "whatsapp_text")) {
+    return { status: "channel_mismatch", detail: "התבנית אינה תואמת לערוץ" };
+  }
+  const rendered = renderVersionForWire(version, content, args.context);
+  const body = rendered.channel === "whatsapp" ? rendered.text : rendered.plainText;
+  if (!rendered.canSend || !body.trim()) {
+    return {
+      status: "render_failed",
+      detail: describeRenderIssues(rendered.issues) ?? "ההודעה ריקה לאחר מילוי המשתנים",
+    };
+  }
+  if (rendered.channel === "whatsapp") {
+    return { status: "ready", channel: "whatsapp", templateId: version.template_id, versionId: version.id, text: rendered.text };
+  }
+  // Sender and Reply-To follow the automation's rules; with no connected-channel
+  // snapshot the provider's own default applies (undefined), never a guess.
+  const emailChannel = await resolveConnectedEmailChannel(args.tenantId);
+  const replyTo = version.reply_to_behavior === "custom"
+    ? version.reply_to_address
+    : version.reply_to_behavior === "channel_default"
+      ? emailChannel?.reply_to ?? undefined
+      : null;
+  if (replyTo && !EMAIL_RE.test(replyTo)) {
+    return { status: "invalid_reply_to", detail: "כתובת המענה של התבנית או הערוץ אינה תקינה" };
+  }
+  return {
+    status: "ready", channel: "email", templateId: version.template_id, versionId: version.id,
+    subject: rendered.subject, preheader: rendered.preheader, html: rendered.html, plainText: rendered.plainText,
+    senderName: version.sender_display_name ?? emailChannel?.sender_name ?? null,
+    replyTo,
+  };
 }

@@ -26,20 +26,24 @@ export async function createOutboundMessage(args: {
   channel: MessageChannel;
   provider: string;
   templateId: string | null;
+  /** D202 — the published version a template send actually rendered */
+  templateVersionId?: string | null;
   toAddress: string;
   subject: string | null;
   body: string;
+  /** the HTML that went on the wire (email from a template, D202) */
+  renderedHtml?: string | null;
   status: MessageStatus;
   userId: string;
 }): Promise<string> {
   const [row] = await sql<{ id: string }[]>`
     INSERT INTO guesthub.outbound_messages
-      (tenant_id, reservation_id, guest_id, channel, provider, template_id,
-       to_address, subject, body, status, created_by)
+      (tenant_id, reservation_id, guest_id, channel, provider, template_id, template_version_id,
+       to_address, subject, body, rendered_html, status, created_by)
     VALUES (
       ${args.tenantId}, ${args.reservationId}, ${args.guestId}, ${args.channel},
-      ${args.provider}, ${args.templateId}, ${args.toAddress}, ${args.subject},
-      ${args.body}, ${args.status}, ${args.userId})
+      ${args.provider}, ${args.templateId}, ${args.templateVersionId ?? null}, ${args.toAddress}, ${args.subject},
+      ${args.body}, ${args.renderedHtml ?? null}, ${args.status}, ${args.userId})
     RETURNING id`;
   return row.id;
 }

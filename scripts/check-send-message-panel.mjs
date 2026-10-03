@@ -279,13 +279,17 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
 }
 
 // ============================================================
-// 10. the mode switch — "כתיבת הודעה חדשה" is a BLANK page (D178, owner ruling 10/09/2026)
+// 10. the mode switch — "כתיבת הודעה חדשה" is a BLANK page (D178, owner ruling
+//     10/09/2026); template mode is READ-ONLY (D202, owner ruling 03/10/2026)
 // ============================================================
 {
-  const tpl = { subject: "אישור הזמנה {{reservation.number}}", body: "שלום {{guest_first_name}},\nמספר {{reservation.number}}" };
-  const filled = { mode: "template", templateId: "t1", subject: tpl.subject, body: tpl.body };
+  // D202 replaced the old "switching back refills the draft from the template":
+  // template mode no longer copies a template into the editable draft at all —
+  // it shows the published version the server rendered, and the send
+  // re-resolves it server-side. So applyMode takes no template any more.
+  const typed = { mode: "custom", templateId: "t1", subject: "נושא {{reservation.number}}", body: "שלום {{guest_first_name}}" };
 
-  const custom = m.applyMode(filled, "custom", tpl, true);
+  const custom = m.applyMode({ ...typed, mode: "template" }, "custom");
   assert.equal(custom.body, "", 'switching to "כתיבת הודעה חדשה" empties the textarea');
   // owner ruling 10/09/2026: empty means empty — the subject goes with the body
   assert.equal(custom.subject, "", "…and empties the subject field too");
@@ -293,28 +297,17 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   assert.ok(!custom.subject.includes("{{"), "…and none in the subject either");
   assert.equal(custom.mode, "custom", "…and the mode really changed");
   assert.equal(custom.templateId, "t1",
-    "…while the chosen template is REMEMBERED — switching back has to have something to refill from");
+    "…while the chosen template is REMEMBERED — switching back shows the same template again");
 
-  const back = m.applyMode(custom, "template", tpl, true);
-  assert.equal(back.body, tpl.body, "switching back to a template repopulates the body");
-  assert.equal(back.subject, tpl.subject, "…and the subject, on email — BOTH come back, not just one");
-  assert.notEqual(back.subject, "", "…so the round trip restores the subject it cleared");
-  assert.equal(m.applyMode(custom, "template", tpl, false).subject, "",
-    "…but WhatsApp never refills a subject, because WhatsApp has no subject field");
-
-  // the select keeps its value, so re-picking the same option fires no change
-  // event: without this branch the body could never come back at all
-  assert.notEqual(back.body, "", "the round trip template → custom → template is not one-way");
-
-  const orphan = m.applyMode({ ...filled, templateId: "gone" }, "template", null, true);
-  assert.equal(orphan.body, filled.body, "a templateId that matches nothing leaves the draft alone");
-  assert.equal(orphan.mode, "template", "…and still switches mode");
+  const back = m.applyMode(custom, "template");
+  assert.equal(back.mode, "template", "switching back to a template changes the mode");
+  assert.equal(back.templateId, "t1", "…to the same remembered template");
+  assert.equal(back.body, "", "…and copies nothing into the draft: template mode is read-only (D202)");
 
   // an untouched custom draft must survive its own no-op switch intact
-  const typed = { mode: "custom", templateId: "", subject: "s", body: "מה שהמפעיל הקליד" };
-  assert.equal(m.applyMode(typed, "template", null, true).body, typed.body,
-    "with no template chosen, entering template mode keeps what the operator typed");
-  assert.equal(m.applyMode(typed, "template", null, true).subject, typed.subject,
+  const kept = m.applyMode(typed, "template");
+  assert.equal(kept.body, typed.body, "entering template mode leaves what the operator typed alone");
+  assert.equal(kept.subject, typed.subject,
     "…including the subject — the clear belongs to the switch INTO custom, not to every switch");
 
   // the preview is derived, so an empty pair leaves nothing for it to render
@@ -328,7 +321,7 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   assert.match(CODE, /onClick=\{\(\) => switchMode\("custom"\)\}/, 'the "כתיבת הודעה חדשה" button routes through it too');
   assert.match(CODE, /const switchMode = \(next: ComposerDraft\["mode"\]\) =>\s*onDraftChange\(applyMode\(/,
     "…and that switch is the pure applyMode, so this section's assertions are about live code");
-  ok('switching to "כתיבת הודעה חדשה" clears body AND subject, and switching back refills both from the template');
+  ok('switching to "כתיבת הודעה חדשה" clears body AND subject; template mode copies nothing into the draft');
 }
 
 // ============================================================

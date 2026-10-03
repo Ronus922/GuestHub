@@ -7,6 +7,8 @@ import { renderTemplate } from "@/lib/messaging/templates";
 import { renderManualText } from "@/lib/messaging/render-manual";
 import {
   applyMode,
+  copyToFreeText,
+  sendPayload,
   insertToken,
   manualSendGate,
   sendBlockMessage,
@@ -168,11 +170,15 @@ export function MessageComposer({
   const recipientValid = ctx ? (isEmail ? ctx.emailValid : ctx.phoneValid) : false;
   const recipient = ctx ? (isEmail ? ctx.email : ctx.phoneE164 ?? ctx.phone) : null;
 
-  const templateById = (id: string) => templates.find((x) => x.id === id) ?? null;
-  const applyTemplate = (id: string) =>
-    onDraftChange(applyMode({ ...draft, templateId: id }, "template", templateById(id), isEmail));
-  const switchMode = (next: ComposerDraft["mode"]) =>
-    onDraftChange(applyMode(draft, next, templateById(templateId), isEmail));
+  // D202 — template mode is read-only: it shows the chosen template's PUBLISHED
+  // version as the server rendered it for this reservation, and the send
+  // re-resolves that same version server-side.
+  const selected = mode === "template" ? templates.find((x) => x.id === templateId) ?? null : null;
+  const applyTemplate = (id: string) => onDraftChange({ ...draft, mode: "template", templateId: id });
+  const switchMode = (next: ComposerDraft["mode"]) => onDraftChange(applyMode(draft, next));
+  const copyToFree = () => {
+    if (selected?.status === "ready") onDraftChange(copyToFreeText(draft, selected.text));
+  };
 
   const insertVar = (key: string) => {
     const token = `{{${key}}}`;
@@ -194,12 +200,19 @@ export function MessageComposer({
   // never show a {{group.key}} token the send would resolve — or hide one the
   // send would refuse. Without a render context the legacy pass is shown and
   // the server refuses on its own.
-  const subjectRender = isEmail && ctx?.renderContext ? renderManualText(subject, vars, ctx.renderContext) : null;
-  const previewSubject = subjectRender ? subjectRender.value : renderTemplate(subject, vars);
+  // In template mode the preview IS the published version, already rendered.
+  const isFree = mode === "custom";
+  const subjectRender = isFree && isEmail && ctx?.renderContext ? renderManualText(subject, vars, ctx.renderContext) : null;
+  const previewSubject = !isFree
+    ? selected?.subject ?? ""
+    : subjectRender ? subjectRender.value : renderTemplate(subject, vars);
   const subjectBlocked = subjectRender !== null && !subjectRender.canSend;
-  const bodyRender = ctx?.renderContext ? renderManualText(body, vars, ctx.renderContext) : null;
-  const previewBody = bodyRender ? bodyRender.value : renderTemplate(body, vars);
+  const bodyRender = isFree && ctx?.renderContext ? renderManualText(body, vars, ctx.renderContext) : null;
+  const previewBody = !isFree ? selected?.text ?? "" : bodyRender ? bodyRender.value : renderTemplate(body, vars);
   const bodyBlocked = bodyRender !== null && !bodyRender.canSend;
+  const templateState = isFree
+    ? undefined
+    : !selected ? "none" : selected.status === "ready" ? "ready" : selected.status === "unpublished" ? "unpublished" : "blocked";
 
   // ONE gate behind both the button and the footer's stated reason.
   const gate = manualSendGate({
@@ -208,8 +221,9 @@ export function MessageComposer({
     recipientValid,
     subjectBlocked,
     bodyBlocked,
-    subject,
+    subject: previewSubject,
     renderedBody: previewBody,
+    template: templateState,
   });
   const canSend = gate.canSend && !pending && sendState !== "sent";
   const blockMessage = sendBlockMessage(gate.block, isEmail);
@@ -217,9 +231,10 @@ export function MessageComposer({
   const doSend = () =>
     startSend(async () => {
       setSendState("sending");
+      const payload = sendPayload(draft);
       const res = isEmail
-        ? await sendBookingEmailAction(reservationId, { templateId: mode === "template" ? templateId || null : null, subject, body })
-        : await sendBookingWhatsAppAction(reservationId, { templateId: mode === "template" ? templateId || null : null, body });
+        ? await sendBookingEmailAction(reservationId, payload)
+        : await sendBookingWhatsAppAction(reservationId, { templateId: payload.templateId, body: payload.body });
       if (!res.success || !res.data) {
         setSendState("failed");
         toast.error(res.success ? "השליחה נכשלה" : res.error);
@@ -247,7 +262,9 @@ export function MessageComposer({
         .filter(Boolean)
         .join(" · ")
     : null;
-  const hasPreview = (isEmail ? previewSubject.trim().length > 0 : true) && previewBody.trim().length > 0;
+  const hasPreview = isFree
+    ? (isEmail ? previewSubject.trim().length > 0 : true) && previewBody.trim().length > 0
+    : selected?.status === "ready";
 
   return (
     <div className="sm-panel" dir="rtl" role="dialog" aria-label={title}>
@@ -379,8 +396,8 @@ export function MessageComposer({
                     <select className="field-input" value={templateId} onChange={(e) => applyTemplate(e.target.value)}>
                       <option value="">בחירת תבנית…</option>
                       {templates.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
+                        <option key={t.id} value={t.id} disabled={t.status === "unpublished"}>
+                          {t.status === "unpublished" ? `${t.name} · התבנית טרם פורסמה` : t.name}
                         </option>
                       ))}
                     </select>
@@ -388,14 +405,29 @@ export function MessageComposer({
                       <span className="field-hint">
                         אין תבניות {isEmail ? "מייל" : "WhatsApp"} פעילות. ניתן לכתוב הודעה חדשה.
                       </span>
-                    ) : templateId ? (
+                    ) : selected?.status === "ready" ? (
                       <span className="field-hint">
                         {isEmail
-                          ? "הנושא והתוכן מולאו מהתבנית — אפשר לערוך אותם לפני השליחה"
-                          : "התוכן מולא מהתבנית — אפשר לערוך אותו לפני השליחה"}
+                          ? "הנושא והתוכן נשלחים כפי שפורסמו בתבנית, ואינם ניתנים לעריכה כאן"
+                          : "התוכן נשלח כפי שפורסם בתבנית. לעריכה — העתיקו אותו לכתיבה חופשית"}
                       </span>
                     ) : null}
                   </label>
+                )}
+
+                {/* D202 — a template that cannot go out for THIS booking names why */}
+                {selected && selected.status !== "ready" && (
+                  <p className="sm-blocked">
+                    <Icon name="warning" size={17} />
+                    {selected.detail}
+                  </p>
+                )}
+
+                {!isEmail && selected?.status === "ready" && (
+                  <button type="button" className="btn btn-secondary sm-copy" onClick={copyToFree}>
+                    <Icon name="copy" size={20} />
+                    העתק לכתיבה חופשית
+                  </button>
                 )}
 
                 {/* D178 — the composer's two free-text fields are pinned RTL, regardless of
@@ -403,7 +435,7 @@ export function MessageComposer({
                     which picks the base direction from the first strong character; an EMPTY
                     field has none, fell back to LTR and put the caret on the left. `:not([dir])`
                     is that same rule's declared opt-out, so the attribute is the sanctioned fix. */}
-                {isEmail && (
+                {isFree && isEmail && (
                   <label className="field sm-field">
                     <span className="field-label">נושא</span>
                     <input
@@ -416,17 +448,19 @@ export function MessageComposer({
                   </label>
                 )}
 
-                <label className="field sm-field">
-                  <span className="field-label">תוכן ההודעה</span>
-                  <textarea
-                    ref={bodyRef}
-                    className="field-input"
-                    dir="rtl"
-                    value={body}
-                    onChange={(e) => patch({ body: e.target.value })}
-                    placeholder="כתבו את ההודעה… לחיצה על משתנה למטה מוסיפה אותו במיקום הסמן"
-                  />
-                </label>
+                {isFree && (
+                  <label className="field sm-field">
+                    <span className="field-label">תוכן ההודעה</span>
+                    <textarea
+                      ref={bodyRef}
+                      className="field-input"
+                      dir="rtl"
+                      value={body}
+                      onChange={(e) => patch({ body: e.target.value })}
+                      placeholder="כתבו את ההודעה… לחיצה על משתנה למטה מוסיפה אותו במיקום הסמן"
+                    />
+                  </label>
+                )}
 
                 {/* D172 — a variable the renderer cannot resolve is named, not shipped */}
                 {subjectBlocked && (
@@ -442,26 +476,28 @@ export function MessageComposer({
                   </p>
                 )}
 
-                <div className="sm-vars">
-                  <p className="sm-vars-hd">
-                    <Icon name="variables" size={17} />
-                    משתני הזמנה — לחיצה מוסיפה לתוכן
-                  </p>
-                  <div className="sm-vars-list">
-                    {ctx.variableDefs.map((v) => (
-                      <button
-                        key={v.key}
-                        type="button"
-                        className="sm-var"
-                        title={`{{${v.key}}}`}
-                        onClick={() => insertVar(v.key)}
-                      >
-                        <Icon name="plus" size={13.5} />
-                        {v.label}
-                      </button>
-                    ))}
+                {isFree && (
+                  <div className="sm-vars">
+                    <p className="sm-vars-hd">
+                      <Icon name="variables" size={17} />
+                      משתני הזמנה — לחיצה מוסיפה לתוכן
+                    </p>
+                    <div className="sm-vars-list">
+                      {ctx.variableDefs.map((v) => (
+                        <button
+                          key={v.key}
+                          type="button"
+                          className="sm-var"
+                          title={`{{${v.key}}}`}
+                          onClick={() => insertVar(v.key)}
+                        >
+                          <Icon name="plus" size={13.5} />
+                          {v.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </section>
 
@@ -478,9 +514,11 @@ export function MessageComposer({
                 {!hasPreview ? (
                   <div className="sm-pv-empty">
                     <Icon name="drafts" size={24} />
-                    {isEmail
-                      ? "התצוגה תופיע כאן ברגע שיהיו נושא ותוכן"
-                      : "התצוגה תופיע כאן ברגע שיהיה תוכן"}
+                    {!isFree
+                      ? "התצוגה תופיע כאן ברגע שתיבחר תבנית מפורסמת"
+                      : isEmail
+                        ? "התצוגה תופיע כאן ברגע שיהיו נושא ותוכן"
+                        : "התצוגה תופיע כאן ברגע שיהיה תוכן"}
                   </div>
                 ) : (
                   <div className="sm-pv-mail">
@@ -494,7 +532,13 @@ export function MessageComposer({
                         </span>
                       )}
                     </div>
-                    <p className="sm-pv-body">{previewBody}</p>
+                    {/* an email template goes out as HTML (D202): shown the way the
+                        automations preview it — an inert sandbox="" frame, never innerHTML */}
+                    {!isFree && isEmail && selected?.html ? (
+                      <iframe className="sm-pv-frame" sandbox="" srcDoc={selected.html} title="תצוגה מקדימה של האימייל" />
+                    ) : (
+                      <p className="sm-pv-body">{previewBody}</p>
+                    )}
                   </div>
                 )}
               </div>

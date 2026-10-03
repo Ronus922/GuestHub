@@ -21,12 +21,13 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // provider_not_configured) — an honest audit trail even when nothing is sent.
 async function recordTerminal(args: {
   actor: Actor; reservationId: string | null; guestId: string | null;
-  channel: "email" | "whatsapp"; provider: string; templateId: string | null;
-  to: string; subject: string | null; body: string; status: MessageStatus; detail: string;
+  channel: "email" | "whatsapp"; provider: string; templateId: string | null; templateVersionId?: string | null;
+  to: string; subject: string | null; body: string; html?: string | null; status: MessageStatus; detail: string;
 }): Promise<SendOutcome> {
   const id = await createOutboundMessage({
     tenantId: args.actor.tenantId, reservationId: args.reservationId, guestId: args.guestId,
     channel: args.channel, provider: args.provider, templateId: args.templateId,
+    templateVersionId: args.templateVersionId, renderedHtml: args.html,
     toAddress: args.to, subject: args.subject, body: args.body, status: args.status,
     userId: args.actor.userId,
   });
@@ -36,7 +37,12 @@ async function recordTerminal(args: {
 // ---- Email (Gmail) ----
 export async function sendEmailMessage(
   actor: Actor,
-  params: { reservationId: string | null; guestId: string | null; to: string; toName?: string | null; subject: string; body: string; html?: string | null; templateId: string | null },
+  params: {
+    reservationId: string | null; guestId: string | null; to: string; toName?: string | null;
+    subject: string; body: string; html?: string | null; templateId: string | null;
+    /** D202 — a template send carries its published version and that version's sender rules */
+    templateVersionId?: string | null; fromName?: string | null; replyTo?: string | null;
+  },
 ): Promise<SendOutcome> {
   if (!EMAIL_RE.test(params.to.trim())) {
     return recordTerminal({ actor, ...params, channel: "email", provider: "gmail", subject: params.subject,
@@ -50,15 +56,18 @@ export async function sendEmailMessage(
   const messageId = await createOutboundMessage({
     tenantId: actor.tenantId, reservationId: params.reservationId, guestId: params.guestId,
     channel: "email", provider: provider.id, templateId: params.templateId,
+    templateVersionId: params.templateVersionId, renderedHtml: params.html,
     toAddress: params.to.trim(), subject: params.subject, body: params.body, status: "submitting",
     userId: actor.userId,
   });
   const result = await provider.sendEmail({
     to: params.to.trim(),
     toName: params.toName ?? null,
+    fromName: params.fromName ?? null,
     subject: params.subject,
     body: params.body,
     html: params.html ?? null,
+    replyTo: params.replyTo,
   });
   await applySendResult(messageId, result);
   // D173 — a provider failure may complete a streak; the alert-once row decides.
@@ -76,7 +85,10 @@ export async function sendEmailMessage(
 // ---- WhatsApp (GREEN-API | Twilio via the active provider) ----
 export async function sendWhatsAppMessage(
   actor: Actor,
-  params: { reservationId: string | null; guestId: string | null; to: string; body: string; templateId: string | null },
+  params: {
+    reservationId: string | null; guestId: string | null; to: string; body: string;
+    templateId: string | null; templateVersionId?: string | null;
+  },
 ): Promise<SendOutcome> {
   const n = normalizePhone(params.to);
   if (!n.valid) {
@@ -91,7 +103,7 @@ export async function sendWhatsAppMessage(
   const messageId = await createOutboundMessage({
     tenantId: actor.tenantId, reservationId: params.reservationId, guestId: params.guestId,
     channel: "whatsapp", provider: resolved.id, templateId: params.templateId,
-    toAddress: n.e164, subject: null, body: params.body, status: "submitting", userId: actor.userId,
+    templateVersionId: params.templateVersionId, toAddress: n.e164, subject: null, body: params.body, status: "submitting", userId: actor.userId,
   });
   const result = await resolved.provider.sendMessage({ to: n.e164, body: params.body });
   await applySendResult(messageId, result);
