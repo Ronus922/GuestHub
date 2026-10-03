@@ -15,7 +15,7 @@ import { TEMPLATE_GALLERY, emptyContentFor } from "@/lib/communications/gallery"
 import {
   TRIGGERS, TRIGGER_IDS, TRIGGER_LIST, SOURCE_GROUPS, describeTiming,
   otaSourceBlockReason, type TriggerId,
-  SCHEDULE_ANCHORS, SCHEDULE_WHENS, describeSchedule, scheduledTriggerId, nextTimingState,
+  SCHEDULE_ANCHORS, scheduleWhens, describeSchedule, scheduledTriggerId, nextTimingState,
   type ScheduleAnchor, type ScheduleWhen,
 } from "@/lib/communications/triggers";
 import { renderTemplateContent } from "@/lib/communications/renderer";
@@ -1029,7 +1029,7 @@ function AutomationPanel({
                         <span className="field-label">מתי</span>
                         <select className="field-input" value={scheduleWhen}
                           onChange={(e) => pickSchedule(scheduleAnchor, e.target.value as ScheduleWhen)}>
-                          {SCHEDULE_WHENS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+                          {scheduleWhens(scheduleAnchor).map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
                         </select>
                       </label>
                       {scheduleWhen !== "on" && trigger.offsetDays && (

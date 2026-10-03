@@ -45,6 +45,8 @@ check(/const timing = nextTimingState\(\{ triggerType, offsetDays, sendTime \}, 
 check(/const stored = fresh \? undefined : Number\(\(value\.timing as \{ offsetDays\?: number \}\)\.offsetDays\);/.test(shellSrc)
   && /const stored = fresh \? undefined : \(value\.timing as \{ sendTime\?: string \}\)\.sendTime;/.test(shellSrc),
   "an existing automation must open with its SAVED days and time");
+check(shellSrc.includes("{scheduleWhens(scheduleAnchor).map((w) =>"),
+  "the \"מתי\" select must take its options from scheduleWhens(the current anchor)");
 check(/subtitleWrap\b/.test(shellSrc.slice(shellSrc.indexOf("<SidePanel", shellSrc.indexOf("function AutomationPanel(")))),
   "the automation panel subtitle states a rule — it must wrap, not truncate");
 if (failures.length) {
@@ -158,6 +160,15 @@ async function scenario({ scheduler, triggers, delivery, db }) {
     eq(triggers.describeSchedule("check_out", "before", 1, "09:00"), "תישלח יום אחד לפני העזיבה בשעה 09:00",
       "the editor's Hebrew sentence");
 
+    // D201 follow-up — the "on" option names its anchor; the other labels and
+    // every id are unchanged (label only).
+    eq(triggers.scheduleWhens("check_out").map((w) => [w.id, w.label]),
+      [["before", "לפני"], ["on", "ביום העזיבה"], ["after", "אחרי"]], "\"מתי\" options under anchor = עזיבה");
+    eq(triggers.scheduleWhens("check_in").map((w) => [w.id, w.label]),
+      [["before", "לפני"], ["on", "ביום ההגעה"], ["after", "אחרי"]], "\"מתי\" options under anchor = הגעה");
+    eq(triggers.describeSchedule("check_in", "on", 0, "09:00"), "תישלח ביום ההגעה בשעה 09:00",
+      "the live sentence matches the \"on\" option");
+
     // D201 follow-up — switching windows lands on the NEW window's defaults,
     // whatever days/time the previous window held (owner-approved table).
     const expectDefaults = {
@@ -194,6 +205,8 @@ process.exitCode = await proveWithRefutation(sql, out, scenario, [
   { name: "window switch keeps the previous day count",
     mutations: [["triggers.js", "offsetDays: def.direction === \"on\" ? 0 : def.offsetDays?.default ?? 0,",
       "offsetDays: def.direction === \"on\" ? 0 : def.offsetDays && prev.offsetDays >= def.offsetDays.min && prev.offsetDays <= def.offsetDays.max ? prev.offsetDays : def.offsetDays?.default ?? 0,"]] },
+  { name: "static \"ביום\" label (anchor ignored)",
+    mutations: [["triggers.js", "label: `ביום ${anchorNoun(anchor)}`", "label: \"ביום\""]] },
   { name: "outside_stay guard removed",
     mutations: [["scheduler.js", "NOT (r.check_in <= ${today} AND ${today} < r.check_out)", "false"]] },
 ]);

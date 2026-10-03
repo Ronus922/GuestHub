@@ -234,11 +234,16 @@ export const SCHEDULE_ANCHORS: { id: ScheduleAnchor; label: string }[] = [
   { id: "check_in", label: "הגעה" },
   { id: "check_out", label: "עזיבה" },
 ];
-export const SCHEDULE_WHENS: { id: ScheduleWhen; label: string }[] = [
-  { id: "before", label: "לפני" },
-  { id: "on", label: "ביום" },
-  { id: "after", label: "אחרי" },
-];
+const anchorNoun = (anchor: ScheduleAnchor) => (anchor === "check_out" ? "העזיבה" : "ההגעה");
+
+/** The "מתי" options. "on" names its anchor — "ביום העזיבה" / "ביום ההגעה"; label only. */
+export function scheduleWhens(anchor: ScheduleAnchor): { id: ScheduleWhen; label: string }[] {
+  return [
+    { id: "before", label: "לפני" },
+    { id: "on", label: `ביום ${anchorNoun(anchor)}` },
+    { id: "after", label: "אחרי" },
+  ];
+}
 
 /** The scheduled trigger that owns one anchor × when cell. Total: 6 cells, 6 ids. */
 export function scheduledTriggerId(anchor: ScheduleAnchor, when: ScheduleWhen): TriggerId {
@@ -287,7 +292,7 @@ function hebrewDays(n: number): string {
 
 /** "תישלח יום אחד לפני העזיבה בשעה 09:00" — the editor's live sentence. */
 export function describeSchedule(anchor: ScheduleAnchor, when: ScheduleWhen, offsetDays: number, sendTime: string): string {
-  const noun = anchor === "check_out" ? "העזיבה" : "ההגעה";
+  const noun = anchorNoun(anchor);
   const day = when === "on"
     ? `ביום ${noun}`
     : `${hebrewDays(offsetDays)} ${when === "before" ? "לפני" : "אחרי"} ${noun}`;
