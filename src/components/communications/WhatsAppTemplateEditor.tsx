@@ -13,7 +13,7 @@ import { STAGE_KEYS, STAGE_LABELS } from "@/lib/communications/blocks";
 import { renderWhatsAppCommunication } from "@/lib/communications/renderer";
 import { getVariableDefinition } from "@/lib/communications/variables";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime,
+  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime, focusTemplateField,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
 import type {
@@ -145,6 +145,7 @@ export function WhatsAppTemplateEditor({
     startTransition(async () => {
       const result = await action();
       setNotice(result);
+      if (!result.success) focusTemplateField(result.field);
       if (result.success) {
         setDirty(false);
         onDone?.();
@@ -159,9 +160,8 @@ export function WhatsAppTemplateEditor({
 
   const versions = template?.versions ?? [];
   const latestVersion = versions[0] ?? null;
-  const versionChip = template?.version
-    ? `v${template.version} · ${template.state === "published" ? "פורסמה" : "טיוטה"}`
-    : "v1 · טיוטה";
+  // D205 — the state only; version numbers are internal and never shown
+  const versionChip = template?.version && template.state === "published" ? "פורסמה" : "טיוטה";
 
   return (
     <SidePanel
@@ -174,6 +174,7 @@ export function WhatsAppTemplateEditor({
           value={name}
           onChange={(e) => { setName(e.target.value); touch(); }}
           disabled={!canEdit}
+          data-tpl-field="name"
           aria-label="שם התבנית"
           placeholder="שם התבנית"
         />
@@ -235,7 +236,7 @@ export function WhatsAppTemplateEditor({
             <button type="button" className="btn btn-primary"
               disabled={pending || !canEdit || Boolean(publishBlocker)}
               title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload))}>
+              onClick={() => run(() => publishTemplateAction(payload), () => { if (!template) onClose(); })}>
               <Icon name="publish" size={17} /> פרסום
             </button>
           )}
@@ -307,6 +308,7 @@ export function WhatsAppTemplateEditor({
                 </span>
                 <textarea
                   ref={messageRef}
+                  data-tpl-field="content"
                   className="field-input"
                   dir="auto"
                   rows={12}
@@ -379,7 +381,7 @@ export function WhatsAppTemplateEditor({
           <div className="gc-meta-grid">
             <label className="field">
               <span className="field-label">שלב בחיי ההזמנה</span>
-              <select className="field-input" disabled={!canEdit} value={stage}
+              <select className="field-input" data-tpl-field="category" disabled={!canEdit} value={stage}
                 onChange={(e) => { setStage(e.target.value); touch(); }}>
                 {STAGE_KEYS.map((key) => <option key={key} value={key}>{STAGE_LABELS[key]}</option>)}
               </select>
@@ -387,7 +389,7 @@ export function WhatsAppTemplateEditor({
             </label>
             <label className="field">
               <span className="field-label">שפה</span>
-              <select className="field-input" disabled={!canEdit} value={language}
+              <select className="field-input" data-tpl-field="language" disabled={!canEdit} value={language}
                 onChange={(e) => { setLanguage(e.target.value as "he" | "en"); touch(); }}>
                 <option value="he">עברית</option>
                 <option value="en">English</option>

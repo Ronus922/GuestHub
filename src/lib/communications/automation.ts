@@ -1,6 +1,8 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { getBusinessProfile } from "@/lib/business/store";
+import type { BusinessProfile } from "@/lib/business/profile";
+import { wazeNavigationLink } from "@/lib/business/google-place";
 import { nightsBetween } from "@/lib/dates";
 import { resolveCommunicationStaySchedule } from "./schedule";
 import {
@@ -182,6 +184,26 @@ export async function loadReservationSnapshot(
   return row ?? null;
 }
 
+/**
+ * The property's variables, from the business profile — ONE builder for the
+ * reservation context (automations, manual send, preview datasets) and the
+ * property-only preview fallback, so a property variable resolves the same
+ * everywhere (D205).
+ */
+function propertyValues(profile: BusinessProfile | null): CommunicationRenderContext["values"] {
+  return {
+    "property.name": profile?.publicPropertyName,
+    "property.address": profile?.formattedAddress,
+    "property.phone": profile?.phone,
+    "property.email": profile?.email,
+    "property.map_url": profile?.latitude != null && profile.longitude != null
+      ? `https://www.google.com/maps/search/?api=1&query=${profile.latitude},${profile.longitude}`
+      : null,
+    "property.waze_url": wazeNavigationLink(profile?.latitude, profile?.longitude),
+    "property.website_url": profile?.website,
+  };
+}
+
 async function buildRenderContext(row: ReservationSnapshot): Promise<CommunicationRenderContext> {
   const [profile, schedule] = await Promise.all([
     getBusinessProfile(row.tenant_id),
@@ -190,9 +212,6 @@ async function buildRenderContext(row: ReservationSnapshot): Promise<Communicati
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
   const absoluteAsset = (value: string | null | undefined) =>
     value && /^https?:\/\//.test(value) ? value : value && appUrl ? `${appUrl}${value.startsWith("/") ? "" : "/"}${value}` : null;
-  const mapUrl = profile?.latitude != null && profile.longitude != null
-    ? `https://www.google.com/maps/search/?api=1&query=${profile.latitude},${profile.longitude}`
-    : null;
   return {
     bookingOrigin: row.booking_origin,
     values: {
@@ -223,11 +242,7 @@ async function buildRenderContext(row: ReservationSnapshot): Promise<Communicati
       "payment.balance": row.balance,
       "payment.currency": row.currency,
       "payment.payment_url": null,
-      "property.name": profile?.publicPropertyName,
-      "property.address": profile?.formattedAddress,
-      "property.phone": profile?.phone,
-      "property.email": profile?.email,
-      "property.map_url": mapUrl,
+      ...propertyValues(profile),
       "property.logo_url": absoluteAsset(profile?.logo),
     },
   };
@@ -553,12 +568,7 @@ export async function propertyOnlyContext(tenantId: string): Promise<Communicati
   const profile = await getBusinessProfile(tenantId);
   return {
     bookingOrigin: "back_office",
-    values: {
-      "property.name": profile?.publicPropertyName,
-      "property.address": profile?.formattedAddress,
-      "property.phone": profile?.phone,
-      "property.email": profile?.email,
-    },
+    values: propertyValues(profile),
   };
 }
 

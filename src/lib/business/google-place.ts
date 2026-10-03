@@ -137,3 +137,12 @@ export function googleMapsLink(opts: {
   }
   return null;
 }
+
+// D205 — the Waze navigation link ({{property.waze_url}}). Coordinates rounded
+// to 6 decimals (~10 cm): the stored values carry 14, which only lengthens a
+// URL that WhatsApp always shows in full. null without both coordinates.
+export function wazeNavigationLink(latitude: number | null | undefined, longitude: number | null | undefined): string | null {
+  if (latitude == null || longitude == null || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  const round = (n: number) => String(Math.round(n * 1e6) / 1e6);
+  return `https://waze.com/ul?ll=${round(latitude)},${round(longitude)}&navigate=yes`;
+}

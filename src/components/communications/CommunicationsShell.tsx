@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { AutomationPreview } from "./AutomationPreview";
 import { SidePanel } from "@/components/ui/SidePanel";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TemplateEditor } from "./TemplateEditor";
 import { HtmlTemplateEditor } from "./HtmlTemplateEditor";
 import { WhatsAppTemplateEditor } from "./WhatsAppTemplateEditor";
@@ -26,9 +27,9 @@ import type {
   AutomationRow, CommunicationsData, CommunicationTemplateRow, DeliveryRow,
 } from "@/app/(dashboard)/communications/data";
 import {
-  archiveTemplateAction, duplicateTemplateAction, saveAutomationAction,
+  archiveTemplateAction, deleteTemplateAction, duplicateTemplateAction, saveAutomationAction,
   saveCommunicationSettingsAction, setAutomationStatusAction,
-  type CommunicationActionResult,
+  type CommunicationActionResult, type DeleteTemplateResult,
 } from "@/app/(dashboard)/communications/actions";
 import { EMAIL_RE } from "@/lib/communications/schemas";
 import { normalizePhone } from "@/lib/phone";
@@ -150,6 +151,21 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
   const [channel, setChannel] = useState("all");
   const [stage, setStage] = useState("all");
   const [pending, startTransition] = useTransition();
+  // D205 — the template whose deletion is being confirmed, and a refusal to show in the dialog
+  const [deleting, setDeleting] = useState<CommunicationTemplateRow | null>(null);
+  const [deleteResult, setDeleteResult] = useState<DeleteTemplateResult | null>(null);
+
+  const confirmDelete = (template: CommunicationTemplateRow) =>
+    startTransition(async () => {
+      const result = await deleteTemplateAction(template.id);
+      if (result.success) {
+        setDeleting(null); setDeleteResult(null);
+        setNotice({ success: true, message: result.message });
+        router.refresh();
+      } else {
+        setDeleteResult(result);
+      }
+    });
 
   const run = (action: () => Promise<CommunicationActionResult>) =>
     startTransition(async () => {
@@ -217,6 +233,43 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
         )}
       </div>
 
+      {deleting && (
+        <ConfirmDialog
+          title="מחיקת תבנית"
+          onClose={() => { setDeleting(null); setDeleteResult(null); }}
+          footer={
+            <>
+              {!(deleteResult && !deleteResult.success && deleteResult.automations?.length) && (
+                <button type="button" className="btn btn-danger" disabled={pending} onClick={() => confirmDelete(deleting)}>
+                  <Icon name="trash" size={17} /> {pending ? "מוחק…" : "מחיקה"}
+                </button>
+              )}
+              <button type="button" className="btn btn-secondary" onClick={() => { setDeleting(null); setDeleteResult(null); }}>
+                סגירה
+              </button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <p>
+              למחוק את התבנית <b>{deleting.name}</b>? התבנית תיעלם מרשימת התבניות, מהשליחה הידנית
+              ומבחירת התבנית באוטומציות. אין שחזור.
+            </p>
+            <p className="gc-hint">
+              <Icon name="info" size={17} />
+              אם התבנית כבר נשלחה לאורחים, ההודעות שנשלחו נשארות בהיסטוריה עם התוכן המקורי.
+            </p>
+            {deleteResult && !deleteResult.success && (
+              <div className="field-msg flex flex-col gap-2" role="alert">
+                <span>{deleteResult.error}</span>
+                {deleteResult.automations?.map((a) => (
+                  <Link key={a.id} className="gc-link" href="/communications/automations">{a.name}</Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </ConfirmDialog>
+      )}
       {notice && (
         <p className={notice.success ? "gc-note" : "field-msg"} role="status">
           {notice.success ? notice.message : notice.error}
@@ -272,7 +325,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                 <div className="gc-thead mcard-head">
                   <span />
                   <span>תבנית</span><span>ערוץ</span><span>שלב</span><span>שפה</span>
-                  <span>סטטוס</span><span>גרסה</span><span>בשימוש</span>
+                  <span>סטטוס</span><span>בשימוש</span>
                   <span>עודכן · ע״י</span><span>פעולות</span>
                 </div>
                 {templates.map((template) => (
@@ -293,7 +346,6 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                     <span data-label="שלב" data-mcard="inline">{STAGE_LABELS[template.category] ?? template.category}</span>
                     <span data-label="שפה" data-mcard="inline">{template.language === "en" ? "English" : "עברית"}</span>
                     <span data-label="סטטוס" data-mcard="inline"><span className={chipClass(template.state)}>{STATE_LABEL[template.state]}</span></span>
-                    <span className="ltr-num" data-label="גרסה" data-mcard="inline">{template.version ? `v${template.version}` : "—"}</span>
                     <span data-label="בשימוש" data-mcard="inline">
                       {template.usedBy > 0 ? (
                         <Link className="gc-link" href="/communications/automations" onClick={(e) => e.stopPropagation()}>
@@ -324,6 +376,11 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
                         disabled={!permissions.editTemplates || pending}
                         onClick={() => run(() => archiveTemplateAction(template.id))}>
                         <Icon name="archive" size={17} label="ארכיון" />
+                      </button>
+                      <button type="button" className="icon-btn gc-ib text-status-danger hover:bg-status-danger-050" title="מחיקה"
+                        disabled={!permissions.editTemplates || pending}
+                        onClick={() => { setDeleteResult(null); setDeleting(template); }}>
+                        <Icon name="trash" size={17} label="מחיקה" />
                       </button>
                     </span>
                   </div>
@@ -927,7 +984,7 @@ function AutomationPanel({
   // The published lifecycle state — the honest replacement for the design's
   // Meta-approval chip. GREEN-API has no template approval to report.
   const templateStateLabel = selectedTemplate
-    ? `מפורסמת${selectedTemplate.version ? ` · גרסה ${selectedTemplate.version}` : ""}`
+    ? "מפורסמת"
     : "לא נבחרה תבנית";
 
   const ownerCount = toOwner
@@ -1149,7 +1206,7 @@ function AutomationPanel({
                     <option value="">בחירת תבנית</option>
                     {channelTemplates.map((template) => (
                       <option key={template.id} value={template.id}>
-                        {template.name}{template.version ? ` (v${template.version})` : ""}
+                        {template.name}
                       </option>
                     ))}
                   </select>

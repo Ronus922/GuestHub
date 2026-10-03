@@ -251,7 +251,7 @@
   .gc-thead,
   .gc-row {
     display: grid;
-    grid-template-columns: 44px minmax(150px, 1.4fr) 92px 96px 62px 88px 50px 100px 120px 152px;
+    grid-template-columns: 44px minmax(150px, 1.4fr) 92px 96px 62px 88px 100px 120px 204px;
     align-items: center;
     gap: 12px;
     min-width: 1040px;
@@ -503,13 +503,17 @@
   .gc-varg > .ms-icon {
     color: var(--brand);
   }
+  /* D205 — label and token share a line when they fit; a long token
+     ({{reservation.cancellation_policy}}) wraps INSIDE its button instead of
+     overflowing it and side-scrolling the whole palette column. */
   .gc-var {
     width: 100%;
     padding: 7px 10px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 4px 8px;
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
     background: var(--surface);
@@ -525,6 +529,9 @@
     background: var(--brand-soft);
   }
   .gc-var code {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
     font-size: 12px;
     color: var(--brand);
     direction: ltr;

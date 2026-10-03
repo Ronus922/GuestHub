@@ -38,6 +38,8 @@ export const COMMUNICATION_VARIABLES = [
   { key: "property.phone", label: "טלפון הנכס", group: "property", kind: "phone" },
   { key: "property.email", label: "אימייל הנכס", group: "property", kind: "email" },
   { key: "property.map_url", label: "קישור ניווט", group: "property", kind: "url" },
+  { key: "property.waze_url", label: "ניווט ב-Waze", group: "property", kind: "url" },
+  { key: "property.website_url", label: "כתובת האתר", group: "property", kind: "url" },
   { key: "property.logo_url", label: "לוגו הנכס", group: "property", kind: "url" },
 ] as const satisfies readonly VariableDefinition[];
 

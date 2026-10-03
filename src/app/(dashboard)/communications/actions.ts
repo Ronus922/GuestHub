@@ -2,8 +2,9 @@
 
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import type postgres from "postgres";
 import { z } from "zod";
-import { getActor, hasPermission, requirePermission, AuthorizationError } from "@/lib/auth/actor";
+import { getActor, hasPermission, requirePermission, AuthorizationError, type Actor } from "@/lib/auth/actor";
 import { sql, withReadOnlyScope } from "@/lib/db";
 import { writeAudit } from "@/lib/audit";
 import {
@@ -26,13 +27,53 @@ import { normalizePhone } from "@/lib/phone";
 import { TRIGGERS, TRIGGER_IDS, SOURCE_GROUP_IDS, otaSourceBlockReason } from "@/lib/communications/triggers";
 import { previewScheduledAutomation, type AutomationPreview } from "@/lib/communications/preview";
 
-export type CommunicationActionResult = { success: true; id?: string; message?: string } | { success: false; error: string };
+/** D205 — the template-editor field a refusal is about; the editor focuses it. */
+export type TemplateField = "name" | "subject" | "senderDisplayName" | "replyTo" | "preheader" | "content" | "category" | "language";
+
+export type CommunicationActionResult =
+  | { success: true; id?: string; message?: string }
+  | { success: false; error: string; field?: TemplateField };
+
+const TEMPLATE_FIELD_LABELS: Record<TemplateField, string> = {
+  name: "שם התבנית",
+  subject: "נושא האימייל",
+  senderDisplayName: "שם השולח",
+  replyTo: "כתובת Reply-To",
+  preheader: "טקסט מקדים",
+  content: "תוכן התבנית",
+  category: "שלב בחיי ההזמנה",
+  language: "שפה",
+};
+
+/** D205 — a schema refusal names the exact field in Hebrew, never "שדות חסרים". */
+function templateFieldError(error: z.ZodError): CommunicationActionResult {
+  const issue = error.issues[0];
+  const key = issue?.path[0];
+  if (typeof key !== "string" || !(key in TEMPLATE_FIELD_LABELS)) {
+    return { success: false, error: "התבנית לא נשמרה — אחד הערכים אינו תקין" };
+  }
+  const field = key as TemplateField;
+  const label = TEMPLATE_FIELD_LABELS[field];
+  const reason = field === "replyTo" ? "כתובת האימייל אינה תקינה"
+    : issue.code === "too_small" ? (field === "name" ? "נדרשים לפחות 2 תווים" : "השדה ריק")
+    : issue.code === "too_big" ? "הטקסט ארוך מדי"
+    : "הערך אינו תקין";
+  return { success: false, error: `${label}: ${reason}`, field };
+}
 
 function fail(error: unknown): CommunicationActionResult {
   if (error instanceof AuthorizationError) return { success: false, error: error.message };
   if (error instanceof z.ZodError) return { success: false, error: "יש שדות חסרים או לא תקינים" };
   if ((error as { code?: string })?.code === "23505") return { success: false, error: "כבר קיים פריט בשם הזה" };
   return { success: false, error: "לא ניתן לשמור כרגע. נסו שוב." };
+}
+
+/** "03.10.2026, 21:45" in Israel time — the way the editor names a published version. */
+function israelDateTime(value: string): string {
+  return new Intl.DateTimeFormat("he-IL", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jerusalem",
+  }).format(new Date(value));
 }
 
 function refresh(): void {
@@ -81,17 +122,72 @@ function legacyBodyFor(input: TemplateInput): string {
   return input.subject || input.name;
 }
 
-/** Per-kind publish gate. Returns a Hebrew error, or null when publishable. */
-function publishBlocker(input: TemplateInput): string | null {
+/** Per-kind publish gate. Returns the Hebrew refusal and the field it is about, or null when publishable. */
+function publishBlocker(input: TemplateInput): { error: string; field: TemplateField } | null {
   if (input.channel === "whatsapp") {
-    return input.content.text.trim() ? null : "התבנית ריקה — הוסיפו תוכן לפני פרסום";
+    return input.content.text.trim() ? null : { error: "תוכן התבנית: ההודעה ריקה — הוסיפו תוכן לפני פרסום", field: "content" };
   }
-  if (input.subject.trim().length < 2) return "נדרש נושא לפרסום";
+  if (input.subject.trim().length < 2) return { error: "נושא האימייל: נדרש נושא לפרסום", field: "subject" };
   const kind = templateContentKind(input.content);
   const empty = kind === "html"
     ? !("html" in input.content && input.content.html.trim())
     : !("blocks" in input.content && input.content.blocks.length);
-  return empty ? "התבנית ריקה — הוסיפו תוכן לפני פרסום" : null;
+  return empty ? { error: "תוכן התבנית: התבנית ריקה — הוסיפו תוכן לפני פרסום", field: "content" } : null;
+}
+
+/** Template actions refuse a schema failure by naming the field (D205). */
+function failTemplate(error: unknown): CommunicationActionResult {
+  return error instanceof z.ZodError ? templateFieldError(error) : fail(error);
+}
+
+/**
+ * The editor's state → the template row, inside the caller's transaction. ONE
+ * writer for both "שמירת טיוטה" and "פרסום" (D205): publish saves the editor's
+ * current state as the draft and publishes it in the same transaction, for an
+ * existing template and for a new one alike.
+ */
+async function writeTemplateDraft(
+  tx: postgres.TransactionSql,
+  actor: Actor,
+  input: TemplateInput,
+  id: string,
+): Promise<void> {
+  const isEmail = input.channel === "email";
+  const subject = isEmail ? input.subject || null : null;
+  // Channel AND content-kind are fixed at creation. The WHERE below makes a
+  // kind/channel swap look like "not found" instead of silently mutating —
+  // legacy block trees carry no `kind`, so NULL matches NULL.
+  const contentKind = "kind" in input.content ? input.content.kind : null;
+  if (input.id) {
+    const rows = await tx<{ id: string }[]>`
+      UPDATE guesthub.message_templates SET name = ${input.name}, subject = ${subject},
+        body = ${legacyBodyFor(input)}, draft_content = ${sql.json(input.content as never)},
+        draft_sender_display_name = ${isEmail ? input.senderDisplayName || null : null},
+        draft_reply_to = ${isEmail ? input.replyTo || null : null},
+        draft_preheader = ${isEmail ? input.preheader || null : null},
+        category = ${input.category}, language = ${input.language},
+        lifecycle_state = CASE WHEN lifecycle_state = 'archived' THEN 'draft' ELSE lifecycle_state END,
+        updated_by = ${actor.userId}, archived_at = NULL
+      WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
+        AND channel = ${input.channel} AND deleted_at IS NULL
+        AND (draft_content->>'kind' IS NOT DISTINCT FROM ${contentKind})
+      RETURNING id`;
+    if (!rows[0]) throw new AuthorizationError("התבנית לא נמצאה");
+  } else {
+    await tx`
+      INSERT INTO guesthub.message_templates
+        (id, tenant_id, channel, slug, name, subject, body, category, language,
+         lifecycle_state, draft_content, draft_sender_display_name, draft_reply_to,
+         draft_preheader, is_active, is_system, created_by, updated_by)
+      VALUES (${id}, ${actor.tenantId}, ${input.channel}, ${`custom_${id}`}, ${input.name}, ${subject},
+        ${legacyBodyFor(input)}, ${input.category}, ${input.language}, 'draft',
+        ${sql.json(input.content as never)}, ${isEmail ? input.senderDisplayName || null : null},
+        ${isEmail ? input.replyTo || null : null}, ${isEmail ? input.preheader || null : null},
+        true, false, ${actor.userId}, ${actor.userId})`;
+  }
+  await writeAudit(actor, { entityType: "message_template", entityId: id,
+    action: input.id ? "template_draft_updated" : "template_created",
+    after: { name: input.name, channel: input.channel } }, tx);
 }
 
 export async function saveTemplateDraftAction(raw: unknown): Promise<CommunicationActionResult> {
@@ -100,47 +196,10 @@ export async function saveTemplateDraftAction(raw: unknown): Promise<Communicati
     requirePermission(actor, "communications.templates.edit");
     const input = templateInputSchema.parse(raw);
     const id = input.id ?? randomUUID();
-    const isEmail = input.channel === "email";
-    const subject = isEmail ? input.subject || null : null;
-    // Channel AND content-kind are fixed at creation. The WHERE below makes a
-    // kind/channel swap look like "not found" instead of silently mutating —
-    // legacy block trees carry no `kind`, so NULL matches NULL.
-    const contentKind = "kind" in input.content ? input.content.kind : null;
-    await sql.begin(async (tx) => {
-      if (input.id) {
-        const rows = await tx<{ id: string }[]>`
-          UPDATE guesthub.message_templates SET name = ${input.name}, subject = ${subject},
-            body = ${legacyBodyFor(input)}, draft_content = ${sql.json(input.content as never)},
-            draft_sender_display_name = ${isEmail ? input.senderDisplayName || null : null},
-            draft_reply_to = ${isEmail ? input.replyTo || null : null},
-            draft_preheader = ${isEmail ? input.preheader || null : null},
-            category = ${input.category}, language = ${input.language},
-            lifecycle_state = CASE WHEN lifecycle_state = 'archived' THEN 'draft' ELSE lifecycle_state END,
-            updated_by = ${actor.userId}, archived_at = NULL
-          WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
-            AND channel = ${input.channel}
-            AND (draft_content->>'kind' IS NOT DISTINCT FROM ${contentKind})
-          RETURNING id`;
-        if (!rows[0]) throw new AuthorizationError("התבנית לא נמצאה");
-      } else {
-        await tx`
-          INSERT INTO guesthub.message_templates
-            (id, tenant_id, channel, slug, name, subject, body, category, language,
-             lifecycle_state, draft_content, draft_sender_display_name, draft_reply_to,
-             draft_preheader, is_active, is_system, created_by, updated_by)
-          VALUES (${id}, ${actor.tenantId}, ${input.channel}, ${`custom_${id}`}, ${input.name}, ${subject},
-            ${legacyBodyFor(input)}, ${input.category}, ${input.language}, 'draft',
-            ${sql.json(input.content as never)}, ${isEmail ? input.senderDisplayName || null : null},
-            ${isEmail ? input.replyTo || null : null}, ${isEmail ? input.preheader || null : null},
-            true, false, ${actor.userId}, ${actor.userId})`;
-      }
-      await writeAudit(actor, { entityType: "message_template", entityId: id,
-        action: input.id ? "template_draft_updated" : "template_created",
-        after: { name: input.name, channel: input.channel } }, tx);
-    });
+    await sql.begin((tx) => writeTemplateDraft(tx, actor, input, id));
     refresh();
     return { success: true, id, message: "הטיוטה נשמרה" };
-  } catch (error) { return fail(error); }
+  } catch (error) { return failTemplate(error); }
 }
 
 /** Duplicate as a fresh DRAFT — never as a published template, and never carrying version history. */
@@ -160,7 +219,7 @@ export async function duplicateTemplateAction(templateId: string): Promise<Commu
              'draft', m.draft_content, m.draft_sender_display_name, m.draft_reply_to,
              m.draft_preheader, true, false, ${actor.userId}, ${actor.userId}
       FROM guesthub.message_templates m
-      WHERE m.id = ${source} AND m.tenant_id = ${actor.tenantId}
+      WHERE m.id = ${source} AND m.tenant_id = ${actor.tenantId} AND m.deleted_at IS NULL
       RETURNING id`;
     if (!rows[0]) return { success: false, error: "התבנית לא נמצאה" };
     await writeAudit(actor, { entityType: "message_template", entityId: id,
@@ -172,8 +231,8 @@ export async function duplicateTemplateAction(templateId: string): Promise<Commu
 
 /**
  * Restore a published version INTO the draft. History is immutable (a DB trigger
- * enforces it): restoring never rewrites v2, it re-opens its content for editing,
- * and publishing again produces a new version number.
+ * enforces it): restoring never rewrites a version, it re-opens its content for
+ * editing, and publishing again produces a new version.
  */
 export async function restoreTemplateVersionAction(versionId: string): Promise<CommunicationActionResult> {
   try {
@@ -184,7 +243,7 @@ export async function restoreTemplateVersionAction(versionId: string): Promise<C
     // (legacyBodyFor): WhatsApp's body is its text and it has no subject (a
     // WhatsApp version stores subject ''); email keeps subject + body = subject.
     // `body = v.subject` used to blank every restored WhatsApp template.
-    const rows = await sql<{ template_id: string; version_number: number }[]>`
+    const rows = await sql<{ template_id: string; published_at: string }[]>`
       UPDATE guesthub.message_templates m
       SET draft_content = v.content,
           subject = CASE WHEN m.channel = 'whatsapp' THEN NULL ELSE v.subject END,
@@ -197,48 +256,51 @@ export async function restoreTemplateVersionAction(versionId: string): Promise<C
           updated_by = ${actor.userId}
       FROM guesthub.message_template_versions v
       WHERE v.id = ${id} AND v.tenant_id = ${actor.tenantId}
-        AND m.id = v.template_id AND m.tenant_id = v.tenant_id
-      RETURNING v.template_id, v.version_number`;
+        AND m.id = v.template_id AND m.tenant_id = v.tenant_id AND m.deleted_at IS NULL
+      RETURNING v.template_id, v.published_at::text AS published_at`;
     if (!rows[0]) return { success: false, error: "הגרסה לא נמצאה" };
     await writeAudit(actor, { entityType: "message_template", entityId: rows[0].template_id,
-      action: "template_version_restored", after: { version: rows[0].version_number } });
+      action: "template_version_restored", after: { versionId: id } });
     refresh();
     return { success: true, id: rows[0].template_id,
-      message: `תוכן גרסה ${rows[0].version_number} הועתק לטיוטה. פרסמו כדי להפוך אותו לפעיל.` };
+      message: `התוכן שפורסם ב-${israelDateTime(rows[0].published_at)} הועתק לטיוטה. פרסמו כדי להפוך אותו לפעיל.` };
   } catch (error) { return fail(error); }
 }
 
-const publishInputSchema = z.discriminatedUnion("channel", [
-  emailTemplateInputSchema.extend({ id: z.string().uuid() }),
-  whatsappTemplateInputSchema.extend({ id: z.string().uuid() }),
-]);
+// D205 — the id is optional: "פרסום" on a template that was never saved
+// creates it and publishes it in one transaction (it used to fail the schema
+// with "יש שדות חסרים" because publish demanded an id only a save produces).
+const publishInputSchema = templateInputSchema;
 
 export async function publishTemplateAction(raw: unknown): Promise<CommunicationActionResult> {
   try {
     const actor = await getActor();
     requirePermission(actor, "communications.templates.publish");
+    if (raw && typeof raw === "object" && !("id" in raw && (raw as { id?: unknown }).id)) {
+      requirePermission(actor, "communications.templates.edit");
+    }
     const input = publishInputSchema.parse(raw);
     const blocker = publishBlocker(input);
-    if (blocker) return { success: false, error: blocker };
+    if (blocker) return { success: false, ...blocker };
     const isEmail = input.channel === "email";
-    let version = 1;
+    const id = input.id ?? randomUUID();
     await sql.begin(async (tx) => {
+      await writeTemplateDraft(tx, actor, input, id);
       const [locked] = await tx<{ id: string }[]>`
         SELECT id FROM guesthub.message_templates
-        WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}
-          AND channel = ${input.channel} FOR UPDATE`;
+        WHERE id = ${id} AND tenant_id = ${actor.tenantId}
+          AND channel = ${input.channel} AND deleted_at IS NULL FOR UPDATE`;
       if (!locked) throw new AuthorizationError("התבנית לא נמצאה");
       const [row] = await tx<{ next_version: number }[]>`
         SELECT COALESCE(MAX(version_number), 0)::int + 1 AS next_version
-        FROM guesthub.message_template_versions WHERE template_id = ${input.id}`;
-      version = row.next_version;
+        FROM guesthub.message_template_versions WHERE template_id = ${id}`;
       // version.subject is NOT NULL — a WhatsApp version stores '' (no subject
       // exists on that channel; no migration for a nullable column).
       const [published] = await tx<{ id: string }[]>`
         INSERT INTO guesthub.message_template_versions
           (tenant_id, template_id, version_number, sender_display_name, reply_to_behavior,
            reply_to_address, subject, preheader, content, published_by)
-        VALUES (${actor.tenantId}, ${input.id}, ${version},
+        VALUES (${actor.tenantId}, ${id}, ${row.next_version},
           ${isEmail ? input.senderDisplayName || null : null},
           ${isEmail ? (input.replyTo ? "custom" : "channel_default") : "none"},
           ${isEmail ? input.replyTo || null : null},
@@ -246,22 +308,16 @@ export async function publishTemplateAction(raw: unknown): Promise<Communication
           ${isEmail ? input.preheader || null : null},
           ${sql.json(input.content as never)}, ${actor.userId}) RETURNING id`;
       await tx`
-        UPDATE guesthub.message_templates SET name = ${input.name},
-          subject = ${isEmail ? input.subject : null},
-          body = ${legacyBodyFor(input)}, draft_content = ${sql.json(input.content as never)},
-          draft_sender_display_name = ${isEmail ? input.senderDisplayName || null : null},
-          draft_reply_to = ${isEmail ? input.replyTo || null : null},
-          draft_preheader = ${isEmail ? input.preheader || null : null},
-          category = ${input.category}, language = ${input.language},
-          current_published_version_id = ${published.id}, lifecycle_state = 'published',
+        UPDATE guesthub.message_templates
+        SET current_published_version_id = ${published.id}, lifecycle_state = 'published',
           is_active = true, archived_at = NULL, updated_by = ${actor.userId}
-        WHERE id = ${input.id} AND tenant_id = ${actor.tenantId}`;
-      await writeAudit(actor, { entityType: "message_template", entityId: input.id,
-        action: "template_published", after: { version, name: input.name } }, tx);
+        WHERE id = ${id} AND tenant_id = ${actor.tenantId}`;
+      await writeAudit(actor, { entityType: "message_template", entityId: id,
+        action: "template_published", after: { version: row.next_version, name: input.name } }, tx);
     });
     refresh();
-    return { success: true, id: input.id, message: `גרסה ${version} פורסמה` };
-  } catch (error) { return fail(error); }
+    return { success: true, id, message: "התבנית פורסמה" };
+  } catch (error) { return failTemplate(error); }
 }
 
 export async function archiveTemplateAction(templateId: string, restore = false): Promise<CommunicationActionResult> {
@@ -282,7 +338,7 @@ export async function archiveTemplateAction(templateId: string, restore = false)
         UPDATE guesthub.message_templates
         SET lifecycle_state = ${restore ? "draft" : "archived"}, is_active = ${restore},
             archived_at = ${restore ? null : new Date()}, updated_by = ${actor.userId}
-        WHERE tenant_id = ${actor.tenantId} AND id = ${id} RETURNING id`;
+        WHERE tenant_id = ${actor.tenantId} AND id = ${id} AND deleted_at IS NULL RETURNING id`;
       changed = Boolean(rows[0]);
       if (changed) await writeAudit(actor, { entityType: "message_template", entityId: id,
         action: restore ? "template_restored" : "template_archived" }, tx);
@@ -291,6 +347,84 @@ export async function archiveTemplateAction(templateId: string, restore = false)
     refresh();
     return { success: true, message: restore ? "התבנית שוחזרה כטיוטה" : "התבנית הועברה לארכיון" };
   } catch (error) { return fail(error); }
+}
+
+export type DeleteTemplateResult =
+  | { success: true; mode: "hard" | "soft"; message: string }
+  | { success: false; error: string; automations?: { id: string; name: string }[] };
+
+/**
+ * D205 — delete a template (owner decision 03/10/2026).
+ *  - Referenced by any automation that is not deleted (active, paused, draft,
+ *    needs attention) → refused, naming the automations.
+ *  - Never sent (no outbound row points at it or at any of its versions) and
+ *    nothing else holds it (no translation linked to it, no deleted automation
+ *    still pointing at it) → HARD delete: the template and its versions.
+ *  - Otherwise → SOFT delete: deleted_at, and out of service (inactive +
+ *    archived) so every send path that refuses archived refuses it too. The
+ *    versions stay, so the history keeps showing what was sent. No restore UI.
+ * One transaction; one audit entry naming the mode.
+ */
+export async function deleteTemplateAction(templateId: string): Promise<DeleteTemplateResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "communications.templates.edit");
+    const id = z.string().uuid().parse(templateId);
+    return await sql.begin(async (tx): Promise<DeleteTemplateResult> => {
+      const [template] = await tx<{ name: string; is_system: boolean }[]>`
+        SELECT name, is_system FROM guesthub.message_templates
+        WHERE id = ${id} AND tenant_id = ${actor.tenantId} AND deleted_at IS NULL FOR UPDATE`;
+      if (!template) return { success: false, error: "התבנית לא נמצאה" };
+      const automations = await tx<{ id: string; name: string }[]>`
+        SELECT id, name FROM guesthub.communication_automations
+        WHERE tenant_id = ${actor.tenantId} AND template_id = ${id} AND archived_at IS NULL
+        ORDER BY name`;
+      if (automations.length > 0) {
+        return {
+          success: false, automations,
+          error: automations.length === 1
+            ? `אי אפשר למחוק את "${template.name}" — התבנית משויכת לאוטומציה "${automations[0].name}". יש להחליף בה את התבנית או למחוק אותה קודם.`
+            : `אי אפשר למחוק את "${template.name}" — התבנית משויכת ל-${automations.length} אוטומציות: ${automations.map((a) => `"${a.name}"`).join(", ")}. יש להחליף בהן את התבנית או למחוק אותן קודם.`,
+        };
+      }
+      const [holds] = await tx<{ sent: boolean; held: boolean }[]>`
+        SELECT EXISTS (
+                 SELECT 1 FROM guesthub.outbound_messages o
+                 WHERE o.tenant_id = ${actor.tenantId}
+                   AND (o.template_id = ${id} OR o.template_version_id IN (
+                     SELECT v.id FROM guesthub.message_template_versions v
+                     WHERE v.tenant_id = ${actor.tenantId} AND v.template_id = ${id}))
+               ) AS sent,
+               EXISTS (
+                 SELECT 1 FROM guesthub.communication_automations a
+                 WHERE a.tenant_id = ${actor.tenantId} AND a.template_id = ${id}
+               ) OR EXISTS (
+                 SELECT 1 FROM guesthub.message_templates t
+                 WHERE t.tenant_id = ${actor.tenantId} AND t.lineage_id = ${id} AND t.id <> ${id}
+               ) AS held`;
+      const mode: "hard" | "soft" = holds.sent || holds.held ? "soft" : "hard";
+      if (mode === "hard") {
+        // the 093 trigger lets THIS template's versions go, in this transaction only
+        await tx`SELECT set_config('guesthub.template_hard_delete', ${id}, true)`;
+        await tx`UPDATE guesthub.message_templates SET current_published_version_id = NULL
+                 WHERE id = ${id} AND tenant_id = ${actor.tenantId}`;
+        await tx`DELETE FROM guesthub.message_template_versions WHERE template_id = ${id} AND tenant_id = ${actor.tenantId}`;
+        await tx`DELETE FROM guesthub.message_templates WHERE id = ${id} AND tenant_id = ${actor.tenantId}`;
+      } else {
+        await tx`
+          UPDATE guesthub.message_templates
+          SET deleted_at = now(), is_active = false, lifecycle_state = 'archived',
+              archived_at = COALESCE(archived_at, now()), updated_by = ${actor.userId}
+          WHERE id = ${id} AND tenant_id = ${actor.tenantId}`;
+      }
+      await writeAudit(actor, { entityType: "message_template", entityId: id, action: "template_deleted",
+        after: { name: template.name, mode, system: template.is_system } }, tx);
+      return { success: true, mode, message: `התבנית "${template.name}" נמחקה` };
+    }).then((result) => { if (result.success) refresh(); return result; });
+  } catch (error) {
+    const failed = fail(error);
+    return { success: false, error: failed.success ? "לא ניתן למחוק כרגע. נסו שוב." : failed.error };
+  }
 }
 
 const testSendSchema = emailTemplateInputSchema.extend({
@@ -488,7 +622,8 @@ async function deriveAutomationConfig(
   const exclusions = { ...trigger.defaultExclusions, ota: !wantsOta };
   const [template] = await sql<{ current_published_version_id: string | null }[]>`
     SELECT current_published_version_id FROM guesthub.message_templates
-    WHERE tenant_id = ${tenantId} AND id = ${input.templateId} AND channel = ${input.channel}`;
+    WHERE tenant_id = ${tenantId} AND id = ${input.templateId} AND channel = ${input.channel}
+      AND deleted_at IS NULL`;
   if (!template) return { ok: false, error: "התבנית שנבחרה אינה זמינה לערוץ הזה" };
   let owner: RecipientConfig["owner"] = null;
   if (input.recipient.owner) {

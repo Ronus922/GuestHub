@@ -74,7 +74,10 @@ export function VariablePalette({ search, canEdit, onInsert }: {
                 title={`הוספת ${variable.label}`}
               >
                 <span>{variable.label}</span>
-                <code className="ltr-num">{`{{${variable.key}}}`}</code>
+                {/* a long token breaks after its group's dot, never mid-word */}
+                <code className="ltr-num">
+                  {`{{${variable.key.split(".")[0]}.`}<wbr />{`${variable.key.split(".").slice(1).join(".")}}}`}
+                </code>
               </button>
             ))}
           </div>
@@ -99,17 +102,18 @@ export function VersionHistoryList({ versions, canEdit, pending, onRestore }: {
   onRestore: (versionId: string) => void;
 }) {
   if (versions.length === 0) {
-    return <p className="gc-hint">עדיין לא פורסמה גרסה. פרסום ייצור את v1.</p>;
+    return <p className="gc-hint">התבנית עדיין לא פורסמה. כל פרסום יופיע כאן, עם התאריך ומי פרסם.</p>;
   }
+  // D205 — a version is named by WHEN it was published and BY WHOM; the
+  // internal version number is never shown.
   return (
     <>
       {versions.map((version) => (
         <div className="gc-ver" key={version.id}>
-          <span className="chip chip-paid">v{version.version}</span>
           <span className="gc-ver-m">
-            {/* the seeded v1 has no publisher — say so, do not print "—" */}
-            <b>{version.publishedBy ? `פרסום · ${version.publishedBy}` : "גרסה ראשונית"}</b>
-            <span>{dateTime(version.publishedAt)}</span>
+            <b><time className="ltr-num" dateTime={version.publishedAt}>{dateTime(version.publishedAt)}</time></b>
+            {/* the seeded first version has no publisher — say so, do not print "—" */}
+            <span>{version.publishedBy ? `פורסמה ע״י ${version.publishedBy}` : "גרסה ראשונית"}</span>
           </span>
           {canEdit && (
             <button type="button" className="icon-btn" title="שחזור התוכן לטיוטה" disabled={pending}
@@ -121,6 +125,15 @@ export function VersionHistoryList({ versions, canEdit, pending, onRestore }: {
       ))}
     </>
   );
+}
+
+/** D205 — a refusal names a field; move the operator to it (data-tpl-field on each editor control). */
+export function focusTemplateField(field: string | undefined): void {
+  if (!field) return;
+  const el = document.querySelector<HTMLElement>(`[data-tpl-field="${field}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center" });
+  el.focus({ preventScroll: true });
 }
 
 /** The ONE in-panel dialog (§8 .modal), rendered into SidePanel's overlay slot. */
