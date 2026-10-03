@@ -215,6 +215,21 @@ async function scenario(load, stub) {
   return fail;
 }
 
+// ---- static: the preview is placed OUTSIDE the sticky two-column block ----
+// .gc-auto-side is `position: sticky` within .gc-auto; a full-width row INSIDE
+// .gc-auto had the side column pinned over the table while scrolling (measured
+// live 03/10/2026 on desktop). The preview must follow .gc-auto's closing tag.
+const { readFileSync } = await import("node:fs");
+const shell = readFileSync("src/components/communications/CommunicationsShell.tsx", "utf8");
+const css = readFileSync("src/app/styles/communications.css", "utf8");
+const staticFails = [];
+if (!/\.gc-auto-side \{[^}]*position: sticky/.test(css)) staticFails.push("the side column is no longer sticky — re-check this placement rule");
+if (!/<\/aside>\s*<\/div>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?<AutomationPreview\b/.test(shell)) {
+  staticFails.push("<AutomationPreview> must come right after .gc-auto closes (</aside></div>), outside the sticky column's block");
+}
+for (const f of staticFails) console.log(`✗ ${f}`);
+if (!staticFails.length) console.log("✓ the preview sits outside the sticky two-column block");
+
 process.exitCode = await proveWithRefutation(out, scenario, [
   { name: "preview ignores eligible statuses",
     mutations: [[PREVIEW, "if (!c.status_ok) {", "if (false) {"],
@@ -230,5 +245,6 @@ process.exitCode = await proveWithRefutation(out, scenario, [
   { name: "read-only scope opened read-write",
     mutations: [[DB, 'base.begin("read only", ', "base.begin("]] },
 ]);
+if (staticFails.length) process.exitCode = 1;
 await sql.end();
 await globalThis.__guesthubSql?.end();

@@ -1234,9 +1234,11 @@
   /* ---- D203 — "מי יקבל ב-7 הימים הקרובים" (AutomationPreview.tsx) ----
      Visibility (table ≥1280 / cards below) is the xl:hidden / hidden xl:table
      utilities on the elements; nothing here sets their display. */
-  .gc-auto-wide {
-    flex: 1 1 100%;
-    min-width: 0;
+  /* the editor's body: the two-column .gc-auto, then the full-width preview */
+  .gc-auto-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
   }
   .gc-pv-run {
     align-self: flex-start;
