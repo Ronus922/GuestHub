@@ -111,8 +111,14 @@ export function eachDay(from: DateOnly, to: DateOnly): DateOnly[] {
 
 // "Today" in the property's timezone (tenants.timezone, e.g. Asia/Jerusalem).
 export function todayInTz(timeZone: string): DateOnly {
+  return dateInTz(new Date(), timeZone);
+}
+
+// The calendar date of an instant in a timezone — never the UTC date: between
+// local midnight and ~03:00 Israel the UTC date still names yesterday.
+export function dateInTz(at: Date, timeZone: string): DateOnly {
   // en-CA formats as YYYY-MM-DD.
-  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(new Date());
+  return new Intl.DateTimeFormat("en-CA", { timeZone }).format(at);
 }
 
 // 0=Sunday … 6=Saturday (timezone-independent for date-only values).

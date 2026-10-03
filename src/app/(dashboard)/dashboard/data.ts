@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { inHouseOn } from "@/lib/in-house";
 import { sourceColor } from "@/lib/colors";
 import { addDays, formatDayMonth, type DateOnly } from "@/lib/dates";
 import { connectionHealth } from "@/lib/channel/connection-health";
@@ -336,7 +337,7 @@ export async function getDashboardData(tenantId: string, today: DateOnly): Promi
     // building tonight" is answered by the dates; the lifecycle status answers
     // "who did reception process", and zero rows carried checked_in when this
     // was built — the window would have rendered permanently empty.
-    stayRows(tenantId, sql`rr.check_in <= ${today} AND rr.check_out > ${today}`),
+    stayRows(tenantId, inHouseOn(today)),
 
     // ---- hk: rooms to clean ----------------------------------------------
     sql<Record<string, unknown>[]>`
