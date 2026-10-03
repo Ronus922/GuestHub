@@ -258,6 +258,27 @@ export function isInStayWindow(trigger: Pick<TriggerDef, "anchor" | "direction">
     || (trigger.anchor === "check_out" && trigger.direction === "before");
 }
 
+export type TimingState = { triggerType: TriggerId; offsetDays: number; sendTime: string };
+
+/**
+ * The editor's state transition when the operator picks another trigger or
+ * schedule window (D201 follow-up). Moving to a scheduled window ALWAYS lands
+ * on that window's own defaults — days and time — never on the day count of
+ * the window it came from (that leaked pre-arrival's 3 days into "לפני
+ * עזיבה"). An event trigger has no timing and leaves the values alone.
+ * Opening an existing automation never goes through here: the panel seeds its
+ * state from the saved timing_config.
+ */
+export function nextTimingState(prev: TimingState, next: TriggerId): TimingState {
+  const def = TRIGGERS[next];
+  if (def.kind !== "scheduled") return { ...prev, triggerType: next };
+  return {
+    triggerType: next,
+    offsetDays: def.direction === "on" ? 0 : def.offsetDays?.default ?? 0,
+    sendTime: def.defaultSendTime ?? "10:00",
+  };
+}
+
 function hebrewDays(n: number): string {
   if (n === 1) return "יום אחד";
   if (n === 2) return "יומיים";
