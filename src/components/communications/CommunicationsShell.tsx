@@ -14,6 +14,8 @@ import { TEMPLATE_GALLERY, emptyContentFor } from "@/lib/communications/gallery"
 import {
   TRIGGERS, TRIGGER_IDS, TRIGGER_LIST, SOURCE_GROUPS, describeTiming,
   otaSourceBlockReason, type TriggerId,
+  SCHEDULE_ANCHORS, SCHEDULE_WHENS, describeSchedule, scheduledTriggerId,
+  type ScheduleAnchor, type ScheduleWhen,
 } from "@/lib/communications/triggers";
 import { renderTemplateContent } from "@/lib/communications/renderer";
 import type {
@@ -857,7 +859,11 @@ function AutomationPanel({
     setTriggerType(next);
     const def = TRIGGERS[next];
     if (def.kind === "scheduled") {
-      setOffsetDays(def.offsetDays?.default ?? 0);
+      // D201 — moving between before/after keeps the operator's day count when
+      // it is legal in the new cell; the send time resets to the cell's default
+      // (on check-out = 09:00).
+      setOffsetDays((current) => def.offsetDays && current >= def.offsetDays.min && current <= def.offsetDays.max
+        ? current : def.offsetDays?.default ?? 0);
       setSendTime(def.defaultSendTime ?? "10:00");
     }
     // Switching TO a trigger that cannot carry OTA drops the selection here, so
@@ -897,6 +903,13 @@ function AutomationPanel({
       preheader: selectedTemplate?.preheader || undefined,
     });
   }, [selectedTemplate, previewContext]);
+
+  // D201 — a scheduled automation is anchor × when; the trigger id is derived.
+  const scheduleAnchor: ScheduleAnchor = trigger.anchor ?? "check_in";
+  const scheduleWhen: ScheduleWhen = trigger.direction ?? "before";
+  const pickSchedule = (anchor: ScheduleAnchor, when: ScheduleWhen) => pickTrigger(scheduledTriggerId(anchor, when));
+  const scheduleSentence = trigger.kind === "scheduled"
+    ? describeSchedule(scheduleAnchor, scheduleWhen, offsetDays, sendTime) : null;
 
   // The server clamps an out-of-range offset SILENTLY (actions.ts). Say so here
   // instead, so 99 days never becomes 30 behind the operator's back.
@@ -939,7 +952,7 @@ function AutomationPanel({
       open
       onClose={onClose}
       title={fresh ? "אוטומציה חדשה" : `עריכת אוטומציה — ${value.name}`}
-      subtitle="האוטומציה תחול על אירועים חדשים בלבד. אין שליחה רטרואקטיבית להזמנות קיימות."
+      subtitle="האוטומציה תחול על אירועים חדשים בלבד. הודעה מתוזמנת שלא יצאה במועד תישלח עד 3 שעות מאוחר יותר, ולא לימים שעברו."
       icon="automations"
       footer={
         <>
@@ -991,37 +1004,57 @@ function AutomationPanel({
             <div className="card-bd flex flex-col gap-3">
               <label className="field">
                 <span className="field-label">טריגר</span>
-                <select className="field-input" value={triggerType}
-                  onChange={(e) => pickTrigger(e.target.value as TriggerId)}>
-                  {TRIGGER_LIST.map((def) => (
+                <select className="field-input" value={trigger.kind === "scheduled" ? "scheduled" : triggerType}
+                  onChange={(e) => e.target.value === "scheduled"
+                    ? pickSchedule("check_in", "before")
+                    : pickTrigger(e.target.value as TriggerId)}>
+                  {TRIGGER_LIST.filter((def) => def.kind === "event").map((def) => (
                     <option key={def.id} value={def.id}>{def.label}</option>
                   ))}
+                  <option value="scheduled">לפי תאריכי השהייה</option>
                 </select>
                 <span className="field-hint">{trigger.description}</span>
               </label>
               {trigger.kind === "scheduled" && (
-                <div className="gc-meta-grid">
-                  {trigger.direction !== "on" && trigger.offsetDays && (
+                <>
+                  <div className="gc-sched-row">
                     <label className="field">
-                      <span className="field-label">
-                        {trigger.direction === "before" ? "ימים לפני" : "ימים אחרי"}
-                      </span>
-                      <input className="field-input ltr-num" type="number"
-                        min={trigger.offsetDays.min} max={trigger.offsetDays.max} value={offsetDays}
-                        onChange={(e) => setOffsetDays(Number(e.target.value))} />
-                      {offsetOutOfRange && (
-                        <span className="field-msg">
-                          {`הטווח המותר לטריגר הזה הוא ${trigger.offsetDays.min}–${trigger.offsetDays.max} ימים`}
-                        </span>
-                      )}
+                      <span className="field-label">עוגן</span>
+                      <select className="field-input" value={scheduleAnchor}
+                        onChange={(e) => pickSchedule(e.target.value as ScheduleAnchor, scheduleWhen)}>
+                        {SCHEDULE_ANCHORS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+                      </select>
                     </label>
+                    <label className="field">
+                      <span className="field-label">מתי</span>
+                      <select className="field-input" value={scheduleWhen}
+                        onChange={(e) => pickSchedule(scheduleAnchor, e.target.value as ScheduleWhen)}>
+                        {SCHEDULE_WHENS.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+                      </select>
+                    </label>
+                    {scheduleWhen !== "on" && trigger.offsetDays && (
+                      <label className="field">
+                        <span className="field-label">ימים</span>
+                        <input className="field-input ltr-num" type="number" inputMode="numeric"
+                          min={trigger.offsetDays.min} max={trigger.offsetDays.max} value={offsetDays}
+                          onChange={(e) => setOffsetDays(Number(e.target.value))} />
+                      </label>
+                    )}
+                    <label className="field">
+                      <span className="field-label">שעה</span>
+                      <input className="field-input ltr-num" type="time" value={sendTime}
+                        onChange={(e) => setSendTime(e.target.value)} />
+                    </label>
+                  </div>
+                  {offsetOutOfRange && trigger.offsetDays && (
+                    <span className="field-msg">
+                      {`הטווח המותר הוא ${trigger.offsetDays.min}–${trigger.offsetDays.max} ימים`}
+                    </span>
                   )}
-                  <label className="field">
-                    <span className="field-label">שעת שליחה</span>
-                    <input className="field-input ltr-num" type="time" value={sendTime}
-                      onChange={(e) => setSendTime(e.target.value)} />
-                  </label>
-                </div>
+                  <p className="gc-sched-say" aria-live="polite">
+                    <Icon name="attendance" size={17} /> {scheduleSentence} · שעון ישראל
+                  </p>
+                </>
               )}
             </div>
           </section>

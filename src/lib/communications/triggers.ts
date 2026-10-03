@@ -10,6 +10,12 @@ import type { CommunicationChannel } from "./types";
 // kind:"scheduled" — the worker's scheduler scan emits synthetic events when a
 //                    reservation's anchor date minus/plus the offset is today
 //                    (Israel time) and the send time has arrived.
+//
+// D201 — every scheduled trigger is one cell of anchor (check_in | check_out) ×
+// when (before | on | after). The operator picks the two axes; the registry
+// maps them to the trigger id (scheduledTriggerId), so each cell keeps its own
+// eligibility and its own occurrence-key slug, and the three pre-D201 ids keep
+// their rows, keys and behaviour byte-for-byte.
 // ============================================================
 
 export const TRIGGER_IDS = [
@@ -18,6 +24,10 @@ export const TRIGGER_IDS = [
   "reservation.pre_arrival",
   "reservation.check_in_day",
   "reservation.post_checkout",
+  // D201 — the three windows that complete anchor × when (relative schedule).
+  "reservation.post_check_in",
+  "reservation.pre_departure",
+  "reservation.check_out_day",
 ] as const;
 export type TriggerId = (typeof TRIGGER_IDS)[number];
 
@@ -152,7 +162,9 @@ export const TRIGGERS: Record<TriggerId, TriggerDef> = {
     shortName: "post_checkout",
     anchor: "check_out",
     direction: "after",
-    offsetDays: { min: 0, max: 14, default: 1 },
+    // D201 — 1–30 like every before/after window; day 0 is "ביום העזיבה"
+    // (reservation.check_out_day), which deliberately excludes checked_out.
+    offsetDays: { min: 1, max: 30, default: 1 },
     defaultSendTime: "11:00",
     // Lenient by design: operators often never press "checkout", so a stay
     // that ended while still marked confirmed/checked_in must still qualify.
@@ -161,7 +173,105 @@ export const TRIGGERS: Record<TriggerId, TriggerDef> = {
     defaultConditions: { logic: "all", items: [...BASE_ITEMS] },
     defaultExclusions: { guestCommunicationOptOut: true, ota: true },
   },
+  // D201 — the in-stay windows. "In the stay" is DATE-based (check_in <= day <
+  // check_out): statuses in production are stale (guests never pressed
+  // check-in/out), so a computed day outside the stay is skipped as
+  // outside_stay by the scheduler instead of trusting the status.
+  "reservation.post_check_in": {
+    id: "reservation.post_check_in",
+    kind: "scheduled",
+    label: "במהלך השהייה — אחרי ההגעה",
+    description: "נשלח X ימים אחרי יום ההגעה, כל עוד האורח עדיין שוהה. יום שנופל ביום העזיבה או אחריו — לא נשלח.",
+    shortName: "post_check_in",
+    anchor: "check_in",
+    direction: "after",
+    offsetDays: { min: 1, max: 30, default: 1 },
+    defaultSendTime: "10:00",
+    eligibleStatuses: ["confirmed", "checked_in"],
+    otaHardSkip: false,
+    defaultConditions: { logic: "all", items: [...BASE_ITEMS] },
+    defaultExclusions: { guestCommunicationOptOut: true, ota: true },
+  },
+  "reservation.pre_departure": {
+    id: "reservation.pre_departure",
+    kind: "scheduled",
+    label: "במהלך השהייה — לפני העזיבה",
+    description: "נשלח X ימים לפני יום העזיבה, כל עוד האורח כבר הגיע. יום שנופל לפני ההגעה — לא נשלח.",
+    shortName: "pre_departure",
+    anchor: "check_out",
+    direction: "before",
+    offsetDays: { min: 1, max: 30, default: 1 },
+    defaultSendTime: "10:00",
+    eligibleStatuses: ["confirmed", "checked_in"],
+    otaHardSkip: false,
+    defaultConditions: { logic: "all", items: [...BASE_ITEMS] },
+    defaultExclusions: { guestCommunicationOptOut: true, ota: true },
+  },
+  "reservation.check_out_day": {
+    id: "reservation.check_out_day",
+    kind: "scheduled",
+    label: "יום העזיבה",
+    description: "נשלח ביום העזיבה עצמו, בשעה שתבחרו — למי שעדיין לא סומן כעזב.",
+    shortName: "check_out_day",
+    anchor: "check_out",
+    direction: "on",
+    defaultSendTime: "09:00",
+    eligibleStatuses: ["confirmed", "checked_in"],
+    otaHardSkip: false,
+    defaultConditions: { logic: "all", items: [...BASE_ITEMS] },
+    defaultExclusions: { guestCommunicationOptOut: true, ota: true },
+  },
 };
+
+// ============================================================
+// D201 — relative schedule: anchor × when → trigger id.
+// ============================================================
+
+export type ScheduleAnchor = "check_in" | "check_out";
+export type ScheduleWhen = "before" | "on" | "after";
+
+export const SCHEDULE_ANCHORS: { id: ScheduleAnchor; label: string }[] = [
+  { id: "check_in", label: "הגעה" },
+  { id: "check_out", label: "עזיבה" },
+];
+export const SCHEDULE_WHENS: { id: ScheduleWhen; label: string }[] = [
+  { id: "before", label: "לפני" },
+  { id: "on", label: "ביום" },
+  { id: "after", label: "אחרי" },
+];
+
+/** The scheduled trigger that owns one anchor × when cell. Total: 6 cells, 6 ids. */
+export function scheduledTriggerId(anchor: ScheduleAnchor, when: ScheduleWhen): TriggerId {
+  const hit = TRIGGER_IDS.find((id) => TRIGGERS[id].kind === "scheduled"
+    && TRIGGERS[id].anchor === anchor && TRIGGERS[id].direction === when);
+  if (!hit) throw new Error(`no scheduled trigger for ${anchor}/${when}`);
+  return hit;
+}
+
+/**
+ * True when the window lives INSIDE the stay (after check-in, before
+ * check-out): the scheduler then requires check_in <= day < check_out and
+ * records outside_stay otherwise. Derived from the axes, never listed by id.
+ */
+export function isInStayWindow(trigger: Pick<TriggerDef, "anchor" | "direction">): boolean {
+  return (trigger.anchor === "check_in" && trigger.direction === "after")
+    || (trigger.anchor === "check_out" && trigger.direction === "before");
+}
+
+function hebrewDays(n: number): string {
+  if (n === 1) return "יום אחד";
+  if (n === 2) return "יומיים";
+  return `${n} ימים`;
+}
+
+/** "תישלח יום אחד לפני העזיבה בשעה 09:00" — the editor's live sentence. */
+export function describeSchedule(anchor: ScheduleAnchor, when: ScheduleWhen, offsetDays: number, sendTime: string): string {
+  const noun = anchor === "check_out" ? "העזיבה" : "ההגעה";
+  const day = when === "on"
+    ? `ביום ${noun}`
+    : `${hebrewDays(offsetDays)} ${when === "before" ? "לפני" : "אחרי"} ${noun}`;
+  return `תישלח ${day} בשעה ${sendTime}`;
+}
 
 export const TRIGGER_LIST: TriggerDef[] = TRIGGER_IDS.map((id) => TRIGGERS[id]);
 
@@ -219,20 +329,14 @@ export function triggerFor(triggerType: string): TriggerDef | null {
   return (TRIGGERS as Record<string, TriggerDef>)[triggerType] ?? null;
 }
 
-/** Hebrew one-liner for the automation list row: "תזכורת לפני הגעה · 3 ימים לפני צ׳ק-אין · 10:00". */
+/** Hebrew one-liner for the automation list row: "תישלח 3 ימים לפני ההגעה בשעה 10:00". */
 export function describeTiming(triggerType: string, timing: Record<string, unknown> | null | undefined): string {
   const trigger = triggerFor(triggerType);
   if (!trigger) return triggerType;
   if (trigger.kind === "event") return `${trigger.label} · שליחה מיידית`;
   const offset = Number((timing as { offsetDays?: number } | null)?.offsetDays ?? trigger.offsetDays?.default ?? 0);
-  const sendTime = String((timing as { sendTime?: string } | null)?.sendTime ?? trigger.defaultSendTime ?? "");
-  const anchorLabel = trigger.anchor === "check_out" ? "צ׳ק-אאוט" : "צ׳ק-אין";
-  const when = trigger.direction === "on" || offset === 0
-    ? `ביום ה${anchorLabel}`
-    : trigger.direction === "before"
-      ? `${offset} ימים לפני ה${anchorLabel}`
-      : `${offset} ימים אחרי ה${anchorLabel}`;
-  return `${trigger.label} · ${when}${sendTime ? ` · ${sendTime}` : ""}`;
+  const sendTime = String((timing as { sendTime?: string } | null)?.sendTime ?? trigger.defaultSendTime ?? "09:00");
+  return describeSchedule(trigger.anchor ?? "check_in", trigger.direction ?? "on", offset, sendTime);
 }
 
 export const CHANNEL_LABELS: Record<CommunicationChannel, string> = {
@@ -242,13 +346,40 @@ export const CHANNEL_LABELS: Record<CommunicationChannel, string> = {
 
 type QuietHoursConfig = { enabled?: boolean; start?: string; end?: string };
 
+const QUIET_HOURS_ZONE = "Asia/Jerusalem";
+
+/** Wall-clock parts of `date` in Asia/Jerusalem — independent of process TZ. */
+function israelParts(date: Date): { y: number; mo: number; d: number; h: number; mi: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: QUIET_HOURS_ZONE, hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  return { y: get("year"), mo: get("month"), d: get("day"), h: get("hour"), mi: get("minute") };
+}
+
+/** The instant at which Israel's wall clock reads y-mo-d h:mi (DST-correct). */
+function israelWallTimeToInstant(y: number, mo: number, d: number, h: number, mi: number): Date {
+  const target = Date.UTC(y, mo - 1, d, h, mi);
+  let guess = target;
+  // Two passes settle the offset even across a DST boundary.
+  for (let i = 0; i < 2; i += 1) {
+    const p = israelParts(new Date(guess));
+    guess += target - Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi);
+  }
+  return new Date(guess);
+}
+
 /**
  * Clamp a send time into the allowed window. Pure — unit-tested by the guard
- * script. A window that crosses midnight (22:00 → 07:00) suppresses sends
+ * scripts. A window that crosses midnight (22:00 → 07:00) suppresses sends
  * after `start` OR before `end`; a same-day window (13:00 → 15:00) suppresses
  * inside it. The clamped time is the window's END on the correct day.
- * Times are interpreted in the runtime's local clock (servers run Israel time,
- * like the rest of the scheduling stack).
+ *
+ * D201 — the window is Israel wall-clock time, computed EXPLICITLY in
+ * Asia/Jerusalem. It used to read the process-local clock on the claim that
+ * "servers run Israel time"; the server and the PM2 worker run Etc/UTC, so a
+ * 22:00–07:00 window would have fired as 01:00–10:00 Israel summer time.
  */
 export function applyQuietHours(date: Date, quietHours: QuietHoursConfig | null | undefined): Date {
   if (!quietHours?.enabled || !quietHours.start || !quietHours.end) return date;
@@ -256,17 +387,17 @@ export function applyQuietHours(date: Date, quietHours: QuietHoursConfig | null 
   const [endH, endM] = quietHours.end.split(":").map(Number);
   if ([startH, startM, endH, endM].some((n) => !Number.isFinite(n))) return date;
 
-  const minutes = date.getHours() * 60 + date.getMinutes();
+  const local = israelParts(date);
+  const minutes = local.h * 60 + local.mi;
   const start = startH * 60 + startM;
   const end = endH * 60 + endM;
   const crossesMidnight = start > end;
   const inQuiet = crossesMidnight ? minutes >= start || minutes < end : minutes >= start && minutes < end;
   if (!inQuiet) return date;
 
-  const clamped = new Date(date);
-  clamped.setHours(endH, endM, 0, 0);
   // Over-midnight window, caught in the evening segment → the window ends
-  // tomorrow morning.
-  if (crossesMidnight && minutes >= start) clamped.setDate(clamped.getDate() + 1);
-  return clamped;
+  // tomorrow morning (Israel calendar day; Date.UTC normalises day overflow).
+  const dayShift = crossesMidnight && minutes >= start ? 1 : 0;
+  const day = new Date(Date.UTC(local.y, local.mo - 1, local.d + dayShift));
+  return israelWallTimeToInstant(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), endH, endM);
 }

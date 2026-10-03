@@ -543,6 +543,29 @@
     grid-template-columns: 1fr 1fr;
     gap: 11px;
   }
+  /* D201 — the relative-schedule row: anchor · when · days · time. One row on
+     a wide panel, wrapping to 2×2 at phone width; every field may shrink. */
+  .gc-sched-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 11px;
+  }
+  .gc-sched-row > .field {
+    flex: 1 1 120px;
+    min-width: 0;
+  }
+  .gc-sched-say {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 13px;
+    border-radius: var(--r-md);
+    background: var(--field-bg);
+    color: var(--brand);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.5;
+  }
   .gc-cnt {
     margin-inline-start: auto;
     font-size: 12px;
