@@ -26,6 +26,7 @@ import { describeRenderIssues } from "@/lib/communications/variables";
 import { normalizePhone } from "@/lib/phone";
 import { TRIGGERS, TRIGGER_IDS, SOURCE_GROUP_IDS, otaSourceBlockReason } from "@/lib/communications/triggers";
 import { previewScheduledAutomation, type AutomationPreview } from "@/lib/communications/preview";
+import { purgeCommunicationHistory, purgePreview, type PurgeCounts } from "@/lib/communications/purge";
 
 /** D205 — the template-editor field a refusal is about; the editor focuses it. */
 export type TemplateField = "name" | "subject" | "senderDisplayName" | "replyTo" | "preheader" | "content" | "category" | "language";
@@ -424,6 +425,43 @@ export async function deleteTemplateAction(templateId: string): Promise<DeleteTe
   } catch (error) {
     const failed = fail(error);
     return { success: false, error: failed.success ? "לא ניתן למחוק כרגע. נסו שוב." : failed.error };
+  }
+}
+
+export type PurgePreviewResult = { success: true; counts: PurgeCounts } | { success: false; error: string };
+export type PurgeResult = { success: true; counts: PurgeCounts; message: string } | { success: false; error: string };
+
+/** D204 — the confirmation dialog's numbers: what "מחק היסטוריה" would delete and keep. Read-only. */
+export async function getHistoryPurgePreviewAction(): Promise<PurgePreviewResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "communications.history.purge");
+    return { success: true, counts: await withReadOnlyScope(() => purgePreview(actor.tenantId)) };
+  } catch (error) {
+    return { success: false, error: error instanceof AuthorizationError ? error.message : "לא ניתן לחשב כרגע. נסו שוב." };
+  }
+}
+
+/**
+ * D204 — "מחק היסטוריה" (owner decision 03/10/2026). Admin only
+ * (communications.history.purge), typed confirmation "מחק", one transaction,
+ * one audit entry with the counts per table and no content.
+ */
+export async function purgeCommunicationHistoryAction(confirmation: string): Promise<PurgeResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "communications.history.purge");
+    if (confirmation.trim() !== "מחק") return { success: false, error: "כדי למחוק יש להקליד מחק" };
+    const counts = await sql.begin(async (tx) => {
+      const result = await purgeCommunicationHistory(tx, actor.tenantId);
+      await writeAudit(actor, { entityType: "communication_history", entityId: actor.tenantId,
+        action: "communication_history_purged", after: result }, tx);
+      return result;
+    });
+    refresh();
+    return { success: true, counts, message: `נמחקו ${counts.outboundMessages} משלוחים מההיסטוריה` };
+  } catch (error) {
+    return { success: false, error: error instanceof AuthorizationError ? error.message : "המחיקה נכשלה — לא נמחק דבר. נסו שוב." };
   }
 }
 

@@ -3,7 +3,8 @@ import { getActor, hasPermission } from "@/lib/auth/actor";
 import { Icon } from "@/components/shared/Icon";
 import { CommunicationsShell, type CommunicationSection } from "@/components/communications/CommunicationsShell";
 import { loadPreviewDatasets, propertyOnlyContext } from "@/lib/communications/automation";
-import { loadCommunicationsData } from "../data";
+import { loadCommunicationsData, loadDeliveryPage } from "../data";
+import { parseHistoryQuery } from "@/lib/communications/history";
 
 const SECTIONS = new Set<CommunicationSection>(["automations", "templates", "history", "channels", "archive"]);
 
@@ -15,7 +16,10 @@ const REQUIRED: Record<CommunicationSection, string> = {
   archive: "communications.templates.view",
 };
 
-export default async function CommunicationSectionPage({ params }: { params: Promise<{ section: string }> }) {
+export default async function CommunicationSectionPage({ params, searchParams }: {
+  params: Promise<{ section: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { section: raw } = await params;
   if (!SECTIONS.has(raw as CommunicationSection)) redirect("/communications/templates");
   const section = raw as CommunicationSection;
@@ -44,13 +48,14 @@ export default async function CommunicationSectionPage({ params }: { params: Pro
   // permission and does not imply reservations.view. Without it the editor
   // previews against the property only, which still proves the template renders.
   const canSeeGuestData = hasPermission(actor, "reservations.view");
-  const [data, datasets, fallbackContext] = await Promise.all([
+  const [data, history, datasets, fallbackContext] = await Promise.all([
     loadCommunicationsData(actor.tenantId, {
       templates: canViewTemplates,
       automations: hasPermission(actor, "communications.automations.manage"),
-      deliveries: hasPermission(actor, "communications.deliveries.view"),
       channels: hasPermission(actor, "communications.channels.manage"),
     }),
+    // D204 — the history is filtered and paged on the server, from the URL
+    section === "history" ? loadDeliveryPage(actor.tenantId, parseHistoryQuery(await searchParams)) : Promise.resolve(null),
     // A preview runs through the very same context builder the worker uses — so a
     // preview cannot look correct while the live send would not.
     canViewTemplates && canSeeGuestData ? loadPreviewDatasets(actor.tenantId) : Promise.resolve([]),
@@ -61,6 +66,7 @@ export default async function CommunicationSectionPage({ params }: { params: Pro
     <CommunicationsShell
       section={section}
       data={data}
+      history={history}
       datasets={datasets}
       fallbackContext={fallbackContext}
       permissions={{
@@ -70,6 +76,7 @@ export default async function CommunicationSectionPage({ params }: { params: Pro
         manageAutomations: hasPermission(actor, "communications.automations.manage"),
         activateAutomations: hasPermission(actor, "communications.automations.activate"),
         manageChannels: hasPermission(actor, "communications.channels.manage"),
+        purgeHistory: hasPermission(actor, "communications.history.purge"),
       }}
     />
   );

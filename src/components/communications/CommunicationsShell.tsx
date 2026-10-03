@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { AutomationPreview } from "./AutomationPreview";
@@ -24,13 +24,18 @@ import type {
   CommunicationChannel, CommunicationRenderContext, TemplateContent, TemplateLanguage,
 } from "@/lib/communications/types";
 import type {
-  AutomationRow, CommunicationsData, CommunicationTemplateRow, DeliveryRow,
+  AutomationRow, CommunicationsData, CommunicationTemplateRow, DeliveryPage, DeliveryRow,
 } from "@/app/(dashboard)/communications/data";
 import {
   archiveTemplateAction, deleteTemplateAction, duplicateTemplateAction, saveAutomationAction,
   saveCommunicationSettingsAction, setAutomationStatusAction,
-  type CommunicationActionResult, type DeleteTemplateResult,
+  getHistoryPurgePreviewAction, purgeCommunicationHistoryAction,
+  type CommunicationActionResult, type DeleteTemplateResult, type PurgePreviewResult, type PurgeResult,
 } from "@/app/(dashboard)/communications/actions";
+import {
+  HISTORY_PRESETS, OUTBOUND_STATUSES, historyHref, israelToday, presetRange, splitRecipients,
+  type HistoryQuery, type OutboundStatus,
+} from "@/lib/communications/history";
 import { EMAIL_RE } from "@/lib/communications/schemas";
 import { normalizePhone } from "@/lib/phone";
 
@@ -47,11 +52,14 @@ const TABS: { key: CommunicationSection; label: string; icon: IconName }[] = [
 type Permissions = {
   editTemplates: boolean; publishTemplates: boolean; testSend: boolean;
   manageAutomations: boolean; activateAutomations: boolean; manageChannels: boolean;
+  purgeHistory: boolean;
 };
 
 type Props = {
   section: CommunicationSection;
   data: CommunicationsData;
+  /** D204 — the history page (server-filtered); null on other sections */
+  history: DeliveryPage | null;
   permissions: Permissions;
   datasets: { id: string; label: string; context: CommunicationRenderContext }[];
   fallbackContext: CommunicationRenderContext;
@@ -140,7 +148,7 @@ function Empty({ icon, title, text, action }: { icon: IconName; title: string; t
   );
 }
 
-export function CommunicationsShell({ section, data, permissions, datasets, fallbackContext }: Props) {
+export function CommunicationsShell({ section, data, history, permissions, datasets, fallbackContext }: Props) {
   const router = useRouter();
   const [editing, setEditing] = useState<CommunicationTemplateRow | { seed: EditorSeed } | null>(null);
   const [creating, setCreating] = useState(false);
@@ -441,7 +449,7 @@ export function CommunicationsShell({ section, data, permissions, datasets, fall
         />
       )}
 
-      {section === "history" && <HistoryPanel rows={data.deliveries} onOpen={setDelivery} />}
+      {section === "history" && <HistoryPanel page={history} canPurge={permissions.purgeHistory} onOpen={setDelivery} />}
 
       {section === "channels" && (
         <ChannelsPanel data={data} canManage={permissions.manageChannels} pending={pending}
@@ -575,8 +583,22 @@ function AutomationsPanel({
   );
 }
 
-function HistoryPanel({ rows, onOpen }: { rows: DeliveryRow[]; onOpen: (row: DeliveryRow) => void }) {
-  const columns = "minmax(160px,1.2fr) 110px minmax(150px,1.2fr) minmax(130px,1fr) 110px 150px 60px";
+/** D204 — the send history: server-side filters and paging (the URL is the state), cards below md. */
+function HistoryPanel({ page, canPurge, onOpen }: {
+  page: DeliveryPage | null;
+  canPurge: boolean;
+  onOpen: (row: DeliveryRow) => void;
+}) {
+  const router = useRouter();
+  const [purging, setPurging] = useState(false);
+  const query = page?.query ?? { from: null, to: null, statuses: [], page: 1 };
+  const go = (next: Partial<HistoryQuery>) => router.push(historyHref({ ...query, page: 1, ...next }));
+  const today = israelToday();
+  const filtered = Boolean(query.from || query.to || query.statuses.length);
+  const toggleStatus = (status: OutboundStatus) => go({
+    statuses: query.statuses.includes(status) ? query.statuses.filter((s) => s !== status) : [...query.statuses, status],
+  });
+  const rows = page?.rows ?? [];
   return (
     <section className="card">
       <div className="gc-ph">
@@ -585,35 +607,189 @@ function HistoryPanel({ rows, onOpen }: { rows: DeliveryRow[]; onOpen: (row: Del
         <span className="gc-ph-d">
           כל שליחה נשמרת עם התוכן המרונדר בפועל — שינוי עתידי בתבנית לא משנה את ההיסטוריה
         </span>
+        {canPurge && (
+          <button type="button" className="btn btn-danger gc-ph-act" onClick={() => setPurging(true)}>
+            <Icon name="trash" size={17} /> מחק היסטוריה
+          </button>
+        )}
       </div>
+
+      <div className="gc-hfil">
+        <div className="gc-hfil-row">
+          <div className="gc-seg" role="group" aria-label="טווח תאריכים">
+            {HISTORY_PRESETS.map((preset) => {
+              const range = presetRange(preset.days, today);
+              const on = query.from === range.from && query.to === range.to;
+              return (
+                <button key={preset.key} type="button" className="gc-segb" aria-pressed={on}
+                  onClick={() => go(range)}>{preset.label}</button>
+              );
+            })}
+            <button type="button" className="gc-segb" aria-pressed={!query.from && !query.to}
+              onClick={() => go({ from: null, to: null })}>הכול</button>
+          </div>
+          <label className="field gc-hfil-date">
+            <span className="field-label">מתאריך</span>
+            <input className="field-input ltr-num" type="date" value={query.from ?? ""} max={query.to ?? undefined}
+              onChange={(e) => go({ from: e.target.value || null })} />
+          </label>
+          <label className="field gc-hfil-date">
+            <span className="field-label">עד תאריך</span>
+            <input className="field-input ltr-num" type="date" value={query.to ?? ""} min={query.from ?? undefined}
+              onChange={(e) => go({ to: e.target.value || null })} />
+          </label>
+        </div>
+        <div className="gc-srcs" role="group" aria-label="סטטוס">
+          {OUTBOUND_STATUSES.map((status) => {
+            const on = query.statuses.includes(status);
+            return (
+              <button key={status} type="button" className={`gc-src${on ? " is-on" : ""}`} aria-pressed={on}
+                onClick={() => toggleStatus(status)}>
+                {on && <Icon name="check" size={17} />} {STATE_LABEL[status] ?? status}
+              </button>
+            );
+          })}
+        </div>
+        <p className="gc-hint">
+          <Icon name="info" size={17} />
+          התאריך הוא מועד יצירת המשלוח, בשעון ישראל.
+          {filtered && (
+            <button type="button" className="gc-link" onClick={() => router.push(historyHref({ from: null, to: null, statuses: [], page: 1 }))}>
+              ניקוי הסינון
+            </button>
+          )}
+        </p>
+      </div>
+
+      <p className="gc-hcount" aria-live="polite">
+        <span className="ltr-num">{(page?.total ?? 0).toLocaleString("he-IL")}</span> משלוחים
+        {page && page.pages > 1 && (
+          <> · עמוד <span className="ltr-num">{page.page}</span> מתוך <span className="ltr-num">{page.pages}</span></>
+        )}
+      </p>
+
       {rows.length === 0 ? (
-        <Empty icon="send" title="עדיין לא נשלחו הודעות"
-          text="משלוחים יופיעו כאן ברגע שאירוע מתאים ייכנס לתור." />
+        <Empty icon="send" title={filtered ? "אין משלוחים שתואמים לסינון" : "עדיין לא נשלחו הודעות"}
+          text={filtered ? "שנו את התאריכים או את הסטטוס." : "משלוחים יופיעו כאן ברגע שאירוע מתאים ייכנס לתור."} />
       ) : (
-        <div className="gc-tw">
-          <div className="gc-thead" style={{ gridTemplateColumns: columns, minWidth: 980 }}>
+        <div className="gc-tw mcard-rows">
+          <div className="gc-thead gc-hist mcard-head">
             <span>אורח</span><span>הזמנה</span><span>נמען</span><span>אוטומציה</span>
             <span>סטטוס</span><span>זמן שליחה</span><span>ניסיונות</span>
           </div>
           {rows.map((row) => (
-            <div key={row.id} className="gc-row" role="button" tabIndex={0}
-              style={{ gridTemplateColumns: columns, minWidth: 980 }}
+            <div key={row.id} className="gc-row gc-hist mcard-row" role="button" tabIndex={0}
               onClick={() => onOpen(row)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(row); } }}
-              aria-label={`פרטי משלוח ל-${row.toAddress}`}
+              aria-label={`פרטי משלוח ל-${row.guestName || "אורח"}`}
             >
-              <span className="gc-row-n">{row.guestName || "אורח"}</span>
-              <span className="ltr-num">{row.reservationNumber ?? "—"}</span>
-              <span className="ltr-num gc-row-m">{row.toAddress}</span>
-              <span>{row.automationName ?? "שליחה ידנית"}</span>
-              <span><span className={chipClass(row.status)}>{STATE_LABEL[row.status] ?? row.status}</span></span>
-              <span className="gc-row-m">{dateTime(row.sentAt ?? row.submittedAt ?? row.createdAt)}</span>
-              <span className="ltr-num">{row.attemptCount}</span>
+              <span className="gc-row-n" data-label="אורח">{row.guestName || "אורח"}</span>
+              {/* every cell stays RTL under its header; only the value inside is LTR */}
+              <span data-label="הזמנה" data-mcard="inline"><span className="ltr-num">{row.reservationNumber ?? "—"}</span></span>
+              <span className="gc-rcpts gc-row-m" data-label="נמען">
+                {splitRecipients(row.toAddress).map((address) => (
+                  <span key={address} className="ltr-num">{address}</span>
+                ))}
+              </span>
+              <span data-label="אוטומציה">{row.automationName ?? "שליחה ידנית"}</span>
+              <span data-label="סטטוס" data-mcard="inline"><span className={chipClass(row.status)}>{STATE_LABEL[row.status] ?? row.status}</span></span>
+              <span className="gc-row-m" data-label="זמן שליחה" data-mcard="inline">
+                <span className="ltr-num">{dateTime(row.sentAt ?? row.submittedAt ?? row.createdAt)}</span>
+              </span>
+              <span data-label="ניסיונות" data-mcard="inline"><span className="ltr-num">{row.attemptCount}</span></span>
             </div>
           ))}
         </div>
       )}
+
+      {page && page.pages > 1 && (
+        <nav className="gc-pager" aria-label="דפדוף">
+          <Link className={`btn btn-secondary${page.page <= 1 ? " is-disabled" : ""}`} aria-disabled={page.page <= 1}
+            href={historyHref({ ...query, page: Math.max(1, page.page - 1) })}>
+            <Icon name="chevron-right" size={17} /> הקודם
+          </Link>
+          <span className="gc-hcount">
+            <span className="ltr-num">{(page.page - 1) * page.pageSize + 1}–{Math.min(page.page * page.pageSize, page.total)}</span>
+            {" "}מתוך <span className="ltr-num">{page.total}</span>
+          </span>
+          <Link className={`btn btn-secondary${page.page >= page.pages ? " is-disabled" : ""}`} aria-disabled={page.page >= page.pages}
+            href={historyHref({ ...query, page: Math.min(page.pages, page.page + 1) })}>
+            הבא <Icon name="chevron-left" size={17} />
+          </Link>
+        </nav>
+      )}
+
+      {purging && <PurgeHistoryDialog onClose={() => setPurging(false)} />}
     </section>
+  );
+}
+
+/** D204 — "מחק היסטוריה": the counts first, then a typed "מחק"; never more than the server decides. */
+function PurgeHistoryDialog({ onClose }: { onClose: () => void }) {
+  const router = useRouter();
+  const [preview, setPreview] = useState<PurgePreviewResult | null>(null);
+  const [typed, setTyped] = useState("");
+  const [result, setResult] = useState<PurgeResult | null>(null);
+  const [pending, start] = useTransition();
+  useEffect(() => { getHistoryPurgePreviewAction().then(setPreview); }, []);
+  const counts = preview?.success ? preview.counts : null;
+  const done = result?.success ? result : null;
+  const purge = () => start(async () => {
+    const res = await purgeCommunicationHistoryAction(typed);
+    setResult(res);
+    if (res.success) router.refresh();
+  });
+  return (
+    <ConfirmDialog
+      title="מחיקת היסטוריית השליחה"
+      onClose={onClose}
+      footer={
+        <>
+          {!done && (
+            <button type="button" className="btn btn-danger" disabled={!counts || typed.trim() !== "מחק" || pending}
+              onClick={purge}>
+              <Icon name="trash" size={17} /> {pending ? "מוחק…" : "מחיקה"}
+            </button>
+          )}
+          <button type="button" className="btn btn-secondary" onClick={onClose}>סגירה</button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {done ? (
+          <p className="gc-note" role="status">{done.message}</p>
+        ) : !preview ? (
+          <p className="gc-hint">סופרים מה יימחק…</p>
+        ) : !counts ? (
+          <p className="field-msg" role="alert">{preview.success ? "" : preview.error}</p>
+        ) : (
+          <>
+            <p>
+              כל המשלוחים שהסתיימו יימחקו מההיסטוריה, בלי קשר לסינון שעל המסך. אין שחזור.
+              הודעות שעוד ממתינות או בשליחה לא נמחקות וימשיכו להישלח, והודעה שכבר נשלחה לא תישלח שוב.
+            </p>
+            <dl className="gc-purge">
+              <div><dt>משלוחים שיימחקו</dt><dd className="ltr-num">{counts.outboundMessages}</dd></div>
+              <div><dt>ניסיונות שליחה</dt><dd className="ltr-num">{counts.deliveryAttempts}</dd></div>
+              <div><dt>אירועי ספק</dt><dd className="ltr-num">{counts.messageEvents}</dd></div>
+              <div><dt>אירועי תקשורת שהסתיימו</dt><dd className="ltr-num">{counts.communicationEvents}</dd></div>
+              <div><dt>פעילים — נשמרים</dt><dd className="ltr-num">{counts.activeKept}</dd></div>
+              <div><dt>מקושרים לשיחה, לערוץ או לשליחה חוזרת — נשמרים</dt><dd className="ltr-num">{counts.referencedKept}</dd></div>
+            </dl>
+            <p className="gc-hint">
+              <Icon name="info" size={17} />
+              שיחות עם אורחים, תבניות, אוטומציות, הגדרות ויומן הפעולות לא נמחקים.
+            </p>
+            <label className="field">
+              <span className="field-label">כדי לאשר, הקלידו מחק</span>
+              <input className="field-input" value={typed} onChange={(e) => setTyped(e.target.value)}
+                autoComplete="off" aria-label="הקלידו מחק לאישור" />
+            </label>
+            {result && !result.success && <p className="field-msg" role="alert">{result.error}</p>}
+          </>
+        )}
+      </div>
+    </ConfirmDialog>
   );
 }
 

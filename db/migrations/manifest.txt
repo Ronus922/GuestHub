@@ -99,3 +99,4 @@
 091_room_capacity_inherit_room_type.sql
 092_relative_schedule_triggers.sql
 093_template_delete.sql
+094_communication_history_purge.sql

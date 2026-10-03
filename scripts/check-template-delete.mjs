@@ -90,11 +90,12 @@ async function scenario(load, stub) {
     eq([soft.success, soft.mode], [true, "soft"], "a sent template is soft-deleted, never hard-deleted");
     eq(await row(sent), { deleted: true, is_active: false, lifecycle_state: "archived" }, "…marked deleted and out of service");
     eq(await versions(sent), 1, "…its version stays");
-    const data = await D.loadCommunicationsData(tenantId, { templates: true, automations: true, deliveries: true, channels: false });
+    const data = await D.loadCommunicationsData(tenantId, { templates: true, automations: true, channels: false });
+    const historyPage = await D.loadDeliveryPage(tenantId, { from: null, to: null, statuses: [], page: 1 });
     const listed = data.templates.map((t) => t.id);
     eq([listed.includes(sent), listed.includes(unsent)], [false, false], "deleted templates are gone from the list, the archive and the automation picker");
     eq(listed.includes(inUse), true, "…the refused one is still listed");
-    const history = data.deliveries.find((d) => d.renderedPlainText === "שלום דנה, נשלח");
+    const history = historyPage.rows.find((d) => d.renderedPlainText === "שלום דנה, נשלח");
     eq([history?.templateName, history?.templateVersionId], ["נשלחה", sentVersion.id],
       "the history row of the sent message still shows its template and version");
     const ctx = await M.getMessagingContextAction(res.id);

@@ -1347,3 +1347,83 @@
     align-self: flex-start;
   }
 }
+
+/* ---- D204 — send history: filters, server paging, aligned columns ----
+   ONE column template for the header and every row (the class, not an inline
+   style: an inline grid would also beat the mobile card rule). Every cell stays
+   RTL so its value starts under its header; an LTR value (number, phone, time)
+   sits in an inline .ltr-num span inside it. Below md the rows are cards
+   (.mcard-rows, responsive.css). */
+@layer components {
+  .gc-thead.gc-hist,
+  .gc-row.gc-hist {
+    grid-template-columns: minmax(150px, 1.2fr) 96px minmax(150px, 1.2fr) minmax(130px, 1fr) 120px 150px 72px;
+    min-width: 980px;
+  }
+  /* flex-start = the inline start (right): each LTR address hugs its text
+     instead of stretching across the column and starting from its left */
+  .gc-rcpts {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .gc-ph-act {
+    margin-inline-start: auto;
+  }
+  .gc-hfil {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+  }
+  .gc-hfil-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+  }
+  .gc-hfil-date {
+    flex: 0 1 170px;
+    min-width: 140px;
+  }
+  .gc-hcount {
+    padding: 12px 20px 0;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .gc-pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--line);
+  }
+  .gc-pager .gc-hcount {
+    padding: 0;
+  }
+  .gc-pager .btn.is-disabled {
+    pointer-events: none;
+    opacity: .5;
+  }
+  .gc-purge {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 16px;
+    padding: 12px 16px;
+    border-radius: var(--r-md);
+    background: var(--field-bg);
+    font-size: 14px;
+  }
+  .gc-purge > div {
+    display: contents;
+  }
+  .gc-purge dd {
+    font-weight: 800;
+    text-align: end;
+  }
+}
