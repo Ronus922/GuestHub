@@ -14,7 +14,7 @@ import { TEMPLATE_GALLERY, emptyContentFor } from "@/lib/communications/gallery"
 import {
   TRIGGERS, TRIGGER_IDS, TRIGGER_LIST, SOURCE_GROUPS, describeTiming,
   otaSourceBlockReason, type TriggerId,
-  SCHEDULE_ANCHORS, SCHEDULE_WHENS, describeSchedule, scheduledTriggerId,
+  SCHEDULE_ANCHORS, SCHEDULE_WHENS, describeSchedule, scheduledTriggerId, nextTimingState,
   type ScheduleAnchor, type ScheduleWhen,
 } from "@/lib/communications/triggers";
 import { renderTemplateContent } from "@/lib/communications/renderer";
@@ -856,16 +856,11 @@ function AutomationPanel({
     setSources((current) => current.includes(source) ? current.filter((s) => s !== source) : [...current, source]);
 
   const pickTrigger = (next: TriggerId) => {
-    setTriggerType(next);
-    const def = TRIGGERS[next];
-    if (def.kind === "scheduled") {
-      // D201 — moving between before/after keeps the operator's day count when
-      // it is legal in the new cell; the send time resets to the cell's default
-      // (on check-out = 09:00).
-      setOffsetDays((current) => def.offsetDays && current >= def.offsetDays.min && current <= def.offsetDays.max
-        ? current : def.offsetDays?.default ?? 0);
-      setSendTime(def.defaultSendTime ?? "10:00");
-    }
+    // D201 follow-up — a window switch lands on the new window's defaults.
+    const timing = nextTimingState({ triggerType, offsetDays, sendTime }, next);
+    setTriggerType(timing.triggerType);
+    setOffsetDays(timing.offsetDays);
+    setSendTime(timing.sendTime);
     // Switching TO a trigger that cannot carry OTA drops the selection here, so
     // the operator never faces a save the server refuses over a chip that is
     // now disabled and unreachable.
@@ -953,6 +948,7 @@ function AutomationPanel({
       onClose={onClose}
       title={fresh ? "אוטומציה חדשה" : `עריכת אוטומציה — ${value.name}`}
       subtitle="האוטומציה תחול על אירועים חדשים בלבד. הודעה מתוזמנת שלא יצאה במועד תישלח עד 3 שעות מאוחר יותר, ולא לימים שעברו."
+      subtitleWrap
       icon="automations"
       footer={
         <>
@@ -1018,14 +1014,14 @@ function AutomationPanel({
               {trigger.kind === "scheduled" && (
                 <>
                   <div className="gc-sched-row">
-                    <label className="field">
+                    <label className="field gc-sched-pick">
                       <span className="field-label">עוגן</span>
                       <select className="field-input" value={scheduleAnchor}
                         onChange={(e) => pickSchedule(e.target.value as ScheduleAnchor, scheduleWhen)}>
                         {SCHEDULE_ANCHORS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
                       </select>
                     </label>
-                    <label className="field">
+                    <label className="field gc-sched-pick">
                       <span className="field-label">מתי</span>
                       <select className="field-input" value={scheduleWhen}
                         onChange={(e) => pickSchedule(scheduleAnchor, e.target.value as ScheduleWhen)}>
@@ -1033,14 +1029,14 @@ function AutomationPanel({
                       </select>
                     </label>
                     {scheduleWhen !== "on" && trigger.offsetDays && (
-                      <label className="field">
+                      <label className="field gc-sched-days">
                         <span className="field-label">ימים</span>
                         <input className="field-input ltr-num" type="number" inputMode="numeric"
                           min={trigger.offsetDays.min} max={trigger.offsetDays.max} value={offsetDays}
                           onChange={(e) => setOffsetDays(Number(e.target.value))} />
                       </label>
                     )}
-                    <label className="field">
+                    <label className="field gc-sched-time">
                       <span className="field-label">שעה</span>
                       <input className="field-input ltr-num" type="time" value={sendTime}
                         onChange={(e) => setSendTime(e.target.value)} />

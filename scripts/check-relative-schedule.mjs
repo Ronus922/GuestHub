@@ -35,11 +35,23 @@ for (const id of ["post_check_in", "pre_departure", "check_out_day", "pre_arriva
 }
 check(readFileSync("db/migrations/manifest.txt", "utf8").includes("092_relative_schedule_triggers.sql"),
   "092 must be in the migration manifest");
+// D201 follow-up — the editor must route every trigger/window pick through
+// nextTimingState (exercised at runtime below), and an EXISTING automation must
+// seed its days/time from the saved timing_config, never from defaults.
+const shellSrc = readFileSync("src/components/communications/CommunicationsShell.tsx", "utf8");
+const pick = shellSrc.slice(shellSrc.indexOf("const pickTrigger = (next: TriggerId) => {"));
+check(/const timing = nextTimingState\(\{ triggerType, offsetDays, sendTime \}, next\);\s*setTriggerType\(timing\.triggerType\);\s*setOffsetDays\(timing\.offsetDays\);\s*setSendTime\(timing\.sendTime\);/.test(pick),
+  "pickTrigger must take days AND time from nextTimingState");
+check(/const stored = fresh \? undefined : Number\(\(value\.timing as \{ offsetDays\?: number \}\)\.offsetDays\);/.test(shellSrc)
+  && /const stored = fresh \? undefined : \(value\.timing as \{ sendTime\?: string \}\)\.sendTime;/.test(shellSrc),
+  "an existing automation must open with its SAVED days and time");
+check(/subtitleWrap\b/.test(shellSrc.slice(shellSrc.indexOf("<SidePanel", shellSrc.indexOf("function AutomationPanel(")))),
+  "the automation panel subtitle states a rule — it must wrap, not truncate");
 if (failures.length) {
   for (const f of failures) console.log(`✗ ${f}`);
   process.exit(1);
 }
-console.log("✓ static wiring: prep honours skipReason first, Hebrew labels, migration 092 in the manifest");
+console.log("✓ static wiring: prep honours skipReason first, Hebrew labels, migration 092 in the manifest, editor timing wiring");
 
 const sql = connect();
 const out = compile("check-relative-schedule");
@@ -145,6 +157,27 @@ async function scenario({ scheduler, triggers, delivery, db }) {
     }
     eq(triggers.describeSchedule("check_out", "before", 1, "09:00"), "תישלח יום אחד לפני העזיבה בשעה 09:00",
       "the editor's Hebrew sentence");
+
+    // D201 follow-up — switching windows lands on the NEW window's defaults,
+    // whatever days/time the previous window held (owner-approved table).
+    const expectDefaults = {
+      "check_in/before": [3, "10:00"], "check_in/on": [0, "09:00"], "check_in/after": [1, "10:00"],
+      "check_out/before": [1, "10:00"], "check_out/on": [0, "09:00"], "check_out/after": [1, "11:00"],
+    };
+    let state = { triggerType: id("check_in", "before"), offsetDays: 17, sendTime: "13:37" };
+    for (const [cell, [days, time]] of Object.entries(expectDefaults)) {
+      const [a, w] = cell.split("/");
+      const next = triggers.nextTimingState({ ...state, offsetDays: 17, sendTime: "13:37" }, id(a, w));
+      eq([next.triggerType, next.offsetDays, next.sendTime], [id(a, w), days, time], `switching to ${cell} resets to its default`);
+      state = next;
+    }
+    // the exact path the operator walks: pre-arrival default (3) → "לפני עזיבה"
+    const pre = triggers.nextTimingState({ triggerType: "reservation.confirmed", offsetDays: 0, sendTime: "10:00" }, id("check_in", "before"));
+    const out = triggers.nextTimingState(pre, id("check_out", "before"));
+    eq([pre.offsetDays, out.offsetDays], [3, 1], "pre-arrival's 3 days never leak into before-check-out");
+    // an event trigger has no timing: values pass through untouched
+    eq(triggers.nextTimingState({ triggerType: id("check_out", "on"), offsetDays: 0, sendTime: "09:00" }, "reservation.confirmed"),
+      { triggerType: "reservation.confirmed", offsetDays: 0, sendTime: "09:00" }, "an event trigger keeps the values");
   });
   return fail;
 }
@@ -158,6 +191,9 @@ process.exitCode = await proveWithRefutation(sql, out, scenario, [
         eligibleStatuses: ["confirmed", "checked_in"]`, `direction: "on",
         defaultSendTime: "09:00",
         eligibleStatuses: ["confirmed", "checked_in", "checked_out"]`]] },
+  { name: "window switch keeps the previous day count",
+    mutations: [["triggers.js", "offsetDays: def.direction === \"on\" ? 0 : def.offsetDays?.default ?? 0,",
+      "offsetDays: def.direction === \"on\" ? 0 : def.offsetDays && prev.offsetDays >= def.offsetDays.min && prev.offsetDays <= def.offsetDays.max ? prev.offsetDays : def.offsetDays?.default ?? 0,"]] },
   { name: "outside_stay guard removed",
     mutations: [["scheduler.js", "NOT (r.check_in <= ${today} AND ${today} < r.check_out)", "false"]] },
 ]);

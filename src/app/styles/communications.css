@@ -543,16 +543,34 @@
     grid-template-columns: 1fr 1fr;
     gap: 11px;
   }
-  /* D201 — the relative-schedule row: anchor · when · days · time. One row on
-     a wide panel, wrapping to 2×2 at phone width; every field may shrink. */
+  /* D201 — the relative-schedule row: anchor · when · days · time.
+     Desktop: ONE row inside the real panel, where the main column is ~460px
+     beside the side column (card row ≈ 420px). Sized by flex bases only — the
+     .field / .field-input primitives are untouched: the two selects share the
+     slack, days needs two digits, time needs HH:MM + the picker icon.
+     88+88+72+120 + 3×11 gaps = 401px ≤ 420.
+     Phone (< md): every field 120px → the 2×2 grid, unchanged. */
   .gc-sched-row {
     display: flex;
     flex-wrap: wrap;
     gap: 11px;
   }
   .gc-sched-row > .field {
-    flex: 1 1 120px;
     min-width: 0;
+  }
+  .gc-sched-row > .gc-sched-pick {
+    flex: 1 1 88px;
+  }
+  .gc-sched-row > .gc-sched-days {
+    flex: 0 0 72px;
+  }
+  .gc-sched-row > .gc-sched-time {
+    flex: 0 0 120px;
+  }
+  @media (max-width: 767px) {
+    .gc-sched-row > .field {
+      flex: 1 1 120px;
+    }
   }
   .gc-sched-say {
     display: flex;

@@ -34,6 +34,7 @@ export function SidePanel({
   title,
   titleSlot,
   subtitle,
+  subtitleWrap,
   icon,
   avatar,
   badge,
@@ -54,6 +55,8 @@ export function SidePanel({
   /** Replaces the <h2> in the blue bar (e.g. a rename-in-place field). aria-label still comes from `title`. */
   titleSlot?: React.ReactNode;
   subtitle?: string;
+  /** Let the subtitle wrap instead of truncating — for a subtitle that states a rule (D201). */
+  subtitleWrap?: boolean;
   icon?: IconName;
   // identity header (edit-employee reference): custom avatar replaces the icon
   // square, badge is a chip rendered next to the title block
@@ -206,7 +209,7 @@ export function SidePanel({
                       canonical on-brand chip class yet, so it is composed here once */}
                   {badge ? <span className="chip chip-onbrand">{badge}</span> : null}
                 </div>
-                {subtitle ? <p className="dw-sub truncate">{subtitle}</p> : null}
+                {subtitle ? <p className={subtitleWrap ? "dw-sub" : "dw-sub truncate"}>{subtitle}</p> : null}
               </div>
 
               {/* left header cluster: action toolbar (RTL: right→left) + close X */}
