@@ -363,4 +363,134 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   ok('the subject and body are RTL while EMPTY, by declaration — not because a Hebrew template happened to fill them');
 }
 
+// ============================================================
+// 12. template mode, RENDERED (D202, owner ruling 03/10/2026) — the real
+//     MessageComposer through react-dom/server, with a fixture context
+// ============================================================
+// Replaces §10's old "switching back refills the draft" claims with the panel
+// the operator actually gets: template mode is a read-only preview (no editable
+// subject or body, no variable chips), an unpublished template stays disabled,
+// and "העתק לכתיבה חופשית" lands in free text with the rendered text. The copy
+// button's REAL onClick is captured by a spy over react/jsx-runtime and called,
+// so the click path is executed, not grepped. Every mutant below must turn it red.
+{
+  const { compile, variant } = await import("./lib/action-harness.mjs");
+  const { writeFileSync } = await import("node:fs");
+  const { createElement: h } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const out = compile("check-send-message-panel", ["src/components/reservations/BookingActions.tsx"]);
+  const SPY = join(out, "jsx-spy.mjs");
+  writeFileSync(SPY, `
+import * as rt from "react/jsx-runtime";
+export const Fragment = rt.Fragment;
+const wrap = (f) => (type, props, key) => {
+  if (props && typeof props.className === "string" && props.className.includes("sm-copy")) {
+    (globalThis.__smCopySpy ??= []).push(props);
+  }
+  return f(type, props, key);
+};
+export const jsx = wrap(rt.jsx);
+export const jsxs = wrap(rt.jsxs);
+`);
+  const BA = "components/reservations/BookingActions.js";
+  const DRAFT = "lib/messaging/composer-draft.js";
+  const spy = [BA, 'from "react/jsx-runtime"', `from ${JSON.stringify(SPY)}`];
+
+  const WA_TEXT = "‏שלום דנה,\n‏ההזמנה 4112 אושרה.";
+  const ctx = {
+    reservationId: "r1", guestName: "דנה בדיקה", reservationNumber: "4112", roomNumbers: "201",
+    checkIn: "2026-07-03", checkOut: "2026-07-06", sourceLabel: null,
+    email: "guest@example.com", emailValid: true, phone: "0501234567", phoneE164: "+972501234567", phoneValid: true,
+    variables: {}, variableDefs: [{ key: "guest_first_name", label: "שם פרטי" }], renderContext: null,
+    gmailConfigured: true, whatsappConfigured: true,
+    templates: {
+      whatsapp: [
+        { id: "wa1", name: "אישור הזמנה", status: "ready", detail: null, subject: null, text: WA_TEXT, html: null },
+        { id: "wa2", name: "מידע צ׳ק-אין", status: "unpublished", detail: "התבנית טרם פורסמה", subject: null, text: "", html: null },
+      ],
+      email: [
+        { id: "em1", name: "אישור במייל", status: "ready", detail: null, subject: "אישור הזמנה 4112",
+          text: "שלום דנה", html: "<p>שלום דנה, המייל המפורסם</p>" },
+      ],
+    },
+  };
+
+  async function scenario(load) {
+    const fail = [];
+    const yes = (cond, message) => { if (!cond) fail.push(message); };
+    const { MessageComposer } = await load(BA);
+    const D = await load(DRAFT);
+    const render = (channel, draft, onDraftChange = () => {}) => renderToStaticMarkup(h(MessageComposer, {
+      channel, reservationId: "r1", draft, onDraftChange, onEditGuest() {}, onClose() {}, onSent() {}, initialContext: ctx,
+    }));
+    const template = (templateId) => ({ mode: "template", templateId, subject: "", body: "" });
+
+    // WhatsApp, a published template chosen: read-only preview
+    globalThis.__smCopySpy = [];
+    let changed = null;
+    const wa = render("whatsapp", template("wa1"), (next) => { changed = next; });
+    yes(!/<textarea/.test(wa), "template mode (WhatsApp) renders no editable body");
+    yes(!/class="sm-vars"/.test(wa), "template mode renders no variable chips");
+    yes(wa.includes("שלום דנה,") && wa.includes("ההזמנה 4112 אושרה."), "template mode previews the rendered published text");
+    yes(wa.includes("התוכן נשלח כפי שפורסם בתבנית"), "the hint says the content is sent as published (not 'editable')");
+    yes(!wa.includes("אפשר לערוך"), "no hint claims the template text can be edited");
+    yes(/class="btn btn-secondary sm-copy"/.test(wa) && wa.includes("העתק לכתיבה חופשית"), 'WhatsApp offers "העתק לכתיבה חופשית"');
+
+    // an unpublished template stays disabled in the picker
+    yes(/<option value="wa2" disabled="">מידע צ׳ק-אין · התבנית טרם פורסמה<\/option>/.test(wa),
+      "the unpublished template is a DISABLED option carrying the hint");
+    yes(/<option value="wa1"(?: selected="")?>אישור הזמנה<\/option>/.test(wa), "…while the published one is selectable");
+    const stale = render("whatsapp", template("wa2"));
+    yes(/<button type="button" class="btn btn-primary" disabled="">/.test(stale), "a draft holding an unpublished template cannot send");
+    yes(stale.includes("התבנית טרם פורסמה — לא ניתן לשלוח"), "…and the footer names why");
+
+    // the copy button's real onClick → free text with the rendered text
+    const copyProps = globalThis.__smCopySpy.at(-1);
+    yes(typeof copyProps?.onClick === "function", "the copy button carries an onClick");
+    copyProps?.onClick?.();
+    yes(changed?.mode === "custom", "copy switches the draft to free text");
+    yes(changed?.body === WA_TEXT, "copy fills the free-text body with the rendered text, variables resolved");
+    yes(changed?.subject === "", "copy carries no subject");
+    if (changed) {
+      const free = render("whatsapp", changed);
+      yes(/<textarea[^>]*>[^<]*שלום דנה,/.test(free), "free text after copy: the textarea holds the copied text, editable");
+      yes(/class="sm-vars"/.test(free), "free text after copy: the variable chips are back");
+      yes(!/sm-copy/.test(free), "free text after copy: no copy button");
+      yes(D.sendPayload(changed).templateId === null, "free text after copy sends no template id");
+    }
+
+    // email, a published template chosen: read-only subject + HTML
+    const em = render("email", template("em1"));
+    yes(!/<textarea/.test(em) && !/placeholder="נושא ההודעה"/.test(em), "template mode (email) renders no editable subject or body");
+    yes(!/class="sm-vars"/.test(em), "template mode (email) renders no variable chips");
+    yes(/<iframe class="sm-pv-frame" sandbox=""/.test(em), "the email preview is an inert sandbox frame");
+    yes(em.includes("אישור הזמנה 4112"), "the email preview shows the published subject");
+    yes(!/sm-copy/.test(em), "email offers no copy button");
+
+    // free text is unchanged: editable subject + body + chips
+    const custom = render("email", { mode: "custom", templateId: "", subject: "נושא", body: "טקסט חופשי" });
+    yes(/placeholder="נושא ההודעה"/.test(custom) && /<textarea[^>]*>טקסט חופשי<\/textarea>/.test(custom),
+      "free text keeps its editable subject and body");
+    yes(/class="sm-vars"/.test(custom), "free text keeps its variable chips");
+    return fail;
+  }
+
+  const real = await scenario(await variant(out, [spy]));
+  for (const message of real) assert.ok(false, `§12 real code: ${message}`);
+  const mutants = [
+    ["editable textarea in template mode", [BA, 'isFree && (_jsxs("label", { className: "field sm-field"', 'true && (_jsxs("label", { className: "field sm-field"']],
+    ["editable subject in template mode", [BA, 'isFree && isEmail && (_jsxs("label"', 'isEmail && (_jsxs("label"']],
+    ["variable chips in template mode", [BA, 'isFree && (_jsxs("div", { className: "sm-vars"', 'true && (_jsxs("div", { className: "sm-vars"']],
+    ["unpublished template enabled", [BA, 'disabled: t.status === "unpublished",', "disabled: false,"]],
+    ["copy button not wired", [BA, "onClick: copyToFree,", "onClick: () => {},"]],
+    ["copy stays in template mode", [DRAFT, 'return { ...draft, mode: "custom", subject: "", body: renderedText };', "return { ...draft, body: renderedText };"]],
+  ];
+  for (const [name, mutation] of mutants) {
+    const caught = await scenario(await variant(out, [spy, mutation]));
+    assert.ok(caught.length > 0, `§12 mutant "${name}" survives — the rendered-panel assertions do not detect it`);
+    if (caught.length) console.log(`  ✓ mutant "${name}" caught (${caught.length}, e.g. ${caught[0]})`);
+  }
+  if (!real.length) ok("template mode renders read-only (no body/subject field, no chips); unpublished stays disabled; copy lands in free text — on the REAL panel, 6/6 mutants caught");
+}
+
 console.log(`\nAll ${n} send-message-drawer claim groups hold.`);

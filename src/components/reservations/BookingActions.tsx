@@ -129,6 +129,7 @@ export function MessageComposer({
   onEditGuest,
   onClose,
   onSent,
+  initialContext,
 }: {
   channel: "email" | "whatsapp";
   reservationId: string;
@@ -139,8 +140,11 @@ export function MessageComposer({
   onEditGuest: () => void;
   onClose: () => void;
   onSent: () => void;
+  /** an already-loaded context skips the load — check:send-message-panel renders the
+   *  real panel this way (react-dom/server runs no effects) */
+  initialContext?: ComposerContext;
 }) {
-  const [ctx, setCtx] = useState<ComposerContext | null>(null);
+  const [ctx, setCtx] = useState<ComposerContext | null>(initialContext ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sendState, setSendState] = useState<SendState>("idle");
   const [pending, startSend] = useTransition();
@@ -151,6 +155,7 @@ export function MessageComposer({
   const patch = (next: Partial<ComposerDraft>) => onDraftChange({ ...draft, ...next });
 
   useEffect(() => {
+    if (initialContext) return;
     let alive = true;
     getMessagingContextAction(reservationId).then((res) => {
       if (!alive) return;
@@ -163,7 +168,7 @@ export function MessageComposer({
     return () => {
       alive = false;
     };
-  }, [reservationId]);
+  }, [reservationId, initialContext]);
 
   const templates = ctx ? ctx.templates[channel] : [];
   const providerConfigured = ctx ? (isEmail ? ctx.gmailConfigured : ctx.whatsappConfigured) : false;
