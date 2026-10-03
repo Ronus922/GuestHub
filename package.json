@@ -77,6 +77,8 @@
     "check:card-draft-holder-only-is-empty": "node scripts/check-card-draft-holder-only-is-empty.mjs",
     "check:messaging": "node scripts/check-messaging.mjs",
     "check:manual-send-render": "node scripts/check-manual-send-render.mjs",
+    "check:manual-send-version": "node scripts/check-manual-send-version.mjs",
+    "check:template-restore": "node scripts/check-template-restore.mjs",
     "check:ttlock-secrets": "node scripts/check-ttlock-secrets.mjs",
     "check:guest-communications": "node scripts/check-guest-communications.mjs && node scripts/check-guest-communications-automation.mjs && node scripts/check-guest-communications-worker.mjs",
     "check:guest-communications-db": "node scripts/check-guest-communications-db.mjs",

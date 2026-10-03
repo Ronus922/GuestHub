@@ -279,13 +279,17 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
 }
 
 // ============================================================
-// 10. the mode switch — "כתיבת הודעה חדשה" is a BLANK page (D178, owner ruling 10/09/2026)
+// 10. the mode switch — "כתיבת הודעה חדשה" is a BLANK page (D178, owner ruling
+//     10/09/2026); template mode is READ-ONLY (D202, owner ruling 03/10/2026)
 // ============================================================
 {
-  const tpl = { subject: "אישור הזמנה {{reservation.number}}", body: "שלום {{guest_first_name}},\nמספר {{reservation.number}}" };
-  const filled = { mode: "template", templateId: "t1", subject: tpl.subject, body: tpl.body };
+  // D202 replaced the old "switching back refills the draft from the template":
+  // template mode no longer copies a template into the editable draft at all —
+  // it shows the published version the server rendered, and the send
+  // re-resolves it server-side. So applyMode takes no template any more.
+  const typed = { mode: "custom", templateId: "t1", subject: "נושא {{reservation.number}}", body: "שלום {{guest_first_name}}" };
 
-  const custom = m.applyMode(filled, "custom", tpl, true);
+  const custom = m.applyMode({ ...typed, mode: "template" }, "custom");
   assert.equal(custom.body, "", 'switching to "כתיבת הודעה חדשה" empties the textarea');
   // owner ruling 10/09/2026: empty means empty — the subject goes with the body
   assert.equal(custom.subject, "", "…and empties the subject field too");
@@ -293,28 +297,17 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   assert.ok(!custom.subject.includes("{{"), "…and none in the subject either");
   assert.equal(custom.mode, "custom", "…and the mode really changed");
   assert.equal(custom.templateId, "t1",
-    "…while the chosen template is REMEMBERED — switching back has to have something to refill from");
+    "…while the chosen template is REMEMBERED — switching back shows the same template again");
 
-  const back = m.applyMode(custom, "template", tpl, true);
-  assert.equal(back.body, tpl.body, "switching back to a template repopulates the body");
-  assert.equal(back.subject, tpl.subject, "…and the subject, on email — BOTH come back, not just one");
-  assert.notEqual(back.subject, "", "…so the round trip restores the subject it cleared");
-  assert.equal(m.applyMode(custom, "template", tpl, false).subject, "",
-    "…but WhatsApp never refills a subject, because WhatsApp has no subject field");
-
-  // the select keeps its value, so re-picking the same option fires no change
-  // event: without this branch the body could never come back at all
-  assert.notEqual(back.body, "", "the round trip template → custom → template is not one-way");
-
-  const orphan = m.applyMode({ ...filled, templateId: "gone" }, "template", null, true);
-  assert.equal(orphan.body, filled.body, "a templateId that matches nothing leaves the draft alone");
-  assert.equal(orphan.mode, "template", "…and still switches mode");
+  const back = m.applyMode(custom, "template");
+  assert.equal(back.mode, "template", "switching back to a template changes the mode");
+  assert.equal(back.templateId, "t1", "…to the same remembered template");
+  assert.equal(back.body, "", "…and copies nothing into the draft: template mode is read-only (D202)");
 
   // an untouched custom draft must survive its own no-op switch intact
-  const typed = { mode: "custom", templateId: "", subject: "s", body: "מה שהמפעיל הקליד" };
-  assert.equal(m.applyMode(typed, "template", null, true).body, typed.body,
-    "with no template chosen, entering template mode keeps what the operator typed");
-  assert.equal(m.applyMode(typed, "template", null, true).subject, typed.subject,
+  const kept = m.applyMode(typed, "template");
+  assert.equal(kept.body, typed.body, "entering template mode leaves what the operator typed alone");
+  assert.equal(kept.subject, typed.subject,
     "…including the subject — the clear belongs to the switch INTO custom, not to every switch");
 
   // the preview is derived, so an empty pair leaves nothing for it to render
@@ -328,7 +321,7 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
   assert.match(CODE, /onClick=\{\(\) => switchMode\("custom"\)\}/, 'the "כתיבת הודעה חדשה" button routes through it too');
   assert.match(CODE, /const switchMode = \(next: ComposerDraft\["mode"\]\) =>\s*onDraftChange\(applyMode\(/,
     "…and that switch is the pure applyMode, so this section's assertions are about live code");
-  ok('switching to "כתיבת הודעה חדשה" clears body AND subject, and switching back refills both from the template');
+  ok('switching to "כתיבת הודעה חדשה" clears body AND subject; template mode copies nothing into the draft');
 }
 
 // ============================================================
@@ -368,6 +361,136 @@ const REFERENCE = "שליחת מייל לאורח.dc.html";
     "the composer pins text-align: start on exactly the two fields that declare dir",
   );
   ok('the subject and body are RTL while EMPTY, by declaration — not because a Hebrew template happened to fill them');
+}
+
+// ============================================================
+// 12. template mode, RENDERED (D202, owner ruling 03/10/2026) — the real
+//     MessageComposer through react-dom/server, with a fixture context
+// ============================================================
+// Replaces §10's old "switching back refills the draft" claims with the panel
+// the operator actually gets: template mode is a read-only preview (no editable
+// subject or body, no variable chips), an unpublished template stays disabled,
+// and "העתק לכתיבה חופשית" lands in free text with the rendered text. The copy
+// button's REAL onClick is captured by a spy over react/jsx-runtime and called,
+// so the click path is executed, not grepped. Every mutant below must turn it red.
+{
+  const { compile, variant } = await import("./lib/action-harness.mjs");
+  const { writeFileSync } = await import("node:fs");
+  const { createElement: h } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const out = compile("check-send-message-panel", ["src/components/reservations/BookingActions.tsx"]);
+  const SPY = join(out, "jsx-spy.mjs");
+  writeFileSync(SPY, `
+import * as rt from "react/jsx-runtime";
+export const Fragment = rt.Fragment;
+const wrap = (f) => (type, props, key) => {
+  if (props && typeof props.className === "string" && props.className.includes("sm-copy")) {
+    (globalThis.__smCopySpy ??= []).push(props);
+  }
+  return f(type, props, key);
+};
+export const jsx = wrap(rt.jsx);
+export const jsxs = wrap(rt.jsxs);
+`);
+  const BA = "components/reservations/BookingActions.js";
+  const DRAFT = "lib/messaging/composer-draft.js";
+  const spy = [BA, 'from "react/jsx-runtime"', `from ${JSON.stringify(SPY)}`];
+
+  const WA_TEXT = "‏שלום דנה,\n‏ההזמנה 4112 אושרה.";
+  const ctx = {
+    reservationId: "r1", guestName: "דנה בדיקה", reservationNumber: "4112", roomNumbers: "201",
+    checkIn: "2026-07-03", checkOut: "2026-07-06", sourceLabel: null,
+    email: "guest@example.com", emailValid: true, phone: "0501234567", phoneE164: "+972501234567", phoneValid: true,
+    variables: {}, variableDefs: [{ key: "guest_first_name", label: "שם פרטי" }], renderContext: null,
+    gmailConfigured: true, whatsappConfigured: true,
+    templates: {
+      whatsapp: [
+        { id: "wa1", name: "אישור הזמנה", status: "ready", detail: null, subject: null, text: WA_TEXT, html: null },
+        { id: "wa2", name: "מידע צ׳ק-אין", status: "unpublished", detail: "התבנית טרם פורסמה", subject: null, text: "", html: null },
+      ],
+      email: [
+        { id: "em1", name: "אישור במייל", status: "ready", detail: null, subject: "אישור הזמנה 4112",
+          text: "שלום דנה", html: "<p>שלום דנה, המייל המפורסם</p>" },
+      ],
+    },
+  };
+
+  async function scenario(load) {
+    const fail = [];
+    const yes = (cond, message) => { if (!cond) fail.push(message); };
+    const { MessageComposer } = await load(BA);
+    const D = await load(DRAFT);
+    const render = (channel, draft, onDraftChange = () => {}) => renderToStaticMarkup(h(MessageComposer, {
+      channel, reservationId: "r1", draft, onDraftChange, onEditGuest() {}, onClose() {}, onSent() {}, initialContext: ctx,
+    }));
+    const template = (templateId) => ({ mode: "template", templateId, subject: "", body: "" });
+
+    // WhatsApp, a published template chosen: read-only preview
+    globalThis.__smCopySpy = [];
+    let changed = null;
+    const wa = render("whatsapp", template("wa1"), (next) => { changed = next; });
+    yes(!/<textarea/.test(wa), "template mode (WhatsApp) renders no editable body");
+    yes(!/class="sm-vars"/.test(wa), "template mode renders no variable chips");
+    yes(wa.includes("שלום דנה,") && wa.includes("ההזמנה 4112 אושרה."), "template mode previews the rendered published text");
+    yes(wa.includes("התוכן נשלח כפי שפורסם בתבנית"), "the hint says the content is sent as published (not 'editable')");
+    yes(!wa.includes("אפשר לערוך"), "no hint claims the template text can be edited");
+    yes(/class="btn btn-secondary sm-copy"/.test(wa) && wa.includes("העתק לכתיבה חופשית"), 'WhatsApp offers "העתק לכתיבה חופשית"');
+
+    // an unpublished template stays disabled in the picker
+    yes(/<option value="wa2" disabled="">מידע צ׳ק-אין · התבנית טרם פורסמה<\/option>/.test(wa),
+      "the unpublished template is a DISABLED option carrying the hint");
+    yes(/<option value="wa1"(?: selected="")?>אישור הזמנה<\/option>/.test(wa), "…while the published one is selectable");
+    const stale = render("whatsapp", template("wa2"));
+    yes(/<button type="button" class="btn btn-primary" disabled="">/.test(stale), "a draft holding an unpublished template cannot send");
+    yes(stale.includes("התבנית טרם פורסמה — לא ניתן לשלוח"), "…and the footer names why");
+
+    // the copy button's real onClick → free text with the rendered text
+    const copyProps = globalThis.__smCopySpy.at(-1);
+    yes(typeof copyProps?.onClick === "function", "the copy button carries an onClick");
+    copyProps?.onClick?.();
+    yes(changed?.mode === "custom", "copy switches the draft to free text");
+    yes(changed?.body === WA_TEXT, "copy fills the free-text body with the rendered text, variables resolved");
+    yes(changed?.subject === "", "copy carries no subject");
+    if (changed) {
+      const free = render("whatsapp", changed);
+      yes(/<textarea[^>]*>[^<]*שלום דנה,/.test(free), "free text after copy: the textarea holds the copied text, editable");
+      yes(/class="sm-vars"/.test(free), "free text after copy: the variable chips are back");
+      yes(!/sm-copy/.test(free), "free text after copy: no copy button");
+      yes(D.sendPayload(changed).templateId === null, "free text after copy sends no template id");
+    }
+
+    // email, a published template chosen: read-only subject + HTML
+    const em = render("email", template("em1"));
+    yes(!/<textarea/.test(em) && !/placeholder="נושא ההודעה"/.test(em), "template mode (email) renders no editable subject or body");
+    yes(!/class="sm-vars"/.test(em), "template mode (email) renders no variable chips");
+    yes(/<iframe class="sm-pv-frame" sandbox=""/.test(em), "the email preview is an inert sandbox frame");
+    yes(em.includes("אישור הזמנה 4112"), "the email preview shows the published subject");
+    yes(!/sm-copy/.test(em), "email offers no copy button");
+
+    // free text is unchanged: editable subject + body + chips
+    const custom = render("email", { mode: "custom", templateId: "", subject: "נושא", body: "טקסט חופשי" });
+    yes(/placeholder="נושא ההודעה"/.test(custom) && /<textarea[^>]*>טקסט חופשי<\/textarea>/.test(custom),
+      "free text keeps its editable subject and body");
+    yes(/class="sm-vars"/.test(custom), "free text keeps its variable chips");
+    return fail;
+  }
+
+  const real = await scenario(await variant(out, [spy]));
+  for (const message of real) assert.ok(false, `§12 real code: ${message}`);
+  const mutants = [
+    ["editable textarea in template mode", [BA, 'isFree && (_jsxs("label", { className: "field sm-field"', 'true && (_jsxs("label", { className: "field sm-field"']],
+    ["editable subject in template mode", [BA, 'isFree && isEmail && (_jsxs("label"', 'isEmail && (_jsxs("label"']],
+    ["variable chips in template mode", [BA, 'isFree && (_jsxs("div", { className: "sm-vars"', 'true && (_jsxs("div", { className: "sm-vars"']],
+    ["unpublished template enabled", [BA, 'disabled: t.status === "unpublished",', "disabled: false,"]],
+    ["copy button not wired", [BA, "onClick: copyToFree,", "onClick: () => {},"]],
+    ["copy stays in template mode", [DRAFT, 'return { ...draft, mode: "custom", subject: "", body: renderedText };', "return { ...draft, body: renderedText };"]],
+  ];
+  for (const [name, mutation] of mutants) {
+    const caught = await scenario(await variant(out, [spy, mutation]));
+    assert.ok(caught.length > 0, `§12 mutant "${name}" survives — the rendered-panel assertions do not detect it`);
+    if (caught.length) console.log(`  ✓ mutant "${name}" caught (${caught.length}, e.g. ${caught[0]})`);
+  }
+  if (!real.length) ok("template mode renders read-only (no body/subject field, no chips); unpublished stays disabled; copy lands in free text — on the REAL panel, 6/6 mutants caught");
 }
 
 console.log(`\nAll ${n} send-message-drawer claim groups hold.`);

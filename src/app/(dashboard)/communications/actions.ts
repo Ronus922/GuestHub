@@ -179,9 +179,17 @@ export async function restoreTemplateVersionAction(versionId: string): Promise<C
     const actor = await getActor();
     requirePermission(actor, "communications.templates.edit");
     const id = z.string().uuid().parse(versionId);
+    // D202 — per channel, the same fields a save of that content writes
+    // (legacyBodyFor): WhatsApp's body is its text and it has no subject (a
+    // WhatsApp version stores subject ''); email keeps subject + body = subject.
+    // `body = v.subject` used to blank every restored WhatsApp template.
     const rows = await sql<{ template_id: string; version_number: number }[]>`
       UPDATE guesthub.message_templates m
-      SET draft_content = v.content, subject = v.subject, body = v.subject,
+      SET draft_content = v.content,
+          subject = CASE WHEN m.channel = 'whatsapp' THEN NULL ELSE v.subject END,
+          body = CASE WHEN m.channel = 'whatsapp'
+                      THEN COALESCE(NULLIF(v.content->>'text', ''), m.name)
+                      ELSE COALESCE(NULLIF(v.subject, ''), m.name) END,
           draft_preheader = v.preheader,
           draft_sender_display_name = v.sender_display_name,
           draft_reply_to = CASE WHEN v.reply_to_behavior = 'custom' THEN v.reply_to_address ELSE NULL END,

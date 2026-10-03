@@ -36,31 +36,40 @@ export function insertToken(
   return { text: text.slice(0, lo) + token + text.slice(hi), caret: lo + token.length };
 }
 
-/** what a template fills a draft with — structurally the composer's own template rows */
-export type DraftTemplate = { subject: string | null; body: string };
-
 /**
  * The mode switch (D178). "כתיבת הודעה חדשה" is a BLANK page: the template's
  * text — and with it the raw {{placeholders}} — must not linger in either
  * editable field. Owner ruling 10/09/2026: empty means empty, so the SUBJECT
  * clears with the body, and the preview (derived from both) empties with them.
- * It was misleading rather than merely sticky, because the preview beside the
- * editor renders the SAME text with the values resolved, so the operator saw
- * tokens and values for one message at the same moment.
  *
- * Switching back re-fills from the still-selected template. That half is not
- * cosmetic: the <select> keeps its value, so re-picking the same option fires
- * no change event and the select's own onChange would never run again.
+ * Template mode is READ-ONLY (D202, owner ruling 03/10/2026): it shows the
+ * template's published version as the server rendered it, never a copy in the
+ * draft — so entering it fills nothing. The chosen template is remembered
+ * across the switch, so switching back shows it again.
  */
-export function applyMode(
-  draft: ComposerDraft,
-  mode: ComposerDraft["mode"],
-  template: DraftTemplate | null,
-  isEmail: boolean,
-): ComposerDraft {
+export function applyMode(draft: ComposerDraft, mode: ComposerDraft["mode"]): ComposerDraft {
   if (mode === "custom") return { ...draft, mode, body: "", subject: "" };
-  if (!template) return { ...draft, mode };
-  return { ...draft, mode, body: template.body, ...(isEmail ? { subject: template.subject ?? "" } : {}) };
+  return { ...draft, mode };
+}
+
+/**
+ * "העתק לכתיבה חופשית" (D202, WhatsApp only): the template's text, variables
+ * already resolved for this reservation, becomes an ordinary free-text draft.
+ * From here it is edited and sent as free text — sendPayload gives it no
+ * template id, so the row records no template and no version.
+ */
+export function copyToFreeText(draft: ComposerDraft, renderedText: string): ComposerDraft {
+  return { ...draft, mode: "custom", subject: "", body: renderedText };
+}
+
+/**
+ * What the panel sends. Template mode sends the template id ONLY — the server
+ * re-resolves the published version and never reads a body from the client.
+ * Free text sends exactly the edited text and no template id.
+ */
+export function sendPayload(draft: ComposerDraft): { templateId: string | null; subject: string; body: string } {
+  if (draft.mode === "template") return { templateId: draft.templateId || null, subject: "", body: "" };
+  return { templateId: null, subject: draft.subject, body: draft.body };
 }
 
 export type SendGateInput = {
@@ -75,6 +84,8 @@ export type SendGateInput = {
   subject: string;
   /** the RENDERED body — an all-variables body that resolves to nothing is empty */
   renderedBody: string;
+  /** template mode only (D202): the chosen template's state; absent in free text */
+  template?: "none" | "ready" | "unpublished" | "blocked";
 };
 
 /** why the send button is locked — null when it is live */
@@ -84,7 +95,10 @@ export type SendBlock =
   | "subject_blocked"
   | "body_blocked"
   | "subject_empty"
-  | "body_empty";
+  | "body_empty"
+  | "template_missing"
+  | "template_unpublished"
+  | "template_blocked";
 
 /**
  * The single gate behind BOTH the button's disabled state and the footer's
@@ -95,6 +109,9 @@ export function manualSendGate(input: SendGateInput): { canSend: boolean; block:
   const block = ((): SendBlock | null => {
     if (!input.providerConfigured) return "provider";
     if (!input.recipientValid) return "recipient";
+    if (input.template === "none") return "template_missing";
+    if (input.template === "unpublished") return "template_unpublished";
+    if (input.template === "blocked") return "template_blocked";
     if (input.subjectBlocked) return "subject_blocked";
     if (input.bodyBlocked) return "body_blocked";
     if (input.isEmail && !input.subject.trim()) return "subject_empty";
@@ -119,6 +136,12 @@ export function sendBlockMessage(block: SendBlock | null, isEmail: boolean): str
       return "יש למלא נושא להודעה";
     case "body_empty":
       return "יש למלא את תוכן ההודעה";
+    case "template_missing":
+      return "יש לבחור תבנית";
+    case "template_unpublished":
+      return "התבנית טרם פורסמה — לא ניתן לשלוח";
+    case "template_blocked":
+      return "לא ניתן לשלוח את התבנית להזמנה הזו";
     default:
       return null;
   }

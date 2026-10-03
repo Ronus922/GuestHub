@@ -14,7 +14,9 @@ import { sendEmailMessage, sendWhatsAppMessage } from "@/lib/messaging/service";
 import { resolveEmailProvider, resolveWhatsAppProvider } from "@/lib/messaging/providers";
 import { getReservationAction } from "./actions";
 import { getPublicPropertyName } from "@/lib/business/store";
-import { reservationRenderContext } from "@/lib/communications/automation";
+import {
+  composePublishedTemplate, reservationSendContext, type ComposedTemplate,
+} from "@/lib/communications/automation";
 import type { CommunicationRenderContext } from "@/lib/communications/types";
 import type { ActionResult } from "@/app/(dashboard)/calendar/types";
 
@@ -32,7 +34,22 @@ function errorMessage(e: unknown): string {
   return "אירעה שגיאה בלתי צפויה";
 }
 
-type TemplateLite = { id: string; slug: string; name: string; subject: string | null; body: string };
+/**
+ * A template as the composer's template mode shows it (D202): the PUBLISHED
+ * version, already rendered for this reservation — read-only, because what is
+ * shown is exactly what is sent and recorded. Never the draft.
+ */
+export type ComposerTemplate = {
+  id: string;
+  name: string;
+  status: ComposedTemplate["status"];
+  /** why it cannot be sent (Hebrew), null when ready */
+  detail: string | null;
+  subject: string | null;
+  /** WhatsApp: the message; email: the plain-text part */
+  text: string;
+  html: string | null;
+};
 
 // The render context the communications renderer needs (property profile +
 // stay schedule). A failure to assemble it must not break the composer — it
@@ -41,9 +58,12 @@ const RENDER_CONTEXT_UNAVAILABLE = "לא ניתן להרכיב את נתוני �
 const refuse = (detail: string): ActionResult<SendActionResult> =>
   ({ success: true, data: { ok: false, status: "validation_failed", detail } });
 
-async function safeRenderContext(tenantId: string, reservationId: string): Promise<CommunicationRenderContext | null> {
+async function safeSendContext(
+  tenantId: string,
+  reservationId: string,
+): Promise<{ context: CommunicationRenderContext; guestLanguage: string | null } | null> {
   try {
-    return await reservationRenderContext(tenantId, reservationId);
+    return await reservationSendContext(tenantId, reservationId);
   } catch (e) {
     console.error("[messaging] render context failed", e instanceof Error ? e.message : e);
     return null;
@@ -70,7 +90,7 @@ export type ComposerContext = {
   /** The communications render context of this reservation (D172) — null when it
    *  cannot be assembled; the send then refuses instead of shipping a raw token. */
   renderContext: CommunicationRenderContext | null;
-  templates: { email: TemplateLite[]; whatsapp: TemplateLite[] };
+  templates: { email: ComposerTemplate[]; whatsapp: ComposerTemplate[] };
   gmailConfigured: boolean;
   whatsappConfigured: boolean;
 };
@@ -116,16 +136,28 @@ export async function getMessagingContextAction(reservationId: string): Promise<
     const actor = await getActor();
     requirePermission(actor, "reservations.view");
 
-    const rows = await sql<(TemplateLite & { channel: string })[]>`
-      SELECT id, channel, slug, name, subject, body
+    const rows = await sql<{ id: string; channel: "email" | "whatsapp"; name: string }[]>`
+      SELECT id, channel, name
       FROM guesthub.message_templates
       WHERE tenant_id = ${actor.tenantId} AND is_active = true
+        AND archived_at IS NULL AND lifecycle_state <> 'archived'
       ORDER BY channel, name`;
-    const toLite = (r: TemplateLite & { channel: string }): TemplateLite => ({
-      id: r.id, slug: r.slug, name: r.name, subject: r.subject, body: r.body,
-    });
-    const email = rows.filter((r) => r.channel === "email").map(toLite);
-    const whatsapp = rows.filter((r) => r.channel === "whatsapp").map(toLite);
+    const sendCtx = await safeSendContext(actor.tenantId, reservationId);
+    const composed = await Promise.all(rows.map(async (r): Promise<ComposerTemplate> => {
+      const c: ComposedTemplate = sendCtx
+        ? await composePublishedTemplate({
+            tenantId: actor.tenantId, templateId: r.id, channel: r.channel,
+            guestLanguage: sendCtx.guestLanguage, context: sendCtx.context,
+          })
+        : { status: "render_failed", detail: RENDER_CONTEXT_UNAVAILABLE };
+      const base = { id: r.id, name: r.name };
+      if (c.status !== "ready") return { ...base, status: c.status, detail: c.detail, subject: null, text: "", html: null };
+      return c.channel === "email"
+        ? { ...base, status: "ready", detail: null, subject: c.subject, text: c.plainText, html: c.html }
+        : { ...base, status: "ready", detail: null, subject: null, text: c.text, html: null };
+    }));
+    const email = composed.filter((_, i) => rows[i].channel === "email");
+    const whatsapp = composed.filter((_, i) => rows[i].channel === "whatsapp");
 
     const [gmail, wa] = await Promise.all([
       resolveEmailProvider(actor.tenantId),
@@ -149,7 +181,7 @@ export async function getMessagingContextAction(reservationId: string): Promise<
         phoneValid: n.valid,
         variables: resolveBookingVariables(built.ctx),
         variableDefs: CANONICAL_VARIABLES,
-        renderContext: await safeRenderContext(actor.tenantId, reservationId),
+        renderContext: sendCtx?.context ?? null,
         templates: { email, whatsapp },
         gmailConfigured: gmail !== null,
         whatsappConfigured: wa !== null,
@@ -160,11 +192,24 @@ export async function getMessagingContextAction(reservationId: string): Promise<
   }
 }
 
-async function loadTemplate(tenantId: string, channel: "email" | "whatsapp", id: string): Promise<TemplateLite | null> {
-  const [row] = await sql<TemplateLite[]>`
-    SELECT id, slug, name, subject, body FROM guesthub.message_templates
-    WHERE tenant_id = ${tenantId} AND channel = ${channel} AND id = ${id} AND is_active = true`;
-  return row ?? null;
+/**
+ * D202 — template mode re-resolves the published version HERE. The client's
+ * subject/body are never read for it (the panel is read-only, but a request is
+ * not the panel): it sends what composePublishedTemplate renders, and the row
+ * records the template AND version that produced it.
+ */
+async function composeForSend(
+  tenantId: string,
+  reservationId: string,
+  templateId: string,
+  channel: "email" | "whatsapp",
+): Promise<{ ready: Extract<ComposedTemplate, { status: "ready" }> } | { refused: string }> {
+  const sendCtx = await safeSendContext(tenantId, reservationId);
+  if (!sendCtx) return { refused: RENDER_CONTEXT_UNAVAILABLE };
+  const composed = await composePublishedTemplate({
+    tenantId, templateId, channel, guestLanguage: sendCtx.guestLanguage, context: sendCtx.context,
+  });
+  return composed.status === "ready" ? { ready: composed } : { refused: composed.detail };
 }
 
 export type SendActionResult = { ok: boolean; status: string; detail?: string };
@@ -181,26 +226,30 @@ export async function sendBookingEmailAction(
     if (!built.email || !EMAIL_RE.test(built.email.trim())) {
       return { success: true, data: { ok: false, status: "validation_failed", detail: "לאורח אין כתובת אימייל תקינה. עדכן אותה בפרטי האורח לפני השליחה." } };
     }
-    const vars = resolveBookingVariables(built.ctx);
-    let subjectSource = input.subject;
-    let bodySource = input.body;
     if (input.templateId) {
-      const tpl = await loadTemplate(actor.tenantId, "email", input.templateId);
-      if (!tpl) return fail("התבנית לא נמצאה");
-      subjectSource = tpl.subject ?? "";
-      bodySource = tpl.body;
+      const result = await composeForSend(actor.tenantId, reservationId, input.templateId, "email");
+      if ("refused" in result) return refuse(result.refused);
+      const t = result.ready;
+      if (t.channel !== "email") return refuse("התבנית אינה תואמת לערוץ");
+      const outcome = await sendEmailMessage(actor, {
+        reservationId, guestId: built.guestId, to: built.email.trim(), toName: built.guestName,
+        subject: t.subject, body: t.plainText, html: t.html, fromName: t.senderName, replyTo: t.replyTo,
+        templateId: t.templateId, templateVersionId: t.versionId,
+      });
+      return { success: true, data: { ok: outcome.ok, status: outcome.status, detail: outcome.detail } };
     }
-    // Subject AND body (D172, addendum 2026-09-05): legacy {{snake_case}} vars,
-    // then the communications renderer for {{group.key}} tokens — the same
-    // renderer the automations use. An unknown token never ships literally:
-    // the send is refused and names the variable.
-    const renderContext = await safeRenderContext(actor.tenantId, reservationId);
+    // Free text — subject AND body (D172, addendum 2026-09-05): legacy
+    // {{snake_case}} vars, then the communications renderer for {{group.key}}
+    // tokens. An unknown token never ships literally: the send is refused and
+    // names the variable.
+    const vars = resolveBookingVariables(built.ctx);
+    const renderContext = (await safeSendContext(actor.tenantId, reservationId))?.context;
     if (!renderContext) return refuse(RENDER_CONTEXT_UNAVAILABLE);
-    const renderedSubject = renderManualText(subjectSource, vars, renderContext);
+    const renderedSubject = renderManualText(input.subject, vars, renderContext);
     if (!renderedSubject.canSend) {
       return refuse(`הנושא מכיל משתנה שלא ניתן לשלוח — ${renderedSubject.detail ?? "משתנה לא מוכר"}`);
     }
-    const renderedBody = renderManualText(bodySource, vars, renderContext);
+    const renderedBody = renderManualText(input.body, vars, renderContext);
     if (!renderedBody.canSend) {
       return refuse(`תוכן ההודעה מכיל משתנה שלא ניתן לשלוח — ${renderedBody.detail ?? "משתנה לא מוכר"}`);
     }
@@ -209,7 +258,7 @@ export async function sendBookingEmailAction(
     if (!body.trim()) return fail("תוכן ההודעה ריק");
     const outcome = await sendEmailMessage(actor, {
       reservationId, guestId: built.guestId, to: built.email.trim(), toName: built.guestName,
-      subject: subject || `הזמנה #${built.ctx.reservationNumber}`, body, templateId: input.templateId,
+      subject: subject || `הזמנה #${built.ctx.reservationNumber}`, body, templateId: null,
     });
     return { success: true, data: { ok: outcome.ok, status: outcome.status, detail: outcome.detail } };
   } catch (e) {
@@ -230,25 +279,31 @@ export async function sendBookingWhatsAppAction(
     if (!n.valid) {
       return { success: true, data: { ok: false, status: "validation_failed", detail: "לאורח אין מספר טלפון תקין. עדכן אותו בפרטי האורח לפני השליחה." } };
     }
-    const vars = resolveBookingVariables(built.ctx);
-    let bodySource = input.body;
     if (input.templateId) {
-      const tpl = await loadTemplate(actor.tenantId, "whatsapp", input.templateId);
-      if (!tpl) return fail("התבנית לא נמצאה");
-      bodySource = tpl.body;
+      const result = await composeForSend(actor.tenantId, reservationId, input.templateId, "whatsapp");
+      if ("refused" in result) return refuse(result.refused);
+      const t = result.ready;
+      if (t.channel !== "whatsapp") return refuse("התבנית אינה תואמת לערוץ");
+      const outcome = await sendWhatsAppMessage(actor, {
+        reservationId, guestId: built.guestId, to: n.e164, body: t.text,
+        templateId: t.templateId, templateVersionId: t.versionId,
+      });
+      return { success: true, data: { ok: outcome.ok, status: outcome.status, detail: outcome.detail } };
     }
-    // Body (D172 addendum 2026-09-05): the same chain as the email subject and
-    // body — 2 of the 4 live WhatsApp templates carry {{group.key}} tokens.
-    const renderContext = await safeRenderContext(actor.tenantId, reservationId);
+    // Free text (D172 addendum 2026-09-05): the same chain as the email subject
+    // and body. Text copied from a template ("העתק לכתיבה חופשית") is free text
+    // from here on — it carries no template id and no version (D202).
+    const vars = resolveBookingVariables(built.ctx);
+    const renderContext = (await safeSendContext(actor.tenantId, reservationId))?.context;
     if (!renderContext) return refuse(RENDER_CONTEXT_UNAVAILABLE);
-    const renderedBody = renderManualText(bodySource, vars, renderContext);
+    const renderedBody = renderManualText(input.body, vars, renderContext);
     if (!renderedBody.canSend) {
       return refuse(`תוכן ההודעה מכיל משתנה שלא ניתן לשלוח — ${renderedBody.detail ?? "משתנה לא מוכר"}`);
     }
     const body = renderedBody.value;
     if (!body.trim()) return fail("תוכן ההודעה ריק");
     const outcome = await sendWhatsAppMessage(actor, {
-      reservationId, guestId: built.guestId, to: n.e164, body, templateId: input.templateId,
+      reservationId, guestId: built.guestId, to: n.e164, body, templateId: null,
     });
     return { success: true, data: { ok: outcome.ok, status: outcome.status, detail: outcome.detail } };
   } catch (e) {

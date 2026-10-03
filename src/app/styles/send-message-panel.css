@@ -383,6 +383,18 @@
   font-weight: 400;
   color: var(--ink);
 }
+/* D202 — an email template goes out as HTML; its preview is an inert sandbox frame */
+.sm-pv-frame {
+  display: block;
+  width: 100%;
+  height: 420px;
+  border: 0;
+  background: var(--surface);
+}
+/* D202 — "העתק לכתיבה חופשית" (WhatsApp): the canonical .btn, sized to its label */
+.sm-copy {
+  align-self: flex-start;
+}
 
 /* ---- footer -------------------------------------------------------------
    The footer IS the design system's .dw-ft (§7: row-reverse, so the primary
