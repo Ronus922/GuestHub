@@ -6,7 +6,7 @@ import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
 import type { CommunicationTemplateRow } from "@/app/(dashboard)/communications/data";
 import {
-  publishTemplateAction, restoreTemplateVersionAction, saveTemplateDraftAction,
+  publishTemplateAction, restoreTemplateVersionAction,
   sendTestEmailAction, type CommunicationActionResult,
 } from "@/app/(dashboard)/communications/actions";
 import { STAGE_KEYS, STAGE_LABELS } from "@/lib/communications/blocks";
@@ -14,8 +14,9 @@ import { renderHtmlCommunication, renderTemplateString } from "@/lib/communicati
 import { htmlTemplateContentSchema } from "@/lib/communications/schemas";
 import { getVariableDefinition } from "@/lib/communications/variables";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, announceTemplateSaved, dateTime, focusTemplateField,
-  type EditorSeed, type PreviewDataset,
+  Dialog, RestoreVersionDialog, TemplateSaveControls, TestSendDialog, VariablePalette, VersionHistoryList,
+  announceTemplateSaved, dateTime, focusTemplateField, templateStateLabel,
+  type EditorSeed, type PreviewDataset, type TemplateVersionRow,
 } from "./editorShared";
 import type { CommunicationRenderContext, HtmlTemplateContent, RenderIssue } from "@/lib/communications/types";
 
@@ -78,6 +79,7 @@ export function HtmlTemplateEditor({
   const [notice, setNotice] = useState<CommunicationActionResult | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [restoring, setRestoring] = useState<TemplateVersionRow | null>(null);
   const [testTo, setTestTo] = useState(senderAddress ?? "");
   const [pending, startTransition] = useTransition();
 
@@ -153,10 +155,10 @@ export function HtmlTemplateEditor({
     senderDisplayName: sender, replyTo, preheader, category: stage, language, content,
   };
 
-  const publishBlocker = subject.trim().length < 2
-    ? "נדרש נושא לפרסום"
+  const saveBlocker = subject.trim().length < 2
+    ? "נדרש נושא"
     : html.trim().length === 0
-      ? "התבנית ריקה — הדביקו תוכן HTML לפני פרסום"
+      ? "התבנית ריקה — הדביקו תוכן HTML לפני שמירה"
       : null;
 
   const run = (action: () => Promise<CommunicationActionResult>, onDone?: (result: CommunicationActionResult) => void) =>
@@ -179,7 +181,7 @@ export function HtmlTemplateEditor({
   const versions = template?.versions ?? [];
   const latestVersion = versions[0] ?? null;
   // D205 — the state only; version numbers are internal and never shown
-  const versionChip = template?.version && template.state === "published" ? "פורסמה" : "טיוטה";
+  const versionChip = templateStateLabel(template?.state ?? "draft");
 
   return (
     <SidePanel
@@ -208,15 +210,27 @@ export function HtmlTemplateEditor({
           <span className="chip chip-onbrand"><Icon name="tag" size={13.5} /> {versionChip}</span>
           {latestVersion && (
             <span className="chip chip-onbrand">
-              <Icon name="publish" size={13.5} />
-              פורסמה {dateTime(latestVersion.publishedAt)}
+              <Icon name="history" size={13.5} />
+              נשמרה {dateTime(latestVersion.publishedAt)}
               {latestVersion.publishedBy ? ` · ${latestVersion.publishedBy}` : ""}
             </span>
           )}
         </>
       }
       overlay={
-        discardOpen ? (
+        restoring ? (
+          <RestoreVersionDialog
+            version={restoring}
+            pending={pending}
+            onCancel={() => setRestoring(null)}
+            onConfirm={() => {
+              const versionId = restoring.id;
+              setRestoring(null);
+              // the editor closes: it reopens on the restored, live content
+              run(() => restoreTemplateVersionAction(versionId), (result) => announceTemplateSaved(result, onClose));
+            }}
+          />
+        ) : discardOpen ? (
           <Dialog
             icon="warning"
             title="שינויים שלא נשמרו"
@@ -246,18 +260,9 @@ export function HtmlTemplateEditor({
       footer={
         <>
           {canPublish && (
-            <button type="button" className="btn btn-primary"
-              disabled={pending || !canEdit || Boolean(invalid) || Boolean(publishBlocker)}
-              title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
-              <Icon name="publish" size={17} /> פרסום
-            </button>
-          )}
-          {canEdit && (
-            <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
-              onClick={() => run(() => saveTemplateDraftAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
-              <Icon name="draft" size={17} /> שמירת טיוטה
-            </button>
+            <TemplateSaveControls blocker={saveBlocker} disabled={!canEdit || Boolean(invalid)} pending={pending}
+              liveAutomations={template?.activeAutomations ?? []}
+              onSave={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))} />
           )}
           {canTest && (
             <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
@@ -295,7 +300,7 @@ export function HtmlTemplateEditor({
 
           <div className="gc-colhd"><Icon name="history" size={20} /> היסטוריית גרסאות</div>
           <VersionHistoryList versions={versions} canEdit={canEdit} pending={pending}
-            onRestore={(versionId) => run(() => restoreTemplateVersionAction(versionId))} />
+            onRestore={setRestoring} />
         </aside>
 
         {/* ---------- MAIN: meta + code/preview ---------- */}

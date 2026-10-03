@@ -406,7 +406,7 @@ export const jsxs = wrap(rt.jsxs);
     templates: {
       whatsapp: [
         { id: "wa1", name: "אישור הזמנה", status: "ready", detail: null, subject: null, text: WA_TEXT, html: null },
-        { id: "wa2", name: "מידע צ׳ק-אין", status: "unpublished", detail: "התבנית טרם פורסמה", subject: null, text: "", html: null },
+        { id: "wa2", name: "מידע צ׳ק-אין", status: "unpublished", detail: "התבנית לא פעילה", subject: null, text: "", html: null },
       ],
       email: [
         { id: "em1", name: "אישור במייל", status: "ready", detail: null, subject: "אישור הזמנה 4112",
@@ -437,12 +437,12 @@ export const jsxs = wrap(rt.jsxs);
     yes(/class="btn btn-secondary sm-copy"/.test(wa) && wa.includes("העתק לכתיבה חופשית"), 'WhatsApp offers "העתק לכתיבה חופשית"');
 
     // an unpublished template stays disabled in the picker
-    yes(/<option value="wa2" disabled="">מידע צ׳ק-אין · התבנית טרם פורסמה<\/option>/.test(wa),
+    yes(/<option value="wa2" disabled="">מידע צ׳ק-אין · התבנית לא פעילה<\/option>/.test(wa),
       "the unpublished template is a DISABLED option carrying the hint");
     yes(/<option value="wa1"(?: selected="")?>אישור הזמנה<\/option>/.test(wa), "…while the published one is selectable");
     const stale = render("whatsapp", template("wa2"));
     yes(/<button type="button" class="btn btn-primary" disabled="">/.test(stale), "a draft holding an unpublished template cannot send");
-    yes(stale.includes("התבנית טרם פורסמה — לא ניתן לשלוח"), "…and the footer names why");
+    yes(stale.includes("התבנית לא פעילה — לא ניתן לשלוח"), "…and the footer names why");
 
     // the copy button's real onClick → free text with the rendered text
     const copyProps = globalThis.__smCopySpy.at(-1);

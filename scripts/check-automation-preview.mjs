@@ -74,8 +74,7 @@ async function scenario(load, stub) {
              VALUES (${tenantId}, 'green_api', 'connected', now(), 'fixture')`;
     const wa = { channel: "whatsapp", name: "תבנית תצוגה", category: "reservation", language: "he",
       content: { schemaVersion: 1, kind: "whatsapp_text", text: "שלום {{guest.first_name}}" } };
-    const templateId = (await C.saveTemplateDraftAction(wa)).id;
-    await C.publishTemplateAction({ ...wa, id: templateId });
+    const templateId = (await C.publishTemplateAction(wa)).id;
 
     const automation = async (name, triggerType, offsetDays, sendTime) => {
       const res = await C.saveAutomationAction({ name, triggerType, channel: "whatsapp", templateId,

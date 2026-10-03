@@ -22,7 +22,7 @@ import { claimDeliveryById, deliverClaimedEmail, deliverClaimedWhatsApp } from "
 import {
   renderTemplateContent, renderTemplateString, renderWhatsAppCommunication,
 } from "@/lib/communications/renderer";
-import { describeRenderIssues } from "@/lib/communications/variables";
+import { describeRenderIssues, extractVariableKeys, getVariableDefinition } from "@/lib/communications/variables";
 import { normalizePhone } from "@/lib/phone";
 import { TRIGGERS, TRIGGER_IDS, SOURCE_GROUP_IDS, otaSourceBlockReason } from "@/lib/communications/triggers";
 import { previewScheduledAutomation, type AutomationPreview } from "@/lib/communications/preview";
@@ -87,8 +87,8 @@ const STAGES = [
   "check_out", "post_stay", "cancellation", "payment", "other",
 ] as const;
 
-// A DRAFT may be truly empty (blank name is still rejected, but subject and
-// content are not) — publish is where per-kind completeness is enforced.
+// The schema allows an empty subject / content — saveBlocker is where per-kind
+// completeness (and the variables, D207) is enforced, naming the field.
 const emailTemplateInputSchema = z.object({
   id: z.string().uuid().optional(),
   channel: z.literal("email"),
@@ -123,17 +123,29 @@ function legacyBodyFor(input: TemplateInput): string {
   return input.subject || input.name;
 }
 
-/** Per-kind publish gate. Returns the Hebrew refusal and the field it is about, or null when publishable. */
-function publishBlocker(input: TemplateInput): { error: string; field: TemplateField } | null {
-  if (input.channel === "whatsapp") {
-    return input.content.text.trim() ? null : { error: "תוכן התבנית: ההודעה ריקה — הוסיפו תוכן לפני פרסום", field: "content" };
+/**
+ * The save gate (D207: שמירה = live, so what used to gate "פרסום" gates every
+ * save). Returns the Hebrew refusal and the field it is about, or null when the
+ * editor state may go live. An unknown {{variable}} is refused on the field
+ * that carries it — a saved template with one would skip every send.
+ */
+function saveBlocker(input: TemplateInput): { error: string; field: TemplateField } | null {
+  const fields: [TemplateField, string][] = input.channel === "whatsapp"
+    ? [["content", input.content.text]]
+    : [["subject", input.subject], ["preheader", input.preheader ?? ""], ["content", JSON.stringify(input.content)]];
+  for (const [field, text] of fields) {
+    const unknown = extractVariableKeys(text).find((key) => !getVariableDefinition(key));
+    if (unknown) return { error: `${TEMPLATE_FIELD_LABELS[field]}: המשתנה {{${unknown}}} אינו מוכר`, field };
   }
-  if (input.subject.trim().length < 2) return { error: "נושא האימייל: נדרש נושא לפרסום", field: "subject" };
+  if (input.channel === "whatsapp") {
+    return input.content.text.trim() ? null : { error: "תוכן התבנית: ההודעה ריקה — הוסיפו תוכן לפני שמירה", field: "content" };
+  }
+  if (input.subject.trim().length < 2) return { error: "נושא האימייל: נדרש נושא", field: "subject" };
   const kind = templateContentKind(input.content);
   const empty = kind === "html"
     ? !("html" in input.content && input.content.html.trim())
     : !("blocks" in input.content && input.content.blocks.length);
-  return empty ? { error: "תוכן התבנית: התבנית ריקה — הוסיפו תוכן לפני פרסום", field: "content" } : null;
+  return empty ? { error: "תוכן התבנית: התבנית ריקה — הוסיפו תוכן לפני שמירה", field: "content" } : null;
 }
 
 /** Template actions refuse a schema failure by naming the field (D205). */
@@ -142,10 +154,10 @@ function failTemplate(error: unknown): CommunicationActionResult {
 }
 
 /**
- * The editor's state → the template row, inside the caller's transaction. ONE
- * writer for both "שמירת טיוטה" and "פרסום" (D205): publish saves the editor's
- * current state as the draft and publishes it in the same transaction, for an
- * existing template and for a new one alike.
+ * The editor's state → the template row, inside the caller's transaction. D207:
+ * only "שמירה" (publishTemplateAction) calls it, in the same transaction that
+ * creates the version — draft_content stays as the row's mirror of the current
+ * editor state (the editor loads it), never as a separate, unpublished state.
  */
 async function writeTemplateDraft(
   tx: postgres.TransactionSql,
@@ -191,19 +203,7 @@ async function writeTemplateDraft(
     after: { name: input.name, channel: input.channel } }, tx);
 }
 
-export async function saveTemplateDraftAction(raw: unknown): Promise<CommunicationActionResult> {
-  try {
-    const actor = await getActor();
-    requirePermission(actor, "communications.templates.edit");
-    const input = templateInputSchema.parse(raw);
-    const id = input.id ?? randomUUID();
-    await sql.begin((tx) => writeTemplateDraft(tx, actor, input, id));
-    refresh();
-    return { success: true, id, message: "הטיוטה נשמרה" };
-  } catch (error) { return failTemplate(error); }
-}
-
-/** Duplicate as a fresh DRAFT — never as a published template, and never carrying version history. */
+/** Duplicate as a NOT-LIVE copy ("לא פעילה — שמירה תפעיל אותה", D207) — never carrying version history; its first שמירה makes it live. */
 export async function duplicateTemplateAction(templateId: string): Promise<CommunicationActionResult> {
   try {
     const actor = await getActor();
@@ -226,51 +226,74 @@ export async function duplicateTemplateAction(templateId: string): Promise<Commu
     await writeAudit(actor, { entityType: "message_template", entityId: id,
       action: "template_duplicated", after: { sourceTemplateId: source } });
     refresh();
-    return { success: true, id, message: "התבנית שוכפלה כטיוטה" };
+    return { success: true, id, message: "התבנית שוכפלה — שמירה בעורך תפעיל אותה" };
   } catch (error) { return fail(error); }
 }
 
 /**
- * Restore a published version INTO the draft. History is immutable (a DB trigger
- * enforces it): restoring never rewrites a version, it re-opens its content for
- * editing, and publishing again produces a new version.
+ * D207 — restore = the restored content becomes the CURRENT version at once.
+ * History is immutable (a DB trigger enforces it): restoring never rewrites a
+ * version, it copies the chosen one into a NEW version (published by the
+ * operator, now) and points the template at it — in one transaction, together
+ * with the row's mirror fields, so the editor reopens on what is live.
  */
 export async function restoreTemplateVersionAction(versionId: string): Promise<CommunicationActionResult> {
   try {
     const actor = await getActor();
     requirePermission(actor, "communications.templates.edit");
+    requirePermission(actor, "communications.templates.publish");
     const id = z.string().uuid().parse(versionId);
-    // D202 — per channel, the same fields a save of that content writes
-    // (legacyBodyFor): WhatsApp's body is its text and it has no subject (a
-    // WhatsApp version stores subject ''); email keeps subject + body = subject.
-    // `body = v.subject` used to blank every restored WhatsApp template.
-    const rows = await sql<{ template_id: string; published_at: string }[]>`
-      UPDATE guesthub.message_templates m
-      SET draft_content = v.content,
-          subject = CASE WHEN m.channel = 'whatsapp' THEN NULL ELSE v.subject END,
-          body = CASE WHEN m.channel = 'whatsapp'
-                      THEN COALESCE(NULLIF(v.content->>'text', ''), m.name)
-                      ELSE COALESCE(NULLIF(v.subject, ''), m.name) END,
-          draft_preheader = v.preheader,
-          draft_sender_display_name = v.sender_display_name,
-          draft_reply_to = CASE WHEN v.reply_to_behavior = 'custom' THEN v.reply_to_address ELSE NULL END,
-          updated_by = ${actor.userId}
-      FROM guesthub.message_template_versions v
-      WHERE v.id = ${id} AND v.tenant_id = ${actor.tenantId}
-        AND m.id = v.template_id AND m.tenant_id = v.tenant_id AND m.deleted_at IS NULL
-      RETURNING v.template_id, v.published_at::text AS published_at`;
-    if (!rows[0]) return { success: false, error: "הגרסה לא נמצאה" };
-    await writeAudit(actor, { entityType: "message_template", entityId: rows[0].template_id,
-      action: "template_version_restored", after: { versionId: id } });
+    const restored = await sql.begin(async (tx) => {
+      // D202 — per channel, the same fields a save of that content writes
+      // (legacyBodyFor): WhatsApp's body is its text and it has no subject (a
+      // WhatsApp version stores subject ''); email keeps subject + body = subject.
+      // `body = v.subject` used to blank every restored WhatsApp template.
+      const rows = await tx<{ template_id: string; published_at: string }[]>`
+        UPDATE guesthub.message_templates m
+        SET draft_content = v.content,
+            subject = CASE WHEN m.channel = 'whatsapp' THEN NULL ELSE v.subject END,
+            body = CASE WHEN m.channel = 'whatsapp'
+                        THEN COALESCE(NULLIF(v.content->>'text', ''), m.name)
+                        ELSE COALESCE(NULLIF(v.subject, ''), m.name) END,
+            draft_preheader = v.preheader,
+            draft_sender_display_name = v.sender_display_name,
+            draft_reply_to = CASE WHEN v.reply_to_behavior = 'custom' THEN v.reply_to_address ELSE NULL END,
+            updated_by = ${actor.userId}
+        FROM guesthub.message_template_versions v
+        WHERE v.id = ${id} AND v.tenant_id = ${actor.tenantId}
+          AND m.id = v.template_id AND m.tenant_id = v.tenant_id AND m.deleted_at IS NULL
+        RETURNING v.template_id, v.published_at::text AS published_at`;
+      if (!rows[0]) return null;
+      const templateId = rows[0].template_id;
+      const [current] = await tx<{ id: string; version_number: number }[]>`
+        INSERT INTO guesthub.message_template_versions
+          (tenant_id, template_id, version_number, sender_display_name, reply_to_behavior,
+           reply_to_address, subject, preheader, content, published_by)
+        SELECT v.tenant_id, v.template_id,
+               (SELECT MAX(x.version_number) + 1 FROM guesthub.message_template_versions x WHERE x.template_id = v.template_id),
+               v.sender_display_name, v.reply_to_behavior, v.reply_to_address, v.subject, v.preheader,
+               v.content, ${actor.userId}
+        FROM guesthub.message_template_versions v WHERE v.id = ${id}
+        RETURNING id, version_number`;
+      await tx`
+        UPDATE guesthub.message_templates
+        SET current_published_version_id = ${current.id}, lifecycle_state = 'published',
+          is_active = true, archived_at = NULL
+        WHERE id = ${templateId} AND tenant_id = ${actor.tenantId}`;
+      await writeAudit(actor, { entityType: "message_template", entityId: templateId,
+        action: "template_version_restored", after: { versionId: id, version: current.version_number } }, tx);
+      return rows[0];
+    });
+    if (!restored) return { success: false, error: "הגרסה לא נמצאה" };
     refresh();
-    return { success: true, id: rows[0].template_id,
-      message: `התוכן שפורסם ב-${israelDateTime(rows[0].published_at)} הועתק לטיוטה. פרסמו כדי להפוך אותו לפעיל.` };
+    return { success: true, id: restored.template_id,
+      message: `התוכן מ-${israelDateTime(restored.published_at)} שוחזר — זו התבנית הפעילה מעכשיו` };
   } catch (error) { return fail(error); }
 }
 
-// D205 — the id is optional: "פרסום" on a template that was never saved
-// creates it and publishes it in one transaction (it used to fail the schema
-// with "יש שדות חסרים" because publish demanded an id only a save produces).
+// D205 — the id is optional: saving a template that was never saved creates
+// it and publishes it in one transaction. D207: this IS "שמירה" — the only
+// template writer; every valid save is a new version and the current one.
 const publishInputSchema = templateInputSchema;
 
 export async function publishTemplateAction(raw: unknown): Promise<CommunicationActionResult> {
@@ -281,7 +304,7 @@ export async function publishTemplateAction(raw: unknown): Promise<Communication
       requirePermission(actor, "communications.templates.edit");
     }
     const input = publishInputSchema.parse(raw);
-    const blocker = publishBlocker(input);
+    const blocker = saveBlocker(input);
     if (blocker) return { success: false, ...blocker };
     const isEmail = input.channel === "email";
     const id = input.id ?? randomUUID();
@@ -317,7 +340,7 @@ export async function publishTemplateAction(raw: unknown): Promise<Communication
         action: "template_published", after: { version: row.next_version, name: input.name } }, tx);
     });
     refresh();
-    return { success: true, id, message: "התבנית פורסמה" };
+    return { success: true, id, message: "התבנית נשמרה" };
   } catch (error) { return failTemplate(error); }
 }
 
@@ -337,7 +360,12 @@ export async function archiveTemplateAction(templateId: string, restore = false)
     await sql.begin(async (tx) => {
       const rows = await tx<{ id: string }[]>`
         UPDATE guesthub.message_templates
-        SET lifecycle_state = ${restore ? "draft" : "archived"}, is_active = ${restore},
+        -- D207: back from the archive a template is what its versions make it —
+        -- live when it has a current version (it was sendable then too, only
+        -- labelled a draft), "לא פעילה" when it never had one
+        SET lifecycle_state = CASE WHEN NOT ${restore}::boolean THEN 'archived'
+                                   WHEN current_published_version_id IS NULL THEN 'draft' ELSE 'published' END,
+            is_active = ${restore},
             archived_at = ${restore ? null : new Date()}, updated_by = ${actor.userId}
         WHERE tenant_id = ${actor.tenantId} AND id = ${id} AND deleted_at IS NULL RETURNING id`;
       changed = Boolean(rows[0]);
@@ -346,7 +374,7 @@ export async function archiveTemplateAction(templateId: string, restore = false)
     });
     if (!changed) return { success: false, error: "התבנית לא נמצאה" };
     refresh();
-    return { success: true, message: restore ? "התבנית שוחזרה כטיוטה" : "התבנית הועברה לארכיון" };
+    return { success: true, message: restore ? "התבנית שוחזרה מהארכיון" : "התבנית הועברה לארכיון" };
   } catch (error) { return fail(error); }
 }
 
@@ -705,7 +733,7 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
     const status = input.activate ? (requestedActive ? "active" : "needs_attention") : "draft";
     const attention = input.activate && !requestedActive
       ? (!template.current_published_version_id
-        ? "נדרשת תבנית מפורסמת"
+        ? "נדרשת תבנית פעילה"
         : input.channel === "whatsapp" ? "ספק ה-WhatsApp אינו מחובר או לא נבדק" : "ערוץ האימייל אינו מחובר או לא עבר בדיקה")
       : null;
     const id = input.id ?? randomUUID();
