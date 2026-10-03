@@ -160,6 +160,7 @@
     "check:closure-bar-hit": "node scripts/check-closure-bar-hit.mjs",
     "check:closure-redesign": "node scripts/check-closure-redesign.mjs",
     "check:availability-ari-coverage": "node scripts/check-availability-ari-coverage.mjs",
+    "check:broadcast-recipients": "node scripts/check-broadcast-recipients.mjs",
     "check:template-publish": "node scripts/check-template-publish.mjs",
     "check:template-delete": "node scripts/check-template-delete.mjs",
     "check:template-variables": "node scripts/check-template-variables.mjs",
