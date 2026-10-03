@@ -98,7 +98,9 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       FROM guesthub.message_templates m
       LEFT JOIN guesthub.message_template_versions v ON v.id = m.current_published_version_id
       LEFT JOIN guesthub.users u ON u.id = m.updated_by AND u.tenant_id = m.tenant_id
-      WHERE m.tenant_id = ${tenantId}
+      -- D205: a deleted template is gone from every list, picker and archive;
+      -- history rows still reach its name and versions through their own join
+      WHERE m.tenant_id = ${tenantId} AND m.deleted_at IS NULL
       ORDER BY m.archived_at NULLS FIRST, m.updated_at DESC` : Promise.resolve([]),
     access.automations ? sql<{
       id: string; name: string; description: string | null; status: string;

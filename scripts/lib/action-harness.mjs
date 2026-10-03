@@ -57,7 +57,9 @@ export class AuthorizationError extends Error {}
 export const getActor = async () => actor;
 export const requirePermission = () => {};
 export const hasPermission = () => true;
-export const writeAudit = async () => {};
+// recorded, so a guard can assert an action wrote its audit entry (D205)
+export const audits = [];
+export const writeAudit = async (_actor, entry) => { audits.push(entry); };
 export const revalidatePath = () => {};
 export const revalidateTag = () => {};
 export const unstable_cache = (fn) => fn;

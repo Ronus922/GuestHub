@@ -14,7 +14,7 @@ import { renderHtmlCommunication, renderTemplateString } from "@/lib/communicati
 import { htmlTemplateContentSchema } from "@/lib/communications/schemas";
 import { getVariableDefinition } from "@/lib/communications/variables";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime,
+  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime, focusTemplateField,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
 import type { CommunicationRenderContext, HtmlTemplateContent, RenderIssue } from "@/lib/communications/types";
@@ -163,6 +163,7 @@ export function HtmlTemplateEditor({
     startTransition(async () => {
       const result = await action();
       setNotice(result);
+      if (!result.success) focusTemplateField(result.field);
       if (result.success) {
         setDirty(false);
         onDone?.();
@@ -177,9 +178,8 @@ export function HtmlTemplateEditor({
 
   const versions = template?.versions ?? [];
   const latestVersion = versions[0] ?? null;
-  const versionChip = template?.version
-    ? `v${template.version} · ${template.state === "published" ? "פורסמה" : "טיוטה"}`
-    : "v1 · טיוטה";
+  // D205 — the state only; version numbers are internal and never shown
+  const versionChip = template?.version && template.state === "published" ? "פורסמה" : "טיוטה";
 
   return (
     <SidePanel
@@ -192,6 +192,7 @@ export function HtmlTemplateEditor({
           value={name}
           onChange={(e) => { setName(e.target.value); touch(); }}
           disabled={!canEdit}
+          data-tpl-field="name"
           aria-label="שם התבנית"
           placeholder="שם התבנית"
         />
@@ -248,7 +249,7 @@ export function HtmlTemplateEditor({
             <button type="button" className="btn btn-primary"
               disabled={pending || !canEdit || Boolean(invalid) || Boolean(publishBlocker)}
               title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload))}>
+              onClick={() => run(() => publishTemplateAction(payload), () => { if (!template) onClose(); })}>
               <Icon name="publish" size={17} /> פרסום
             </button>
           )}
@@ -332,13 +333,13 @@ export function HtmlTemplateEditor({
               <div className="gc-meta-grid">
                 <label className="field">
                   <span className="field-label">שם השולח</span>
-                  <input className="field-input" value={sender} disabled={!canEdit}
+                  <input className="field-input" data-tpl-field="senderDisplayName" value={sender} disabled={!canEdit}
                     onChange={(e) => { setSender(e.target.value); touch(); }}
                     placeholder="ברירת המחדל של הערוץ" />
                 </label>
                 <label className="field">
                   <span className="field-label">כתובת Reply-To</span>
-                  <input className="field-input ltr-num" type="email" value={replyTo} disabled={!canEdit}
+                  <input className="field-input ltr-num" data-tpl-field="replyTo" type="email" value={replyTo} disabled={!canEdit}
                     onChange={(e) => { setReplyTo(e.target.value); touch(); }}
                     placeholder="ברירת המחדל של הערוץ" />
                 </label>
@@ -348,7 +349,7 @@ export function HtmlTemplateEditor({
                   <span className="field-label">נושא האימייל</span>
                   <span className="gc-cnt">{subject.length} תווים</span>
                 </span>
-                <input className="field-input" value={subject} disabled={!canEdit}
+                <input className="field-input" data-tpl-field="subject" value={subject} disabled={!canEdit}
                   onFocus={(e) => { activeField.current = { kind: "subject", el: e.currentTarget }; }}
                   onDragOver={allowVarDrop} onDrop={(e) => onFieldDrop(e, "subject")}
                   onChange={(e) => { setSubject(e.target.value); touch(); }} />
@@ -358,7 +359,7 @@ export function HtmlTemplateEditor({
                   <span className="field-label">טקסט מקדים (Preheader)</span>
                   <span className="gc-cnt">{preheader.length} תווים</span>
                 </span>
-                <input className="field-input" value={preheader} disabled={!canEdit}
+                <input className="field-input" data-tpl-field="preheader" value={preheader} disabled={!canEdit}
                   onFocus={(e) => { activeField.current = { kind: "preheader", el: e.currentTarget }; }}
                   onDragOver={allowVarDrop} onDrop={(e) => onFieldDrop(e, "preheader")}
                   onChange={(e) => { setPreheader(e.target.value); touch(); }}
@@ -377,6 +378,7 @@ export function HtmlTemplateEditor({
             {mode === "edit" ? (
               <textarea
                 className="field-input gc-code"
+                data-tpl-field="content"
                 dir="ltr"
                 spellCheck={false}
                 disabled={!canEdit}
@@ -432,7 +434,7 @@ export function HtmlTemplateEditor({
           <div className="gc-meta-grid">
             <label className="field">
               <span className="field-label">שלב בחיי ההזמנה</span>
-              <select className="field-input" disabled={!canEdit} value={stage}
+              <select className="field-input" data-tpl-field="category" disabled={!canEdit} value={stage}
                 onChange={(e) => { setStage(e.target.value); touch(); }}>
                 {STAGE_KEYS.map((key) => <option key={key} value={key}>{STAGE_LABELS[key]}</option>)}
               </select>
@@ -440,7 +442,7 @@ export function HtmlTemplateEditor({
             </label>
             <label className="field">
               <span className="field-label">שפה</span>
-              <select className="field-input" disabled={!canEdit} value={language}
+              <select className="field-input" data-tpl-field="language" disabled={!canEdit} value={language}
                 onChange={(e) => { setLanguage(e.target.value as "he" | "en"); touch(); }}>
                 <option value="he">עברית</option>
                 <option value="en">English</option>
