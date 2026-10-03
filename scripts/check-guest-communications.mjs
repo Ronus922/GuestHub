@@ -824,8 +824,13 @@ assert.match(panelCode, /gc-auto-note is-warn/,
 
 // ---- source: the server refuses what the panel must not offer (fail-closed),
 // and the chip actually CONTROLS the exclusion instead of decorating it
-assert.match(uiActions, /if \(wantsOta && otaBlocked\) return \{ success: false/,
+// D203 moved the derivation into deriveAutomationConfig (shared by the save and
+// the 7-day preview): it returns { ok: false } and the save maps that to
+// { success: false } — the refusal is the same, only where it is spelled moved.
+assert.match(uiActions, /if \(wantsOta && otaBlocked\) return \{ (?:success|ok): false/,
   "the save path must REFUSE an OTA source on a hard-skip trigger, never strip it silently");
+assert.match(uiActions, /if \(!derived\.ok\) return \{ success: false, error: derived\.error \}/,
+  "…and the save returns the derivation's refusal instead of saving");
 assert.match(uiActions, /ota: !wantsOta/,
   "exclusions.ota must be DERIVED from the chosen sources — otherwise the chip controls nothing");
 

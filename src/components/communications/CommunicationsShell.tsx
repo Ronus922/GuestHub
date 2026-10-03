@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Icon, type IconName } from "@/components/shared/Icon";
+import { AutomationPreview } from "./AutomationPreview";
 import { SidePanel } from "@/components/ui/SidePanel";
 import { TemplateEditor } from "./TemplateEditor";
 import { HtmlTemplateEditor } from "./HtmlTemplateEditor";
@@ -883,6 +884,18 @@ function AutomationPanel({
   // was later marked otaHardSkip must not look saveable.
   const sourcesValid = sources.length > 0 && !(sources.includes("ota") && otaBlockReason);
   const valid = name.trim().length >= 2 && sourcesValid && selectedTemplateValid && recipientsValid;
+  // D203 — ONE input object: the save sends it, and the 7-day preview evaluates it
+  const draftInput = {
+    id: fresh ? undefined : value.id, name, description,
+    triggerType, channel, templateId, sources, activate,
+    recipient: {
+      guest: toGuest,
+      owner: toOwner
+        ? (ownerMode === "all" ? { mode: "all" } : { mode: "selected", addresses: ownerPicks })
+        : null,
+    },
+    ...(trigger.kind === "scheduled" ? { offsetDays, sendTime } : {}),
+  };
 
   // ---- the honest preview: the PUBLISHED bytes, through the send path's own
   // renderer. A template with no published version has nothing to preview, and
@@ -953,17 +966,7 @@ function AutomationPanel({
       footer={
         <>
           <button type="button" className="btn btn-primary" disabled={!valid || pending}
-            onClick={() => onSave({
-              id: fresh ? undefined : value.id, name, description,
-              triggerType, channel, templateId, sources, activate,
-              recipient: {
-                guest: toGuest,
-                owner: toOwner
-                  ? (ownerMode === "all" ? { mode: "all" } : { mode: "selected", addresses: ownerPicks })
-                  : null,
-              },
-              ...(trigger.kind === "scheduled" ? { offsetDays, sendTime } : {}),
-            })}>
+            onClick={() => onSave(draftInput)}>
             {activate ? "שמירה והפעלה" : "שמירה כטיוטה"}
           </button>
           <button type="button" className="btn btn-secondary" onClick={onClose}>ביטול</button>
@@ -1249,6 +1252,7 @@ function AutomationPanel({
               )}
             </div>
           </section>
+
         </div>
 
         <aside className="gc-auto-side">
@@ -1317,6 +1321,12 @@ function AutomationPanel({
             </div>
           </section>
         </aside>
+
+        {/* D203 — full panel width (below both columns): a 7-day table needs it */}
+        <div className="gc-auto-wide">
+          <AutomationPreview input={draftInput} scheduled={trigger.kind === "scheduled"}
+            ready={sourcesValid && selectedTemplateValid && recipientsValid} />
+        </div>
       </div>
     </SidePanel>
   );

@@ -3,8 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getActor, requirePermission, AuthorizationError } from "@/lib/auth/actor";
-import { sql } from "@/lib/db";
+import { getActor, hasPermission, requirePermission, AuthorizationError } from "@/lib/auth/actor";
+import { sql, withReadOnlyScope } from "@/lib/db";
 import { writeAudit } from "@/lib/audit";
 import {
   EMAIL_RE,
@@ -24,6 +24,7 @@ import {
 import { describeRenderIssues } from "@/lib/communications/variables";
 import { normalizePhone } from "@/lib/phone";
 import { TRIGGERS, TRIGGER_IDS, SOURCE_GROUP_IDS, otaSourceBlockReason } from "@/lib/communications/triggers";
+import { previewScheduledAutomation, type AutomationPreview } from "@/lib/communications/preview";
 
 export type CommunicationActionResult = { success: true; id?: string; message?: string } | { success: false; error: string };
 
@@ -439,63 +440,93 @@ async function providerReady(tenantId: string, channel: "email" | "whatsapp"): P
   return Boolean(row?.ready);
 }
 
+/**
+ * D203 — the ONE mapping from the editor's input to the stored automation
+ * config (timing, conditions, exclusions, sources, recipients) and its
+ * validation. saveAutomationAction persists what it returns; the preview
+ * evaluates exactly the same config without persisting it.
+ */
+type DerivedAutomationConfig = {
+  ok: true;
+  timing: Record<string, unknown>;
+  conditions: unknown;
+  exclusions: Record<string, unknown>;
+  sources: string[];
+  recipientConfig: RecipientConfig;
+  owner: RecipientConfig["owner"];
+  publishedVersionId: string | null;
+};
+async function deriveAutomationConfig(
+  tenantId: string,
+  input: Omit<z.infer<typeof automationInputSchema>, "name" | "description" | "activate">,
+): Promise<DerivedAutomationConfig | { ok: false; error: string }> {
+  const trigger = TRIGGERS[input.triggerType];
+  // The trigger's registry defaults own timing/conditions/exclusions — and the
+  // UPDATE rewrites them too, so switching confirmed→cancelled can never leave
+  // stale status=confirmed conditions behind.
+  const timing = trigger.kind === "scheduled"
+    ? {
+      mode: "scheduled" as const,
+      offsetDays: trigger.direction === "on" ? 0
+        : Math.min(trigger.offsetDays?.max ?? 60,
+          Math.max(trigger.offsetDays?.min ?? 0, input.offsetDays ?? trigger.offsetDays?.default ?? 0)),
+      sendTime: input.sendTime ?? trigger.defaultSendTime ?? "09:00",
+      quietHours: "bypass" as const,
+    }
+    : { mode: "immediate" as const, quietHours: "bypass" as const };
+  const conditions = trigger.defaultConditions;
+  // D118 — the OTA group is a real operator decision now, so exclusions.ota is
+  // DERIVED from the chosen sources instead of pinned to the registry default.
+  // The engine already reads exclusions.ota and skips truthfully on it; this
+  // is the switch that was missing, not new engine behaviour.
+  // Fail-closed: a trigger the registry marks otaHardSkip can never carry the
+  // OTA source, and the save is REFUSED rather than silently stripped — a
+  // clamp the operator cannot see is exactly the defect D118 forbids.
+  const wantsOta = input.sources.includes("ota");
+  const otaBlocked = otaSourceBlockReason(input.triggerType);
+  if (wantsOta && otaBlocked) return { ok: false, error: otaBlocked };
+  const exclusions = { ...trigger.defaultExclusions, ota: !wantsOta };
+  const [template] = await sql<{ current_published_version_id: string | null }[]>`
+    SELECT current_published_version_id FROM guesthub.message_templates
+    WHERE tenant_id = ${tenantId} AND id = ${input.templateId} AND channel = ${input.channel}`;
+  if (!template) return { ok: false, error: "התבנית שנבחרה אינה זמינה לערוץ הזה" };
+  let owner: RecipientConfig["owner"] = null;
+  if (input.recipient.owner) {
+    const [ownerRow] = await sql<{ addresses: string[] }[]>`
+      SELECT ${input.channel === "whatsapp" ? sql`owner_notification_phones` : sql`owner_notification_emails`} AS addresses
+      FROM guesthub.communication_settings WHERE tenant_id = ${tenantId}`;
+    const configured = ownerRow?.addresses ?? [];
+    if (configured.length === 0)
+      return { ok: false, error: "יש להגדיר כתובות של בעל העסק בהגדרות התקשורת לפני בחירת נמען זה" };
+    if (input.recipient.owner.mode === "selected") {
+      const normalize = (a: string) => input.channel === "whatsapp" ? normalizePhone(a).e164 : a.trim().toLowerCase();
+      const configuredSet = new Set(configured.map(normalize));
+      const picked = [...new Set(input.recipient.owner.addresses.map(normalize))]
+        .filter((a) => a && configuredSet.has(a));
+      if (picked.length === 0)
+        return { ok: false, error: "הכתובות שנבחרו אינן קיימות עוד בהגדרות — יש לבחור מחדש" };
+      owner = { mode: "selected", addresses: picked };
+    } else {
+      owner = { mode: "all" };
+    }
+  }
+  const recipientConfig: RecipientConfig = { version: 2, guest: input.recipient.guest, owner };
+  return {
+    ok: true, timing, conditions, exclusions, sources: input.sources, recipientConfig, owner,
+    publishedVersionId: template.current_published_version_id,
+  };
+}
+
 export async function saveAutomationAction(raw: unknown): Promise<CommunicationActionResult> {
   try {
     const actor = await getActor();
     requirePermission(actor, "communications.automations.manage");
     const input = automationInputSchema.parse(raw);
     if (input.activate) requirePermission(actor, "communications.automations.activate");
-    const trigger = TRIGGERS[input.triggerType];
-    // The trigger's registry defaults own timing/conditions/exclusions — and the
-    // UPDATE rewrites them too, so switching confirmed→cancelled can never leave
-    // stale status=confirmed conditions behind.
-    const timing = trigger.kind === "scheduled"
-      ? {
-        mode: "scheduled" as const,
-        offsetDays: trigger.direction === "on" ? 0
-          : Math.min(trigger.offsetDays?.max ?? 60,
-            Math.max(trigger.offsetDays?.min ?? 0, input.offsetDays ?? trigger.offsetDays?.default ?? 0)),
-        sendTime: input.sendTime ?? trigger.defaultSendTime ?? "09:00",
-        quietHours: "bypass" as const,
-      }
-      : { mode: "immediate" as const, quietHours: "bypass" as const };
-    const conditions = trigger.defaultConditions;
-    // D118 — the OTA group is a real operator decision now, so exclusions.ota is
-    // DERIVED from the chosen sources instead of pinned to the registry default.
-    // The engine already reads exclusions.ota and skips truthfully on it; this
-    // is the switch that was missing, not new engine behaviour.
-    // Fail-closed: a trigger the registry marks otaHardSkip can never carry the
-    // OTA source, and the save is REFUSED rather than silently stripped — a
-    // clamp the operator cannot see is exactly the defect D118 forbids.
-    const wantsOta = input.sources.includes("ota");
-    const otaBlocked = otaSourceBlockReason(input.triggerType);
-    if (wantsOta && otaBlocked) return { success: false, error: otaBlocked };
-    const exclusions = { ...trigger.defaultExclusions, ota: !wantsOta };
-    const [template] = await sql<{ current_published_version_id: string | null }[]>`
-      SELECT current_published_version_id FROM guesthub.message_templates
-      WHERE tenant_id = ${actor.tenantId} AND id = ${input.templateId} AND channel = ${input.channel}`;
-    if (!template) return { success: false, error: "התבנית שנבחרה אינה זמינה לערוץ הזה" };
-    let owner: RecipientConfig["owner"] = null;
-    if (input.recipient.owner) {
-      const [ownerRow] = await sql<{ addresses: string[] }[]>`
-        SELECT ${input.channel === "whatsapp" ? sql`owner_notification_phones` : sql`owner_notification_emails`} AS addresses
-        FROM guesthub.communication_settings WHERE tenant_id = ${actor.tenantId}`;
-      const configured = ownerRow?.addresses ?? [];
-      if (configured.length === 0)
-        return { success: false, error: "יש להגדיר כתובות של בעל העסק בהגדרות התקשורת לפני בחירת נמען זה" };
-      if (input.recipient.owner.mode === "selected") {
-        const normalize = (a: string) => input.channel === "whatsapp" ? normalizePhone(a).e164 : a.trim().toLowerCase();
-        const configuredSet = new Set(configured.map(normalize));
-        const picked = [...new Set(input.recipient.owner.addresses.map(normalize))]
-          .filter((a) => a && configuredSet.has(a));
-        if (picked.length === 0)
-          return { success: false, error: "הכתובות שנבחרו אינן קיימות עוד בהגדרות — יש לבחור מחדש" };
-        owner = { mode: "selected", addresses: picked };
-      } else {
-        owner = { mode: "all" };
-      }
-    }
-    const recipientConfig: RecipientConfig = { version: 2, guest: input.recipient.guest, owner };
+    const derived = await deriveAutomationConfig(actor.tenantId, input);
+    if (!derived.ok) return { success: false, error: derived.error };
+    const { timing, conditions, exclusions, recipientConfig, owner } = derived;
+    const template = { current_published_version_id: derived.publishedVersionId };
     const ready = await providerReady(actor.tenantId, input.channel);
     const requestedActive = input.activate && Boolean(template.current_published_version_id) && ready;
     const status = input.activate ? (requestedActive ? "active" : "needs_attention") : "draft";
@@ -535,6 +566,49 @@ export async function saveAutomationAction(raw: unknown): Promise<CommunicationA
     refresh();
     return { success: true, id, message: requestedActive ? "האוטומציה הופעלה לאירועים חדשים בלבד" : attention ?? "האוטומציה נשמרה כטיוטה" };
   } catch (error) { return fail(error); }
+}
+
+// D203 — "מי יקבל ב-7 הימים הקרובים". The editor's CURRENT state (saved or
+// not, active or not) through the same schema and the same derivation as the
+// save, then the scheduler's predicate + the engine's evaluation, inside ONE
+// read-only transaction: nothing is inserted or updated, no event, no row.
+// name/description/activate do not decide who receives, so an unnamed draft
+// can be previewed.
+const previewInputSchema = automationInputSchema.omit({ name: true, description: true, activate: true });
+
+export type PreviewActionResult = { success: true; data: AutomationPreview } | { success: false; error: string };
+
+export async function previewAutomationAction(raw: unknown, days = 7): Promise<PreviewActionResult> {
+  try {
+    const actor = await getActor();
+    requirePermission(actor, "communications.automations.manage");
+    const input = previewInputSchema.parse(raw);
+    const span = Math.min(14, Math.max(1, Math.trunc(days)));
+    const outcome = await withReadOnlyScope(async () => {
+      const derived = await deriveAutomationConfig(actor.tenantId, input);
+      if (!derived.ok) return derived;
+      const preview = await previewScheduledAutomation({
+        automation: {
+          id: input.id ?? randomUUID(), tenant_id: actor.tenantId, trigger_type: input.triggerType,
+          channel: input.channel, template_id: input.templateId,
+          template_version_policy: "latest_published", locked_template_version_id: null,
+          timing_config: derived.timing, source_filters: { include: derived.sources },
+          conditions: derived.conditions, exclusion_rules: derived.exclusions,
+          recipient_config: derived.recipientConfig,
+        },
+        days: span,
+        now: new Date(),
+        showGuestData: hasPermission(actor, "reservations.view"),
+      });
+      return { ok: true as const, preview };
+    });
+    if (!outcome.ok) return { success: false, error: outcome.error };
+    return { success: true, data: outcome.preview };
+  } catch (error) {
+    if (error instanceof AuthorizationError) return { success: false, error: error.message };
+    if (error instanceof z.ZodError) return { success: false, error: "יש לבחור תבנית ולפחות מקור הזמנה אחד" };
+    return { success: false, error: "לא ניתן להציג את התצוגה המקדימה כרגע. נסו שוב." };
+  }
 }
 
 export async function setAutomationStatusAction(idRaw: string, operation: "activate" | "disable" | "delete"): Promise<CommunicationActionResult> {

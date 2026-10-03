@@ -370,7 +370,7 @@ type QuietHoursConfig = { enabled?: boolean; start?: string; end?: string };
 const QUIET_HOURS_ZONE = "Asia/Jerusalem";
 
 /** Wall-clock parts of `date` in Asia/Jerusalem — independent of process TZ. */
-function israelParts(date: Date): { y: number; mo: number; d: number; h: number; mi: number } {
+export function israelParts(date: Date): { y: number; mo: number; d: number; h: number; mi: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: QUIET_HOURS_ZONE, hourCycle: "h23",
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
@@ -380,7 +380,7 @@ function israelParts(date: Date): { y: number; mo: number; d: number; h: number;
 }
 
 /** The instant at which Israel's wall clock reads y-mo-d h:mi (DST-correct). */
-function israelWallTimeToInstant(y: number, mo: number, d: number, h: number, mi: number): Date {
+export function israelWallTimeToInstant(y: number, mo: number, d: number, h: number, mi: number): Date {
   const target = Date.UTC(y, mo - 1, d, h, mi);
   let guess = target;
   // Two passes settle the offset even across a DST boundary.

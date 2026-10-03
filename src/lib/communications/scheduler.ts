@@ -1,4 +1,5 @@
 import "server-only";
+import type postgres from "postgres";
 import { sql } from "@/lib/db";
 import { TRIGGERS, isInStayWindow, type TriggerId } from "./triggers";
 
@@ -37,10 +38,25 @@ export const CATCH_UP_WINDOW_HOURS = 3;
 const SCHEDULED_TRIGGERS = (Object.keys(TRIGGERS) as TriggerId[])
   .filter((id) => TRIGGERS[id].kind === "scheduled");
 
-async function emitForTrigger(triggerId: TriggerId, at: Date | null): Promise<number> {
+/** The automation rows a scan runs over: the table (default), or one draft row (D203). */
+export type AutomationSource = postgres.Fragment;
+
+/**
+ * D203 — the scheduler's predicate, ONE fragment for both callers: the worker
+ * emits from it (emitForTrigger) and the automation preview reads it. Every
+ * reservation whose anchor matches this trigger's day for the automation is a
+ * candidate; the three gates the emission applies are exposed as columns
+ * (status_ok, is_test, due) instead of being hidden in a WHERE, so the preview
+ * can say WHY a candidate is not emitted without restating the rule.
+ */
+export function scheduledCandidates(
+  triggerId: TriggerId,
+  at: Date | null,
+  automations?: AutomationSource,
+): postgres.Fragment {
   const trigger = TRIGGERS[triggerId];
-  // `at` exists for the behavioural guards (check:relative-schedule,
-  // check:catch-up-window); production always scans at the database's now().
+  // `at` exists for the behavioural guards and the preview; production always
+  // scans at the database's now().
   const nowTs = at ? sql`${at.toISOString()}::timestamptz` : sql`now()`;
   const today = sql`((${nowTs}) AT TIME ZONE 'Asia/Jerusalem')::date`;
   const anchorColumn = trigger.anchor === "check_out" ? sql`r.check_out` : sql`r.check_in`;
@@ -58,12 +74,10 @@ async function emitForTrigger(triggerId: TriggerId, at: Date | null): Promise<nu
     : sql`false`;
   const scheduledFor = sql`((${today} + (${sendTime})::time) AT TIME ZONE 'Asia/Jerusalem')`;
   const catchUpExpired = sql`(${nowTs}) > ${scheduledFor} + make_interval(hours => ${CATCH_UP_WINDOW_HOURS})`;
-  const rows = await sql<{ id: string }[]>`
-    INSERT INTO guesthub.communication_events
-      (tenant_id, event_type, aggregate_type, reservation_id, source,
-       occurrence_key, payload, occurred_at)
-    SELECT a.tenant_id, a.trigger_type, 'reservation', r.id, r.booking_origin,
-           'reservation:' || r.id || ':' || ${trigger.shortName} || ':' || a.id || ':' || ${anchorColumn}::text,
+  return sql`
+    SELECT a.tenant_id, a.trigger_type AS event_type, 'reservation' AS aggregate_type,
+           r.id AS reservation_id, r.booking_origin AS source,
+           'reservation:' || r.id || ':' || ${trigger.shortName} || ':' || a.id || ':' || ${anchorColumn}::text AS occurrence_key,
            jsonb_strip_nulls(jsonb_build_object(
              'automationId', a.id,
              'anchorDate', ${anchorColumn}::text,
@@ -72,17 +86,28 @@ async function emitForTrigger(triggerId: TriggerId, at: Date | null): Promise<nu
              'skipReason', CASE
                WHEN ${outsideStay} THEN 'outside_stay'
                WHEN ${catchUpExpired} THEN 'catch_up_window_expired'
-             END)),
-           ${nowTs}
-    FROM guesthub.communication_automations a
+             END)) AS payload,
+           ${nowTs} AS occurred_at,
+           r.status = ANY(${trigger.eligibleStatuses}) AS status_ok,
+           r.is_test,
+           to_char((${nowTs}) AT TIME ZONE 'Asia/Jerusalem', 'HH24:MI') >= ${sendTime} AS due
+    FROM ${automations ?? sql`guesthub.communication_automations`} a
     JOIN guesthub.reservations r ON r.tenant_id = a.tenant_id
     WHERE a.trigger_type = ${triggerId}
       AND a.status = 'active' AND a.archived_at IS NULL
       AND (a.timing_config->>'mode') = 'scheduled'
-      AND r.status = ANY(${trigger.eligibleStatuses})
-      AND NOT r.is_test
-      AND ${anchorMatch}
-      AND to_char((${nowTs}) AT TIME ZONE 'Asia/Jerusalem', 'HH24:MI') >= ${sendTime}
+      AND ${anchorMatch}`;
+}
+
+async function emitForTrigger(triggerId: TriggerId, at: Date | null): Promise<number> {
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO guesthub.communication_events
+      (tenant_id, event_type, aggregate_type, reservation_id, source,
+       occurrence_key, payload, occurred_at)
+    SELECT c.tenant_id, c.event_type, c.aggregate_type, c.reservation_id, c.source,
+           c.occurrence_key, c.payload, c.occurred_at
+    FROM (${scheduledCandidates(triggerId, at)}) c
+    WHERE c.status_ok AND NOT c.is_test AND c.due
     ON CONFLICT (tenant_id, event_type, aggregate_type, occurrence_key) DO NOTHING
     RETURNING id`;
   return rows.length;

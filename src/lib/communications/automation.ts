@@ -13,7 +13,7 @@ import { describeConditionFailures, evaluateConditions } from "./conditions";
 import { renderTemplateContent, renderTemplateString, renderWhatsAppCommunication } from "./renderer";
 import { describeRenderIssues } from "./variables";
 import { parseTemplateContent, templateContentKind } from "./schemas";
-import { applyQuietHours, triggerFor } from "./triggers";
+import { applyQuietHours, triggerFor, type TriggerDef } from "./triggers";
 import { normalizePhone } from "@/lib/phone";
 import type { CommunicationEvent } from "./outbox";
 import type {
@@ -21,7 +21,7 @@ import type {
   TemplateLanguage, WhatsAppTemplateContent,
 } from "./types";
 
-type AutomationRow = {
+export type AutomationRow = {
   id: string;
   tenant_id: string;
   channel: CommunicationChannel;
@@ -35,7 +35,7 @@ type AutomationRow = {
   recipient_config: unknown;
 };
 
-type VersionRow = {
+export type VersionRow = {
   id: string;
   template_id: string;
   /** The owning TEMPLATE's language — RTL-safe WhatsApp output keys off it (D116). */
@@ -53,7 +53,7 @@ type EmailChannelSnapshot = {
   reply_to: string | null;
 };
 
-type ReservationSnapshot = {
+export type ReservationSnapshot = {
   id: string;
   tenant_id: string;
   booking_origin: BookingOrigin;
@@ -142,7 +142,7 @@ function cancellationDescription(snapshot: unknown): string | null {
   return null;
 }
 
-async function loadReservationSnapshot(
+export async function loadReservationSnapshot(
   tenantId: string,
   reservationId: string | null,
 ): Promise<ReservationSnapshot | null> {
@@ -439,6 +439,31 @@ async function skippedDisplayAddress(args: {
   }
 }
 
+/** The Hebrew label of every skip reason — the history and the D203 preview show the same text. */
+export const SKIP_REASON_LABELS: Record<string, string> = {
+  source_mismatch: "מקור האירוע אינו תואם להזמנה",
+  ota_excluded: "הזמנת ערוץ אינה זכאית להודעה האוטומטית",
+  reservation_not_confirmed: "ההזמנה אינה במצב מאושר",
+  reservation_not_eligible: "ההזמנה אינה במצב המתאים לשליחה הזו",
+  test_reservation: "הזמנת בדיקה אינה נשלחת לאורח",
+  guest_opted_out: "האורח הוסר מתקשורת",
+  source_filtered: "מקור ההזמנה אינו כלול באוטומציה",
+  conditions_not_met: "תנאי האוטומציה לא התקיימו",
+  missing_guest_email: "כתובת האימייל של האורח חסרה או אינה תקינה",
+  missing_guest_phone: "מספר הטלפון של האורח חסר או אינו תקין",
+  template_version_missing: "לא נמצאה גרסה מפורסמת תואמת",
+  template_resolution_ambiguous: "יותר מתבנית מפורסמת אחת תואמת — לא נבחרה אף אחת",
+  provider_not_ready: "הערוץ אינו מחובר או לא נבדק",
+  render_failed: "נתון נדרש לתבנית חסר בהזמנה הזו",
+  render_context_failed: "לא ניתן להרכיב את נתוני ההודעה",
+  automation_config_invalid: "הגדרת האוטומציה אינה תקינה",
+  invalid_reply_to: "כתובת המענה של התבנית אינה תקינה",
+  template_channel_mismatch: "התבנית אינה תואמת לערוץ האוטומציה",
+  no_owner_recipients: "לא הוגדרו כתובות של בעל העסק לערוץ הזה",
+  outside_stay: "היום המחושב נופל מחוץ לתאריכי השהייה",
+  catch_up_window_expired: "חלון ההשלמה (3 שעות אחרי שעת השליחה) עבר — לא נשלח באיחור",
+};
+
 async function recordSkippedDelivery(args: {
   event: CommunicationEvent;
   automation: AutomationRow;
@@ -451,29 +476,6 @@ async function recordSkippedDelivery(args: {
   /** Overrides the generic reason label with specific evidence (D112). */
   detail?: string;
 }): Promise<"created" | "duplicate"> {
-  const reasonLabels: Record<string, string> = {
-    source_mismatch: "מקור האירוע אינו תואם להזמנה",
-    ota_excluded: "הזמנת ערוץ אינה זכאית להודעה האוטומטית",
-    reservation_not_confirmed: "ההזמנה אינה במצב מאושר",
-    reservation_not_eligible: "ההזמנה אינה במצב המתאים לשליחה הזו",
-    test_reservation: "הזמנת בדיקה אינה נשלחת לאורח",
-    guest_opted_out: "האורח הוסר מתקשורת",
-    source_filtered: "מקור ההזמנה אינו כלול באוטומציה",
-    conditions_not_met: "תנאי האוטומציה לא התקיימו",
-    missing_guest_email: "כתובת האימייל של האורח חסרה או אינה תקינה",
-    missing_guest_phone: "מספר הטלפון של האורח חסר או אינו תקין",
-    template_version_missing: "לא נמצאה גרסה מפורסמת תואמת",
-    template_resolution_ambiguous: "יותר מתבנית מפורסמת אחת תואמת — לא נבחרה אף אחת",
-    provider_not_ready: "הערוץ אינו מחובר או לא נבדק",
-    render_failed: "נתון נדרש לתבנית חסר בהזמנה הזו",
-    render_context_failed: "לא ניתן להרכיב את נתוני ההודעה",
-    automation_config_invalid: "הגדרת האוטומציה אינה תקינה",
-    invalid_reply_to: "כתובת המענה של התבנית אינה תקינה",
-    template_channel_mismatch: "התבנית אינה תואמת לערוץ האוטומציה",
-    no_owner_recipients: "לא הוגדרו כתובות של בעל העסק לערוץ הזה",
-    outside_stay: "היום המחושב נופל מחוץ לתאריכי השהייה",
-    catch_up_window_expired: "חלון ההשלמה (3 שעות אחרי שעת השליחה) עבר — לא נשלח באיחור",
-  };
   const channel = args.automation.channel;
   const provider = args.provider ?? (channel === "whatsapp" ? "whatsapp" : "gmail");
   const toAddress = args.recipient?.address ?? await skippedDisplayAddress(args);
@@ -491,7 +493,7 @@ async function recordSkippedDelivery(args: {
       ${args.version?.id ?? null}, ${args.event.id}, ${idempotencyKey}, ${args.recipient?.recipientKey ?? "guest"},
       ${toAddress}, ${args.version?.subject ?? null},
       '', 'skipped', '', '', 'normal', now(), ${args.reason}, ${args.reason},
-      ${args.detail ?? reasonLabels[args.reason] ?? "המשלוח דולג"}, 0)
+      ${args.detail ?? SKIP_REASON_LABELS[args.reason] ?? "המשלוח דולג"}, 0)
     ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
       DO NOTHING
     RETURNING id`;
@@ -593,6 +595,115 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       AND (${scheduledAutomationId}::uuid IS NULL OR id = ${scheduledAutomationId}::uuid)
     ORDER BY created_at, id`;
   if (!automations.length) return summary;
+  await evaluateEventAutomations({ event, trigger, reservation, automations, now: new Date() }, {
+    skip: (automation, reason, version, provider, recipient, detail) =>
+      skipAutomation(summary, event, automation, reservation, reason, version, provider, recipient, detail),
+    markNeedsAttention,
+    deliver: async (delivery) => {
+      if (await insertPlannedDelivery(event, reservation, delivery)) summary.created += 1;
+      else summary.duplicates += 1;
+    },
+  });
+  return summary;
+}
+
+/** D203 — one planned outbound message: what the worker INSERTs and the preview lists. */
+export type PlannedDelivery = {
+  automation: AutomationRow;
+  version: VersionRow;
+  recipient: { key: string; recipientKey: string; address: string };
+  scheduledAt: Date;
+  eligibleStatuses: readonly string[];
+} & (
+  | { channel: "whatsapp"; provider: string; text: string }
+  | {
+      channel: "email"; subject: string; plainText: string; html: string; preheader: string | null;
+      senderName: string | null; replyTo: string | null;
+    }
+);
+
+/**
+ * D203 — what evaluating an event DOES. The decision itself (every gate below)
+ * is single-sourced in evaluateEventAutomations; the worker passes effects that
+ * write (skipped rows, needs-attention flags, outbound rows), the automation
+ * preview passes effects that only record, so a preview cannot drift from a send.
+ */
+export type DeliveryEffects = {
+  skip(
+    automation: AutomationRow, reason: string, version?: VersionRow | null, provider?: string,
+    recipient?: { key: string; recipientKey: string; address: string }, detail?: string,
+  ): Promise<void>;
+  markNeedsAttention(automationId: string, reason: string): Promise<void>;
+  deliver(delivery: PlannedDelivery): Promise<void>;
+};
+
+/** INSERT one planned delivery; false = it already existed (idempotency key). */
+async function insertPlannedDelivery(
+  event: CommunicationEvent,
+  reservation: ReservationSnapshot,
+  d: PlannedDelivery,
+): Promise<boolean> {
+  const { version } = d;
+  if (d.channel === "whatsapp") {
+    const rows = await sql<{ id: string }[]>`
+      INSERT INTO guesthub.outbound_messages
+        (tenant_id, reservation_id, guest_id, channel, provider, template_id,
+         automation_id, template_version_id, event_id, idempotency_key, recipient_key,
+         to_address, subject, body, status, rendered_html,
+         rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
+      SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
+             'whatsapp', ${d.provider}, ${version.template_id}, ${d.automation.id},
+             ${version.id}, ${event.id}, ${d.recipient.key}, ${d.recipient.recipientKey},
+             ${d.recipient.address}, NULL,
+             ${d.text}, 'queued', '',
+             ${d.text}, 'normal', ${d.scheduledAt}, ${d.eligibleStatuses as string[]},
+             GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
+                                   FROM guesthub.communication_settings
+                                   WHERE tenant_id = ${event.tenant_id}), 5))
+      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+        DO NOTHING
+      RETURNING id`;
+    return Boolean(rows[0]);
+  }
+  const rows = await sql<{ id: string }[]>`
+    INSERT INTO guesthub.outbound_messages
+      (tenant_id, reservation_id, guest_id, channel, provider, template_id,
+       automation_id, template_version_id, event_id, idempotency_key, recipient_key,
+       to_address, subject, body, status, rendered_sender_name,
+       rendered_reply_to, rendered_preheader, rendered_html,
+       rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
+    SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
+           'email', 'gmail', ${version.template_id}, ${d.automation.id},
+           ${version.id}, ${event.id}, ${d.recipient.key}, ${d.recipient.recipientKey},
+           ${d.recipient.address}, ${d.subject},
+           ${d.plainText}, 'queued', ${d.senderName}, ${d.replyTo},
+           ${d.preheader}, ${d.html},
+           ${d.plainText}, 'normal', ${d.scheduledAt}, ${d.eligibleStatuses as string[]},
+           GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
+                                 FROM guesthub.communication_settings
+                                 WHERE tenant_id = ${event.tenant_id}), 5))
+    ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+      DO NOTHING
+    RETURNING id`;
+  return Boolean(rows[0]);
+}
+
+/**
+ * Every decision of an event over its automations (D203 extraction of the body
+ * of prepareDeliveriesForEvent — no gate added, removed or reordered).
+ */
+export async function evaluateEventAutomations(
+  args: {
+    event: CommunicationEvent;
+    trigger: TriggerDef;
+    reservation: ReservationSnapshot;
+    automations: AutomationRow[];
+    /** the evaluation clock: scheduledAt / quiet hours are computed from it */
+    now: Date;
+  },
+  fx: DeliveryEffects,
+): Promise<void> {
+  const { event, trigger, reservation, automations, now } = args;
   // D201 — the scheduler decided at emission time that this occurrence must
   // not send (outside the stay by date, or past the same-day catch-up window).
   // Recorded as ONE truthful skipped row, never re-evaluated here: the decision
@@ -602,9 +713,9 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
     : null;
   if (scheduledSkipReason === "outside_stay" || scheduledSkipReason === "catch_up_window_expired") {
     for (const automation of automations) {
-      await skipAutomation(summary, event, automation, reservation, scheduledSkipReason, await resolvedVersion(automation, reservation.guest_language));
+      await fx.skip(automation, scheduledSkipReason, await resolvedVersion(automation, reservation.guest_language));
     }
-    return summary;
+    return;
   }
   // The persisted reservation is authoritative; an event cannot override its
   // provenance. Record one truthful terminal row per matching automation.
@@ -626,9 +737,9 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
             : null;
   if (globalSkipReason) {
     for (const automation of automations) {
-      await skipAutomation(summary, event, automation, reservation, globalSkipReason, await resolvedVersion(automation, reservation.guest_language));
+      await fx.skip(automation, globalSkipReason, await resolvedVersion(automation, reservation.guest_language));
     }
-    return summary;
+    return;
   }
 
   // Building the render context needs the tenant's business profile and the
@@ -641,10 +752,10 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
     context = await buildRenderContext(reservation);
   } catch {
     for (const automation of automations) {
-      await markNeedsAttention(automation.id, "לא ניתן להרכיב את נתוני ההודעה (פרופיל העסק או לוח השעות)");
-      await skipAutomation(summary, event, automation, reservation, "render_context_failed", await resolvedVersion(automation, reservation.guest_language));
+      await fx.markNeedsAttention(automation.id, "לא ניתן להרכיב את נתוני ההודעה (פרופיל העסק או לוח השעות)");
+      await fx.skip(automation, "render_context_failed", await resolvedVersion(automation, reservation.guest_language));
     }
-    return summary;
+    return;
   }
 
   // Quiet hours apply at delivery creation (scheduled_at), once per event.
@@ -667,21 +778,21 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       const recipientConfig = parseRecipientConfig(automation.recipient_config);
       const timing = timingConfigSchema.parse(automation.timing_config);
       if (!sources.include.includes(reservation.booking_origin)) {
-        await skipAutomation(summary, event, automation, reservation, "source_filtered", await resolvedVersion(automation, reservation.guest_language)); continue;
+        await fx.skip(automation, "source_filtered", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.ota && isChannelBooking(reservation)) {
-        await skipAutomation(summary, event, automation, reservation, "ota_excluded", await resolvedVersion(automation, reservation.guest_language)); continue;
+        await fx.skip(automation, "ota_excluded", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
       if (exclusions.guestCommunicationOptOut && reservation.guest_communication_opt_out) {
-        await skipAutomation(summary, event, automation, reservation, "guest_opted_out", await resolvedVersion(automation, reservation.guest_language)); continue;
+        await fx.skip(automation, "guest_opted_out", await resolvedVersion(automation, reservation.guest_language)); continue;
       }
       const resolution = await resolveVersion(automation, reservation.guest_language);
       if (resolution.outcome === "ambiguous") {
         // A configuration defect, not a per-reservation fact: two published
         // same-language templates in one lineage. Never resolved by luck (D117)
         // — the skip names the candidates (D112) and the automation is flagged.
-        await markNeedsAttention(automation.id, "יותר מתבנית מפורסמת אחת תואמת לשפה בשושלת התבנית");
-        await skipAutomation(summary, event, automation, reservation, "template_resolution_ambiguous",
+        await fx.markNeedsAttention(automation.id, "יותר מתבנית מפורסמת אחת תואמת לשפה בשושלת התבנית");
+        await fx.skip(automation, "template_resolution_ambiguous",
           undefined, undefined, undefined,
           `יותר מתבנית מפורסמת אחת תואמת לשפה: ${resolution.candidateTemplateIds.join(", ")}`
           + (resolution.candidateTemplateIds.length >= 5 ? " (רשימה חלקית)" : ""));
@@ -702,7 +813,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           recipients.push({ key: legacyKey, recipientKey: "guest", address: guestAddress });
         } else {
           // The guest leg alone is unreachable — owner legs still go out.
-          await skipAutomation(summary, event, automation, reservation,
+          await fx.skip(automation,
             automation.channel === "whatsapp" ? "missing_guest_phone" : "missing_guest_email", version);
         }
       }
@@ -719,7 +830,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           pool = pool.filter((a) => picked.has(a)).slice(0, 3);
         }
         if (pool.length === 0) {
-          await skipAutomation(summary, event, automation, reservation, "no_owner_recipients", version, undefined,
+          await fx.skip(automation, "no_owner_recipients", version, undefined,
             { key: `${legacyKey}:owner:none`, recipientKey: "owner:none", address: "" });
         }
         // An owner address identical to the guest's is already covered by the
@@ -742,14 +853,14 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         guestIsRecipient: recipientConfig.guest && guestAddress !== null,
       });
       if (!verdict.pass) {
-        await skipAutomation(summary, event, automation, reservation, "conditions_not_met", version,
+        await fx.skip(automation, "conditions_not_met", version,
           undefined, undefined, describeConditionFailures(verdict.failed) ?? undefined);
         continue;
       }
 
       if (!version) {
-        await markNeedsAttention(automation.id, "לא נמצאה גרסה מפורסמת תואמת לתבנית");
-        await skipAutomation(summary, event, automation, reservation, "template_version_missing");
+        await fx.markNeedsAttention(automation.id, "לא נמצאה גרסה מפורסמת תואמת לתבנית");
+        await fx.skip(automation, "template_version_missing");
         continue;
       }
 
@@ -758,62 +869,44 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
       // The picker only offers same-channel templates, but a body must never
       // leave through the wrong channel — belt-and-braces on both sides.
       if (automation.channel === "whatsapp" ? contentKind !== "whatsapp_text" : contentKind === "whatsapp_text") {
-        await markNeedsAttention(automation.id, "התבנית אינה תואמת לערוץ האוטומציה");
-        await skipAutomation(summary, event, automation, reservation, "template_channel_mismatch", version);
+        await fx.markNeedsAttention(automation.id, "התבנית אינה תואמת לערוץ האוטומציה");
+        await fx.skip(automation, "template_channel_mismatch", version);
         continue;
       }
 
       let scheduledAt = timing.mode === "delay"
-        ? new Date(Date.now() + (timing.delayMinutes ?? 0) * 60_000)
-        : new Date();
+        ? new Date(now.getTime() + (timing.delayMinutes ?? 0) * 60_000)
+        : new Date(now);
       if (timing.quietHours === "respect") scheduledAt = applyQuietHours(scheduledAt, quietHours);
 
       if (automation.channel === "whatsapp") {
         const waChannel = await resolveConnectedWhatsAppChannel(event.tenant_id);
         if (!waChannel) {
-          await markNeedsAttention(automation.id, "ספק ה-WhatsApp אינו מחובר או לא נבדק");
-          await skipAutomation(summary, event, automation, reservation, "provider_not_ready", version);
+          await fx.markNeedsAttention(automation.id, "ספק ה-WhatsApp אינו מחובר או לא נבדק");
+          await fx.skip(automation, "provider_not_ready", version);
           continue;
         }
         const rendered = renderVersionForWire(version, content, context);
         if (rendered.channel !== "whatsapp") throw new Error("unreachable: whatsapp_text checked above");
         if (!rendered.canSend || !rendered.text.trim()) {
           // D112/D115 — the skip names the variable that blocked it.
-          await skipAutomation(summary, event, automation, reservation, "render_failed", version,
+          await fx.skip(automation, "render_failed", version,
             waChannel.provider, undefined,
             describeRenderIssues(rendered.issues)
               ?? (rendered.text.trim() ? undefined : "ההודעה ריקה לאחר מילוי המשתנים"));
           continue;
         }
         for (const r of recipients) {
-          const rows = await sql<{ id: string }[]>`
-            INSERT INTO guesthub.outbound_messages
-              (tenant_id, reservation_id, guest_id, channel, provider, template_id,
-               automation_id, template_version_id, event_id, idempotency_key, recipient_key,
-               to_address, subject, body, status, rendered_html,
-               rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
-            SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
-                   'whatsapp', ${waChannel.provider}, ${version.template_id}, ${automation.id},
-                   ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
-                   ${r.address}, NULL,
-                   ${rendered.text}, 'queued', '',
-                   ${rendered.text}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
-                   GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
-                                         FROM guesthub.communication_settings
-                                         WHERE tenant_id = ${event.tenant_id}), 5))
-            ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-              DO NOTHING
-            RETURNING id`;
-          if (rows[0]) summary.created += 1;
-          else summary.duplicates += 1;
+          await fx.deliver({ channel: "whatsapp", automation, version, recipient: r, scheduledAt,
+            eligibleStatuses: trigger.eligibleStatuses, provider: waChannel.provider, text: rendered.text });
         }
         continue;
       }
 
       const emailChannel = await resolveConnectedEmailChannel(event.tenant_id);
       if (!emailChannel) {
-        await markNeedsAttention(automation.id, "ערוץ האימייל אינו מחובר או שלא עבר בדיקת חיבור");
-        await skipAutomation(summary, event, automation, reservation, "provider_not_ready", version);
+        await fx.markNeedsAttention(automation.id, "ערוץ האימייל אינו מחובר או שלא עבר בדיקת חיבור");
+        await fx.skip(automation, "provider_not_ready", version);
         continue;
       }
       const rendered = renderVersionForWire(version, content, context);
@@ -824,7 +917,7 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
         // the automation here would silently stop every OTHER guest's
         // confirmation too. Record the skip — naming the variable that blocked
         // it (D112/D115) — and carry on.
-        await skipAutomation(summary, event, automation, reservation, "render_failed", version,
+        await fx.skip(automation, "render_failed", version,
           undefined, undefined,
           describeRenderIssues(rendered.issues) ?? undefined);
         continue;
@@ -836,40 +929,20 @@ export async function prepareDeliveriesForEvent(event: CommunicationEvent): Prom
           ? emailChannel.reply_to
           : null;
       if (replyTo && !EMAIL_RE.test(replyTo)) {
-        await markNeedsAttention(automation.id, "כתובת המענה של התבנית או הערוץ אינה תקינה");
-        await skipAutomation(summary, event, automation, reservation, "invalid_reply_to", version);
+        await fx.markNeedsAttention(automation.id, "כתובת המענה של התבנית או הערוץ אינה תקינה");
+        await fx.skip(automation, "invalid_reply_to", version);
         continue;
       }
       for (const r of recipients) {
-        const rows = await sql<{ id: string }[]>`
-          INSERT INTO guesthub.outbound_messages
-            (tenant_id, reservation_id, guest_id, channel, provider, template_id,
-             automation_id, template_version_id, event_id, idempotency_key, recipient_key,
-             to_address, subject, body, status, rendered_sender_name,
-             rendered_reply_to, rendered_preheader, rendered_html,
-             rendered_plain_text, delivery_type, scheduled_at, eligible_statuses, max_attempts)
-          SELECT ${event.tenant_id}, ${reservation.id}, ${reservation.guest_id},
-                 'email', 'gmail', ${version.template_id}, ${automation.id},
-                 ${version.id}, ${event.id}, ${r.key}, ${r.recipientKey},
-                 ${r.address}, ${rendered.subject},
-                 ${rendered.plainText}, 'queued', ${senderName}, ${replyTo},
-                 ${rendered.preheader}, ${rendered.html},
-                 ${rendered.plainText}, 'normal', ${scheduledAt}, ${trigger.eligibleStatuses},
-                 GREATEST(1, COALESCE((SELECT (retry_policy->>'maxAttempts')::int
-                                       FROM guesthub.communication_settings
-                                       WHERE tenant_id = ${event.tenant_id}), 5))
-          ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-            DO NOTHING
-          RETURNING id`;
-        if (rows[0]) summary.created += 1;
-        else summary.duplicates += 1;
+        await fx.deliver({ channel: "email", automation, version, recipient: r, scheduledAt,
+          eligibleStatuses: trigger.eligibleStatuses, subject: rendered.subject, plainText: rendered.plainText,
+          html: rendered.html, preheader: rendered.preheader, senderName, replyTo });
       }
     } catch {
-      await markNeedsAttention(automation.id, "הגדרת האוטומציה או התבנית אינה תקינה");
-      await skipAutomation(summary, event, automation, reservation, "automation_config_invalid");
+      await fx.markNeedsAttention(automation.id, "הגדרת האוטומציה או התבנית אינה תקינה");
+      await fx.skip(automation, "automation_config_invalid");
     }
   }
-  return summary;
 }
 
 /** The composer's per-reservation inputs (D202): its render context and the
