@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { HISTORY_PAGE_SIZE, type HistoryQuery } from "@/lib/communications/history";
 
 export type TemplateVersionRow = {
   id: string; version: number; publishedAt: string; publishedBy: string | null;
@@ -62,13 +63,12 @@ export type CommunicationSettingsView = {
 export type CommunicationsData = {
   templates: CommunicationTemplateRow[];
   automations: AutomationRow[];
-  deliveries: DeliveryRow[];
   channel: ChannelView;
   settings: CommunicationSettingsView;
 };
 
-export async function loadCommunicationsData(tenantId: string, access: { templates: boolean; automations: boolean; deliveries: boolean; channels: boolean }): Promise<CommunicationsData> {
-  const [templates, automations, deliveries, emailConnection, settings, whatsappConnection] = await Promise.all([
+export async function loadCommunicationsData(tenantId: string, access: { templates: boolean; automations: boolean; channels: boolean }): Promise<CommunicationsData> {
+  const [templates, automations, emailConnection, settings, whatsappConnection] = await Promise.all([
     access.templates ? sql<{
       id: string; name: string; subject: string | null; channel: string; category: string;
       language: string; lifecycle_state: string; version_number: number | null; used_by: number;
@@ -121,44 +121,6 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       WHERE a.tenant_id = ${tenantId} AND a.archived_at IS NULL
       GROUP BY a.id, m.name
       ORDER BY a.updated_at DESC` : Promise.resolve([]),
-    access.deliveries ? sql<{
-      id: string; reservation_id: string | null; reservation_number: string | null;
-      guest_name: string | null; to_address: string; subject: string | null; channel: string;
-      provider: string; status: string; error_detail: string | null; created_at: string;
-      submitted_at: string | null; delivered_at: string | null; automation_name: string | null;
-      template_name: string | null; attempt_count: number;
-      attempts: { number: number; result: string; startedAt: string; completedAt: string | null; errorCategory: string | null }[];
-      rendered_sender_name: string | null; rendered_reply_to: string | null; rendered_html: string | null;
-      rendered_plain_text: string | null; provider_message_id: string | null; scheduled_at: string | null;
-      sent_at: string | null; template_version_id: string | null; delivery_type: string;
-      resend_of_delivery_id: string | null; resend_reason: string | null; created_by_name: string | null;
-    }[]>`
-      SELECT o.id, o.reservation_id, r.reservation_number, g.full_name AS guest_name,
-             o.to_address, o.subject, o.channel, o.provider, o.status, o.error_detail,
-             o.created_at::text AS created_at, o.submitted_at::text AS submitted_at,
-             o.delivered_at::text AS delivered_at, a.name AS automation_name,
-             m.name AS template_name, o.attempt_count, o.rendered_sender_name, o.rendered_reply_to,
-             o.rendered_html, o.rendered_plain_text, o.provider_message_id,
-             o.scheduled_at::text AS scheduled_at, o.sent_at::text AS sent_at,
-             o.template_version_id, o.delivery_type, o.resend_of_delivery_id, o.resend_reason,
-             u.full_name AS created_by_name,
-             COALESCE((SELECT jsonb_agg(jsonb_build_object(
-               'number', da.attempt_number, 'result', da.result, 'startedAt', da.started_at::text,
-               'completedAt', da.completed_at::text, 'errorCategory', da.error_category
-             ) ORDER BY da.attempt_number)
-             FROM guesthub.communication_delivery_attempts da
-             WHERE da.tenant_id = o.tenant_id AND da.delivery_id = o.id), '[]'::jsonb) AS attempts
-      FROM guesthub.outbound_messages o
-      LEFT JOIN guesthub.reservations r ON r.id = o.reservation_id AND r.tenant_id = o.tenant_id
-      LEFT JOIN guesthub.guests g ON g.id = o.guest_id AND g.tenant_id = o.tenant_id
-      LEFT JOIN guesthub.communication_automations a ON a.id = o.automation_id AND a.tenant_id = o.tenant_id
-      LEFT JOIN guesthub.message_templates m ON m.id = o.template_id AND m.tenant_id = o.tenant_id
-      LEFT JOIN guesthub.users u ON u.id = o.created_by AND u.tenant_id = o.tenant_id
-      -- A "שליחת בדיקה" is not a message to the guest, and the reference says so
-      -- out loud in the test dialog. It is still persisted (it really was sent,
-      -- and its attempts are auditable) but it never counts as guest history.
-      WHERE o.tenant_id = ${tenantId} AND o.delivery_type <> 'test'
-      ORDER BY o.created_at DESC LIMIT 250` : Promise.resolve([]),
     access.channels ? sql<{ status: string; status_detail: string | null; last_tested_at: string | null; config: Record<string, unknown> }[]>`
       SELECT status, status_detail, last_tested_at::text AS last_tested_at, config
       FROM guesthub.messaging_provider_connections
@@ -213,19 +175,6 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       updatedAt: r.updated_at,
       successCount: r.success_count, failureCount: r.failure_count,
     })),
-    deliveries: deliveries.map((r) => ({
-      id: r.id, reservationId: r.reservation_id, reservationNumber: r.reservation_number,
-      guestName: r.guest_name, toAddress: r.to_address, subject: r.subject, channel: r.channel,
-      provider: r.provider, status: r.status, errorDetail: r.error_detail, createdAt: r.created_at,
-      submittedAt: r.submitted_at, deliveredAt: r.delivered_at, automationName: r.automation_name,
-      templateName: r.template_name, attemptCount: r.attempt_count, attempts: r.attempts ?? [],
-      renderedSenderName: r.rendered_sender_name, renderedReplyTo: r.rendered_reply_to,
-      renderedHtml: r.rendered_html, renderedPlainText: r.rendered_plain_text,
-      providerMessageId: r.provider_message_id, scheduledAt: r.scheduled_at, sentAt: r.sent_at,
-      templateVersionId: r.template_version_id, deliveryType: r.delivery_type,
-      resendOfDeliveryId: r.resend_of_delivery_id, resendReason: r.resend_reason,
-      createdByName: r.created_by_name,
-    })),
     channel: {
       email: {
         status: conn?.status ?? "not_configured", detail: conn?.status_detail ?? null,
@@ -255,4 +204,87 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       ownerEmails: [], ownerPhones: [],
     },
   };
+}
+
+export type DeliveryPage = {
+  rows: DeliveryRow[];
+  total: number;
+  page: number;
+  pages: number;
+  pageSize: number;
+  query: HistoryQuery;
+};
+
+/**
+ * D204 — one page of the send history, filtered and paged in SQL. The date
+ * filter is created_at as an Asia/Jerusalem calendar date (both ends
+ * inclusive); statuses are the CHECK's own values. A page past the end clamps
+ * to the last page. Served by outbound_messages_tenant_created_idx (094).
+ */
+export async function loadDeliveryPage(tenantId: string, query: HistoryQuery): Promise<DeliveryPage> {
+  // A "שליחת בדיקה" is not a message to the guest, and the reference says so
+  // out loud in the test dialog. It is still persisted (it really was sent,
+  // and its attempts are auditable) but it never counts as guest history.
+  const conditions = [sql`o.tenant_id = ${tenantId}`, sql`o.delivery_type <> 'test'`];
+  if (query.from) conditions.push(sql`o.created_at >= (${query.from}::date)::timestamp AT TIME ZONE 'Asia/Jerusalem'`);
+  if (query.to) conditions.push(sql`o.created_at < (${query.to}::date + 1)::timestamp AT TIME ZONE 'Asia/Jerusalem'`);
+  if (query.statuses.length) conditions.push(sql`o.status = ANY(${query.statuses})`);
+  const where = conditions.reduce((acc, cond) => sql`${acc} AND ${cond}`);
+  const [{ total }] = await sql<{ total: number }[]>`
+    SELECT COUNT(*)::int AS total FROM guesthub.outbound_messages o WHERE ${where}`;
+  const pages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+  const page = Math.min(query.page, pages);
+  const rows = await sql<{
+      id: string; reservation_id: string | null; reservation_number: string | null;
+      guest_name: string | null; to_address: string; subject: string | null; channel: string;
+      provider: string; status: string; error_detail: string | null; created_at: string;
+      submitted_at: string | null; delivered_at: string | null; automation_name: string | null;
+      template_name: string | null; attempt_count: number;
+      attempts: { number: number; result: string; startedAt: string; completedAt: string | null; errorCategory: string | null }[];
+      rendered_sender_name: string | null; rendered_reply_to: string | null; rendered_html: string | null;
+      rendered_plain_text: string | null; provider_message_id: string | null; scheduled_at: string | null;
+      sent_at: string | null; template_version_id: string | null; delivery_type: string;
+      resend_of_delivery_id: string | null; resend_reason: string | null; created_by_name: string | null;
+    }[]>`
+      SELECT o.id, o.reservation_id, r.reservation_number, g.full_name AS guest_name,
+             o.to_address, o.subject, o.channel, o.provider, o.status, o.error_detail,
+             o.created_at::text AS created_at, o.submitted_at::text AS submitted_at,
+             o.delivered_at::text AS delivered_at, a.name AS automation_name,
+             m.name AS template_name, o.attempt_count, o.rendered_sender_name, o.rendered_reply_to,
+             o.rendered_html, o.rendered_plain_text, o.provider_message_id,
+             o.scheduled_at::text AS scheduled_at, o.sent_at::text AS sent_at,
+             o.template_version_id, o.delivery_type, o.resend_of_delivery_id, o.resend_reason,
+             u.full_name AS created_by_name,
+             COALESCE((SELECT jsonb_agg(jsonb_build_object(
+               'number', da.attempt_number, 'result', da.result, 'startedAt', da.started_at::text,
+               'completedAt', da.completed_at::text, 'errorCategory', da.error_category
+             ) ORDER BY da.attempt_number)
+             FROM guesthub.communication_delivery_attempts da
+             WHERE da.tenant_id = o.tenant_id AND da.delivery_id = o.id), '[]'::jsonb) AS attempts
+      FROM guesthub.outbound_messages o
+      LEFT JOIN guesthub.reservations r ON r.id = o.reservation_id AND r.tenant_id = o.tenant_id
+      LEFT JOIN guesthub.guests g ON g.id = o.guest_id AND g.tenant_id = o.tenant_id
+      LEFT JOIN guesthub.communication_automations a ON a.id = o.automation_id AND a.tenant_id = o.tenant_id
+      LEFT JOIN guesthub.message_templates m ON m.id = o.template_id AND m.tenant_id = o.tenant_id
+      LEFT JOIN guesthub.users u ON u.id = o.created_by AND u.tenant_id = o.tenant_id
+      -- A "שליחת בדיקה" is not a message to the guest, and the reference says so
+      -- out loud in the test dialog. It is still persisted (it really was sent,
+      -- and its attempts are auditable) but it never counts as guest history.
+      WHERE ${where}
+      ORDER BY o.created_at DESC, o.id DESC
+      LIMIT ${HISTORY_PAGE_SIZE} OFFSET ${(page - 1) * HISTORY_PAGE_SIZE}`;
+  const mapped: DeliveryRow[] = rows.map((r) => ({
+      id: r.id, reservationId: r.reservation_id, reservationNumber: r.reservation_number,
+      guestName: r.guest_name, toAddress: r.to_address, subject: r.subject, channel: r.channel,
+      provider: r.provider, status: r.status, errorDetail: r.error_detail, createdAt: r.created_at,
+      submittedAt: r.submitted_at, deliveredAt: r.delivered_at, automationName: r.automation_name,
+      templateName: r.template_name, attemptCount: r.attempt_count, attempts: r.attempts ?? [],
+      renderedSenderName: r.rendered_sender_name, renderedReplyTo: r.rendered_reply_to,
+      renderedHtml: r.rendered_html, renderedPlainText: r.rendered_plain_text,
+      providerMessageId: r.provider_message_id, scheduledAt: r.scheduled_at, sentAt: r.sent_at,
+      templateVersionId: r.template_version_id, deliveryType: r.delivery_type,
+      resendOfDeliveryId: r.resend_of_delivery_id, resendReason: r.resend_reason,
+      createdByName: r.created_by_name,
+  }));
+  return { rows: mapped, total, page, pages, pageSize: HISTORY_PAGE_SIZE, query: { ...query, page } };
 }

@@ -55,7 +55,11 @@ let actor = null;
 export const setActor = (value) => { actor = value; };
 export class AuthorizationError extends Error {}
 export const getActor = async () => actor;
-export const requirePermission = () => {};
+// an actor seeded WITH a permission list is checked against it (D204: a
+// non-admin is refused); an actor without one passes, as every guard assumed
+export const requirePermission = (who, key) => {
+  if (who?.permissions && !who.permissions.includes(key)) throw new AuthorizationError("אין הרשאה לפעולה הזו");
+};
 export const hasPermission = () => true;
 // recorded, so a guard can assert an action wrote its audit entry (D205)
 export const audits = [];

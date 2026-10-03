@@ -42,6 +42,7 @@ export type AutomationPreview =
 
 export const PREVIEW_CATCH_UP_EXPIRED = "ידולג — עבר חלון השליחה";
 export const PREVIEW_ALREADY_SENT = "כבר נשלח";
+export const PREVIEW_ALREADY_PURGED = "כבר טופל — נמחק מההיסטוריה";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const israelDate = (date: Date) => { const p = israelParts(date); return `${p.y}-${pad(p.mo)}-${pad(p.d)}`; };
@@ -160,7 +161,15 @@ async function alreadyHandled(
     SELECT id FROM guesthub.communication_events
     WHERE tenant_id = ${c.tenant_id} AND event_type = ${c.event_type}
       AND aggregate_type = ${c.aggregate_type} AND occurrence_key = ${c.occurrence_key}`;
-  if (!event) return null;
+  if (!event) {
+    // D204 — a purged occurrence is gone from the outbox but kept in the
+    // ledger, and the 094 trigger will refuse to emit it again
+    const [purged] = await sql<{ key: string }[]>`
+      SELECT key FROM guesthub.communication_purge_ledger
+      WHERE tenant_id = ${c.tenant_id}
+        AND key = ${`occurrence:${c.event_type}:${c.aggregate_type}:${c.occurrence_key}`}`;
+    return purged ? PREVIEW_ALREADY_PURGED : null;
+  }
   const outcomes = await sql<{ status: string; error_code: string | null }[]>`
     SELECT status, error_code FROM guesthub.outbound_messages
     WHERE tenant_id = ${c.tenant_id} AND event_id = ${event.id} AND automation_id = ${automationId}`;
