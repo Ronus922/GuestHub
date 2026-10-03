@@ -96,15 +96,22 @@ export type TemplateVersionRow = {
   publishedBy: string | null;
 };
 
-/** Published-version history with restore-to-draft. History itself is immutable. */
+/** D207 — the template's state in words: "פעילה" (has a current version), "בארכיון", or never saved. */
+export function templateStateLabel(state: string): string {
+  if (state === "published") return "פעילה";
+  if (state === "archived") return "בארכיון";
+  return "לא פעילה — שמירה תפעיל אותה";
+}
+
+/** Version history with restore (D207: the restored content becomes the current version). History itself is immutable. */
 export function VersionHistoryList({ versions, canEdit, pending, onRestore }: {
   versions: TemplateVersionRow[];
   canEdit: boolean;
   pending: boolean;
-  onRestore: (versionId: string) => void;
+  onRestore: (version: TemplateVersionRow) => void;
 }) {
   if (versions.length === 0) {
-    return <p className="gc-hint">התבנית עדיין לא פורסמה. כל פרסום יופיע כאן, עם התאריך ומי פרסם.</p>;
+    return <p className="gc-hint">התבנית עדיין לא נשמרה. כל שמירה תופיע כאן, עם התאריך ומי שמר.</p>;
   }
   // D205 — a version is named by WHEN it was published and BY WHOM; the
   // internal version number is never shown.
@@ -115,11 +122,11 @@ export function VersionHistoryList({ versions, canEdit, pending, onRestore }: {
           <span className="gc-ver-m">
             <b><time className="ltr-num" dateTime={version.publishedAt}>{dateTime(version.publishedAt)}</time></b>
             {/* the seeded first version has no publisher — say so, do not print "—" */}
-            <span>{version.publishedBy ? `פורסמה ע״י ${version.publishedBy}` : "גרסה ראשונית"}</span>
+            <span>{version.publishedBy ? `נשמרה ע״י ${version.publishedBy}` : "גרסה ראשונית"}</span>
           </span>
           {canEdit && (
-            <button type="button" className="icon-btn" title="שחזור התוכן לטיוטה" disabled={pending}
-              onClick={() => onRestore(version.id)}>
+            <button type="button" className="icon-btn" title="שחזור — התוכן הזה יהיה הפעיל" disabled={pending}
+              onClick={() => onRestore(version)}>
               <Icon name="restore" size={17} label="שחזור" />
             </button>
           )}
@@ -139,13 +146,61 @@ export function focusTemplateField(field: string | undefined): void {
 }
 
 /**
- * D205 follow-up — פרסום / שמירת טיוטה succeeded: the app's toast (Shell
- * <Toaster>) says so, also when a NEW template's editor closes right after.
+ * D205 follow-up / D207 — שמירה (or a restore) succeeded: the app's toast
+ * (Shell <Toaster>) says so, also when the editor closes right after.
  */
 export function announceTemplateSaved(result: CommunicationActionResult, close?: () => void): void {
   if (!result.success) return;
   toast.success(result.message ?? "נשמר");
   close?.();
+}
+
+/**
+ * D207 — the ONE save action of every template editor: שמירה = a new version
+ * that is live at once. When active automations send this template, a note
+ * beside the button says the change reaches them now (no confirm dialog).
+ */
+export function TemplateSaveControls({ blocker, disabled, pending, liveAutomations, onSave }: {
+  blocker: string | null;
+  disabled: boolean;
+  pending: boolean;
+  liveAutomations: string[];
+  onSave: () => void;
+}) {
+  return (
+    <>
+      <button type="button" className="btn btn-primary" data-tpl-save=""
+        disabled={pending || disabled || Boolean(blocker)}
+        title={blocker ?? undefined}
+        onClick={onSave}>
+        <Icon name="save" size={17} /> שמירה
+      </button>
+      {liveAutomations.length > 0 && (
+        <span className="gc-hint flex items-center gap-1" role="note">
+          <Icon name="automations" size={13.5} />
+          השינוי ייכנס מיד לאוטומציה: {liveAutomations.join(", ")}
+        </span>
+      )}
+    </>
+  );
+}
+
+/** D207 — restore asks first: the chosen version's content becomes the live one. */
+export function RestoreVersionDialog({ version, pending, onCancel, onConfirm }: {
+  version: TemplateVersionRow;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog icon="restore" title="שחזור גרסה" confirmLabel="שחזור" confirmIcon="restore"
+      disabled={pending} onCancel={onCancel} onConfirm={onConfirm}>
+      <p className="t-body">
+        התוכן מ-<time className="ltr-num" dateTime={version.publishedAt}>{dateTime(version.publishedAt)}</time> יהיה
+        התבנית הפעילה מיד — גם באוטומציות ובשליחה הידנית. שינויים שלא נשמרו בעורך יאבדו.
+      </p>
+    </Dialog>
+  );
 }
 
 /** The ONE in-panel dialog (§8 .modal), rendered into SidePanel's overlay slot. */

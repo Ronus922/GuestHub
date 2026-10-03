@@ -10,7 +10,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TemplateEditor } from "./TemplateEditor";
 import { HtmlTemplateEditor } from "./HtmlTemplateEditor";
 import { WhatsAppTemplateEditor } from "./WhatsAppTemplateEditor";
-import type { EditorSeed } from "./editorShared";
+import { templateStateLabel, type EditorSeed } from "./editorShared";
 import { STAGE_KEYS, STAGE_LABELS, usageLabel } from "@/lib/communications/blocks";
 import { TEMPLATE_GALLERY, emptyContentFor } from "@/lib/communications/gallery";
 import {
@@ -66,7 +66,8 @@ type Props = {
 };
 
 const STATE_LABEL: Record<string, string> = {
-  draft: "טיוטה", published: "פורסמה", archived: "בארכיון",
+  // templates are labelled by templateStateLabel (D207); "draft" here is an AUTOMATION status
+  draft: "טיוטה", archived: "בארכיון",
   active: "פעילה", disabled: "כבויה", needs_attention: "דורשת טיפול",
   delivered: "נמסרה", read: "נקראה", sent: "נשלחה", submitted: "נשלחה לספק",
   queued: "בתור", submitting: "בשליחה", failed: "נכשלה", undelivered: "לא נמסרה",
@@ -186,8 +187,8 @@ export function CommunicationsShell({ section, data, history, permissions, datas
   const archived = data.templates.filter((t) => t.state === "archived");
 
   const templateKpis: Kpi[] = [
-    { key: "published", label: "פורסמו", caption: "זמינות לאוטומציות", icon: "check-circle", tone: "is-ok", value: live.filter((t) => t.state === "published").length },
-    { key: "draft", label: "טיוטות", caption: "בעריכה — לא נשלחות", icon: "draft", tone: "is-warn", value: live.filter((t) => t.state === "draft").length },
+    { key: "published", label: "פעילות", caption: "זמינות לאוטומציות ולשליחה", icon: "check-circle", tone: "is-ok", value: live.filter((t) => t.state === "published").length },
+    { key: "inactive", label: "לא פעילות", caption: "לא נשלחות — שמירה תפעיל אותן", icon: "hourglass", tone: "is-warn", value: live.filter((t) => t.state === "draft").length },
     { key: "used", label: "בשימוש", caption: "משויכות לאוטומציה פעילה", icon: "automations", tone: "is-brand", value: live.filter((t) => t.usedBy > 0).length },
     { key: "archived", label: "בארכיון", caption: "מעבר לארכיון", icon: "archive", tone: "is-muted", value: archived.length },
   ];
@@ -196,7 +197,7 @@ export function CommunicationsShell({ section, data, history, permissions, datas
     if (channel !== "all" && t.channel !== channel) return false;
     if (stage !== "all" && t.category !== stage) return false;
     if (kpi === "published" && t.state !== "published") return false;
-    if (kpi === "draft" && t.state !== "draft") return false;
+    if (kpi === "inactive" && t.state !== "draft") return false;
     if (kpi === "used" && t.usedBy === 0) return false;
     return true;
   }), [live, channel, stage, kpi]);
@@ -353,7 +354,18 @@ export function CommunicationsShell({ section, data, history, permissions, datas
                     <span data-label="ערוץ" data-mcard="inline">{channelChip(template.channel)}</span>
                     <span data-label="שלב" data-mcard="inline">{STAGE_LABELS[template.category] ?? template.category}</span>
                     <span data-label="שפה" data-mcard="inline">{template.language === "en" ? "English" : "עברית"}</span>
-                    <span data-label="סטטוס" data-mcard="inline"><span className={chipClass(template.state)}>{STATE_LABEL[template.state]}</span></span>
+                    <span data-label="סטטוס" data-mcard="inline">
+                      {/* D207 — "לא פעילה — שמירה תפעיל אותה": the chip, its reason on the line under it (one column wide) */}
+                      {(() => {
+                        const [label, hint] = templateStateLabel(template.state).split(" — ");
+                        return (
+                          <span className="flex flex-col items-start gap-1">
+                            <span className={chipClass(template.state)}>{label}</span>
+                            {hint && <span className="gc-row-m">{hint}</span>}
+                          </span>
+                        );
+                      })()}
+                    </span>
                     <span data-label="בשימוש" data-mcard="inline">
                       {template.usedBy > 0 ? (
                         <Link className="gc-link" href="/communications/automations" onClick={(e) => e.stopPropagation()}>
@@ -371,7 +383,7 @@ export function CommunicationsShell({ section, data, history, permissions, datas
                         onClick={() => openTemplate(template)}>
                         <Icon name="eye" size={17} label="תצוגה מקדימה" />
                       </button>
-                      <button type="button" className="icon-btn gc-ib" title="שכפול התבנית כטיוטה"
+                      <button type="button" className="icon-btn gc-ib" title="שכפול התבנית"
                         disabled={!permissions.editTemplates || pending}
                         onClick={() => run(() => duplicateTemplateAction(template.id))}>
                         <Icon name="copy" size={17} label="שכפול" />
@@ -427,7 +439,7 @@ export function CommunicationsShell({ section, data, history, permissions, datas
                     <button type="button" className="btn btn-secondary btn-sm"
                       disabled={!permissions.editTemplates || pending}
                       onClick={() => run(() => archiveTemplateAction(template.id, true))}>
-                      <Icon name="restore" size={17} /> שחזור כטיוטה
+                      <Icon name="restore" size={17} /> שחזור
                     </button>
                   </span>
                 </div>
@@ -466,9 +478,12 @@ export function CommunicationsShell({ section, data, history, permissions, datas
 
       {editing && (() => {
         const editorKind = editorKindOf(editing);
+        // D207 — the row as the server has it NOW (state, versions, live
+        // automations refresh after a save); the editor keeps its own fields
+        const row = "seed" in editing ? null : data.templates.find((t) => t.id === editing.id) ?? editing;
         const shared = {
           key: "seed" in editing ? "new" : editing.id,
-          template: "seed" in editing ? null : editing,
+          template: row,
           seed: "seed" in editing ? editing.seed : undefined,
           datasets,
           fallbackContext,
@@ -525,8 +540,8 @@ function AutomationsPanel({
           icon="automations"
           title="עדיין אין אוטומציות"
           text={templates.length
-            ? "צרו אוטומציה כדי לחבר אירוע בהזמנה לתבנית מפורסמת."
-            : "כדי ליצור אוטומציה צריך קודם תבנית מפורסמת אחת לפחות."}
+            ? "צרו אוטומציה כדי לחבר אירוע בהזמנה לתבנית פעילה."
+            : "כדי ליצור אוטומציה צריך קודם תבנית פעילה אחת לפחות."}
         />
       ) : (
         <div className="flex flex-col">
@@ -1159,8 +1174,8 @@ function AutomationPanel({
 
   // The published lifecycle state — the honest replacement for the design's
   // Meta-approval chip. GREEN-API has no template approval to report.
-  const templateStateLabel = selectedTemplate
-    ? "מפורסמת"
+  const templateChip = selectedTemplate
+    ? "פעילה"
     : "לא נבחרה תבנית";
 
   const ownerCount = toOwner
@@ -1351,7 +1366,7 @@ function AutomationPanel({
               <div className="card-hd flex items-center gap-2">
                 <Icon name="send" size={20} /> ערוץ ותבנית
                 <span className={`gc-hd-chip${selectedTemplate ? " is-ok" : ""}`}>
-                  {templateStateLabel}
+                  {templateChip}
                 </span>
               </div>
               <div className="card-bd flex flex-col gap-3">
@@ -1376,7 +1391,7 @@ function AutomationPanel({
                   )}
                 </div>
                 <label className="field">
-                  <span className="field-label">תבנית מפורסמת</span>
+                  <span className="field-label">תבנית פעילה</span>
                   <select className="field-input" value={selectedTemplateValid ? templateId : ""}
                     onChange={(e) => setTemplateId(e.target.value)}>
                     <option value="">בחירת תבנית</option>
@@ -1393,8 +1408,8 @@ function AutomationPanel({
                 {channelTemplates.length === 0 && (
                   <p className="field-msg">
                     {channel === "whatsapp"
-                      ? "אין תבנית WhatsApp מפורסמת. יש לפרסם תבנית לפני הפעלה."
-                      : "אין תבנית אימייל מפורסמת. יש לפרסם תבנית לפני הפעלה."}
+                      ? "אין תבנית WhatsApp פעילה. שמרו תבנית בעורך התבניות לפני הפעלה."
+                      : "אין תבנית אימייל פעילה. שמרו תבנית בעורך התבניות לפני הפעלה."}
                   </p>
                 )}
                 <span className="gc-toggle">
@@ -1507,7 +1522,7 @@ function AutomationPanel({
                   <p className="gc-hint">בחרו תבנית כדי לראות את ההודעה שתישלח.</p>
                 ) : !preview ? (
                   <p className="field-msg">
-                    לתבנית הזו אין עדיין גרסה מפורסמת — אין מה להציג, ואין מה לשלוח.
+                    התבנית הזו לא פעילה — אין מה להציג, ואין מה לשלוח.
                   </p>
                 ) : channel === "whatsapp" ? (
                   // The SAME bytes the guest receives, RLM marks included (D116).
@@ -1645,7 +1660,7 @@ function NewTemplateDialog({
       open
       onClose={onCancel}
       title="תבנית חדשה"
-      subtitle="בחרו שם, ערוץ ונקודת התחלה — התוכן נערך בעורך התבנית. אין פרסום ואין יצירת אוטומציה בשלב זה."
+      subtitle="בחרו שם, ערוץ ונקודת התחלה — התוכן נערך בעורך התבנית. כלום לא נשמר עד ללחיצה על שמירה בעורך, ואין יצירת אוטומציה בשלב זה."
       icon="documents"
       footer={
         <>
@@ -1718,7 +1733,7 @@ function NewTemplateDialog({
                     <option key={example.id} value={example.id}>{example.name} — {example.description}</option>
                   ))}
                 </select>
-                <span className="field-hint">הדוגמה נטענת לעורך וניתנת לשינוי מלא — כלום לא נשלח בלי פרסום.</span>
+                <span className="field-hint">הדוגמה נטענת לעורך וניתנת לשינוי מלא — כלום לא נשמר עד ללחיצה על שמירה.</span>
               </label>
             )}
             {mode === "duplicate" && (

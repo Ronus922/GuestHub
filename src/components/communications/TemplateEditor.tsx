@@ -6,7 +6,7 @@ import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
 import type { CommunicationTemplateRow } from "@/app/(dashboard)/communications/data";
 import {
-  publishTemplateAction, restoreTemplateVersionAction, saveTemplateDraftAction,
+  publishTemplateAction, restoreTemplateVersionAction,
   sendTestEmailAction, type CommunicationActionResult,
 } from "@/app/(dashboard)/communications/actions";
 import {
@@ -20,8 +20,9 @@ import {
 } from "@/lib/communications/renderer";
 import { structuredTemplateContentSchema } from "@/lib/communications/schemas";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, announceTemplateSaved, dateTime, focusTemplateField,
-  type EditorSeed, type PreviewDataset,
+  Dialog, RestoreVersionDialog, TemplateSaveControls, TestSendDialog, VariablePalette, VersionHistoryList,
+  announceTemplateSaved, dateTime, focusTemplateField, templateStateLabel,
+  type EditorSeed, type PreviewDataset, type TemplateVersionRow,
 } from "./editorShared";
 import type {
   BlockCondition, CommunicationRenderContext, RenderedCommunication,
@@ -94,6 +95,7 @@ export function TemplateEditor({
   const [notice, setNotice] = useState<CommunicationActionResult | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [restoring, setRestoring] = useState<TemplateVersionRow | null>(null);
   const [testTo, setTestTo] = useState(senderAddress ?? "");
   const [pending, startTransition] = useTransition();
 
@@ -295,11 +297,11 @@ export function TemplateEditor({
     senderDisplayName: sender, replyTo, preheader, category: stage, language, content,
   };
 
-  // Mirror the server's publish gate so the operator sees WHY publish is off.
-  const publishBlocker = subject.trim().length < 2
-    ? "נדרש נושא לפרסום"
+  // Mirror the server's save gate so the operator sees WHY שמירה is off.
+  const saveBlocker = subject.trim().length < 2
+    ? "נדרש נושא"
     : content.blocks.length === 0
-      ? "התבנית ריקה — הוסיפו תוכן לפני פרסום"
+      ? "התבנית ריקה — הוסיפו תוכן לפני שמירה"
       : null;
 
   const run = (action: () => Promise<CommunicationActionResult>, onDone?: (result: CommunicationActionResult) => void) =>
@@ -325,7 +327,7 @@ export function TemplateEditor({
   const latestVersion = versions[0] ?? null;
   const usedLabel = usageLabel(template?.usedBy ?? 0);
   // D205 — the state only; version numbers are internal and never shown
-  const versionChip = template?.version && template.state === "published" ? "פורסמה" : "טיוטה";
+  const versionChip = templateStateLabel(template?.state ?? "draft");
 
   const palette = BLOCK_LIBRARY.filter((b) => !search || b.label.includes(search));
 
@@ -356,8 +358,8 @@ export function TemplateEditor({
           <span className="chip chip-onbrand"><Icon name="tag" size={13.5} /> {versionChip}</span>
           {latestVersion && (
             <span className="chip chip-onbrand">
-              <Icon name="publish" size={13.5} />
-              פורסמה {dateTime(latestVersion.publishedAt)}
+              <Icon name="history" size={13.5} />
+              נשמרה {dateTime(latestVersion.publishedAt)}
               {latestVersion.publishedBy ? ` · ${latestVersion.publishedBy}` : ""}
             </span>
           )}
@@ -365,7 +367,19 @@ export function TemplateEditor({
         </>
       }
       overlay={
-        discardOpen ? (
+        restoring ? (
+          <RestoreVersionDialog
+            version={restoring}
+            pending={pending}
+            onCancel={() => setRestoring(null)}
+            onConfirm={() => {
+              const versionId = restoring.id;
+              setRestoring(null);
+              // the editor closes: it reopens on the restored, live content
+              run(() => restoreTemplateVersionAction(versionId), (result) => announceTemplateSaved(result, onClose));
+            }}
+          />
+        ) : discardOpen ? (
           <Dialog
             icon="warning"
             title="שינויים שלא נשמרו"
@@ -397,18 +411,9 @@ export function TemplateEditor({
       footer={
         <>
           {canPublish && (
-            <button type="button" className="btn btn-primary"
-              disabled={pending || !canEdit || Boolean(invalid) || Boolean(publishBlocker)}
-              title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
-              <Icon name="publish" size={17} /> פרסום
-            </button>
-          )}
-          {canEdit && (
-            <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
-              onClick={() => run(() => saveTemplateDraftAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
-              <Icon name="draft" size={17} /> שמירת טיוטה
-            </button>
+            <TemplateSaveControls blocker={saveBlocker} disabled={!canEdit || Boolean(invalid)} pending={pending}
+              liveAutomations={template?.activeAutomations ?? []}
+              onSave={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))} />
           )}
           {canTest && (
             <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
@@ -894,7 +899,7 @@ export function TemplateEditor({
 
               <div className="gc-colhd"><Icon name="history" size={20} /> היסטוריית גרסאות</div>
               <VersionHistoryList versions={versions} canEdit={canEdit} pending={pending}
-                onRestore={(versionId) => run(() => restoreTemplateVersionAction(versionId))} />
+                onRestore={setRestoring} />
             </>
           )}
 

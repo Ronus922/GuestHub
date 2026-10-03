@@ -6,15 +6,16 @@ import { Icon } from "@/components/shared/Icon";
 import { SidePanel } from "@/components/ui/SidePanel";
 import type { CommunicationTemplateRow } from "@/app/(dashboard)/communications/data";
 import {
-  publishTemplateAction, restoreTemplateVersionAction, saveTemplateDraftAction,
+  publishTemplateAction, restoreTemplateVersionAction,
   sendTestWhatsAppAction, type CommunicationActionResult,
 } from "@/app/(dashboard)/communications/actions";
 import { STAGE_KEYS, STAGE_LABELS } from "@/lib/communications/blocks";
 import { renderWhatsAppCommunication } from "@/lib/communications/renderer";
 import { getVariableDefinition } from "@/lib/communications/variables";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, announceTemplateSaved, dateTime, focusTemplateField,
-  type EditorSeed, type PreviewDataset,
+  Dialog, RestoreVersionDialog, TemplateSaveControls, TestSendDialog, VariablePalette, VersionHistoryList,
+  announceTemplateSaved, dateTime, focusTemplateField, templateStateLabel,
+  type EditorSeed, type PreviewDataset, type TemplateVersionRow,
 } from "./editorShared";
 import type {
   CommunicationRenderContext, RenderIssue, TemplateLanguage, WhatsAppTemplateContent,
@@ -76,6 +77,7 @@ export function WhatsAppTemplateEditor({
   const [notice, setNotice] = useState<CommunicationActionResult | null>(null);
   const [testOpen, setTestOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
+  const [restoring, setRestoring] = useState<TemplateVersionRow | null>(null);
   const [testTo, setTestTo] = useState("");
   const [varHint, setVarHint] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -135,8 +137,8 @@ export function WhatsAppTemplateEditor({
     id: template?.id, channel: "whatsapp" as const, name, category: stage, language, content,
   };
 
-  const publishBlocker = text.trim().length === 0
-    ? "התבנית ריקה — כתבו את תוכן ההודעה לפני פרסום"
+  const saveBlocker = text.trim().length === 0
+    ? "התבנית ריקה — כתבו את תוכן ההודעה לפני שמירה"
     : text.length > MAX_LEN
       ? "ההודעה ארוכה מדי"
       : null;
@@ -161,7 +163,7 @@ export function WhatsAppTemplateEditor({
   const versions = template?.versions ?? [];
   const latestVersion = versions[0] ?? null;
   // D205 — the state only; version numbers are internal and never shown
-  const versionChip = template?.version && template.state === "published" ? "פורסמה" : "טיוטה";
+  const versionChip = templateStateLabel(template?.state ?? "draft");
 
   return (
     <SidePanel
@@ -190,15 +192,27 @@ export function WhatsAppTemplateEditor({
           <span className="chip chip-onbrand"><Icon name="tag" size={13.5} /> {versionChip}</span>
           {latestVersion && (
             <span className="chip chip-onbrand">
-              <Icon name="publish" size={13.5} />
-              פורסמה {dateTime(latestVersion.publishedAt)}
+              <Icon name="history" size={13.5} />
+              נשמרה {dateTime(latestVersion.publishedAt)}
               {latestVersion.publishedBy ? ` · ${latestVersion.publishedBy}` : ""}
             </span>
           )}
         </>
       }
       overlay={
-        discardOpen ? (
+        restoring ? (
+          <RestoreVersionDialog
+            version={restoring}
+            pending={pending}
+            onCancel={() => setRestoring(null)}
+            onConfirm={() => {
+              const versionId = restoring.id;
+              setRestoring(null);
+              // the editor closes: it reopens on the restored, live content
+              run(() => restoreTemplateVersionAction(versionId), (result) => announceTemplateSaved(result, onClose));
+            }}
+          />
+        ) : discardOpen ? (
           <Dialog
             icon="warning"
             title="שינויים שלא נשמרו"
@@ -233,18 +247,9 @@ export function WhatsAppTemplateEditor({
       footer={
         <>
           {canPublish && (
-            <button type="button" className="btn btn-primary"
-              disabled={pending || !canEdit || Boolean(publishBlocker)}
-              title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
-              <Icon name="publish" size={17} /> פרסום
-            </button>
-          )}
-          {canEdit && (
-            <button type="button" className="btn btn-secondary" disabled={pending || text.length > MAX_LEN}
-              onClick={() => run(() => saveTemplateDraftAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
-              <Icon name="draft" size={17} /> שמירת טיוטה
-            </button>
+            <TemplateSaveControls blocker={saveBlocker} disabled={!canEdit} pending={pending}
+              liveAutomations={template?.activeAutomations ?? []}
+              onSave={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))} />
           )}
           {canTest && (
             <button type="button" className="btn btn-secondary"
@@ -288,7 +293,7 @@ export function WhatsAppTemplateEditor({
 
           <div className="gc-colhd"><Icon name="history" size={20} /> היסטוריית גרסאות</div>
           <VersionHistoryList versions={versions} canEdit={canEdit} pending={pending}
-            onRestore={(versionId) => run(() => restoreTemplateVersionAction(versionId))} />
+            onRestore={setRestoring} />
         </aside>
 
         {/* ---------- MAIN: message + preview ---------- */}

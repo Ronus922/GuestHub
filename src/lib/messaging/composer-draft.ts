@@ -139,7 +139,7 @@ export function sendBlockMessage(block: SendBlock | null, isEmail: boolean): str
     case "template_missing":
       return "יש לבחור תבנית";
     case "template_unpublished":
-      return "התבנית טרם פורסמה — לא ניתן לשלוח";
+      return "התבנית לא פעילה — לא ניתן לשלוח";
     case "template_blocked":
       return "לא ניתן לשלוח את התבנית להזמנה הזו";
     default:

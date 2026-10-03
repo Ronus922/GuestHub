@@ -18,6 +18,8 @@ export type CommunicationTemplateRow = {
    *  unpublished draft is not what reaches the guest. null until first publish. */
   publishedContent: Record<string, unknown> | null;
   versions: TemplateVersionRow[];
+  /** D207 — ACTIVE automations sending this template: a save reaches them at once. */
+  activeAutomations: string[];
 };
 
 export type AutomationRow = {
@@ -77,6 +79,7 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       draft_preheader: string | null; draft_content: Record<string, unknown> | null;
       published_content: Record<string, unknown> | null;
       versions: TemplateVersionRow[];
+      active_automations: string[];
     }[]>`
       SELECT m.id, m.name, m.subject, m.channel, m.category, m.language,
              m.lifecycle_state, v.version_number, v.content AS published_content,
@@ -94,7 +97,13 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
                FROM guesthub.message_template_versions mv
                LEFT JOIN guesthub.users pu ON pu.id = mv.published_by AND pu.tenant_id = mv.tenant_id
                WHERE mv.tenant_id = m.tenant_id AND mv.template_id = m.id
-             ), '[]'::jsonb) AS versions
+             ), '[]'::jsonb) AS versions,
+             COALESCE((
+               SELECT jsonb_agg(a.name ORDER BY a.name)
+               FROM guesthub.communication_automations a
+               WHERE a.tenant_id = m.tenant_id AND a.template_id = m.id
+                 AND a.status = 'active' AND a.archived_at IS NULL
+             ), '[]'::jsonb) AS active_automations
       FROM guesthub.message_templates m
       LEFT JOIN guesthub.message_template_versions v ON v.id = m.current_published_version_id
       LEFT JOIN guesthub.users u ON u.id = m.updated_by AND u.tenant_id = m.tenant_id
@@ -166,6 +175,7 @@ export async function loadCommunicationsData(tenantId: string, access: { templat
       draftContent: r.draft_content,
       publishedContent: r.published_content,
       versions: r.versions ?? [],
+      activeAutomations: r.active_automations ?? [],
     })),
     automations: automations.map((r) => ({
       id: r.id, name: r.name, description: r.description, status: r.status,

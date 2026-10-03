@@ -402,7 +402,7 @@ export function MessageComposer({
                       <option value="">בחירת תבנית…</option>
                       {templates.map((t) => (
                         <option key={t.id} value={t.id} disabled={t.status === "unpublished"}>
-                          {t.status === "unpublished" ? `${t.name} · התבנית טרם פורסמה` : t.name}
+                          {t.status === "unpublished" ? `${t.name} · התבנית לא פעילה` : t.name}
                         </option>
                       ))}
                     </select>
@@ -413,7 +413,7 @@ export function MessageComposer({
                     ) : selected?.status === "ready" ? (
                       <span className="field-hint">
                         {isEmail
-                          ? "הנושא והתוכן נשלחים כפי שפורסמו בתבנית, ואינם ניתנים לעריכה כאן"
+                          ? "הנושא והתוכן נשלחים כפי שנשמרו בתבנית, ואינם ניתנים לעריכה כאן"
                           : "התוכן נשלח כפי שפורסם בתבנית. לעריכה — העתיקו אותו לכתיבה חופשית"}
                       </span>
                     ) : null}
@@ -520,7 +520,7 @@ export function MessageComposer({
                   <div className="sm-pv-empty">
                     <Icon name="drafts" size={24} />
                     {!isFree
-                      ? "התצוגה תופיע כאן ברגע שתיבחר תבנית מפורסמת"
+                      ? "התצוגה תופיע כאן ברגע שתיבחר תבנית פעילה"
                       : isEmail
                         ? "התצוגה תופיע כאן ברגע שיהיו נושא ותוכן"
                         : "התצוגה תופיע כאן ברגע שיהיה תוכן"}

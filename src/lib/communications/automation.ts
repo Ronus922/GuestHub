@@ -1007,7 +1007,7 @@ export async function composePublishedTemplate(args: {
   if (resolution.outcome === "ambiguous") {
     return { status: "ambiguous", detail: "יותר מתבנית מפורסמת אחת תואמת לשפת האורח בשושלת התבנית" };
   }
-  if (resolution.outcome === "none") return { status: "unpublished", detail: "התבנית טרם פורסמה" };
+  if (resolution.outcome === "none") return { status: "unpublished", detail: "התבנית לא פעילה" };
   const version = resolution.version;
   const content = parseTemplateContent(version.content);
   if ((args.channel === "whatsapp") !== (templateContentKind(content) === "whatsapp_text")) {

@@ -59,20 +59,27 @@ async function scenario(load, stub) {
       rooms: [], total_price: 0, balance: 0,
     });
 
-    // templates: published, THEN a different draft saved on top
+    // templates: saved (D207: שמירה = the current version), THEN a different
+    // row mirror written underneath — no action writes one since D207, but the
+    // composer must still read the VERSION, never the row's draft_content/body
     const wa = (text) => ({ channel: "whatsapp", name: "וואטסאפ מפורסם", category: "reservation", language: "he",
       content: { schemaVersion: 1, kind: "whatsapp_text", text } });
-    const waId = (await C.saveTemplateDraftAction(wa("x"))).id;
-    await C.publishTemplateAction({ ...wa("שלום {{guest.first_name}}, זו הגרסה המפורסמת"), id: waId });
-    await C.saveTemplateDraftAction({ ...wa("טיוטה שלא פורסמה {{guest.first_name}}"), id: waId });
+    const mirror = (id, content, subject, body) => tx`
+      UPDATE guesthub.message_templates SET draft_content = ${tx.json(content)}, subject = ${subject}, body = ${body} WHERE id = ${id}`;
+    const waId = (await C.publishTemplateAction(wa("שלום {{guest.first_name}}, זו הגרסה המפורסמת"))).id;
+    await mirror(waId, wa("טיוטה שלא פורסמה {{guest.first_name}}").content, null, "טיוטה שלא פורסמה");
 
     const em = (subject, html) => ({ channel: "email", name: "מייל מפורסם", subject, category: "reservation", language: "he",
       content: { schemaVersion: 1, kind: "html", html } });
-    const emId = (await C.saveTemplateDraftAction(em("x", "<p>x</p>"))).id;
-    await C.publishTemplateAction({ ...em("אישור הזמנה {{reservation.number}}", "<p>שלום {{guest.first_name}}, המייל המפורסם</p>"), id: emId });
-    await C.saveTemplateDraftAction({ ...em("נושא טיוטה", "<p>טיוטה שלא פורסמה</p>"), id: emId });
+    const emId = (await C.publishTemplateAction(em("אישור הזמנה {{reservation.number}}", "<p>שלום {{guest.first_name}}, המייל המפורסם</p>"))).id;
+    await mirror(emId, em("נושא טיוטה", "<p>טיוטה שלא פורסמה</p>").content, "נושא טיוטה", "נושא טיוטה");
 
-    const unpubId = (await C.saveTemplateDraftAction({ ...wa("רק טיוטה"), name: "לא פורסמה" })).id;
+    // a never-saved template (as the 3 system ones are): no version at all
+    const [{ id: unpubId }] = await tx`
+      INSERT INTO guesthub.message_templates (tenant_id, channel, slug, name, body, category, language,
+        lifecycle_state, draft_content, is_active, is_system)
+      VALUES (${tenantId}, 'whatsapp', 'never_saved', 'לא פורסמה', 'רק טיוטה', 'reservation', 'he', 'draft',
+        ${tx.json(wa("רק טיוטה").content)}, true, true) RETURNING id::text`;
 
     const pub = async (id) => (await tx`
       SELECT current_published_version_id::text AS id FROM guesthub.message_templates WHERE id = ${id}`)[0].id;
@@ -92,7 +99,7 @@ async function scenario(load, stub) {
     ok(emT?.html?.includes("שלום דנה, המייל המפורסם"), "email: the composer shows the published HTML, rendered");
     ok(!emT?.html?.includes("טיוטה") && emT?.subject !== "נושא טיוטה", "email: the draft never reaches the composer");
     eq(unT?.status, "unpublished", "an unpublished template is listed as unpublished");
-    eq(unT?.detail, "התבנית טרם פורסמה", "…with the hint the panel shows");
+    eq(unT?.detail, "התבנית לא פעילה", "…with the hint the panel shows (D207: 'התבנית לא פעילה')");
 
     // the email HTML is the AUTOMATION renderer's output for this booking
     const send = await AUTO.reservationSendContext(tenantId, res.id);
@@ -143,7 +150,7 @@ async function scenario(load, stub) {
     stub.wire.length = 0;
     const unSend = await M.sendBookingWhatsAppAction(res.id, { templateId: unpubId, body: "רק טיוטה" });
     eq(unSend.data?.ok, false, "server: an unpublished template is not sent");
-    eq(unSend.data?.detail, "התבנית טרם פורסמה", "…and the refusal names why");
+    eq(unSend.data?.detail, "התבנית לא פעילה", "…and the refusal names why");
     eq(stub.wire.length, 0, "…nothing reached the provider");
     const [{ n: unRows }] = await tx`
       SELECT count(*)::int AS n FROM guesthub.outbound_messages WHERE tenant_id = ${tenantId} AND template_id = ${unpubId}`;
