@@ -46,12 +46,17 @@ const proxy = (...args) => current(...args);
 proxy.json = (value) => current.json(value);
 proxy.begin = (...args) => args[args.length - 1](current);
 export const sql = proxy;
+// the real withReadOnlyScope opens its OWN connection, which cannot see a rolled-back
+// seed — guards run the scope's body on the seed transaction and prove the real
+// read-only scope separately against lib/db itself (check:automation-preview)
+export const withReadOnlyScope = (fn) => fn();
 
 let actor = null;
 export const setActor = (value) => { actor = value; };
 export class AuthorizationError extends Error {}
 export const getActor = async () => actor;
 export const requirePermission = () => {};
+export const hasPermission = () => true;
 export const writeAudit = async () => {};
 export const revalidatePath = () => {};
 export const revalidateTag = () => {};

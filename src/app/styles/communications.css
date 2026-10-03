@@ -1229,3 +1229,112 @@
     cursor: default;
   }
 }
+
+@layer components {
+  /* ---- D203 — "מי יקבל ב-7 הימים הקרובים" (AutomationPreview.tsx) ----
+     Visibility (table ≥1280 / cards below) is the xl:hidden / hidden xl:table
+     utilities on the elements; nothing here sets their display. */
+  .gc-auto-wide {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .gc-pv-run {
+    align-self: flex-start;
+  }
+  .gc-pv-day {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .gc-pv-day-hd {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .gc-pv-day-n {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .gc-pv-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .gc-pv-table th {
+    padding: 8px 16px;
+    text-align: start;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--field-bg);
+  }
+  .gc-pv-table td {
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    color: var(--ink);
+    vertical-align: middle;
+  }
+  /* numbers, phone and name never break — the reason column takes the slack */
+  .gc-pv-table td.ltr-num,
+  .gc-pv-table td.gc-pv-guest {
+    white-space: nowrap;
+  }
+  .gc-pv-reason {
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .gc-pv-msg {
+    margin-top: 4px;
+  }
+  .gc-pv-subject {
+    padding: 0 0 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .gc-pv-frame {
+    display: block;
+    width: 100%;
+    height: 360px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+  .gc-pv-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+  .gc-pv-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .gc-pv-name {
+    font-weight: 700;
+    color: var(--ink);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .gc-pv-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  .gc-pv-msgbtn {
+    align-self: flex-start;
+  }
+}
