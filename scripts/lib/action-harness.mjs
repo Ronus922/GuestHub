@@ -37,7 +37,7 @@ const STUB_FILES = [
   "lib/messaging/channel-failure-alert.js",
   "app/(dashboard)/reservations/actions.js",
 ];
-const STUB_SPECIFIERS = ["@/lib/db", "@/lib/auth/actor", "@/lib/audit", "next/cache", "server-only"];
+const STUB_SPECIFIERS = ["@/lib/db", "@/lib/auth/actor", "@/lib/audit", "next/cache", "server-only", "sonner"];
 
 const STUBS = `
 let current = null;
@@ -64,6 +64,12 @@ export const hasPermission = () => true;
 // recorded, so a guard can assert an action wrote its audit entry (D205)
 export const audits = [];
 export const writeAudit = async (_actor, entry) => { audits.push(entry); };
+// the app's toast (sonner), recorded so a guard can assert what the operator was told (D205 follow-up)
+export const toasts = [];
+export const toast = Object.assign((message) => { toasts.push({ type: "default", message }); },
+  { success: (message) => { toasts.push({ type: "success", message }); },
+    error: (message) => { toasts.push({ type: "error", message }); } });
+export const Toaster = () => null;
 export const revalidatePath = () => {};
 export const revalidateTag = () => {};
 export const unstable_cache = (fn) => fn;

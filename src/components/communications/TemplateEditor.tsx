@@ -20,7 +20,7 @@ import {
 } from "@/lib/communications/renderer";
 import { structuredTemplateContentSchema } from "@/lib/communications/schemas";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime, focusTemplateField,
+  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, announceTemplateSaved, dateTime, focusTemplateField,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
 import type {
@@ -302,14 +302,14 @@ export function TemplateEditor({
       ? "התבנית ריקה — הוסיפו תוכן לפני פרסום"
       : null;
 
-  const run = (action: () => Promise<CommunicationActionResult>, onDone?: () => void) =>
+  const run = (action: () => Promise<CommunicationActionResult>, onDone?: (result: CommunicationActionResult) => void) =>
     startTransition(async () => {
       const result = await action();
       setNotice(result);
       if (!result.success) focusTemplateField(result.field);
       if (result.success) {
         setDirty(false);
-        onDone?.();
+        onDone?.(result);
         router.refresh();
       }
     });
@@ -400,13 +400,13 @@ export function TemplateEditor({
             <button type="button" className="btn btn-primary"
               disabled={pending || !canEdit || Boolean(invalid) || Boolean(publishBlocker)}
               title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload), () => { if (!template) onClose(); })}>
+              onClick={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
               <Icon name="publish" size={17} /> פרסום
             </button>
           )}
           {canEdit && (
             <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
-              onClick={() => run(() => saveTemplateDraftAction(payload), () => { if (!template) onClose(); })}>
+              onClick={() => run(() => saveTemplateDraftAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
               <Icon name="draft" size={17} /> שמירת טיוטה
             </button>
           )}

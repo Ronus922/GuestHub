@@ -1,8 +1,10 @@
 "use client";
 
+import { toast } from "sonner";
 import { Icon, type IconName } from "@/components/shared/Icon";
 import { COMMUNICATION_VARIABLES } from "@/lib/communications/variables";
 import type { CommunicationRenderContext, TemplateContent } from "@/lib/communications/types";
+import type { CommunicationActionResult } from "@/app/(dashboard)/communications/actions";
 
 // ============================================================
 // Chrome shared by the three template editors (blocks / HTML / WhatsApp).
@@ -134,6 +136,16 @@ export function focusTemplateField(field: string | undefined): void {
   if (!el) return;
   el.scrollIntoView({ block: "center" });
   el.focus({ preventScroll: true });
+}
+
+/**
+ * D205 follow-up — פרסום / שמירת טיוטה succeeded: the app's toast (Shell
+ * <Toaster>) says so, also when a NEW template's editor closes right after.
+ */
+export function announceTemplateSaved(result: CommunicationActionResult, close?: () => void): void {
+  if (!result.success) return;
+  toast.success(result.message ?? "נשמר");
+  close?.();
 }
 
 /** The ONE in-panel dialog (§8 .modal), rendered into SidePanel's overlay slot. */

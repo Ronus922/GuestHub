@@ -13,11 +13,47 @@
 // that bring the bug back. DB-backed: connects to TEST_DATABASE_URL
 // (action-harness connect()) — the suite reads this file to decide it needs its
 // own cloned database.
+//
+// D205 follow-up: a successful פרסום / שמירת טיוטה shows the app's toast, in
+// every editor, for a new template (whose editor then closes) and an existing
+// one; a refusal shows none. The toast decision runs for real
+// (announceTemplateSaved on the actions' real results, sonner recorded by the
+// harness stub); that all three editors route both buttons through it is
+// static wiring, proven non-vacuous on a mutated copy below.
+import { readFileSync } from "node:fs";
 import { compile, connect, inRollback, proveWithRefutation, seedTenant } from "./lib/action-harness.mjs";
 
 const sql = connect();
-const out = compile("check-template-publish", ["src/app/(dashboard)/communications/actions.ts"]);
+const out = compile("check-template-publish", [
+  "src/app/(dashboard)/communications/actions.ts",
+  "src/components/communications/editorShared.tsx",
+]);
 const ACTIONS = "app/(dashboard)/communications/actions.js";
+const SHARED = "components/communications/editorShared.js";
+
+// static wiring: run() hands its success result on, and BOTH buttons of EVERY
+// editor announce through the shared helper
+const EDITORS = ["TemplateEditor", "HtmlTemplateEditor", "WhatsAppTemplateEditor"];
+function wiringFailures(name, src) {
+  const fail = [];
+  if (!src.includes("onDone?.(result);")) fail.push(`${name}: run() does not pass its result to onDone`);
+  for (const action of ["publishTemplateAction", "saveTemplateDraftAction"]) {
+    if (!src.includes(`run(() => ${action}(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))`)) {
+      fail.push(`${name}: the ${action} button does not announce through announceTemplateSaved`);
+    }
+  }
+  return fail;
+}
+const wiring = EDITORS.flatMap((name) => wiringFailures(name, readFileSync(`src/components/communications/${name}.tsx`, "utf8")));
+const bypass = wiringFailures("mutant", readFileSync("src/components/communications/WhatsAppTemplateEditor.tsx", "utf8")
+  .replace("run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))",
+    "run(() => publishTemplateAction(payload), () => { if (!template) onClose(); })"));
+if (wiring.length || bypass.length === 0) {
+  for (const f of wiring) console.log(`✗ ${f}`);
+  if (bypass.length === 0) console.log("✗ the wiring check passes an editor whose publish button skips the toast (vacuous)");
+  process.exit(1);
+}
+console.log(`✓ static: both buttons of ${EDITORS.length} editors announce through announceTemplateSaved (a bypassing editor is caught)`);
 
 async function scenario(load, stub) {
   const fail = [];
@@ -83,6 +119,20 @@ async function scenario(load, stub) {
     eq(await counts(), before, "a refused publish creates no template and no version");
     const after = await state(saved.id);
     eq(after.versions, 1, "a refused publish of an existing template adds no version");
+
+    // D205 follow-up — the toast, on the actions' REAL results
+    const UI = await load(SHARED);
+    const announce = (result, isNew) => {
+      stub.toasts.length = 0; let closed = 0;
+      UI.announceTemplateSaved(result, isNew ? () => { closed += 1; } : undefined);
+      return [stub.toasts.map((t) => `${t.type}:${t.message}`), closed];
+    };
+    eq(announce(fresh, true), [["success:התבנית פורסמה"], 1], "פרסום of a NEW template: the toast, then the editor closes");
+    eq(announce(edited, false), [["success:התבנית פורסמה"], 0], "פרסום of an existing template: the toast, the editor stays");
+    eq(announce(saved, true), [["success:הטיוטה נשמרה"], 1], "שמירת טיוטה of a new template: the toast, then the editor closes");
+    eq(announce(await A.saveTemplateDraftAction(wa("עוד טקסט", { id: saved.id })), false), [["success:הטיוטה נשמרה"], 0],
+      "שמירת טיוטה of an existing template: the toast");
+    eq(announce(shortName, true), [[], 0], "a refusal shows no toast and keeps the editor open");
   });
   return fail;
 }
@@ -93,6 +143,10 @@ process.exitCode = await proveWithRefutation(out, scenario, [
       "const publishInputSchema = z.discriminatedUnion(\"channel\", [emailTemplateInputSchema.extend({ id: z.string().uuid() }), whatsappTemplateInputSchema.extend({ id: z.string().uuid() })]);"]] },
   { name: "publish skips the editor state (publishes only what was saved)",
     mutations: [[ACTIONS, "await writeTemplateDraft(tx, actor, input, id);", ""]] },
+  { name: "no toast after פרסום / שמירת טיוטה",
+    mutations: [[SHARED, 'toast.success(result.message ?? "נשמר");', ""]] },
+  { name: "a refusal also toasts success",
+    mutations: [[SHARED, "if (!result.success)\n        return;", ""]] },
   { name: "schema refusal is generic again",
     mutations: [[ACTIONS, "return error instanceof z.ZodError ? templateFieldError(error) : fail(error);", "return fail(error);"]] },
 ]);

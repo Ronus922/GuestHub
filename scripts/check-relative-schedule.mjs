@@ -169,6 +169,21 @@ async function scenario({ scheduler, triggers, delivery, db }) {
     eq(triggers.describeSchedule("check_in", "on", 0, "09:00"), "תישלח ביום ההגעה בשעה 09:00",
       "the live sentence matches the \"on\" option");
 
+    // D201/D205 follow-up — trigger names say הגעה / עזיבה, never צ׳ק-אין /
+    // צ׳ק-אאוט (owner decision; label only — ids and stored values unchanged).
+    eq(Object.fromEntries(Object.values(triggers.TRIGGERS).map((t) => [t.id, t.label])), {
+      "reservation.confirmed": "הזמנה אושרה",
+      "reservation.cancelled": "הזמנה בוטלה",
+      "reservation.pre_arrival": "תזכורת לפני הגעה",
+      "reservation.check_in_day": "יום ההגעה",
+      "reservation.post_checkout": "לאחר העזיבה",
+      "reservation.post_check_in": "במהלך השהייה — אחרי ההגעה",
+      "reservation.pre_departure": "במהלך השהייה — לפני העזיבה",
+      "reservation.check_out_day": "יום העזיבה",
+    }, "every trigger's label");
+    eq(Object.values(triggers.TRIGGERS).filter((t) => /צ[׳']ק/.test(t.label + t.description)).map((t) => t.id), [],
+      "no trigger label or description says צ׳ק-אין / צ׳ק-אאוט");
+
     // D201 follow-up — switching windows lands on the NEW window's defaults,
     // whatever days/time the previous window held (owner-approved table).
     const expectDefaults = {
@@ -207,6 +222,12 @@ process.exitCode = await proveWithRefutation(sql, out, scenario, [
       "offsetDays: def.direction === \"on\" ? 0 : def.offsetDays && prev.offsetDays >= def.offsetDays.min && prev.offsetDays <= def.offsetDays.max ? prev.offsetDays : def.offsetDays?.default ?? 0,"]] },
   { name: "static \"ביום\" label (anchor ignored)",
     mutations: [["triggers.js", "label: `ביום ${anchorNoun(anchor)}`", "label: \"ביום\""]] },
+  { name: "old wording: \"יום הצ׳ק-אין\"",
+    mutations: [["triggers.js", 'label: "יום ההגעה",', 'label: "יום הצ׳ק-אין",']] },
+  { name: "old wording in a description (לפני הצ׳ק-אין)",
+    mutations: [["triggers.js", "נשלח X ימים לפני ההגעה, בשעה", "נשלח X ימים לפני הצ׳ק-אין, בשעה"]] },
+  { name: "old wording in a description (אחרי הצ׳ק-אאוט)",
+    mutations: [["triggers.js", "נשלח X ימים אחרי העזיבה —", "נשלח X ימים אחרי הצ׳ק-אאוט —"]] },
   { name: "outside_stay guard removed",
     mutations: [["scheduler.js", "NOT (r.check_in <= ${today} AND ${today} < r.check_out)", "false"]] },
 ]);

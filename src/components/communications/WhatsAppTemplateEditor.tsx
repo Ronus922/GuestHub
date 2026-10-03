@@ -13,7 +13,7 @@ import { STAGE_KEYS, STAGE_LABELS } from "@/lib/communications/blocks";
 import { renderWhatsAppCommunication } from "@/lib/communications/renderer";
 import { getVariableDefinition } from "@/lib/communications/variables";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime, focusTemplateField,
+  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, announceTemplateSaved, dateTime, focusTemplateField,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
 import type {
@@ -141,14 +141,14 @@ export function WhatsAppTemplateEditor({
       ? "ההודעה ארוכה מדי"
       : null;
 
-  const run = (action: () => Promise<CommunicationActionResult>, onDone?: () => void) =>
+  const run = (action: () => Promise<CommunicationActionResult>, onDone?: (result: CommunicationActionResult) => void) =>
     startTransition(async () => {
       const result = await action();
       setNotice(result);
       if (!result.success) focusTemplateField(result.field);
       if (result.success) {
         setDirty(false);
-        onDone?.();
+        onDone?.(result);
         router.refresh();
       }
     });
@@ -236,13 +236,13 @@ export function WhatsAppTemplateEditor({
             <button type="button" className="btn btn-primary"
               disabled={pending || !canEdit || Boolean(publishBlocker)}
               title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload), () => { if (!template) onClose(); })}>
+              onClick={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
               <Icon name="publish" size={17} /> פרסום
             </button>
           )}
           {canEdit && (
             <button type="button" className="btn btn-secondary" disabled={pending || text.length > MAX_LEN}
-              onClick={() => run(() => saveTemplateDraftAction(payload), () => { if (!template) onClose(); })}>
+              onClick={() => run(() => saveTemplateDraftAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
               <Icon name="draft" size={17} /> שמירת טיוטה
             </button>
           )}
