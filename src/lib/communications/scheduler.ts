@@ -16,7 +16,7 @@ import { TRIGGERS, isInStayWindow, type TriggerId } from "./triggers";
 //   · moving the reservation's dates = a new anchor = a fresh (wanted) send.
 //
 // Catch-up: the date-EQUALITY predicate is the horizon — a day that has passed
-// is never emitted ("אין שליחה רטרואקטיבית"). Within the day (D201) a late
+// is never emitted (the panel: "ולא לימים שעברו"). Within the day (D201) a late
 // emission is honoured only up to CATCH_UP_WINDOW_HOURS after the send time;
 // later than that the event is still emitted ONCE (same key) but carries
 // skipReason 'catch_up_window_expired', so the history shows why nothing went
