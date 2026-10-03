@@ -14,7 +14,7 @@ import { renderHtmlCommunication, renderTemplateString } from "@/lib/communicati
 import { htmlTemplateContentSchema } from "@/lib/communications/schemas";
 import { getVariableDefinition } from "@/lib/communications/variables";
 import {
-  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, dateTime, focusTemplateField,
+  Dialog, TestSendDialog, VariablePalette, VersionHistoryList, announceTemplateSaved, dateTime, focusTemplateField,
   type EditorSeed, type PreviewDataset,
 } from "./editorShared";
 import type { CommunicationRenderContext, HtmlTemplateContent, RenderIssue } from "@/lib/communications/types";
@@ -159,14 +159,14 @@ export function HtmlTemplateEditor({
       ? "התבנית ריקה — הדביקו תוכן HTML לפני פרסום"
       : null;
 
-  const run = (action: () => Promise<CommunicationActionResult>, onDone?: () => void) =>
+  const run = (action: () => Promise<CommunicationActionResult>, onDone?: (result: CommunicationActionResult) => void) =>
     startTransition(async () => {
       const result = await action();
       setNotice(result);
       if (!result.success) focusTemplateField(result.field);
       if (result.success) {
         setDirty(false);
-        onDone?.();
+        onDone?.(result);
         router.refresh();
       }
     });
@@ -249,13 +249,13 @@ export function HtmlTemplateEditor({
             <button type="button" className="btn btn-primary"
               disabled={pending || !canEdit || Boolean(invalid) || Boolean(publishBlocker)}
               title={publishBlocker ?? undefined}
-              onClick={() => run(() => publishTemplateAction(payload), () => { if (!template) onClose(); })}>
+              onClick={() => run(() => publishTemplateAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
               <Icon name="publish" size={17} /> פרסום
             </button>
           )}
           {canEdit && (
             <button type="button" className="btn btn-secondary" disabled={pending || Boolean(invalid)}
-              onClick={() => run(() => saveTemplateDraftAction(payload), () => { if (!template) onClose(); })}>
+              onClick={() => run(() => saveTemplateDraftAction(payload), (result) => announceTemplateSaved(result, template ? undefined : onClose))}>
               <Icon name="draft" size={17} /> שמירת טיוטה
             </button>
           )}
